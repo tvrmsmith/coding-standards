@@ -1,0 +1,109 @@
+<Project>
+
+  <!--
+    Phase-1 (local, bare-DLL) consumption of Tvrmsmith.Analyzers.
+
+    This file is staged into artifacts/local/ alongside the analyzer DLLs and the
+    .globalconfig, so every path below is relative to itself and the directory can be moved
+    or symlinked anywhere.
+
+    Wire it up without editing a single committed file in the target repo:
+
+      # ~/.config/coding-standards.props — a sibling of ~/.config/coding-standards, which is a
+      # symlink into the hub; a file "inside" it would land in the hub's working tree.
+      <Project>
+        <Import Project="$(HOME)/dev/personal/coding-standards/dotnet/artifacts/local/Tvrmsmith.Analyzers.Local.props"
+                Condition="$(MSBuildProjectDirectory.StartsWith('/Users/you/dev/target-monorepo/'))" />
+      </Project>
+
+      export CustomAfterMicrosoftCommonProps="$HOME/.config/coding-standards.props"
+
+    `harness/bootstrap dotnet <repo>` writes both, and the trailing slash on the repo path is
+    deliberate: without it StartsWith('/a/b') also matches /a/b-other.
+
+    Why bare <Analyzer Include> and not <PackageReference>: it sidesteps Central Package
+    Management entirely — no NU1008/NU1010, and no dependency on the env var being set at
+    restore time. Verified against both CPM-on and CPM-off build trees.
+
+    FluentAssertions.Analyzers is staged here too rather than referenced from the NuGet cache:
+    a consuming repo has no reason to reference it already, so bundling it is what makes the
+    injection work with zero repo edits, and it pins the version these severities were curated
+    against.
+  -->
+
+  <PropertyGroup>
+    <TvrmsmithAnalyzersDir>$(MSBuildThisFileDirectory)</TvrmsmithAnalyzersDir>
+    <TvrmsmithAnalyzersEnabled Condition="'$(TvrmsmithAnalyzersEnabled)' == ''">true</TvrmsmithAnalyzersEnabled>
+  </PropertyGroup>
+
+  <!--
+    Injection must never fail a build that succeeded without it. A repo that sets
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors> — the common case, and easy to miss
+    because a small repro rarely bothers — would take every id below as a build *error*. That is
+    the reason this PropertyGroup exists.
+
+    WarningsNotAsErrors is an allowlist, not a switch: it becomes csc /warnaserror-:<ids>, so
+    only the ids named here are demoted back to warnings. Everything the target repo already
+    fails on — CS8618, the rest of CSxxxx, NuGet audit warnings, any analyzer it adopts later —
+    keeps failing exactly as before. Verified by tests/verify-severities.sh, which builds a
+    TreatWarningsAsErrors=true consumer and asserts both halves: our ids warn, and a plain CS
+    warning in the same compilation still errors.
+
+    Prepending $(WarningsNotAsErrors) preserves anything the target already set. It cannot
+    survive a project file that assigns the property without $(WarningsNotAsErrors) in the
+    value, because a csproj body is evaluated after this import — no project in the adoption
+    target does, and `bootstrap dotnet` re-checks that rather than trusting it.
+
+    The last four ids are not ours to emit but exist only because we injected: AD0001 (an
+    analyzer threw), CS8032/CS8034 (the analyzer assembly could not be loaded or instantiated)
+    and CS9057 (it was built against a newer compiler). Each is a warning, so under
+    TreatWarningsAsErrors any one of them turns a crash in *our* code into a broken build of
+    someone else's. They stay visible as warnings; they must not be fatal.
+  -->
+  <PropertyGroup Condition="'$(TvrmsmithAnalyzersEnabled)' == 'true'">
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);TVRM0001;TVRM0002;TVRM0003;FAA0001;FAA0002;FAA0003;FAA0004;AD0001;CS8032;CS8034;CS9057</WarningsNotAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(TvrmsmithAnalyzersEnabled)' == 'true' And '$(Language)' != 'VB'">
+    <Analyzer Include="$(TvrmsmithAnalyzersDir)Tvrmsmith.Analyzers.dll" />
+    <Analyzer Include="$(TvrmsmithAnalyzersDir)FluentAssertions.Analyzers.dll" />
+
+    <!--
+      The severities. Without this the analyzers load but stay at their shipped Info level,
+      which never surfaces in a build. EditorConfigFiles is what the SDK hands to csc as
+      /analyzerconfig:, and a global AnalyzerConfig is just an editorconfig with is_global=true.
+    -->
+    <EditorConfigFiles Include="$(TvrmsmithAnalyzersDir)Tvrmsmith.Analyzers.globalconfig" />
+  </ItemGroup>
+
+  <!--
+    Changed-files-only scoping. Roslyn has no diff awareness, so a plain build of a mature
+    codebase reports thousands of pre-existing sites. tvrmsmith-scope-changed.sh
+    writes a second global AnalyzerConfig — every injected id off, re-raised per file for the files
+    git reports as changed — and prints its path; see the script for why global_level matters.
+
+    A target rather than an ItemGroup because the config has to be generated against the working
+    tree as it is now, and @(EditorConfigFiles) is read by CoreCompile, not at evaluation time.
+    That also means the IDE gets it: design-time builds run CoreCompile too.
+
+    -p:TvrmsmithAnalyzersScopeToChanged=false turns it off for one build, which is how you see the
+    whole standing backlog. The script is best-effort: outside git, or with no dotnet-visible git,
+    it prints nothing, the item stays empty and the build behaves exactly as it did before.
+  -->
+  <PropertyGroup>
+    <TvrmsmithAnalyzersScopeToChanged Condition="'$(TvrmsmithAnalyzersScopeToChanged)' == ''">true</TvrmsmithAnalyzersScopeToChanged>
+  </PropertyGroup>
+
+  <Target Name="TvrmsmithScopeAnalyzersToChangedFiles" BeforeTargets="CoreCompile"
+          Condition="'$(TvrmsmithAnalyzersEnabled)' == 'true' And '$(TvrmsmithAnalyzersScopeToChanged)' == 'true' And '$(Language)' != 'VB'">
+    <Exec Command="&quot;$(TvrmsmithAnalyzersDir)tvrmsmith-scope-changed.sh&quot; &quot;$(MSBuildProjectDirectory)&quot;"
+          ConsoleToMSBuild="true" StandardOutputImportance="low" ContinueOnError="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="TvrmsmithScopingConfig" />
+    </Exec>
+    <ItemGroup>
+      <EditorConfigFiles Include="$(TvrmsmithScopingConfig)"
+                         Condition="'$(TvrmsmithScopingConfig)' != '' And Exists('$(TvrmsmithScopingConfig)')" />
+    </ItemGroup>
+  </Target>
+
+</Project>

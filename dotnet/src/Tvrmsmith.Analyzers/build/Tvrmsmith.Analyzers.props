@@ -1,0 +1,14 @@
+<Project>
+
+  <!--
+    Phase-2 (NuGet) consumption. Auto-imported from the package's build/ folder.
+
+    NuGet adds analyzers/dotnet/cs/*.dll on its own, and FluentAssertions.Analyzers arrives as
+    a package dependency, so all this file has to do is contribute the curated severities.
+  -->
+
+  <ItemGroup Condition="'$(TvrmsmithAnalyzersEnabled)' != 'false' And '$(Language)' != 'VB'">
+    <EditorConfigFiles Include="$(MSBuildThisFileDirectory)Tvrmsmith.Analyzers.globalconfig" />
+  </ItemGroup>
+
+</Project>

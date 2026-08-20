@@ -1,0 +1,7 @@
+{
+  "name": "fixture-package",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A stand-in consumer package. The preset is linted against these files the way it will be layered over a real package: the fixture supplies the parser, the preset is spread after it.",
+  "type": "module"
+}
