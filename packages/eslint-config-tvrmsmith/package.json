@@ -1,0 +1,33 @@
+{
+  "name": "eslint-config-tvrmsmith",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Curated off-the-shelf ESLint preset enforcing the tvrmsmith coding standards.",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./base": "./base.js",
+    "./react": "./react.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["index.js", "base.js", "react.js", "globs.js", "README.md"],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "peerDependencies": {
+    "eslint": ">=8.57.0"
+  },
+  "dependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.66.0",
+    "eslint-plugin-jest-dom": "^5.10.1",
+    "eslint-plugin-tvrmsmith": "link:../eslint-plugin-tvrmsmith",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-you-might-not-need-an-effect": "^1.0.1",
+    "eslint-plugin-testing-library": "^7.16.2"
+  },
+  "devDependencies": {
+    "@typescript-eslint/parser": "^8.66.0",
+    "eslint": "^9.39.0"
+  }
+}

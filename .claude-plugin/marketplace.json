@@ -1,0 +1,18 @@
+{
+  "name": "coding-standards",
+  "owner": {
+    "name": "Trevor Smith",
+    "email": "tvrmsmith@gmail.com",
+    "url": "https://github.com/tvrmsmith"
+  },
+  "description": "Personal coding standards: guidance skills plus the lint rules that mechanically enforce them.",
+  "plugins": [
+    {
+      "name": "coding-standards",
+      "source": "./plugins/coding-standards",
+      "description": "Domain/DTO design, React effects, and test/assertion standards — with each guideline marked as lint-enforced or review-only.",
+      "category": "development",
+      "keywords": ["coding-standards", "code-review", "testing", "react", "dotnet", "eslint", "roslyn"]
+    }
+  ]
+}

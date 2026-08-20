@@ -1,0 +1,19 @@
+<Project>
+
+  <PropertyGroup>
+    <!-- The single stable path phase-1 injection points at. Kept out of the project file so
+         the consumer test can read it too. -->
+    <DotnetRoot>$(MSBuildThisFileDirectory)</DotnetRoot>
+    <LocalArtifactsDir>$(DotnetRoot)artifacts/local/</LocalArtifactsDir>
+
+    <!-- Pinned deliberately: the curated severities in
+         src/Tvrmsmith.Analyzers/config/Tvrmsmith.Analyzers.globalconfig were written against
+         this version's FAA0001-FAA0004. Bump both together. -->
+    <FluentAssertionsAnalyzersVersion>0.34.1</FluentAssertionsAnalyzersVersion>
+
+    <!-- FluentAssertions 6.x is the assumed baseline, which is why the analyzer pairing is
+         FluentAssertions.Analyzers and not AwesomeAssertions.Analyzers. -->
+    <FluentAssertionsVersion>6.12.2</FluentAssertionsVersion>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+#
+# Personal coding-standards pre-commit hook — installed machine-locally by
+# `harness/bootstrap ts <repo>`. Never committed to the repository it guards.
+#
+# This hook is the enforcement gate for TypeScript: the editor layer
+# reaches roughly 12% of the rule x package matrix, this reaches all of it.
+#
+# Two branches, one per language, each a no-op when the commit contains nothing it handles and
+# when the repo was never bootstrapped for it — so this one template serves a repo adopted for
+# either language or both, and `bootstrap ts` and `bootstrap dotnet` install it identically.
+#
+# The harness path and any pre-existing hook to chain are substituted in below at install
+# time; `bootstrap` re-reads the `chained=` line on reinstall, so keep its shape.
+set -uo pipefail
+
+# tvrmsmith-coding-standards-hook — how `bootstrap` recognises its own hook on reinstall.
+# Without a stable marker it mistakes this file for someone else's and chains to itself.
+harness=@HARNESS@
+chained=@CHAINED@
+
+# Anything that ran here before the personal hook goes first, and its verdict stands.
+# Replacing a teammate-facing hook silently is the worst failure available to this file.
+if [ -n "$chained" ] && [ -x "$chained" ]; then
+  "$chained" "$@" || exit $?
+fi
+
+if [ "${SKIP_TVRMSMITH_LINT:-}" = "1" ]; then
+  exit 0
+fi
+
+status=0
+
+# TypeScript: ESLint over the staged .ts/.tsx, layered. Errors fail, warnings do not.
+"$harness/lint-changed.sh" --staged || status=$?
+
+# C#: the same question asked of the staged .cs, answered by building the projects that own
+# them with the analyzers injected. Both branches run even if the first found something — a
+# commit spanning both languages should report both, not stop at whichever came first.
+#
+# The exit convention is identical (the build's own verdict: compile errors fail, analyzer
+# warnings do not), but it bites differently: every id the .NET side injects is a warning by
+# design, so that branch reports and never blocks on a finding. See lint-changed-dotnet.sh.
+"$harness/lint-changed-dotnet.sh" --staged || status=$?
+
+if [ $status -ne 0 ]; then
+  echo >&2
+  echo "pre-commit: personal coding standards found errors in the staged changes." >&2
+  echo "  fix them, or commit with SKIP_TVRMSMITH_LINT=1 / --no-verify to bypass." >&2
+fi
+
+exit $status

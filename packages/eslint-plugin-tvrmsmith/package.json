@@ -1,0 +1,23 @@
+{
+  "name": "eslint-plugin-tvrmsmith",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The custom ESLint rules behind the tvrmsmith coding standards — the guidelines with no off-the-shelf equivalent.",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["index.js", "rules", "docs", "README.md"],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "peerDependencies": {
+    "eslint": ">=8.57.0"
+  },
+  "devDependencies": {
+    "@typescript-eslint/parser": "^8.66.0",
+    "eslint": "^9.39.0"
+  }
+}

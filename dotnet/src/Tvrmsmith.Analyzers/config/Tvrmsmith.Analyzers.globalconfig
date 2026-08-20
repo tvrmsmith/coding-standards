@@ -1,0 +1,71 @@
+# Tvrmsmith.Analyzers — curated severities
+#
+# A global AnalyzerConfig (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/configuration-files).
+# It is applied two ways, and both must work:
+#
+#   1. NuGet consumption  — build/Tvrmsmith.Analyzers.props adds it.
+#   2. Bare-dll injection — local/Tvrmsmith.Analyzers.Local.props adds it, reached through
+#                           CustomAfterMicrosoftCommonProps.
+#
+# A .globalconfig shipped only inside the nupkg would not reach a bare <Analyzer Include>
+# consumer, so it is staged to artifacts/local/ next to the DLLs as well.
+
+is_global = true
+
+# global_level is deliberately left at its default (0, the lowest). Anything the target repo
+# states for itself — its own .editorconfig, or a global config it opts into — outranks these.
+# These are a floor, not an override.
+
+##
+## FluentAssertions.Analyzers 0.34.1
+##
+## Pairing matters and fails silently: FluentAssertions 6.x <-> FluentAssertions.Analyzers,
+## AwesomeAssertions 9.x <-> AwesomeAssertions.Analyzers. The diagnostic IDs and these
+## editorconfig keys are identical across both packages, so this block is portable. Get the
+## pairing wrong and the analyzer gates on a type name that does not exist: zero diagnostics,
+## no warning, a run that looks clean.
+##
+## All four ship as Info, which never surfaces in a normal build. The enforcement mapping
+## makes them the off-the-shelf home for four guidelines, so Info is too
+## quiet — they are elevated to warning. Not error: adoption is machine-local with no CI
+## gate, and an error would block builds of code nobody else is being asked to change.
+##
+
+# FAA0001 "Simplify Assertion" — clean up FluentAssertion usage.
+# Enforcement home for: A2 (assertions communicate intent), B2 (collections:
+# BeEquivalentTo/ContainSingle over Count checks), B3 (expressive chains).
+dotnet_diagnostic.FAA0001.severity = warning
+
+# FAA0002 — replace an Xunit assertion with the Fluent Assertions equivalent.
+dotnet_diagnostic.FAA0002.severity = warning
+
+# FAA0003 — replace an MSTest assertion with the Fluent Assertions equivalent.
+dotnet_diagnostic.FAA0003.severity = warning
+
+# FAA0004 — replace an NUnit assertion with the Fluent Assertions equivalent.
+dotnet_diagnostic.FAA0004.severity = warning
+
+# ffa_excluded_methods is deliberately unset. It suppresses FAA0002-FAA0004 for named
+# assertion methods (e.g. M:NUnit.Framework.Assert.Fail); nothing in scope needs an exemption.
+
+##
+## Tvrmsmith custom analyzers
+##
+## The three guidelines the enforcement mapping found no off-the-shelf home
+## for. All three already default to warning in their DiagnosticDescriptor; they are restated
+## here so the severity of every rule this package is responsible for is readable in one place,
+## and so raising or lowering one is a config edit rather than a rebuild.
+##
+## Warning, never error, for the same reason as the block above: this runs machine-locally
+## against code other people wrote and are not being asked to change.
+##
+
+# TVRM0001 combine-assertions-on-same-object — enforcement home for A1 and B1.
+dotnet_diagnostic.TVRM0001.severity = warning
+
+# TVRM0002 no-suppression-before-assertion — enforcement home for the C# half of A4, and B7.
+dotnet_diagnostic.TVRM0002.severity = warning
+
+# TVRM0003 no-assertion-escape-cast — enforcement home for C2. The judgment half of that
+# guideline, C1 (which target to assert on instead), stays review-only in the skill text.
+dotnet_diagnostic.TVRM0003.severity = warning

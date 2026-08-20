@@ -1,0 +1,89 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <IsRoslynComponent>true</IsRoslynComponent>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Package">
+    <PackageId>Tvrmsmith.Analyzers</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Trevor Smith</Authors>
+    <Description>
+      Personal coding-standards Roslyn analyzers, plus curated severities for the off-the-shelf
+      C# analyzers the standards rely on.
+    </Description>
+    <PackageTags>analyzers;roslyn;coding-standards;fluentassertions</PackageTags>
+    <RepositoryUrl>https://github.com/tvrmsmith/coding-standards</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- An analyzer package: no lib/, nothing at runtime, and PrivateAssets=all by default
+         for consumers so it never leaks past the project that references it. -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <SuppressDependenciesWhenPacking>false</SuppressDependenciesWhenPacking>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4" PrivateAssets="all" />
+
+    <!-- The off-the-shelf layer, referenced plainly and on purpose. It has to land in the
+         nuspec as a real dependency so a phase-2 consumer gets the analyzers alongside our
+         severities. PrivateAssets="none" is required and not decorative: the default
+         (contentfiles;analyzers;build) writes exclude="Build,Analyzers" into the nuspec, which
+         would hand a consumer the dependency with the one asset that matters stripped out.
+         It analyzing this project is a no-op — it gates on FluentAssertions.AssertionExtensions,
+         which is not in this compilation. GeneratePathProperty gives us
+         $(PkgFluentAssertions_Analyzers) to stage the DLL from for local adoption. -->
+    <PackageReference Include="FluentAssertions.Analyzers" Version="$(FluentAssertionsAnalyzersVersion)"
+                      PrivateAssets="none" GeneratePathProperty="true" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The tests build their expectations from the real DiagnosticDescriptors, which keeps the
+         asserted message text honest without making the descriptors public API. -->
+    <InternalsVisibleTo Include="Tvrmsmith.Analyzers.Tests" />
+  </ItemGroup>
+
+  <ItemGroup Label="Analyzer release tracking">
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+
+  <ItemGroup Label="Package layout">
+    <None Include="$(OutputPath)$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    <None Include="build/Tvrmsmith.Analyzers.props" Pack="true" PackagePath="build" />
+    <None Include="config/Tvrmsmith.Analyzers.globalconfig" Pack="true" PackagePath="build" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" Visible="false" />
+  </ItemGroup>
+
+  <!--
+    Stage everything a bare <Analyzer Include> consumer needs into one stable, predictable
+    directory. Phase-1 injection points at this directory and nothing else; see
+    local/Tvrmsmith.Analyzers.Local.props.
+  -->
+  <Target Name="StageLocalArtifacts" AfterTargets="Build">
+    <ItemGroup>
+      <LocalArtifact Include="$(TargetPath)" />
+      <LocalArtifact Include="$(PkgFluentAssertions_Analyzers)/analyzers/dotnet/cs/FluentAssertions.Analyzers.dll" />
+      <LocalArtifact Include="config/Tvrmsmith.Analyzers.globalconfig" />
+      <LocalArtifact Include="local/Tvrmsmith.Analyzers.Local.props" />
+      <LocalArtifact Include="local/tvrmsmith-scope-changed.sh" />
+    </ItemGroup>
+    <Error Condition="!Exists('%(LocalArtifact.FullPath)')"
+           Text="Cannot stage local artifact, missing: %(LocalArtifact.FullPath)" />
+    <Copy SourceFiles="@(LocalArtifact)" DestinationFolder="$(LocalArtifactsDir)" SkipUnchangedFiles="true" />
+    <!-- Copy does not carry the execute bit, and Local.props invokes the staged copy directly. -->
+    <Exec Command="chmod +x &quot;$(LocalArtifactsDir)tvrmsmith-scope-changed.sh&quot;" Condition="'$(OS)' != 'Windows_NT'" />
+    <Message Importance="high" Text="Tvrmsmith.Analyzers staged for bare-DLL consumption -> $(LocalArtifactsDir)" />
+  </Target>
+
+</Project>

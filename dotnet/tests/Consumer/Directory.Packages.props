@@ -1,0 +1,9 @@
+<Project>
+
+  <ItemGroup>
+    <!-- Mirrors a consuming repo: FluentAssertions 6.x pinned, and no analyzer package. -->
+    <PackageVersion Include="FluentAssertions" Version="6.12.2" />
+    <PackageVersion Include="xunit" Version="2.9.2" />
+  </ItemGroup>
+
+</Project>

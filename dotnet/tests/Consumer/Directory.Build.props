@@ -1,0 +1,16 @@
+<Project>
+
+  <!--
+    Deliberately does NOT import ../../Directory.Build.props. This tree stands in for the
+    consuming repo, so it must look like a foreign repo: its own build tree, Central Package
+    Management on, and no reference of any kind to Tvrmsmith.Analyzers or
+    FluentAssertions.Analyzers. Everything the analyzers need has to arrive through the
+    injected props file, or the test is not proving anything.
+  -->
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+</Project>

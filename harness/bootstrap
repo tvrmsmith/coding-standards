@@ -1,0 +1,459 @@
+#!/usr/bin/env bash
+#
+# Wire one repository up to the personal coding standards, machine-locally.
+#
+#   harness/bootstrap ts     [<repo>]
+#   harness/bootstrap dotnet [<repo>]
+#
+# "Machine-locally" is the whole design constraint: adoption is solo, so
+# nothing this script writes may be visible to anyone else who clones the repo. Everything
+# lands either outside the repo (~/.config/coding-standards, ~/.config/coding-standards.props,
+# ~/.zshenv.local) or in a path git ignores (.git/hooks, and a .vscode/settings.json covered by
+# .gitignore or .git/info/exclude). The script refuses to touch a tracked file, and stages
+# nothing. The .NET half writes nothing inside the repo at all except the hook — the analyzers
+# arrive through an MSBuild property, so there is no editor file to place.
+#
+# Run it once per language you want in a repo; the two share the config symlink and the hook,
+# and neither undoes the other.
+#
+# Idempotent: run it again after pulling new rules.
+#
+# Written for bash 3.2 (the macOS system bash).
+set -uo pipefail
+
+# -P: resolve to the real directory. Invoked through the ~/.config symlink this would
+# otherwise report the link's own path, and the "already linked" check below would miss.
+harness=$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+hub=$(cd "$harness/.." && pwd -P)
+config_home=${XDG_CONFIG_HOME:-$HOME/.config}
+install_dir=$config_home/coding-standards
+
+# Deliberately a sibling of $install_dir and not a file inside it: $install_dir is a symlink to
+# the harness, so anything written "in" it lands in the hub's working tree. This file is
+# generated and machine-specific (it names absolute repo paths), so it must not.
+analyzer_props=$config_home/coding-standards.props
+artifacts=$hub/dotnet/artifacts/local
+
+lang=${1:-}
+repo=${2:-$PWD}
+
+usage() {
+  cat >&2 <<'EOF'
+usage: bootstrap <lang> [<repo>]
+
+  ts      TypeScript: ESLint layering wrapper, editor settings, pre-commit hook
+  dotnet  C#: Roslyn analyzers injected through CustomAfterMicrosoftCommonProps, pre-commit hook
+EOF
+  exit 2
+}
+
+info() { printf '  %s\n' "$*"; }
+warn() { printf '  ! %s\n' "$*" >&2; }
+step() { printf '\n%s\n' "$*"; }
+die()  { printf '\nbootstrap: %s\n' "$*" >&2; exit 1; }
+
+case "$lang" in
+  ts|dotnet) ;;
+  *) usage ;;
+esac
+
+repo=$(cd "$repo" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null) \
+  || die "'${2:-$PWD}' is not inside a git repository"
+# Resolved, not as given: the .NET scoping condition compares against MSBuildProjectDirectory,
+# which MSBuild normalises but does not resolve, so a path reached through a symlink would
+# scope the analyzers to a prefix no project ever reports (research caveat 2).
+repo=$(cd "$repo" && pwd -P)
+[ "$repo" = "$hub" ] && die "point this at a target repository, not the hub itself"
+
+printf 'Bootstrapping %s (%s)\n  harness: %s\n' "$repo" "$lang" "$harness"
+
+# ---------------------------------------------------------------------------------------
+step 'Personal config outside the repo'
+
+if [ "$lang" = ts ]; then
+  [ -d "$harness/node_modules" ] || {
+    info 'installing harness dependencies'
+    (cd "$harness" && pnpm install --silent) || die 'pnpm install failed in the harness'
+  }
+  # The harness reaches the preset through pnpm's link: protocol, which symlinks the package
+  # directory but does not install that package's own dependencies — and base.js imports five
+  # plugins. The hub has no workspace root, so nothing else installs them either and a fresh
+  # clone dies at the smoke check with ERR_MODULE_NOT_FOUND.
+  for pkg in "$hub"/packages/*/; do
+    [ -f "$pkg/package.json" ] || continue
+    [ -d "$pkg/node_modules" ] && continue
+    info "installing dependencies for $(basename "$pkg")"
+    (cd "$pkg" && pnpm install --silent) || die "pnpm install failed in $pkg"
+  done
+fi
+
+mkdir -p "$config_home"
+if [ -L "$install_dir" ]; then
+  current=$(cd -P "$install_dir" 2>/dev/null && pwd)
+  if [ "$current" = "$harness" ]; then
+    info "$install_dir -> $harness (already linked)"
+  else
+    warn "$install_dir points at $current, not the harness — leaving it alone"
+  fi
+elif [ -e "$install_dir" ]; then
+  warn "$install_dir exists and is not a symlink — leaving it alone"
+else
+  ln -s "$harness" "$install_dir"
+  info "$install_dir -> $harness"
+fi
+
+if [ "$lang" = ts ]; then
+# ---------------------------------------------------------------------------------------
+step 'Packages'
+
+packages=$(cd "$repo" && find . -path '*/node_modules' -prune -o \
+  \( -name 'eslint.config.js' -o -name 'eslint.config.mjs' -o -name 'eslint.config.cjs' \
+     -o -name 'eslint.config.ts' -o -name '.eslintrc.js' -o -name '.eslintrc.cjs' \
+     -o -name '.eslintrc.mjs' -o -name '.eslintrc.json' -o -name '.eslintrc' \) -print \
+  | sed 's|^\./||' | xargs -n1 dirname | sort -u)
+
+[ -n "$packages" ] || die 'no ESLint configs found in this repository'
+
+flat=0; legacy=0; uninstalled=0
+package_dirs=()
+while IFS= read -r pkg; do
+  [ -n "$pkg" ] || continue
+  package_dirs+=("$repo/$pkg")
+  if ls "$repo/$pkg"/eslint.config.* >/dev/null 2>&1; then flat=$((flat + 1)); else legacy=$((legacy + 1)); fi
+  [ -x "$repo/$pkg/node_modules/.bin/eslint" ] || uninstalled=$((uninstalled + 1))
+done <<<"$packages"
+
+info "$((flat + legacy)) packages — $flat flat config, $legacy legacy .eslintrc"
+[ "$uninstalled" -gt 0 ] && warn "$uninstalled have no installed eslint; they are skipped until their dependencies are installed"
+
+# `no-restricted-syntax` is a core rule: a later config replaces its options rather than
+# merging them. Name the packages this costs something in, rather than letting it be a
+# silent behaviour change in someone's editor.
+collisions=$(cd "$repo" && grep -rl --include='.eslintrc*' --include='eslint.config.*' \
+  --exclude-dir=node_modules 'no-restricted-syntax' . 2>/dev/null | sed 's|^\./||' | sort)
+if [ -n "$collisions" ]; then
+  warn 'these packages configure no-restricted-syntax; inside test files the preset replaces their selectors'
+  while IFS= read -r c; do [ -n "$c" ] && warn "    $c"; done <<<"$collisions"
+  warn '    (editor and commit gate alike — both go through eslint-layer.js)'
+fi
+
+# ---------------------------------------------------------------------------------------
+step 'Editor settings'
+
+settings=$repo/.vscode/settings.json
+if (cd "$repo" && git ls-files --error-unmatch .vscode/settings.json >/dev/null 2>&1); then
+  die '.vscode/settings.json is tracked in this repository — refusing to modify a shared file'
+fi
+
+node "$harness/write-vscode-settings.mjs" "$repo" "${package_dirs[@]}" \
+  | sed 's/^/  /' || die 'failed to write editor settings'
+
+if (cd "$repo" && git check-ignore -q .vscode/settings.json); then
+  info '.vscode/settings.json is already ignored'
+else
+  # Not "$repo/.git/info/exclude": in a linked worktree `.git` is a *file*, so that path is
+  # not a directory. --git-path resolves to the real one (shared with the main checkout).
+  exclude=$(cd "$repo" && git rev-parse --git-path info/exclude)
+  case "$exclude" in /*) ;; *) exclude=$repo/$exclude ;; esac
+  mkdir -p "$(dirname "$exclude")"
+  printf '%s\n' '.vscode/settings.json' >>"$exclude"
+  info "added .vscode/settings.json to $exclude"
+fi
+
+# The settings file is inert without something that reads it, and an editor with no ESLint
+# integration installed makes the whole editor half write into the void without ever saying so.
+# Cheap to check, expensive to not notice.
+eslint_editor=''
+for candidate in "$HOME/.vscode/extensions" "$HOME/.vscode-insiders/extensions" \
+                 "$HOME/.cursor/extensions" "$HOME/.vscode-server/extensions"; do
+  [ -d "$candidate" ] || continue
+  if ls -d "$candidate"/dbaeumer.vscode-eslint-* >/dev/null 2>&1; then
+    eslint_editor=$candidate
+    break
+  fi
+done
+if [ -n "$eslint_editor" ]; then
+  info "ESLint editor integration found in $eslint_editor"
+else
+  warn 'no dbaeumer.vscode-eslint found — these settings are read by nothing until one is installed'
+  warn '    (Zed reads its own "lsp": {"eslint": …} block instead; this file will not reach it)'
+fi
+fi  # lang = ts
+
+if [ "$lang" = dotnet ]; then
+# ---------------------------------------------------------------------------------------
+step 'Analyzers'
+
+command -v dotnet >/dev/null 2>&1 || die 'no dotnet on PATH'
+
+# The DLLs, the .globalconfig and the props file all live in dotnet/artifacts/local, which is
+# gitignored — it is build output, staged there by the analyzer project's own StageLocalArtifacts
+# target. So build it rather than checking whether it happens to be there: a stale copy from an
+# older rule set is worse than none, and the build is a no-op when nothing changed.
+info 'building Tvrmsmith.Analyzers'
+dotnet build "$hub/dotnet/src/Tvrmsmith.Analyzers/Tvrmsmith.Analyzers.csproj" \
+  -c Release --nologo -v quiet >/dev/null || die 'the analyzer project failed to build'
+
+local_props=$artifacts/Tvrmsmith.Analyzers.Local.props
+for f in Tvrmsmith.Analyzers.dll FluentAssertions.Analyzers.dll \
+         Tvrmsmith.Analyzers.globalconfig Tvrmsmith.Analyzers.Local.props \
+         tvrmsmith-scope-changed.sh; do
+  [ -f "$artifacts/$f" ] || die "the build did not stage $f into $artifacts"
+done
+[ -x "$artifacts/tvrmsmith-scope-changed.sh" ] \
+  || die "tvrmsmith-scope-changed.sh is staged but not executable; changed-file scoping would silently do nothing"
+info "staged $artifacts"
+
+# One path-scoped Import per adopted repo. The trailing slash is not cosmetic: without it
+# StartsWith('/a/b') also matches /a/b-other, and the blast radius of this file is the one thing
+# it exists to control. MSBuildProjectDirectory carries no trailing slash, so a .csproj sitting
+# at the repo root reports exactly $repo and the prefix test can never match it — hence the
+# second branch rather than dropping the slash.
+import_cond="          Condition=\"\$(MSBuildProjectDirectory.StartsWith('$repo/')) or '\$(MSBuildProjectDirectory)' == '$repo'\" />"
+import_line="  <Import Project=\"$local_props\"
+$import_cond"
+
+if [ ! -f "$analyzer_props" ]; then
+  printf '<Project>\n%s\n</Project>\n' "$import_line" >"$analyzer_props"
+  info "created $analyzer_props"
+elif grep -qF "== '$repo'" "$analyzer_props"; then
+  info "$analyzer_props already scopes $repo"
+elif grep -qF "StartsWith('$repo/')" "$analyzer_props"; then
+  # Written by a bootstrap from before the root-project branch existed: rewrite that repo's
+  # condition line in place rather than adding a second Import of the same file.
+  tmp=$(mktemp)
+  awk -v needle="StartsWith('$repo/')" -v cond="$import_cond" \
+    'index($0, needle) { print cond; next } { print }' "$analyzer_props" >"$tmp" \
+    && mv "$tmp" "$analyzer_props"
+  info "widened $repo's condition in $analyzer_props to cover a project at the repo root"
+else
+  # Insert before the closing tag rather than appending, so repeated runs against different
+  # repos accumulate instead of producing a file with two roots.
+  tmp=$(mktemp)
+  awk -v line="$import_line" '/<\/Project>/ && !done { print line; done = 1 } { print }' \
+    "$analyzer_props" >"$tmp" && mv "$tmp" "$analyzer_props"
+  info "added $repo to $analyzer_props"
+fi
+
+# ---------------------------------------------------------------------------------------
+step 'Environment'
+
+# CustomAfterMicrosoftCommonProps is read by MSBuild from the environment, so every process that
+# builds has to have it: the shell, and separately the GUI-launched IDEs, which inherit from
+# launchd and never see a shell profile.
+zshenv_local=$HOME/.zshenv.local
+export_line="export CustomAfterMicrosoftCommonProps=\"$analyzer_props\""
+if [ -f "$zshenv_local" ] && grep -qF 'CustomAfterMicrosoftCommonProps' "$zshenv_local"; then
+  info "$zshenv_local already exports it"
+else
+  # Untracked and machine-local by design — a shell profile sources it if present, so nothing
+  # about this adoption is committed anywhere.
+  printf '\n# Personal Roslyn analyzers, injected into every MSBuild evaluation (coding-standards).\n%s\n' \
+    "$export_line" >>"$zshenv_local"
+  info "appended the export to $zshenv_local"
+fi
+
+if [ "$(uname)" = Darwin ]; then
+  launchctl setenv CustomAfterMicrosoftCommonProps "$analyzer_props" 2>/dev/null \
+    && info 'launchctl setenv done — GUI apps launched from now on will see it'
+
+  # setenv dies with the login session. The agent is what survives a reboot; without it an IDE
+  # opened from the Dock next week builds without the analyzers and nothing says so.
+  plist=$HOME/Library/LaunchAgents/com.tvrmsmith.coding-standards.plist
+  mkdir -p "$(dirname "$plist")"
+  cat >"$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.tvrmsmith.coding-standards</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/launchctl</string>
+    <string>setenv</string>
+    <string>CustomAfterMicrosoftCommonProps</string>
+    <string>$analyzer_props</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>
+EOF
+  launchctl unload "$plist" 2>/dev/null
+  launchctl load "$plist" 2>/dev/null && info "installed $plist"
+fi
+
+# ---------------------------------------------------------------------------------------
+step 'Target repository survey'
+
+# WarningsNotAsErrors is what keeps the injected ids at warning under TreatWarningsAsErrors, and
+# the injection sets it from an import that runs *before* the csproj body. A project assigning
+# the property without $(WarningsNotAsErrors) in the value would silently drop the exemption and
+# turn our warnings into build errors. Check rather than trust.
+clobbering=$(cd "$repo" && grep -rl '<WarningsNotAsErrors>' \
+  --include='*.csproj' --include='*.props' --exclude-dir=node_modules . 2>/dev/null \
+  | while IFS= read -r f; do
+      grep -qF '<WarningsNotAsErrors>$(WarningsNotAsErrors)' "$f" || printf '%s\n' "$f"
+    done)
+if [ -n "$clobbering" ]; then
+  warn 'these assign WarningsNotAsErrors without preserving $(WarningsNotAsErrors); the injected ids will be errors there'
+  while IFS= read -r c; do [ -n "$c" ] && warn "    $c"; done <<<"$clobbering"
+fi
+
+twae_count=$(cd "$repo" && grep -rl '<TreatWarningsAsErrors>true<' \
+  --include='Directory.Build.props' --include='*.csproj' . 2>/dev/null | wc -l | tr -d ' ')
+info "$twae_count file(s) set TreatWarningsAsErrors=true — the exemption list is why they still build"
+fi  # lang = dotnet
+
+# ---------------------------------------------------------------------------------------
+step 'Pre-commit hook'
+
+hooks_dir=$(cd "$repo" && git config core.hooksPath || true)
+if [ -n "$hooks_dir" ]; then
+  case "$hooks_dir" in /*) ;; *) hooks_dir=$repo/$hooks_dir ;; esac
+  info "core.hooksPath is set: $hooks_dir"
+  rel=${hooks_dir#"$repo"/}
+  if [ "$rel" != "$hooks_dir" ] \
+     && (cd "$repo" && git ls-files --error-unmatch "$rel/pre-commit" >/dev/null 2>&1); then
+    die 'the active pre-commit hook is tracked in this repository — install it by hand rather than editing a shared file'
+  fi
+else
+  hooks_dir=$(cd "$repo" && git rev-parse --git-path hooks)
+  case "$hooks_dir" in /*) ;; *) hooks_dir=$repo/$hooks_dir ;; esac
+fi
+mkdir -p "$hooks_dir"
+
+hook=$hooks_dir/pre-commit
+chained=''
+if [ -e "$hook" ]; then
+  if grep -q 'tvrmsmith-coding-standards-hook' "$hook" 2>/dev/null; then
+    # Ours from a previous run — re-read whatever it was chaining so the chain survives.
+    chained=$(sed -n 's/^chained=\(.*\)$/\1/p' "$hook" | head -1)
+    chained=${chained%\'}; chained=${chained#\'}
+  else
+    chained=$hooks_dir/pre-commit.pre-tvrmsmith
+    mv "$hook" "$chained"
+    chmod +x "$chained"
+    warn "an existing pre-commit hook was found; it was moved to $chained and the personal hook now runs it first"
+  fi
+fi
+
+sed -e "s|@HARNESS@|'$harness'|" -e "s|@CHAINED@|'$chained'|" "$harness/hooks/pre-commit" >"$hook"
+chmod +x "$hook"
+info "installed $hook"
+[ -n "$chained" ] && info "chaining to $chained"
+
+# Hook runners that are present but not wired up are worth saying out loud: if one is
+# activated later it will take over, and the personal hook has to be reinstalled behind it.
+for dormant in .husky/pre-commit lefthook.yml .lefthook.yml .beads/hooks/pre-commit; do
+  [ -e "$repo/$dormant" ] && warn "found $dormant but core.hooksPath is unset — dormant today; rerun bootstrap if it is ever activated"
+done
+
+# ---------------------------------------------------------------------------------------
+step 'Smoke check'
+
+if [ "$lang" = dotnet ]; then
+  # Everything above is evaluation-time plumbing that fails silently when it is wrong: a
+  # mis-scoped condition, an unresolved symlink in a path, an env var the shell has but this
+  # process does not. Ask MSBuild what it actually evaluated, against a real project in the
+  # target, rather than inferring it from the files we just wrote.
+  #
+  # Not simply the first .csproj: the injection rides on CustomAfterMicrosoftCommonProps, which
+  # only reaches a project that imports Microsoft.Common.props — i.e. an SDK-style one. The
+  # A repo may ship bare <Project> stubs as architecture-fitness fixtures, and probing one of
+  # those reports an empty Analyzer item group that looks exactly like a broken condition.
+  # Require the Sdk attribute, and prefer the shallowest match so the probe is a real project.
+  probe=$(cd "$repo" && grep -rl --include='*.csproj' --exclude-dir=obj --exclude-dir=bin \
+    --exclude-dir=node_modules 'Sdk="Microsoft.NET.Sdk' . 2>/dev/null \
+    | awk -F/ '{ print NF, $0 }' | sort -n | head -1 | cut -d' ' -f2-)
+  [ -n "$probe" ] || die "no SDK-style .csproj found under $repo"
+  probe=$repo/${probe#./}
+  info "probing $(basename "$probe")"
+
+  evaluated=$(cd "$(dirname "$probe")" && CustomAfterMicrosoftCommonProps="$analyzer_props" \
+    dotnet msbuild "$probe" -getItem:Analyzer -getProperty:WarningsNotAsErrors -nologo 2>&1)
+
+  case "$evaluated" in
+    *Tvrmsmith.Analyzers.dll*) info 'ok   Tvrmsmith.Analyzers.dll is in the Analyzer item group' ;;
+    *) printf '%s\n' "$evaluated" | sed 's/^/      /' >&2
+       die 'the analyzers did not reach this project — check the scoping condition path' ;;
+  esac
+  case "$evaluated" in
+    *FluentAssertions.Analyzers.dll*) info 'ok   FluentAssertions.Analyzers.dll too' ;;
+    *) warn 'FluentAssertions.Analyzers.dll is missing from the Analyzer item group' ;;
+  esac
+  case "$evaluated" in
+    *TVRM0001*CS9057*) info 'ok   WarningsNotAsErrors carries the exemption list' ;;
+    *) die 'WarningsNotAsErrors does not carry the injected ids — they would be build errors here' ;;
+  esac
+
+  # Item groups prove delivery, not execution: analyzers only run when csc does. --no-incremental
+  # forces that; an up-to-date project reports nothing at all and would look like a clean pass.
+  # References first, forced recompile second — the same two passes lint-changed-dotnet.sh runs,
+  # and for the same reason: a forced build with BuildProjectReferences=false on a tree whose
+  # dependencies were never built reports the entire file as undefined types.
+  #
+  # Scoping off for the probe: changed-file scoping is on by default, and in a clean checkout it
+  # would suppress every diagnostic — a masked pass that looks identical to a broken injection.
+  info 'building it (analyzers only run inside a real compilation)'
+  CustomAfterMicrosoftCommonProps="$analyzer_props" \
+    dotnet build "$probe" -p:TvrmsmithAnalyzersScopeToChanged=false -v:q --nologo >/dev/null 2>&1
+  built=$(CustomAfterMicrosoftCommonProps="$analyzer_props" \
+    dotnet build "$probe" --no-incremental -p:BuildProjectReferences=false \
+      -p:TvrmsmithAnalyzersScopeToChanged=false -v:m --nologo 2>&1)
+  if grep -qE ': error (FAA|TVRM|AD0001|CS8032|CS8034|CS9057)' <<<"$built"; then
+    grep -E ': error ' <<<"$built" | head -5 | sed 's/^/      /' >&2
+    die 'an injected diagnostic arrived as an error — the exemption list did not apply'
+  fi
+  if grep -qE ': error (CS8032|CS8034|AD0001)' <<<"$built"; then
+    die 'the analyzer assembly could not be loaded'
+  fi
+  found=$(grep -cE ': warning (TVRM|FAA)[0-9]+' <<<"$built" | tr -d ' ')
+  info "ok   build finished with $found injected warning line(s) and no injected error"
+
+  step 'Done. Nothing was staged, and no tracked file was touched.'
+  (cd "$repo" && git status --short | sed 's/^/  /')
+  echo
+  info "open a new shell (or source $zshenv_local) so the env var is set; restart the IDE too"
+  exit 0
+fi
+
+# The wrapper resolves the preset and its plugins from the harness, by absolute path,
+# outside the repo. A broken link there degrades to a fatal config error rather than a
+# quiet miss, so prove the custom rule actually fires — once per config format, since the
+# two formats take different branches through the wrapper.
+fixture='type U = { name: string; age: number }
+const user: U = { name: "a", age: 2 }
+it("smoke", () => {
+  expect(user.name).toBe("a")
+  expect(user.age).toBe(2)
+})
+'
+
+smoke_one() {
+  local pkg=$1 out
+  out=$(cd "$pkg" && printf '%s' "$fixture" | ESLINT_USE_FLAT_CONFIG=true \
+    ./node_modules/.bin/eslint --config "$harness/eslint-layer.js" \
+    --stdin --stdin-filename "$pkg/src/tvrmsmith-smoke.test.ts" 2>&1)
+  case "$out" in
+    *tvrmsmith/combine-assertions-on-same-object*) info "ok   $(basename "$pkg") — custom rule fires"; return 0 ;;
+    *) warn "FAIL $pkg"; printf '%s\n' "$out" | sed 's/^/      /' >&2; return 1 ;;
+  esac
+}
+
+smoke_status=0
+smoke_ran=0
+for format in flat legacy; do
+  for pkg in "${package_dirs[@]}"; do
+    [ -x "$pkg/node_modules/.bin/eslint" ] || continue
+    if ls "$pkg"/eslint.config.* >/dev/null 2>&1; then found=flat; else found=legacy; fi
+    [ "$found" = "$format" ] || continue
+    smoke_ran=$((smoke_ran + 1))
+    smoke_one "$pkg" || smoke_status=1
+    break
+  done
+done
+[ $smoke_status -eq 0 ] || die 'the layering wrapper does not work in this repository'
+[ $smoke_ran -gt 0 ] || warn 'no package has eslint installed, so nothing could be proven — install dependencies and rerun'
+
+step 'Done. Nothing was staged, and no tracked file was touched.'
+(cd "$repo" && git status --short | sed 's/^/  /')
