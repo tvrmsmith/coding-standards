@@ -282,7 +282,13 @@ export function createBase({ extraRestrictedSyntax = [] } = {}) {
         // A second member with the same name silently replaces the first.
         '@typescript-eslint/no-dupe-class-members': 'error',
         // `this` outside a class or a method is `undefined` under modules.
-        '@typescript-eslint/no-invalid-this': 'error',
+        //
+        // The option is spelled out rather than left to the default. The rule wraps ESLint's
+        // core `no-invalid-this`, which destructures `context.options[0]` unguarded. ESLint 9
+        // injects schema defaults into `context.options`, ESLint 8 does not, so under an
+        // ESLint 8 repo the array is empty and the rule throws on load. `true` is the schema
+        // default, so this changes nothing on 9 and unbreaks 8.
+        '@typescript-eslint/no-invalid-this': ['error', { capIsConstructor: true }],
         // A `#private` member nothing reads is either dead or a typo at the read site.
         '@typescript-eslint/no-unused-private-class-members': 'error',
         // `constructor(private readonly x: T) { this.x = x }` assigns the parameter
