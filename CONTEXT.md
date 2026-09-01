@@ -67,4 +67,30 @@ method span. There is one extractor per language.
 
 The language-neutral half. Consumes spans and coverage, joins them, scopes to changed code,
 compares against a threshold, and decides pass or fail. A gate is the only thing that knows the
-threshold, and it is shared across every language.
+threshold, and it is shared across every language. It hosts more than one metric, so do not name it
+after any of them.
+
+## Metric
+
+A single measured quantity the gate computes per method and compares against a threshold. CRAP is
+the first. A metric declares the inputs it needs, and the gate demands an input only when a selected
+metric declared it.
+
+## Coverage report
+
+An input the gate consumes and never produces. Someone else runs the tests. A report carries the
+time it was written, so it can be judged **stale** against the source it claims to describe, and it
+is the producer's timestamp that counts, not the file's.
+
+## Method state
+
+What the join could establish about one method span.
+
+| State | Meaning | Effect on the score |
+| --- | --- | --- |
+| measured | coverage was attributed to the span | scored normally |
+| structural n/a | the span holds no instrumentable lines | treated as fully covered |
+| unknown | the span could not be attributed at all | excluded, carries a typed reason |
+
+`structural n/a` is what makes trivial members exclude themselves. `unknown` means the join broke,
+never that the code is untested, because a coverage report lists methods nobody called.
