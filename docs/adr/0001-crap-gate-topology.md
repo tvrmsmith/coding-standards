@@ -16,7 +16,9 @@ A span join folds compiler-generated code back onto its source method with no de
 
 The smallest-containing-span rule is not optional. Coverlet emits a local function as its own element whose lines sit inside the container's span, so pooling a file's lines and filtering by span would let the container absorb them and count them twice.
 
-Path normalization has to be deliberate. Coverlet reported `private/tmp/crapspan/src/SpanLib/Samples.cs`, with the leading slash stripped and `/tmp` resolved through its symlink.
+Path normalization has to be deliberate. Coverlet reported `private/tmp/crapspan/src/SpanLib/Samples.cs`, with `/tmp` resolved through its symlink.
+
+**Amended 2026-09-01.** This paragraph originally read "with the leading slash stripped and `/tmp` resolved through its symlink". Nothing was stripped. The reading ignored the `<sources>` element, and Cobertura's contract is `source + filename`: the same report carries `<sources><source>/</source></sources>`, so the path reconstructs exactly as `/private/tmp/crapspan/src/SpanLib/Samples.cs`. Only the symlink resolution is a real transform. The decision this ADR records is unaffected; the resolution rule is [ADR 0004](0004-source-paths-are-repo-relative-and-resolved-deterministically.md).
 
 A method whose span contains no instrumentable lines is treated as fully covered rather than unknown, which is what makes the "trivial members exclude themselves arithmetically" assumption true. A method that cannot be attributed at all is excluded from scoring, reported with a typed reason, and fails the run if such methods exceed a fraction of the changed set, so a broken join can never pass as untested code.
 
