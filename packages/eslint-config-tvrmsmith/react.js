@@ -1,6 +1,8 @@
 import jestDom from 'eslint-plugin-jest-dom'
+import react from 'eslint-plugin-react'
 import reactHooks from 'eslint-plugin-react-hooks'
 import noEffect from 'eslint-plugin-react-you-might-not-need-an-effect'
+import sonarjs from 'eslint-plugin-sonarjs'
 import testingLibrary from 'eslint-plugin-testing-library'
 
 import { sourceFiles, testFiles } from './globs.js'
@@ -156,4 +158,114 @@ const reactSource = {
   },
 }
 
-export default [reactTests, reactSource]
+/**
+ * The rest of React: JSX correctness, the render-time bugs, and the two DOM escape hatches
+ * that are also XSS holes.
+ *
+ * `eslint-plugin-react` predates hooks and TypeScript, and about half of it is aimed at
+ * neither. Off here, and why:
+ *
+ * - **PropTypes** (`prop-types`, `require-default-props`, the `forbid-*` and `sort-*`
+ *   families). TypeScript is the prop contract; PropTypes is not installed.
+ * - **The classic React runtime** (`react-in-jsx-scope`, `jsx-uses-react`). The automatic
+ *   runtime has been the default since React 17.
+ * - **`jsx-uses-vars`**. It only teaches core `no-unused-vars` to see JSX, which
+ *   `typescript-eslint`'s own rule already does.
+ * - **Class components** (`sort-comp`, `state-in-constructor`, `no-access-state-in-setstate`
+ *   and the lifecycle rules). Kept only where the code being flagged is *deprecated* rather
+ *   than merely class-shaped, since that is a migration signal rather than a style.
+ * - **Formatting** (the `jsx-indent`, `jsx-spacing` and `jsx-wrap-multilines` families).
+ *   Prettier owns this.
+ */
+const reactJsx = {
+  name: 'tvrmsmith/react/jsx',
+  files: sourceFiles,
+  plugins: { react, sonarjs },
+  settings: {
+    /**
+     * Pinned rather than `'detect'`. Detection resolves `react/package.json` from the
+     * *config's* location, and this preset is installed machine-locally outside the package
+     * it lints, so detection finds nothing and every version-gated rule silently downgrades.
+     * Only `no-deprecated` and `no-unsafe` read this, and both want the current major.
+     */
+    react: { version: '19.0' },
+  },
+  rules: {
+    // A list rendered without `key` remounts rows on every reorder, losing their state.
+    'react/jsx-key': 'error',
+    // The second one wins and the first is silently dropped. Same for a repeated spread.
+    'react/jsx-no-duplicate-props': 'error',
+    'react/jsx-props-no-spread-multi': 'error',
+    // `{/* comment */}` without the braces renders the comment as visible text.
+    'react/jsx-no-comment-textnodes': 'error',
+    // `<div>{count && <List />}</div>` renders a literal `0` when the count is zero.
+    // (Sonar has a rule for this too, but its version needs type information.)
+    'react/jsx-no-leaked-render': 'error',
+    // `this` inside a function component is `undefined`.
+    'react/no-this-in-sfc': 'error',
+    // `<img>` and `<br>` cannot have children; React drops them.
+    'react/void-dom-elements-no-children': 'error',
+    // `children` alongside `dangerouslySetInnerHTML` is discarded.
+    'react/no-danger-with-children': 'error',
+    // `children` passed as a prop rather than between the tags is ignored by some
+    // components and confusing in the rest.
+    'react/no-children-prop': 'error',
+    // `style="color: red"` throws; React wants an object.
+    'react/style-prop-object': 'error',
+    // `checked` with no `onChange` and no `readOnly` makes an input that cannot be typed in.
+    'react/checked-requires-onchange-or-readonly': 'error',
+    // `class` instead of `className`, `for` instead of `htmlFor`. React ignores them.
+    'react/no-unknown-property': 'error',
+    // A bare `'` or `>` in markup is a mis-paste more often than it is intended text.
+    'react/no-unescaped-entities': 'error',
+    // A component defined inside another component is a new type on every render, so React
+    // unmounts and remounts the subtree and every bit of its state is lost.
+    'react/no-unstable-nested-components': 'error',
+
+    // Security.
+    //
+    // `target="_blank"` without `rel="noreferrer"` hands the opened page a handle to this one.
+    'react/jsx-no-target-blank': 'error',
+    // `href="javascript:…"` executes on click.
+    'react/jsx-no-script-url': 'error',
+
+    // Deprecated and removed APIs. These are migration signals rather than style: each names
+    // something that no longer works, or is about to stop.
+    'react/no-deprecated': 'error',
+    'react/no-unsafe': 'error',
+    'react/no-find-dom-node': 'error',
+    'react/no-string-refs': 'error',
+    'react/no-is-mounted': 'error',
+    'react/no-render-return-value': 'error',
+    'react/no-direct-mutation-state': 'error',
+    'react/require-render-return': 'error',
+
+    // warn: each has a legitimate use, and the fix is a judgement call.
+    //
+    // An index key is correct only for a list that never reorders, filters or splices.
+    'react/no-array-index-key': 'warn',
+    // A context value built inline is a new object every render, so every consumer rerenders.
+    'react/jsx-no-constructed-context-values': 'warn',
+    // `= {}` as a default is a new object every render, which restarts any effect
+    // depending on it.
+    'react/no-object-type-as-default-prop': 'warn',
+    // A fragment wrapping one child does nothing.
+    'react/jsx-no-useless-fragment': 'warn',
+    // A `<button>` inside a form defaults to `type="submit"`.
+    'react/button-has-type': 'warn',
+    // `dangerouslySetInnerHTML` is sometimes the answer, and always worth a second look.
+    'react/no-danger': 'warn',
+    // An `<iframe>` with no `sandbox` runs the embedded page with full privileges.
+    'react/iframe-missing-sandbox': 'warn',
+
+    // Sonar's two React rules, neither of which the plugins above cover. Both describe a
+    // render loop rather than a style.
+    //
+    // A setter called during render, not in an effect or a handler, loops forever.
+    'sonarjs/no-hook-setter-in-body': 'error',
+    // `setX(x)` with the current value: React bails out, so the line does nothing.
+    'sonarjs/no-useless-react-setstate': 'error',
+  },
+}
+
+export default [reactTests, reactSource, reactJsx]

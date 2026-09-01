@@ -9,9 +9,17 @@
     ".": "./index.js",
     "./base": "./base.js",
     "./react": "./react.js",
+    "./typed": "./typed.js",
     "./package.json": "./package.json"
   },
-  "files": ["index.js", "base.js", "react.js", "globs.js", "README.md"],
+  "files": [
+    "index.js",
+    "base.js",
+    "react.js",
+    "typed.js",
+    "globs.js",
+    "README.md"
+  ],
   "scripts": {
     "test": "node --test test/*.test.js",
     "measure": "node measure.mjs"
@@ -23,13 +31,24 @@
     "@typescript-eslint/eslint-plugin": "^8.66.0",
     "eslint-plugin-jest": "^29.16.1",
     "eslint-plugin-jest-dom": "^5.10.1",
+    "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-you-might-not-need-an-effect": "^1.0.1",
+    "eslint-plugin-regexp": "^3.2.0",
+    "eslint-plugin-sonarjs": "^4.2.0",
     "eslint-plugin-testing-library": "^7.16.2",
     "eslint-plugin-tvrmsmith": "link:../eslint-plugin-tvrmsmith"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.6",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^26.4.0",
+    "@types/react": "^19.2.18",
     "@typescript-eslint/parser": "^8.66.0",
-    "eslint": "^9.39.0"
+    "eslint": "^9.39.0",
+    "react": "^19.2.8",
+    "typescript": "^6.0.3"
   }
 }

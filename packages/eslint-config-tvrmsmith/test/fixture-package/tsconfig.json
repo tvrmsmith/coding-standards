@@ -1,0 +1,16 @@
+{
+  "//": "Only the typed half of the suite reads this. It exists so `projectService` has a project to open the case files in, and so the fixture's own sources type-check: an unresolved import becomes `any`, and the `no-unsafe-*` family would then report on every case that happens to touch it.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "types": ["jest", "node", "@testing-library/jest-dom"]
+  },
+  "include": ["src"]
+}
