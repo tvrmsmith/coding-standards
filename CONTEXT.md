@@ -58,6 +58,19 @@ method name. Where spans nest, a source line belongs to the smallest span contai
 Prefer "span" over "method identity" or "method key". The latter two invite a name-based reading,
 which is the reading this project rejects.
 
+## Source path
+
+The gate's one path currency: a repo-relative, slash-separated path from the git top level. Every
+path the gate handles is either already a source path or is resolved to one, and a path that cannot
+be resolved fails the run rather than being matched approximately.
+
+The gate resolves the changed set and looks coverage up against it, rather than canonicalizing every
+path a report mentions. A report path outside the repo, or inside it but untouched by the diff, is
+not the gate's business.
+
+Prefer "source path" over "file path" or "normalized path". The point of the term is that there is
+exactly one form, not that some normalizing happened.
+
 ## Touched line
 
 A line the diff reports on its **new side**. Deleting lines touches the line at the point they were
