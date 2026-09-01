@@ -63,13 +63,28 @@ on instead is judgement, and stays **[review-only]** in the skill text.
 
 ## Curated severities
 
-The off-the-shelf C# layer is **FluentAssertions.Analyzers `FAA0001`–`FAA0004`, and nothing
-else**. The enforcement mapping selected no built-in `CAxxxx` rules; adding
-any would be a new decision, not one the mapping already made.
+Two layers. **FluentAssertions.Analyzers `FAA0001`–`FAA0004`** is the assertion half, selected by
+the enforcement mapping. All four ship as `Info`, which never surfaces in a build, so they are
+elevated to `warning` — not `error`, because adoption is machine-local with no CI gate.
 
-All four ship as `Info`, which never surfaces in a build. They are elevated to `warning` — not
-`error`, because adoption is machine-local with no CI gate. The reasoning per diagnostic is in
-`config/Tvrmsmith.Analyzers.globalconfig`.
+The second layer is **the built-in `CAxxxx` rules the SDK ships disabled**, minus a short
+exclusion list, and it maps to no guideline. Same one-directional rule as the TypeScript
+`test-integrity` slice: a rule that is already installed and already correct does not need a
+guideline written for it first.
+
+No package backs that layer. The SDK already loads the analyzers, and a `.globalconfig` configures
+severity by id regardless of which assembly emits the diagnostic. Setting an explicit severity is
+also what *enables* a rule that ships disabled, so this reaches the same rules as
+`<AnalysisMode>All</AnalysisMode>` without injecting that property and without sweeping in the
+exclusions.
+
+The rules that are *on* by default are deliberately left alone. Raising them here would also
+subject them to changed-files scoping, which would *reduce* what the target repo already reports.
+
+`node ../generate-ca-severities.mjs` regenerates the block. It reads the rule set from the SDK
+rather than a pinned list, so an SDK upgrade that adds `CA` rules picks them up instead of quietly
+leaving them off, and it emits the two other places the same ids must appear — see
+"Three files, one list" below. The exclusions and the reason for each are in the generator.
 
 `FluentAssertions.Analyzers` is the right pairing for FluentAssertions 6.x. Against
 AwesomeAssertions 9.x it emits **zero diagnostics, silently**: the analyzer gates on
@@ -201,8 +216,23 @@ Injection must never fail a build that succeeded without it, and a repo that set
 `Tvrmsmith.Analyzers.Local.props` also sets:
 
 ```
-WarningsNotAsErrors += TVRM0001-3;FAA0001-4;AD0001;CS8032;CS8034;CS9057
+WarningsNotAsErrors += TVRM0001-3;FAA0001-4;<every enabled CA id>;AD0001;CS8032;CS8034;CS9057
 ```
+
+### Three files, one list
+
+The enabled ids have to appear in three places, and only the first announces itself when they
+drift:
+
+1. `config/Tvrmsmith.Analyzers.globalconfig` — the severities.
+2. `local/Tvrmsmith.Analyzers.Local.props` — `WarningsNotAsErrors`. An id missing here becomes a
+   build *error* wherever the target sets `TreatWarningsAsErrors`, the one outcome the injection
+   promises never to cause.
+3. `local/tvrmsmith-scope-changed.sh` — the `ids=` list. An id missing here escapes changed-files
+   scoping and reports the whole standing backlog on every build.
+
+`generate-ca-severities.mjs` writes all three from one exclusion table. `--check` exits non-zero
+when they are stale.
 
 `WarningsNotAsErrors` is an allowlist, not a switch — it becomes `csc /warnaserror-:<ids>`, so
 only the named ids are demoted. Everything the target already fails on keeps failing;
