@@ -110,8 +110,12 @@ describe('slice scoping', () => {
   })
 
   test('base is React-free', () => {
-    const plugins = base.flatMap((config) => Object.keys(config.plugins ?? {})).sort()
-    assert.deepEqual(plugins, ['@typescript-eslint', 'tvrmsmith'])
+    // Deduped: `jest` is registered by two slices (assertion-intent and test-integrity),
+    // which flat config permits because both spread the same imported plugin object.
+    const plugins = [
+      ...new Set(base.flatMap((config) => Object.keys(config.plugins ?? {}))),
+    ].sort()
+    assert.deepEqual(plugins, ['@typescript-eslint', 'jest', 'tvrmsmith'])
   })
 
   test('react carries only the React and RTL plugins', () => {
@@ -124,11 +128,52 @@ describe('slice scoping', () => {
     ])
   })
 
-  test('no rule from a test-runner plugin is enabled', () => {
-    const runnerScoped = [...enabledRules].filter(
-      (r) => r.startsWith('vitest/') || r.startsWith('jest/'),
+  test('no vitest-plugin rule is enabled', () => {
+    assert.deepEqual(
+      [...enabledRules].filter((r) => r.startsWith('vitest/')),
+      [],
+      '@vitest/eslint-plugin duplicates the jest rules it forked; registering both double-reports every violation',
     )
-    assert.deepEqual(runnerScoped, [], 'the preset must not assume vitest or jest')
+  })
+
+  test('no enabled jest rule resolves the jest package', () => {
+    // `jest/no-deprecated-functions` calls `require.resolve('jest/package.json')` and
+    // *throws* where jest is not installed — which is most of the target. Every other rule
+    // used here decides syntactically. Enabling it would take out whole vitest packages.
+    assert.ok(
+      !enabledRules.has('jest/no-deprecated-functions'),
+      'jest/no-deprecated-functions throws in a package without jest installed',
+    )
+  })
+})
+
+/**
+ * The A2/A5 rules come from `eslint-plugin-jest`, and the preset applies them to vitest
+ * packages too. Nothing about that is obvious from the rule ids, and one deleted `settings`
+ * block silently drops the 387 files at the adoption target that import `expect` from
+ * `vitest`. These assert the coverage rather than the configuration.
+ */
+describe('assertion-intent rules cover both runners', () => {
+  const violation = `it('a', () => { expect(list.length).toBe(3) })`
+  const declarations = `declare const list: string[]\n`
+
+  const firedOn = async (source) => {
+    const [result] = await eslint.lintText(source, { filePath: filePathFor('test') })
+    return result.messages.map((m) => m.ruleId ?? `fatal: ${m.message}`)
+  }
+
+  test('fires on the injected globals both runners provide', async () => {
+    assert.ok((await firedOn(declarations + violation)).includes('jest/prefer-to-have-length'))
+  })
+
+  test("fires where expect is imported from 'vitest'", async () => {
+    const source = `import { it, expect } from 'vitest'\n` + declarations + violation
+    assert.ok((await firedOn(source)).includes('jest/prefer-to-have-length'))
+  })
+
+  test('stays silent where expect is a local of the file, not an assertion', async () => {
+    const source = `declare const expect: (v: unknown) => { toBe: (v: unknown) => void }\n${declarations}${violation}`
+    assert.ok(!(await firedOn(source)).includes('jest/prefer-to-have-length'))
   })
 })
 

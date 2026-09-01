@@ -1,7 +1,7 @@
-import base, { createBase, noOptionalChainInExpect } from './base.js'
+import base, { assertionIntentSettings, createBase, noOptionalChainInExpect } from './base.js'
 import react from './react.js'
 
-export { base, createBase, noOptionalChainInExpect, react }
+export { assertionIntentSettings, base, createBase, noOptionalChainInExpect, react }
 export { sourceFiles, testFiles } from './globs.js'
 
 /**

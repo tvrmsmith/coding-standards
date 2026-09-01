@@ -13,18 +13,39 @@ import { noEmptyWaitForCallback, noOptionalChainInExpect } from '../base.js'
  * rule id alone would let one selector's case pass on another selector's report.
  */
 
+/**
+ * `expect`, `it`, `describe`, `beforeEach` and `test` are deliberately **not** declared
+ * here, unlike every other name below.
+ *
+ * `eslint-plugin-jest` treats a locally-declared `expect` as "not an assertion" and stays
+ * silent on it, so a `declare const expect: any` would switch off every A2 and A5 rule in
+ * the base slice while leaving the rest of the suite green. Left undeclared, `expect`
+ * resolves to an unresolved global — the shape real test files have under either runner,
+ * and the one the plugin recognises. This preamble is a fixture, so an implicit global
+ * costs nothing; the same line in a real file would be the runner's injected global.
+ */
 const TEST_PREAMBLE = `
 import { render, screen, act, waitFor, waitForElementToBeRemoved, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-declare const it: (name: string, fn: () => unknown) => void
 declare const afterEach: (fn: () => unknown) => void
-declare const expect: any
 declare const App: () => JSX.Element
 declare const getUser: () => { name: string, age: number }
 declare const other: { name?: string }
 declare const el: HTMLInputElement
 declare const noop: () => void
 declare const assertSaved: () => void
+declare const list: string[]
+declare const total: number
+declare const save: (n: number) => void
+declare const loadUser: () => Promise<{ name: string }>
+declare const throwing: () => void
+declare const obj: { method: () => void }
+declare const spy: {
+  mock: { calls: unknown[][] }
+  mockImplementation: (fn: () => unknown) => void
+  mockResolvedValue: (v: unknown) => void
+}
+declare const jest: { fn: () => () => void, spyOn: (o: object, k: string) => void }
 `
 
 const SOURCE_PREAMBLE = `
@@ -77,6 +98,193 @@ export const cases = [
     // A `?.` in the *expected* value is outside the expect(...) call's arguments and
     // must not be flagged.
     compliant: `it('a', () => { const user = getUser(); expect(user.name).toBe(other?.name) })`,
+  },
+
+  // ---- base: A2, assertions should communicate meaning (non-DOM half) ----
+  {
+    rule: 'jest/prefer-to-be',
+    scope: 'test',
+    violating: `it('a', () => { expect(getUser().age).toEqual(36) })`,
+    compliant: `it('a', () => { expect(getUser().age).toBe(36) })`,
+  },
+  {
+    rule: 'jest/prefer-to-contain',
+    scope: 'test',
+    violating: `it('a', () => { expect(list.includes('a')).toBe(true) })`,
+    compliant: `it('a', () => { expect(list).toContain('a') })`,
+  },
+  {
+    rule: 'jest/prefer-to-have-length',
+    scope: 'test',
+    violating: `it('a', () => { expect(list.length).toBe(3) })`,
+    compliant: `it('a', () => { expect(list).toHaveLength(3) })`,
+  },
+  {
+    rule: 'jest/prefer-comparison-matcher',
+    scope: 'test',
+    violating: `it('a', () => { expect(total > 5).toBe(true) })`,
+    compliant: `it('a', () => { expect(total).toBeGreaterThan(5) })`,
+  },
+  {
+    rule: 'jest/prefer-equality-matcher',
+    scope: 'test',
+    violating: `it('a', () => { expect(total === 5).toBe(true) })`,
+    compliant: `it('a', () => { expect(total).toBe(5) })`,
+  },
+  {
+    rule: 'jest/prefer-strict-equal',
+    scope: 'test',
+    violating: `it('a', () => { expect(getUser()).toEqual({ name: 'Ada', age: 36 }) })`,
+    compliant: `it('a', () => { expect(getUser()).toStrictEqual({ name: 'Ada', age: 36 }) })`,
+  },
+  {
+    rule: 'jest/prefer-called-with',
+    scope: 'test',
+    violating: `it('a', () => { expect(save).toHaveBeenCalled() })`,
+    compliant: `it('a', () => { expect(save).toHaveBeenCalledWith(1) })`,
+  },
+
+  // ---- base: A5, assertions must actually execute ----
+  {
+    rule: 'jest/valid-expect',
+    scope: 'test',
+    // An async matcher whose promise is dropped: the test finishes before it resolves.
+    violating: `it('a', async () => { expect(loadUser()).resolves.toMatchObject({ name: 'Ada' }) })`,
+    compliant: `it('a', async () => { await expect(loadUser()).resolves.toMatchObject({ name: 'Ada' }) })`,
+  },
+  {
+    rule: 'jest/no-conditional-expect',
+    scope: 'test',
+    violating: `it('a', () => {
+  if (total > 0) {
+    expect(getUser().name).toBe('Ada')
+  }
+})`,
+    // The branch is decided before the assertion, so the assertion always runs.
+    compliant: `it('a', () => {
+  const expected = total > 0 ? 'Ada' : 'Grace'
+  expect(getUser().name).toBe(expected)
+})`,
+  },
+
+  {
+    rule: 'jest/require-to-throw-message',
+    scope: 'test',
+    violating: `it('a', () => { expect(() => throwing()).toThrow() })`,
+    compliant: `it('a', () => { expect(() => throwing()).toThrow('boom') })`,
+  },
+  {
+    rule: 'jest/no-alias-methods',
+    scope: 'test',
+    violating: `it('a', () => { expect(save).toBeCalledWith(1) })`,
+    compliant: `it('a', () => { expect(save).toHaveBeenCalledWith(1) })`,
+  },
+  {
+    rule: 'jest/prefer-to-have-been-called',
+    scope: 'test',
+    violating: `it('a', () => { expect(save).toHaveBeenCalledTimes(0) })`,
+    // A real count is not this rule's business — only the zero.
+    compliant: `it('a', () => { expect(save).toHaveBeenCalledTimes(2) })`,
+  },
+  {
+    rule: 'jest/prefer-to-have-been-called-times',
+    scope: 'test',
+    violating: `it('a', () => { expect(spy.mock.calls).toHaveLength(1) })`,
+    compliant: `it('a', () => { expect(spy).toHaveBeenCalledTimes(1) })`,
+  },
+
+  // ---- base: A5, the two chain/placement shapes `valid-expect` does not cover ----
+  {
+    rule: 'jest/valid-expect-in-promise',
+    scope: 'test',
+    violating: `it('a', () => {
+  loadUser().then((user) => { expect(user.name).toBe('Ada') })
+})`,
+    compliant: `it('a', async () => {
+  await loadUser().then((user) => { expect(user.name).toBe('Ada') })
+})`,
+  },
+  {
+    rule: 'jest/no-standalone-expect',
+    scope: 'test',
+    violating: `describe('g', () => { expect(total).toBe(1) })`,
+    compliant: `describe('g', () => { it('a', () => { expect(total).toBe(1) }) })`,
+  },
+  {
+    rule: 'jest/expect-expect',
+    scope: 'test',
+    violating: `it('a', () => { save(1) })`,
+    compliant: `it('a', () => { save(1); expect(total).toBe(1) })`,
+  },
+
+  // ---- base: test integrity — tests that do not run ----
+  {
+    rule: 'jest/no-focused-tests',
+    scope: 'test',
+    violating: `it.only('a', () => { expect(total).toBe(1) })`,
+    compliant: `it('a', () => { expect(total).toBe(1) })`,
+  },
+  {
+    rule: 'jest/no-disabled-tests',
+    scope: 'test',
+    violating: `it.skip('a', () => { expect(total).toBe(1) })`,
+    compliant: `it('a', () => { expect(total).toBe(1) })`,
+  },
+  {
+    rule: 'jest/no-commented-out-tests',
+    scope: 'test',
+    violating: `// it('a', () => { expect(total).toBe(1) })
+it('b', () => { expect(total).toBe(2) })`,
+    // A comment that is not a test is none of the rule's business.
+    compliant: `// the total is seeded by the fixture
+it('b', () => { expect(total).toBe(2) })`,
+  },
+
+  // ---- base: test integrity — titles and hooks ----
+  {
+    rule: 'jest/no-identical-title',
+    scope: 'test',
+    violating: `describe('g', () => {
+  it('a', () => { expect(total).toBe(1) })
+  it('a', () => { expect(total).toBe(2) })
+})`,
+    compliant: `describe('g', () => {
+  it('a', () => { expect(total).toBe(1) })
+  it('b', () => { expect(total).toBe(2) })
+})`,
+  },
+  {
+    rule: 'jest/valid-title',
+    scope: 'test',
+    violating: `it('', () => { expect(total).toBe(1) })`,
+    compliant: `it('reports the total', () => { expect(total).toBe(1) })`,
+  },
+  {
+    rule: 'jest/no-duplicate-hooks',
+    scope: 'test',
+    violating: `describe('g', () => {
+  beforeEach(() => { save(1) })
+  beforeEach(() => { save(2) })
+  it('a', () => { expect(total).toBe(1) })
+})`,
+    compliant: `describe('g', () => {
+  beforeEach(() => { save(1) })
+  it('a', () => { expect(total).toBe(1) })
+})`,
+  },
+
+  // ---- base: test integrity — mocks ----
+  {
+    rule: 'jest/prefer-spy-on',
+    scope: 'test',
+    violating: `it('a', () => { obj.method = jest.fn() })`,
+    compliant: `it('a', () => { jest.spyOn(obj, 'method') })`,
+  },
+  {
+    rule: 'jest/prefer-mock-promise-shorthand',
+    scope: 'test',
+    violating: `it('a', () => { spy.mockImplementation(() => Promise.resolve(1)) })`,
+    compliant: `it('a', () => { spy.mockResolvedValue(1) })`,
   },
 
   // ---- D11: the empty-callback half, the selector standing in for the rule

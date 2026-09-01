@@ -1,4 +1,5 @@
 import tseslint from '@typescript-eslint/eslint-plugin'
+import jest from 'eslint-plugin-jest'
 import tvrmsmith from 'eslint-plugin-tvrmsmith'
 
 import { testFiles } from './globs.js'
@@ -43,10 +44,36 @@ export const noEmptyWaitForCallback = {
 }
 
 /**
- * Base slice — no React, no DOM, no test runner assumed.
+ * The one runner plugin the preset registers, and the setting that makes it cover both
+ * runners. See `assertionIntentSettings` for why `eslint-plugin-jest` is not a bet on jest.
+ */
+export const assertionIntentSettings = {
+  /**
+   * `eslint-plugin-jest` resolves `expect` three ways, and only the middle one names a
+   * package: a local declaration means "not an assertion" and the rules stay silent; an
+   * *import* is matched against this setting; an unresolved global is always treated as an
+   * assertion, whichever runner injected it.
+   *
+   * So the globals-style majority is covered whatever this says, and this setting decides
+   * one thing only: which explicit `import { expect } from '…'` is recognised. It takes a
+   * **single string**. An array is accepted without error and silently matches nothing,
+   * disabling detection for every import form at once — verified, not inferred.
+   *
+   * `'vitest'` rather than the default `'@jest/globals'` because that is the import that
+   * exists in practice: across the adoption target's 2058 test files, 387 import `expect`
+   * from `vitest` and **zero** import it from `@jest/globals`. Jest packages there write
+   * assertions against the injected globals, which this setting does not affect. A repo
+   * that does import from `@jest/globals` needs the default back, and cannot have both.
+   */
+  jest: { globalPackage: 'vitest' },
+}
+
+/**
+ * Base slice — no React, no DOM, and no assumption about *which* runner is installed.
  *
- * Carries the two assertion guidelines that need no React: **A1, "Combine assertions on
- * the same object"** and **A4, "Don't suppress null/missing value failures"**
+ * Carries the assertion guidelines that need no React: **A1, "Combine assertions on
+ * the same object"**, **A2, "Assertions should communicate meaning"**, **A4, "Don't
+ * suppress null/missing value failures"** and **A5, "Assertions must actually execute"**
  * (test-best-practices/SKILL.md). Everything here is scoped to test files — these are
  * assertion guidelines, and banning `!` across production source would enforce something
  * no guideline asks for.
@@ -97,6 +124,119 @@ export function createBase({ extraRestrictedSyntax = [] } = {}) {
         // suites in a batch at commit time (the plugin has zero editor reach — a plugin
         // cannot be registered through `overrideConfig` in a mixed ESLint 8/9 workspace).
         'tvrmsmith/combine-assertions-on-same-object': 'warn',
+      },
+    },
+    {
+      name: 'tvrmsmith/base/assertion-intent',
+      files: testFiles,
+      plugins: { jest },
+      settings: assertionIntentSettings,
+      rules: {
+        // A2 — the matcher should name the expectation. These four rewrite one call into
+        // a more specific one with the same meaning, so error: mechanical, autofixable,
+        // one right answer.
+        //
+        // `toEqual(1)` / `toBe(null)` on a primitive says "compare these"; `toBe` says it
+        // exactly.
+        'jest/prefer-to-be': 'error',
+        // `expect(list.includes(x)).toBe(true)` reports `false !== true` on failure.
+        // `toContain` reports the list and the missing member.
+        'jest/prefer-to-contain': 'error',
+        // `expect(list.length).toBe(3)` reports `2 !== 3`. `toHaveLength` reports the list.
+        'jest/prefer-to-have-length': 'error',
+        // `expect(n > 5).toBe(true)` reports `false !== true` and names neither operand.
+        'jest/prefer-comparison-matcher': 'error',
+        // `expect(a === b).toBe(true)` — same failure, same fix, but suggestion-only
+        // upstream because the negated spelling picks between `toBe` and `not.toBe`.
+        'jest/prefer-equality-matcher': 'error',
+
+        // A2, but warn: both propose a strictly stronger assertion, and whether the
+        // strengthening is wanted is the author's call.
+        //
+        // `toStrictEqual` also compares undefined keys and class identity, which is
+        // sometimes the point and sometimes an unrelated failure.
+        'jest/prefer-strict-equal': 'warn',
+        // Asserting only that a spy was called is occasionally all the test means.
+        'jest/prefer-called-with': 'warn',
+
+        // A2, continued. `toThrow()` with no argument passes for *any* error, including a
+        // TypeError thrown by a typo in the test itself, so the assertion looks like it
+        // verifies behaviour and verifies almost nothing.
+        'jest/require-to-throw-message': 'error',
+        // `toBeCalled` and friends are aliases; the canonical spellings were removed from
+        // jest in v30, so this is forward compatibility as well as consistency.
+        'jest/no-alias-methods': 'error',
+        // `toHaveBeenCalledTimes(0)` states "not called" as arithmetic. The fix is
+        // `.not.toHaveBeenCalled()`, and real counts are left alone.
+        'jest/prefer-to-have-been-called': 'error',
+        // Reaching into `.mock.calls` and measuring its length describes an array's size
+        // instead of naming the expectation.
+        'jest/prefer-to-have-been-called-times': 'error',
+
+        // A5 — an assertion that never runs, or never asserts, is worse than none: the
+        // suite is green and nothing was checked.
+        //
+        // A missing matcher, or an async matcher whose promise is never awaited.
+        'jest/valid-expect': 'error',
+        // An assertion inside `if`/`catch` reports nothing when the branch is not taken.
+        'jest/no-conditional-expect': 'error',
+        // Assertions in a `.then()` on a promise nobody returns or awaits. Distinct from
+        // `valid-expect` above, which covers the matcher rather than the chain.
+        'jest/valid-expect-in-promise': 'error',
+        // An `expect` in a `describe` body runs at collection time, so no test owns the
+        // failure. Assertions inside helper functions are exempt.
+        'jest/no-standalone-expect': 'error',
+
+        // A5, but warn: the guideline is right and the *detector* is incomplete. The rule
+        // only counts calls named in `assertFunctionNames` (default `expect`), so a suite
+        // that asserts through another vocabulary reads as assertionless. WebdriverIO e2e
+        // specs are the measured case: `browser.waitUntil(...)` is the assertion and the
+        // rule cannot see it. Same reason `prefer-strict-equal` warns.
+        'jest/expect-expect': 'warn',
+      },
+    },
+    {
+      /**
+       * Test integrity: a test that silently does not run, a title that cannot identify a
+       * failure, and mocks that leak across tests.
+       *
+       * These map to no guideline. The mapping's one-home invariant runs in one direction
+       * only — every guideline needs an enforcement home, but a rule need not trace back to
+       * a guideline. An off-the-shelf rule that is already installed and already right
+       * costs nothing to enable and does not need a paragraph written for it first.
+       *
+       * Registering `jest` here as well as above is safe: flat config rejects two
+       * *different* plugin objects under one namespace, and this is the same import.
+       */
+      name: 'tvrmsmith/base/test-integrity',
+      files: testFiles,
+      plugins: { jest },
+      settings: assertionIntentSettings,
+      rules: {
+        // Tests that do not run. A committed `.only` skips every other test in the file
+        // and the suite still reports green.
+        'jest/no-focused-tests': 'error',
+        // `.skip`, `xit`, and a test declared with no body. error rather than warn because
+        // `eslint-disable-next-line` is the better escape hatch: it puts the reason for the
+        // skip in the file, next to the skip, instead of in a log nobody reads.
+        'jest/no-disabled-tests': 'error',
+        // Fuzzy-matches `it(`/`describe(` in comments, so it can misjudge what it found.
+        // Same escape hatch applies.
+        'jest/no-commented-out-tests': 'error',
+
+        // Titles. Two tests with one name make a red suite ambiguous; an empty, non-string,
+        // block-name-prefixed or space-padded title fails to identify anything.
+        'jest/no-identical-title': 'error',
+        'jest/valid-title': 'error',
+        // Two `beforeEach` in one `describe` is nearly always an accident.
+        'jest/no-duplicate-hooks': 'error',
+
+        // Mocks. `Date.now = jest.fn()` destroys the original and nothing restores it, so
+        // the damage leaks into every later test in the file. Isolation, not style, and
+        // autofixable.
+        'jest/prefer-spy-on': 'error',
+        // `mockImplementation(() => Promise.resolve(x))` is `mockResolvedValue(x)`.
+        'jest/prefer-mock-promise-shorthand': 'error',
       },
     },
   ]
