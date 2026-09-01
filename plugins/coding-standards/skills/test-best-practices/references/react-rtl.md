@@ -7,13 +7,7 @@ Examples are TypeScript + React and are runner-agnostic — they work under vite
 `@testing-library/jest-dom` matchers apply either way; under vitest import them in setup with
 `import '@testing-library/jest-dom/vitest'`.
 
-Almost everything here is enforced off the shelf by `eslint-plugin-testing-library` v7 and
-`eslint-plugin-jest-dom` v5 — the rule ids are named per guideline. **[review-only]** marks the
-handful that no rule catches.
-
 ## Use `screen` for Queries
-
-`testing-library/prefer-screen-queries`.
 
 Don't destructure queries from `render`. `screen` exposes every query, needs no
 maintenance as you add queries, and gets editor autocomplete. `screen.debug()` is
@@ -83,8 +77,6 @@ await user.click(screen.getByRole('button', { name: /save/i }));
 
 ## Use jest-dom Matchers
 
-All twelve `prefer-*` rules of `eslint-plugin-jest-dom`.
-
 Asserting on raw DOM properties yields cryptic failures (`expected false to be
 true`). jest-dom matchers describe intent and print the element on failure.
 
@@ -103,10 +95,6 @@ Common matchers: `toBeInTheDocument`, `toBeDisabled`, `toBeEnabled`,
 `toHaveTextContent`, `toHaveValue`, `toHaveAttribute`, `toBeChecked`, `toHaveFocus`.
 
 ## Query Priority: Accessible Queries First
-
-`testing-library/no-test-id-queries`, `testing-library/no-container`,
-`testing-library/no-node-access` catch the escape hatches. The *ordering* among the accessible
-queries is **[review-only]** — no rule ranks `getByRole` above `getByText`.
 
 Query the DOM the way users (and assistive tech) do. Prefer, in order:
 `getByRole` → `getByLabelText` → `getByPlaceholderText` → `getByText` →
@@ -173,9 +161,7 @@ render(<Profile />);
 expect(await screen.findByText(/jane doe/i)).toBeInTheDocument();
 ```
 
-## Don't Test Implementation Details — **[review-only]**
-
-Nothing detects "this assertion reaches into internals".
+## Don't Test Implementation Details
 
 Assert on rendered output and behavior, not component state, props, or instance
 methods. Tests coupled to internals break on refactors that don't change behavior
@@ -193,9 +179,6 @@ expect(screen.getByRole('dialog')).toBeInTheDocument();
 ```
 
 ## Always `await` Async Helpers
-
-`testing-library/await-async-queries`, `await-async-utils`, `await-async-events`, plus
-`no-await-sync-queries` / `no-await-sync-events` for the inverse.
 
 `findBy*`, `waitFor`, and every `userEvent` interaction return promises. Forgetting
 `await` causes false passes, act warnings, and leaked work into later tests.
@@ -215,22 +198,8 @@ await waitFor(() => expect(mockSave).toHaveBeenCalled());
 `waitFor` notes: wait for a single specific assertion inside the callback — never
 pass an empty callback, never run multiple assertions or side-effects in it (the
 callback runs an unpredictable number of times).
-`testing-library/no-wait-for-multiple-assertions`, `no-wait-for-side-effects` and
-`no-wait-for-snapshot` cover most of that. The **empty callback** case is a `no-restricted-syntax`
-selector in `eslint-config-tvrmsmith/base`, standing in for `no-wait-for-empty-callback` (removed in
-`eslint-plugin-testing-library` 6.0.0). It catches an empty block body and `waitFor(noop)`; a
-callback reached through a renamed import stays **[review-only]**.
 
-## Lint It Automatically
-
-Most of the above is caught by ESLint. Both plugins are bundled by `eslint-config-tvrmsmith`:
-
-- [`eslint-plugin-testing-library`](https://github.com/testing-library/eslint-plugin-testing-library)
-- [`eslint-plugin-jest-dom`](https://github.com/testing-library/eslint-plugin-jest-dom)
-
-## Write Fewer, Longer Tests — **[review-only]**
-
-Strategic, not mechanical.
+## Write Fewer, Longer Tests
 
 Group related interactions into a single longer test that walks a real user flow,
 rather than splitting one flow into many tiny `it` blocks with repeated setup. See
@@ -242,19 +211,18 @@ render real component trees over isolated, mock-heavy unit tests.
 
 ## Quick Reference
 
-| Scenario | Pattern | Enforcement |
-|----------|---------|-------------|
-| Query elements | `screen.getByRole(...)` — not destructured results | `prefer-screen-queries` |
-| Render result name | destructure, or `view` — never `wrapper` | `render-result-naming-convention` |
-| Cleanup | automatic — don't call `cleanup` | `no-manual-cleanup` |
-| User interaction | `const user = userEvent.setup()`; `await user.click(...)` | `prefer-user-event` |
-| Assertions | jest-dom matchers (`toBeDisabled`, `toBeInTheDocument`, ...) | `eslint-plugin-jest-dom` |
-| Query selection | role → label → text → ... → testId (last resort) | `no-test-id-queries` + review |
-| Element present now | `getBy*` | `prefer-presence-queries` |
-| Element appears async | `await findBy*` | `prefer-find-by` |
-| Element absent | `queryBy*().not.toBeInTheDocument()` | `prefer-presence-queries` |
-| act warning | await the async update — don't wrap in `act()` | `no-unnecessary-act` |
-| What to assert | rendered output / behavior, not state/props/instances | review-only |
-| Async helpers | always `await` `findBy*`, `waitFor`, `userEvent` | `await-async-*` |
-| Enforcement | `eslint-plugin-testing-library` + `eslint-plugin-jest-dom` | via `eslint-config-tvrmsmith` |
-| Strategy | fewer/longer integration tests (Testing Trophy) | review-only |
+| Scenario | Pattern |
+|----------|---------|
+| Query elements | `screen.getByRole(...)` — not destructured results |
+| Render result name | destructure, or `view` — never `wrapper` |
+| Cleanup | automatic — don't call `cleanup` |
+| User interaction | `const user = userEvent.setup()`; `await user.click(...)` |
+| Assertions | jest-dom matchers (`toBeDisabled`, `toBeInTheDocument`, ...) |
+| Query selection | role → label → text → ... → testId (last resort) |
+| Element present now | `getBy*` |
+| Element appears async | `await findBy*` |
+| Element absent | `queryBy*().not.toBeInTheDocument()` |
+| act warning | await the async update — don't wrap in `act()` |
+| What to assert | rendered output / behavior, not state/props/instances |
+| Async helpers | always `await` `findBy*`, `waitFor`, `userEvent` |
+| Strategy | fewer/longer integration tests (Testing Trophy) |

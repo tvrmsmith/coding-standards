@@ -4,23 +4,7 @@ AwesomeAssertions is a fork of FluentAssertions — the API is identical. Everyt
 
 Technology-specific patterns implementing the principles from the parent skill.
 
-## Pick the Analyzer Package That Matches Your Assertion Library
-
-| Assertion library | Analyzer package |
-|---|---|
-| FluentAssertions 6.x | `FluentAssertions.Analyzers` |
-| AwesomeAssertions 9.x | `AwesomeAssertions.Analyzers` |
-
-**Mixing them fails silently.** `FluentAssertions.Analyzers` gates on
-`Compilation.GetTypeByMetadataName("FluentAssertions.AssertionExtensions")`, which AwesomeAssertions v9
-renamed away — so against AwesomeAssertions it emits **zero diagnostics and no error**. You get a
-green build that has analysed nothing. Diagnostic ids and `.editorconfig` keys are identical either
-way, so the only visible symptom is the absence of warnings.
-
 ## Combining Assertions: `BeEquivalentTo` with Anonymous Objects
-
-Enforced by the custom `combine-assertions-on-same-object` analyzer; `FAA0001`–`FAA0004` steer the
-count-and-index shapes.
 
 Use `BeEquivalentTo` with an anonymous object to verify multiple properties in a single assertion. Use `ExcludingMissingMembers()` when the anonymous object is a subset of the actual.
 
@@ -60,8 +44,6 @@ body.Result.Items.Should().HaveCount(2);
 
 ## Communicating Meaning: Expressive Assertion Methods
 
-Enforced off the shelf by `FluentAssertions.Analyzers` `FAA0001`–`FAA0004`.
-
 Choose assertion methods whose names describe the expectation:
 
 ```csharp
@@ -80,9 +62,7 @@ items.Should().ContainSingle()
     .Which.Should().BeEquivalentTo(new { Name = "expected" });
 ```
 
-### Type + Value Checking — **[review-only]**
-
-No analyzer knows you *intended* a type check, so nothing detects the omission.
+### Type + Value Checking
 
 `BeEquivalentTo` is purely structural — it does NOT check types. When you need to verify the object is a specific type AND has expected values:
 
@@ -100,14 +80,13 @@ The `BeOfType<T>().Which` chain is a single fluent expression, not back-to-back 
 > **Strict typing note**: `WithStrictTyping()` / `WithStrictTypingFor()` are not available in
 > FluentAssertions 6.x (nor in AwesomeAssertions 9.4). Use `BeOfType<T>().Which` for type enforcement.
 
-### Why Anonymous Objects for `BeEquivalentTo`? — **[review-only]**
+### Why Anonymous Objects for `BeEquivalentTo`?
 
-Heuristic and context-dependent — a typed expected object is often the right call, so this stays a
-judgment rather than a rule.
+A typed expected object is often the right call, so this is a judgment.
 
 Typed expected objects (e.g., `new MirthChannelAuditTrail(...)`) inherit base class properties like `Timestamp` that differ between expected and actual instances — causing spurious failures. `BeOfType<T>().Which` handles type enforcement, then anonymous objects let you check only the properties you care about.
 
-## Scoping: `AssertionScope` — **[review-only]**
+## Scoping: `AssertionScope`
 
 When multiple assertions on the same value truly cannot be combined into `BeEquivalentTo` (e.g., mixing type checks with property checks, or assertions with different comparison strategies), wrap them in an `AssertionScope`:
 
@@ -123,9 +102,7 @@ using (new AssertionScope())
 
 Without the scope, only the first failure is reported and subsequent assertions are never evaluated.
 
-## Null Safety in Assertions — **[custom rule]**
-
-Enforced by the custom `no-suppression-before-assertion` Roslyn analyzer.
+## Null Safety in Assertions
 
 Never use `!` (null-forgiving) to dereference a potentially null value before asserting. Never use `?.` — it silently skips the assertion chain if the value is null, causing a false pass.
 
@@ -141,11 +118,11 @@ response.Headers.Location.Should().Be(
     new Uri(Client.BaseAddress!, Route($"/{item.Id}")));
 ```
 
-Note: `Client.BaseAddress!` is acceptable because `BaseAddress` is set during test setup and is a precondition, not the value under test. The analyzer scopes to the receiver chain feeding `.Should()` for exactly this reason.
+Note: `Client.BaseAddress!` is acceptable because `BaseAddress` is set during test setup and is a precondition, not the value under test. This guideline is about the receiver chain feeding `.Should()`.
 
-## Audit Trail Pattern — **[review-only]**
+## Audit Trail Pattern
 
-A worked composite of the expressive-chain and type-check guidelines above, not a separate rule.
+A worked composite of the expressive-chain and type-check guidelines above.
 
 For audit trail verification, combine `ContainSingle`, `BeOfType`, and `BeEquivalentTo`:
 
@@ -171,4 +148,3 @@ _auditor.AuditTrailLogs.Should().ContainSingle()
 | Type check only | `BeOfType<T>()` |
 | Nullable value | Construct expected value, use `Be()` — no `!` or `?.` |
 | Multiple unrelated assertions | Wrap in `AssertionScope` |
-| Analyzer package | FluentAssertions 6.x → `FluentAssertions.Analyzers`; AwesomeAssertions 9.x → `AwesomeAssertions.Analyzers` |

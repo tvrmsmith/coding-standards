@@ -7,11 +7,6 @@ description: Use when writing, reviewing, or refactoring tests in any language/f
 
 Technology-agnostic principles for writing clear, maintainable, reliable tests. For language/framework-specific patterns and examples, check `references/`.
 
-**Enforcement markers.** Each guideline says how it is enforced:
-- unmarked → an off-the-shelf lint rule catches it (rule ids given inline);
-- **[custom rule]** → a rule shipped by `Tvrmsmith.Analyzers` / `eslint-plugin-tvrmsmith`;
-- **[review-only]** → not lintable at all; the only enforcement is reading the code.
-
 ## Progressive Discovery
 
 After reading these principles, read the relevant technology-specific reference for concrete syntax and patterns:
@@ -29,10 +24,7 @@ Read the relevant reference file at `<skill-directory>/references/<file>` before
 
 ## Assertions
 
-### Combine Assertions on the Same Object — **[custom rule]**
-
-Enforced by `combine-assertions-on-same-object` (Roslyn **and** ESLint) — the one guideline
-here with no off-the-shelf coverage in either language.
+### Combine Assertions on the Same Object
 
 Back-to-back assertions on the same object are wasteful and fragile. When the first fails, subsequent assertions never run — hiding additional problems.
 
@@ -54,9 +46,6 @@ This applies to collections too. Don't assert count then index into elements sep
 
 ### Assertions Should Communicate Meaning
 
-Enforced off the shelf: `FluentAssertions.Analyzers` FAA0001–FAA0004 in C#; the twelve
-`prefer-*` rules of `eslint-plugin-jest-dom` in TypeScript.
-
 The assertion method/matcher should describe what's being tested. A reader should understand the expectation from the assertion alone, without reading setup code.
 
 **Bad** — generic, says nothing about intent:
@@ -74,10 +63,10 @@ assert response.status == OK
 
 Choose specific matchers over generic equality when they exist. `contain_single` is more expressive than `length == 1`. `be_empty` is clearer than `length == 0`.
 
-### Use Lazy/Scoping for Unavoidable Multi-Assertions — **[review-only]**
+### Use Lazy/Scoping for Unavoidable Multi-Assertions
 
 Whether to reach for a scope is a judgment call, and the "when NOT to scope" list below is
-inherently contextual. No rule attempts it.
+inherently contextual.
 
 Sometimes combining into one assertion isn't possible — different comparison strategies, mixed type checks and property checks, or assertions on genuinely different values that share logical context.
 
@@ -95,11 +84,7 @@ Without scoping, only the first failure reports — slow feedback loops. Scoping
 - Assertions that naturally combine into structural equivalence — combine instead
 - Guard assertions that should fail fast (e.g., response succeeded before checking body)
 
-### Don't Suppress Null/Missing Value Failures — **[custom rule]** (C#)
-
-C#: `no-suppression-before-assertion` (Roslyn) — flags `?.` or `!` in the receiver chain
-feeding `.Should()`. TypeScript needs no rule authoring: `@typescript-eslint/no-non-null-assertion`
-plus a `no-restricted-syntax` selector banning `?.` inside `expect(…)`.
+### Don't Suppress Null/Missing Value Failures
 
 Never use language features that silently skip assertions when a value is null or missing. The test should fail loudly if an intermediate value is unexpectedly absent.
 
@@ -107,8 +92,23 @@ Never use language features that silently skip assertions when a value is null o
 - Don't use null-forgiving/force-unwrap (`!`, `!!`) to bypass type safety — construct the expected value and compare directly
 - If a value might legitimately be null, assert that explicitly
 
-The rule scopes to the *value under test* — the receiver chain feeding the assertion — not to
-every `!` in the file, so setup preconditions (e.g. `Client.BaseAddress!`) stay legal.
+This is about the *value under test* — the receiver chain feeding the assertion — not about
+every `!` in the file. Setup preconditions (e.g. `Client.BaseAddress!`) are fine.
+
+### Assertions Must Actually Execute
+
+An assertion that never runs is worse than no assertion: the suite is green and nothing was
+checked. A missing assertion is at least visible.
+
+Three shapes produce it:
+
+- **A dropped async matcher.** The matcher returns a promise nobody awaits, so the test ends
+  before the assertion resolves. Await the assertion, not just the value.
+- **No matcher at all.** `expect(value)` on its own is a statement that computes nothing.
+- **An assertion inside a branch.** An assertion under `if` or in a `catch` reports nothing when
+  the branch is not taken, so a test that never enters the branch passes having checked nothing.
+  Decide the expected value before the assertion and assert unconditionally. To assert that
+  something threw, assert on the throwing call itself rather than asserting inside `catch`.
 
 ---
 

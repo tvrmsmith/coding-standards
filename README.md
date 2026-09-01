@@ -11,14 +11,26 @@ Every guideline has exactly one home, and each home corresponds to *when* it act
 |---|---|---|
 | **skill-as-guidance** | before the code is written | The skills below, loaded by the agent while writing code. |
 | **lint** | after, mechanical | ESLint + Roslyn rules. Deterministic shapes only — an off-the-shelf rule where one exists, a custom rule where none does. |
-| **skill-as-review** | after, judgement | The same skills, read while reviewing. Guidelines no linter can catch are tagged **[review-only]** in the skill text. |
+| **skill-as-review** | after, judgement | The same skills, read while reviewing. |
 
 There is no separate review skill and no review tooling — the guidance and review modes are the
 same text read at different times.
 
-47 guidelines in total: 26 enforced by an off-the-shelf rule, 1 by configuration alone, 3 by a
-custom rule, and 17 review-only. Each guideline has an id (`A1`, `D11`, `F10`), and that id appears
-both on the rule that enforces it and in the skill text where no rule can.
+**The skills carry guidelines, never enforcement.** No rule ids, no plugin names, no `[review-only]`
+tags. An agent that follows the guidance needs none of it, and an agent that ignores the guidance
+gets told by the linter. Keeping the mapping out of the skill also keeps it in one place instead of
+two that drift.
+
+48 guidelines in total: 27 enforced by an off-the-shelf rule, 1 by configuration alone, 3 by a
+custom rule, and 17 review-only. Each guideline has an id (`A1`, `D11`, `F10`) carried by the
+enforcement mapping and repeated on the rule that enforces it — see the rule tables in
+`packages/eslint-config-tvrmsmith/README.md` and `dotnet/README.md`.
+
+**The mapping runs one way.** Every guideline needs an enforcement home; a rule does not have to
+trace back to a guideline. An off-the-shelf rule that is already installed and already correct
+earns its place without a guideline being written for it first — the eight `test-integrity` rules
+in the preset are exactly that. Requiring a round trip would mean either writing guideline prose
+nobody asked for or leaving a good rule off, and both are worse than an unmapped rule.
 
 ## Layout
 
@@ -62,6 +74,11 @@ Everything else is off the shelf. These three have no off-the-shelf equivalent:
 The off-the-shelf layer around them is already curated: `packages/eslint-config-tvrmsmith` for
 TypeScript, and FluentAssertions.Analyzers `FAA0001`–`FAA0004` for C# (see `dotnet/README.md` —
 the pairing is version-sensitive and mixing it with AwesomeAssertions fails *silently*).
+
+TypeScript also registers `eslint-plugin-jest`, for the A2 and A5 assertion rules and for eight
+lint-only test-integrity rules. Despite the name it is not a bet on jest: those rules resolve
+`expect` syntactically, so they cover vitest packages too.
+`packages/eslint-config-tvrmsmith/README.md` explains the one setting this depends on.
 
 ## Install
 

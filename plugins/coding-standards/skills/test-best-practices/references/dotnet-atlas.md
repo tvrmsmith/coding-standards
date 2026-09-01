@@ -11,9 +11,9 @@ assertions type instead of the standard `ObjectAssertions`. Those bespoke types 
 **Worked example — Atlas.** Atlas provides custom `Should()` extensions for `ApiResponse<T>` that
 return `ApiResponseAssertions<T>`, which has no `BeEquivalentTo`.
 
-## Solution: Assert on the Inner DTO — **[review-only]**
+## Solution: Assert on the Inner DTO
 
-Choosing the right assertion target is judgment, so this half is not lintable.
+Choosing the right assertion target is judgment.
 
 Assert on the inner DTO (`body.Result`) rather than on the wrapper (`ApiOkResponse<T>`). Check the
 transport-level concern — HTTP status — separately on `response.StatusCode`.
@@ -30,12 +30,11 @@ using (new AssertionScope())
 ```
 
 Use `AssertionScope` when checking both status and body, since these are genuinely separate
-assertions that can't be combined — see the scoping guidance in the parent skill (**[review-only]**).
+assertions that can't be combined — see the scoping guidance in the parent skill.
 
-## Never `(object)`-Cast to Escape the Custom Type — **[custom rule]**
+## Never `(object)`-Cast to Escape the Custom Type
 
-Enforced by the custom `no-assertion-escape-cast` Roslyn analyzer, which flags a cast to `object`
-whose sole purpose is to reach the general `ObjectAssertions` overload.
+A cast to `object` whose sole purpose is to reach the general `ObjectAssertions` overload.
 
 ```csharp
 // BAD — (object) cast purely to escape the framework's custom assertions type

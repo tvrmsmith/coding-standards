@@ -44,8 +44,8 @@ plugins `base.js` imports.
 ## Two layers, different jobs
 
 **The pre-commit hook is the gate.** It runs the full personal preset — custom rule, all nine
-effect rules, the typescript-eslint / testing-library / jest-dom slices — over exactly the
-files the commit will contain. Errors block; warnings do not, on purpose (the rules that
+effect rules, the typescript-eslint / testing-library / jest-dom / jest slices — over exactly
+the files the commit will contain. Errors block; warnings do not, on purpose (the rules that
 propose restructures ship at `warn`, and a warn that blocks a commit is an error in a hat).
 
 **The editor is feedback, not enforcement** — but it now carries the same rules. It points
