@@ -34,7 +34,7 @@ plugins `base.js` imports.
 
 | File | Job |
 | --- | --- |
-| `eslint-layer.js` | Loads the package's own ESLint config, spreads the personal preset after it. The layering. |
+| `eslint-layer.js` | Loads the package's own ESLint config, spreads the personal preset after it. The layering, and the typed-layer gate. |
 | `lint-changed.sh` | Lints changed `.ts`/`.tsx` only, each through its own package's ESLint binary. |
 | `lint-changed-dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs`, filters the diagnostics down to those files. |
 | `hooks/pre-commit` | Template for the installed hook. The enforcement gate. One template, two branches, each self-gating. |
@@ -117,9 +117,20 @@ recognises it instead of shuffling it aside and chaining to itself.
 ```sh
 SKIP_TVRMSMITH_LINT=1 git commit …   # skip the personal hook, keep any chained one
 git commit --no-verify               # skip all hooks
-TVRMSMITH_ESLINT_DEBUG=1 …           # print which branch of the wrapper ran
+TVRMSMITH_ESLINT_DEBUG=1 …           # print which branch of the wrapper ran, and the typed decision
+TVRMSMITH_TYPED_LINT=0 …             # force the type-aware layer off for this run
+TVRMSMITH_TYPED_LINT=1 …             # force it on
 ~/.config/coding-standards/lint-changed.sh --since main
 ```
+
+## The typed layer is decided per package
+
+The preset's type-aware rules throw where the package has no TypeScript program, so the wrapper
+adds them only where the package's own config already sets `parserOptions.projectService`,
+`parserOptions.project`, or the older `EXPERIMENTAL_useProjectService`. A repo becomes ready by
+configuring typed linting for itself, which is work it wants anyway; nothing here needs touching.
+`TVRMSMITH_TYPED_LINT` overrides the detector in either direction, which is how you try the layer
+on a package before committing to it.
 
 ## Namespacing, and one cosmetic effect
 

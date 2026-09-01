@@ -17,6 +17,9 @@
  *   which needs the linter in flat mode: hence `ESLINT_USE_FLAT_CONFIG=true`, required on
  *   ESLint 8 and harmless on 9.
  *
+ * The preset's type-aware layer is added per package, and only where the package's own config
+ * already supplies type information. See `packageProvidesTypeInfo` at the bottom.
+ *
  * Resolution note: every bare import below resolves from *this file's* directory, not the
  * linted package's. The preset and its plugins therefore come from the hub's own
  * `node_modules` — which is the only thing that works, since pnpm's strict layout means
@@ -31,6 +34,7 @@ import { pathToFileURL } from 'node:url'
 import { FlatCompat } from '@eslint/eslintrc'
 import js from '@eslint/js'
 import tvrmsmith from 'eslint-config-tvrmsmith'
+import typed from 'eslint-config-tvrmsmith/typed'
 
 const cwd = process.cwd()
 const debug = process.env.TVRMSMITH_ESLINT_DEBUG === '1'
@@ -174,7 +178,47 @@ function namespacePreset(configs) {
   })
 }
 
+/**
+ * Does this package already lint with type information?
+ *
+ * The typed layer is opt-in per package, and this is the opt-in signal: a package is ready
+ * for typed rules exactly when it has already configured type information for its own
+ * linting. Nothing extra to add, nothing to keep in sync, and no marker file that can outlive
+ * the config it describes.
+ *
+ * Three spellings, because a repo mid-migration has all of them. `projectService` is the
+ * current one, `project` the older per-tsconfig form, and `EXPERIMENTAL_useProjectService`
+ * what `typescript-eslint` v6 and v7 called the first. `FlatCompat` translates a legacy
+ * `.eslintrc` into the same `languageOptions.parserOptions` shape, so both branches of
+ * `loadPackageConfig` are covered by reading that one place.
+ *
+ * Getting this wrong fails loudly rather than silently: a typed rule with no program throws
+ * "you have used a rule which requires type information" and takes the run down. That is the
+ * right failure mode for a detector, but `TVRMSMITH_TYPED_LINT` is there to force the answer
+ * either way — `0` to skip the layer in a package that does have a program, `1` to demand it.
+ */
+function packageProvidesTypeInfo(packageConfig) {
+  return packageConfig.some((entry) => {
+    const parserOptions = entry?.languageOptions?.parserOptions ?? entry?.parserOptions
+    if (!parserOptions) return false
+    return Boolean(
+      parserOptions.projectService ??
+        parserOptions.project ??
+        parserOptions.EXPERIMENTAL_useProjectService,
+    )
+  })
+}
+
 const { config: packageConfig } = await loadPackageConfig()
 warnOnRestrictedSyntaxCollision(packageConfig)
 
-export default [...packageConfig, ...namespacePreset(tvrmsmith)]
+const override = process.env.TVRMSMITH_TYPED_LINT
+const useTyped =
+  override === undefined || override === '' ? packageProvidesTypeInfo(packageConfig) : override === '1'
+
+if (debug) {
+  const why = override === undefined || override === '' ? 'detected from the package config' : 'TVRMSMITH_TYPED_LINT'
+  console.error(`[tvrmsmith] typed layer: ${useTyped ? 'on' : 'off'} (${why})`)
+}
+
+export default [...packageConfig, ...namespacePreset(useTyped ? [...tvrmsmith, ...typed] : tvrmsmith)]

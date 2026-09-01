@@ -28,9 +28,11 @@ enforcement mapping and repeated on the rule that enforces it — see the rule t
 
 **The mapping runs one way.** Every guideline needs an enforcement home; a rule does not have to
 trace back to a guideline. An off-the-shelf rule that is already installed and already correct
-earns its place without a guideline being written for it first — the eight `test-integrity` rules
-in the preset are exactly that. Requiring a round trip would mean either writing guideline prose
-nobody asked for or leaving a good rule off, and both are worse than an unmapped rule.
+earns its place without a guideline being written for it first. Most of what the preset enables is
+exactly that: the `test-integrity` rules, the TypeScript, regex, Sonar and React correctness layers,
+and the built-in `CA` rules on the C# side. Requiring a round trip would
+mean either writing guideline prose nobody asked for or leaving a good rule off, and both are
+worse than an unmapped rule.
 
 ## Layout
 
@@ -72,13 +74,25 @@ Everything else is off the shelf. These three have no off-the-shelf equivalent:
 3. `no-assertion-escape-cast` — Roslyn only (`TVRM0003`). Bans `((object)x).Should()`.
 
 The off-the-shelf layer around them is already curated: `packages/eslint-config-tvrmsmith` for
-TypeScript, and FluentAssertions.Analyzers `FAA0001`–`FAA0004` for C# (see `dotnet/README.md` —
-the pairing is version-sensitive and mixing it with AwesomeAssertions fails *silently*).
+TypeScript, and for C# both FluentAssertions.Analyzers `FAA0001`–`FAA0004` and most of the built-in
+`CAxxxx` rules the SDK ships disabled (see `dotnet/README.md` — the FluentAssertions pairing is
+version-sensitive and mixing it with AwesomeAssertions fails *silently*, and the `CA` set is
+generated from the SDK's own rule metadata rather than a pinned list).
 
-TypeScript also registers `eslint-plugin-jest`, for the A2 and A5 assertion rules and for eight
-lint-only test-integrity rules. Despite the name it is not a bet on jest: those rules resolve
+TypeScript also registers `eslint-plugin-jest`, for the A2 and A5 assertion rules and for a slice
+of lint-only test-integrity rules. Despite the name it is not a bet on jest: those rules resolve
 `expect` syntactically, so they cover vitest packages too.
 `packages/eslint-config-tvrmsmith/README.md` explains the one setting this depends on.
+
+Beyond the guideline rules, the preset enables the untyped half of `typescript-eslint`,
+`eslint-plugin-regexp`, `eslint-plugin-sonarjs` and `eslint-plugin-react`. Every one of those
+plugins was already an indirect dependency of the packages being linted, with almost nothing turned
+on.
+
+The type-aware rules from those same plugins are opt-in, in a separate `eslint-config-tvrmsmith/typed`
+entry point, because a typed rule in a package with no `projectService` throws and fails the run.
+The machine-local wrapper adds the layer per package, wherever the package already lints with type
+information, and `TVRMSMITH_TYPED_LINT` forces the answer either way.
 
 ## Install
 

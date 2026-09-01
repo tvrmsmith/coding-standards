@@ -1,8 +1,8 @@
 import { useState } from 'react'
 
-type GreetingProps = {
-  first: string
-  last: string
+interface GreetingProps {
+  readonly first: string
+  readonly last: string
 }
 
 /** Compliant source: the full name is calculated during render, not synced by an Effect. */
