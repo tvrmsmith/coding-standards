@@ -58,10 +58,26 @@ method name. Where spans nest, a source line belongs to the smallest span contai
 Prefer "span" over "method identity" or "method key". The latter two invite a name-based reading,
 which is the reading this project rejects.
 
+## Touched line
+
+A line the diff reports on its **new side**. Deleting lines touches the line at the point they were
+removed from, so a deletion is a touch and not an absence. Whitespace-only differences produce no
+touched lines.
+
+## Changed method
+
+A method span in the working tree holding at least one touched line. This is the unit the gate
+measures; a method with no touched line is never measured, however badly it scores.
+
+One touched line changes the whole method, because the metric is a per-method number. Where spans
+nest, only the smallest containing span is changed, matching the rule the join already uses.
+
 ## Extractor
 
 The language-specific half of the measurement. Reads source, produces one complexity number per
-method span. There is one extractor per language.
+method span. There is one extractor per language. It declares which file extensions it handles and
+reports, per file, whether it parsed that file, so "not my language" and "nothing to measure here"
+are distinguishable from "I failed".
 
 ## Gate
 
