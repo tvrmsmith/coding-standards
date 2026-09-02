@@ -690,6 +690,134 @@ func TestCoverageReportOutsideAResultsDirectoryIsNotFound(t *testing.T) {
 		"CRAP requires a coverage report, none found\n")
 }
 
+func TestTwoOverloadsDeclaredOnOneLineAreBothScored(t *testing.T) {
+	const calc = "src/Ordering/Calc.cs"
+	// `public class C { public int F(int x) => 1; public int F(string x) => 2; }`
+	// is valid C#. The two overloads share a file, a name and a line range, and
+	// only their parameter lists tell them apart, so a duplicate test that reads
+	// name alone calls this an extractor contract violation and scores neither.
+	first := span{File: calc, Name: "Calc.F", Signature: "(int)", StartLine: 14, EndLine: 14, Complexity: 1}
+	second := span{File: calc, Name: "Calc.F", Signature: "(string)", StartLine: 14, EndLine: 14, Complexity: 2}
+
+	f := newFixture(t, "main")
+	f.write(calc, csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(calc, 14)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: calc, lines: spanCoverage(14, 1, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(calc), []span{first, second}),
+	}
+
+	// Two rows under one name, carrying the two complexities and so the two
+	// scores. Collapsing them into one would lose whichever the map dropped.
+	f.run().assertMatches(t, "same_line_two_overloads", 0, f.baseLabel("main"),
+		"0 of 2 changed methods over CRAP threshold 30, worst score 2.00\n")
+}
+
+func TestChangedMethodInAUTF16SourceFileIsStillMeasured(t *testing.T) {
+	const wide = "src/Ordering/Wide.cs"
+	vanish := span{File: wide, Name: "Wide.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	// UTF-16 puts a NUL beside every ASCII character, so git autodetects the file
+	// as binary and prints "Binary files differ" in place of any hunk header. The
+	// gate would then see no touched line, measure nothing, and pass.
+	f.writeUTF16LE(wide, csharpFile(20))
+	f.commitAll("initial")
+	f.writeUTF16LE(wide, replaceLine(csharpFile(20), 7, "// line 7, edited"))
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: wide, lines: spanCoverage(6, 4, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(wide), []span{vanish}),
+	}
+
+	f.run().assertMatches(t, "binary_source_file", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 10.75\n")
+}
+
+func TestGitattributesMarkingSourceUndiffableDoesNotHideTheChange(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	// `-diff` lives in the repository, ahead of anything the run can pass on the
+	// command line, and it suppresses every hunk header for the paths it names.
+	f.write(".gitattributes", "*.cs -diff\n")
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestCleanFilterInjectedThroughTheEnvironmentDoesNotHideTheChange(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// GIT_CONFIG_COUNT config outranks a -c flag, and there is no flag for this
+	// anyway, so the only defence is dropping the variables from the child's
+	// environment. The filter reverses the edit and leaves the two sides equal.
+	result := f.runWithEnv(cleanFilterEnv(t)...)
+
+	result.assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestChangedMethodInAPathGitQuotesIsStillMeasured(t *testing.T) {
+	const weird = `src/Ordering/we"ird.cs`
+	vanish := span{File: weird, Name: "Weird.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	// A path holding a double quote is one git quotes and escapes whatever
+	// core.quotePath says, so no -c flag can turn this off. Read literally the
+	// header names a path no extractor was given and no report ever matched.
+	f.write(weird, csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(weird, 7)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: weird, lines: spanCoverage(6, 4, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(weird), []span{vanish}),
+	}
+
+	f.run().assertMatches(t, "quoted_diff_path", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 10.75\n")
+}
+
+func TestMissingCoverageFailureStillReportsThePathsTheWalkCouldNotRead(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The one directory that could have held a report is unreadable. Reporting
+	// "none found" without saying so reads as a repo with no coverage at all,
+	// rather than one whose coverage the run could not reach.
+	f.denyRead("TestResults/locked")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_missing_with_skipped_path", 1, f.baseLabel("main"),
+		"CRAP requires a coverage report, none found\n")
+}
+
 func TestRunOutsideAGitRepoWritesNoDocumentAndExitsOne(t *testing.T) {
 	f := &fixture{t: t, root: t.TempDir()}
 	if inRepo(t, f.root) {

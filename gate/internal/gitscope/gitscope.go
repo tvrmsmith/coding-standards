@@ -3,10 +3,15 @@
 // runs git itself rather than taking hunks from a wrapper, so `-w` and
 // `--diff-filter` are fixed in one place and no caller can get them wrong.
 //
-// Every invocation goes through run, which pins the output-shaping config on
-// the command line and drops the environment variables that override it. An
-// ambient `color.ui=always` or `GIT_EXTERNAL_DIFF` would otherwise make the
-// hunk parser match nothing, and a gate that measures nothing passes.
+// A gate that measures nothing passes, so anything able to reshape the diff
+// into something the hunk parser reads as empty is a silent green build. Three
+// separate mechanisms can do that and each needs its own answer. Ambient config
+// such as `color.ui=always` is beaten by the `-c` overrides run pins on the
+// command line. Environment config such as `GIT_EXTERNAL_DIFF`, or a clean
+// filter injected through the GIT_CONFIG_COUNT family, outranks a `-c` flag and
+// is instead dropped from the command's environment. Neither reaches
+// `.gitattributes` or git's own NUL-byte autodetection, which live in the repo
+// and in the file's bytes; `--text` on the diff answers those.
 //
 // The diff covers tracked paths only. A brand-new source file the developer
 // has not yet `git add`ed contributes no touched lines and therefore no
@@ -333,8 +338,12 @@ var configOverrides = []string{
 }
 
 // diffFlags harden the unified diff the hunk parser reads. The prefixes are
-// repeated as flags because they are what parseNewSidePath strips.
-var diffFlags = []string{"diff", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/"}
+// repeated as flags because they are what parseNewSidePath strips. `--text`
+// forces a hunk out of a file git would otherwise summarise as "Binary files
+// differ", which is any source carrying a NUL byte, UTF-16 for instance, and
+// any path a `.gitattributes` line marks `-diff` or `binary`. Only the hunk
+// headers are read, so whatever the cells hold does not matter.
+var diffFlags = []string{"diff", "--no-color", "--no-ext-diff", "--no-textconv", "--text", "--src-prefix=a/", "--dst-prefix=b/"}
 
 // rawFlags harden the `--raw` listing, which carries no prefixes.
 var rawFlags = []string{"diff", "--no-color", "--no-ext-diff", "--raw"}
