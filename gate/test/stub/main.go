@@ -33,7 +33,7 @@ func main() {
 		return
 	}
 	// The real extractor reads every path before it answers, so the stub
-	// must drain stdin too or the gate sees a broken pipe.
+	// drains stdin too and the two agree on when the gate's write completes.
 	io.Copy(io.Discard, os.Stdin)
 	if cfg.ExitCode != 0 {
 		os.Exit(cfg.ExitCode)

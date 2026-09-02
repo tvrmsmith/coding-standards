@@ -65,7 +65,7 @@ public class ExtractionTests
     }
 
     [Fact]
-    public void ANestedTypesMethodNameIsQualifiedByItsDeclaringType()
+    public void AMethodInASubdirectoryIsQualifiedByItsDeclaringTypeAlone()
     {
         var (exitCode, result) = ExtractorRun.Run("fixtures/sub/Nested.cs");
 
@@ -77,6 +77,18 @@ public class ExtractionTests
         result.Spans.Should().BeEquivalentTo(new[]
         {
             new { File = "fixtures/sub/Nested.cs", Name = "Nested.One", StartLine = 5, EndLine = 13, Complexity = 2 },
+        });
+    }
+
+    [Fact]
+    public void AMethodInsideANestedTypeIsQualifiedOutermostTypeFirst()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/OuterInner.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { File = "fixtures/OuterInner.cs", Name = "Outer.Inner.M", StartLine = 7, EndLine = 15, Complexity = 2 },
         });
     }
 
@@ -101,8 +113,11 @@ public class ExtractionTests
             new { File = "fixtures/Broken.cs", Status = "failed" },
             new { File = "fixtures/NoMethods.cs", Status = "parsed" },
         }, o => o.WithStrictOrdering());
-        result.Spans.Should().OnlyContain(s => s.File == "fixtures/Plain.cs");
-        result.Spans.Should().HaveCount(2);
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { File = "fixtures/Plain.cs", Name = "Plain.Simple" },
+            new { File = "fixtures/Plain.cs", Name = "Plain.Branchy" },
+        }, o => o.WithStrictOrdering());
     }
 
     [Fact]

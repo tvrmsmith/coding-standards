@@ -2,7 +2,11 @@
 // formula, and the two typed fix cells ADR 0005 requires beside it.
 package crap
 
-import "math"
+import (
+	"math"
+
+	"github.com/tvrmsmith/coding-standards/gate/internal/round"
+)
 
 // Name is the key the metric's table appears under in the document.
 const Name = "crap"
@@ -41,7 +45,7 @@ type Measurement struct {
 func (m Measurement) Score() float64 {
 	comp := float64(m.Complexity)
 	uncovered := 1 - m.Coverage
-	return roundHalfUp(comp*comp*uncovered*uncovered*uncovered+comp, 2)
+	return round.HalfUp(comp*comp*uncovered*uncovered*uncovered+comp, 2)
 }
 
 // Action is the one fix instruction that applies. split_method is emitted
@@ -70,12 +74,6 @@ func (m Measurement) TargetCoverage() *float64 {
 	comp := float64(m.Complexity)
 	target := ceilAt(1-math.Cbrt((Threshold-comp)/(comp*comp)), 3)
 	return &target
-}
-
-// roundHalfUp rounds f to precision decimal places, half away from zero.
-func roundHalfUp(f float64, precision int) float64 {
-	scale := math.Pow(10, float64(precision))
-	return math.Floor(f*scale+0.5) / scale
 }
 
 // ceilAt rounds f up to precision decimal places. It snaps the scaled value

@@ -16,8 +16,8 @@ type Path string
 // String renders the path as it appears in the gate's output.
 func (p Path) String() string { return string(p) }
 
-// Ext is the path's lowercase-free file extension, including the dot. ADR
-// 0004 rejects case folding, so the extension is compared as written.
+// Ext is the path's file extension, including the dot. ADR 0004 rejects case
+// folding, so the extension is returned and compared exactly as written.
 func (p Path) Ext() string { return filepath.Ext(string(p)) }
 
 // Root is a repo root with its symlinks already resolved, which is what

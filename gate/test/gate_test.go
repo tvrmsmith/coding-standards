@@ -92,6 +92,86 @@ func TestFourChangedMethodsEachGetTheFixThatApplies(t *testing.T) {
 		"2 of 4 changed methods over CRAP threshold 30, worst score 139.34\n")
 }
 
+func TestBranchIsScoredAgainstTheMergeBaseAndNotTheTipOfMain(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+
+	f.git("checkout", "--quiet", "-b", "feature")
+	f.touchLine(orderService, 62)
+	f.commitAll("edit Cancel on the branch")
+
+	// main moves on without the branch, so the tip of main is no longer an
+	// ancestor of HEAD and only the merge base scopes the diff correctly.
+	f.git("checkout", "--quiet", "main")
+	f.write("docs/unrelated.md", "main moved on\n")
+	f.commitAll("unrelated work on main")
+	f.git("checkout", "--quiet", "feature")
+
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// The branch's own commit is the whole changed set, and `base` is the
+	// merge base rather than main's tip. The document is the one
+	// pass_single_method pins, because the same one method changed.
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestMethodMovedToANewPathAndEditedIsScoredAtItsNewLocation(t *testing.T) {
+	const origin = "src/Ordering/Origin.cs"
+	const moved = "src/Ordering/Moved.cs"
+	vanish := span{File: moved, Name: "Moved.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(origin, csharpFile(20))
+	f.commitAll("initial")
+	// git scores this as a rename, which status R would drop from an
+	// ACM-filtered diff; ADR 0003 says the method appears as added lines at
+	// its new location instead.
+	f.git("mv", origin, moved)
+	f.touchLine(moved, 7)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: moved, lines: spanCoverage(6, 4, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(moved), []span{vanish}),
+	}
+
+	f.run().assertMatches(t, "renamed_file", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 10.75\n")
+}
+
+func TestANestedSpanTakesTheTouchedLineAndItsOwnCoverageFromItsContainer(t *testing.T) {
+	const outer = "src/Ordering/Outer.cs"
+	container := span{File: outer, Name: "Outer.Run", StartLine: 10, EndLine: 60, Complexity: 5}
+	local := span{File: outer, Name: "Outer.Run.Local", StartLine: 30, EndLine: 40, Complexity: 2}
+
+	f := newFixture(t, "main")
+	f.write(outer, csharpFile(80))
+	f.commitAll("initial")
+	// Line 35 sits in both spans, so only the smaller one is changed.
+	f.touchLine(outer, 35)
+	// Lines 12-15 belong to the container alone; 31-34 sit inside the local
+	// function, so the container must not absorb them.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: outer, lines: append(spanCoverage(12, 4, 4), spanCoverage(31, 4, 1)...)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(outer), []span{container, local}),
+	}
+
+	// One in four of the local function's own lines is covered. Were the
+	// container absorbing them the local function would hold no
+	// instrumentable line and report structural_na instead.
+	f.run().assertMatches(t, "nested_spans", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.69\n")
+}
+
 func TestChangedMethodWithNoCoverageReportAnywhereFails(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))

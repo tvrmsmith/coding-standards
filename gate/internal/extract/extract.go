@@ -10,10 +10,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/report"
 	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
@@ -49,6 +51,12 @@ type Result struct {
 // Extract runs every located extractor over the changed files it claims. It
 // returns a *report.Failure for every exit-1 cause in ADR 0006's contract.
 func Extract(root srcpath.Root, changed []srcpath.Path) (Result, error) {
+	// No changed file means no extractor can be asked for anything, so none
+	// is located or launched. A docs-only change therefore passes in a
+	// deployment that ships the gate without an extractor beside it.
+	if len(changed) == 0 {
+		return Result{Claimed: map[srcpath.Path]bool{}}, nil
+	}
 	dir, err := extractorDir()
 	if err != nil {
 		return Result{}, err
@@ -81,12 +89,7 @@ func extractorDir() (string, error) {
 // sortedLanguages keeps the order the languages are consulted in fixed, so a
 // run's output does not depend on map iteration.
 func sortedLanguages() []string {
-	languages := make([]string, 0, len(languageBinaries))
-	for language := range languageBinaries {
-		languages = append(languages, language)
-	}
-	sort.Strings(languages)
-	return languages
+	return slices.Sorted(maps.Keys(languageBinaries))
 }
 
 // extractor is one located language extractor.
@@ -211,9 +214,18 @@ func (e extractor) exec(stdin *bytes.Buffer, args ...string) ([]byte, error) {
 			Message: fmt.Sprintf("%s extractor exited %d", e.language, exitErr.ExitCode()),
 		}
 	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, &report.Failure{
+			Code:    report.CodeExtractorFailed,
+			Message: fmt.Sprintf("%s extractor not found: %s", e.language, filepath.Base(e.binary)),
+		}
+	}
+	// A binary that is present but will not launch, because it is not
+	// executable or was built for another platform, is a different problem
+	// from an absent one, and the reader needs the cause to tell them apart.
 	return nil, &report.Failure{
 		Code:    report.CodeExtractorFailed,
-		Message: fmt.Sprintf("%s extractor not found: %s", e.language, filepath.Base(e.binary)),
+		Message: fmt.Sprintf("%s extractor %s could not be run: %v", e.language, filepath.Base(e.binary), err),
 	}
 }
 
@@ -238,11 +250,23 @@ func (e extractor) collect(parsed extraction, handed []srcpath.Path) ([]Span, er
 	for _, file := range parsed.Files {
 		status[file.File] = file.Status
 	}
+	// ADR 0003 makes per-file status an obligation so the gate can tell
+	// "nothing here" from "I failed". A path the gate handed in and the
+	// extractor never reported on is neither, and silently scoring its file
+	// with zero spans would let every method in it go unmeasured under a
+	// passing run.
 	for _, path := range handed {
-		if status[path.String()] == "failed" {
+		switch status[path.String()] {
+		case "parsed":
+		case "failed":
 			return nil, &report.Failure{
 				Code:    report.CodeParseFailed,
 				Message: fmt.Sprintf("%s extractor could not parse %s", e.language, path),
+			}
+		default:
+			return nil, &report.Failure{
+				Code:    report.CodeExtractorFailed,
+				Message: fmt.Sprintf("%s extractor reported no parse status for %s", e.language, path),
 			}
 		}
 	}

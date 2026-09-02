@@ -4,6 +4,8 @@
 package join
 
 import (
+	"maps"
+	"slices"
 	"sort"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/coverage"
@@ -82,12 +84,7 @@ func groupByFile(spans []extract.Span) map[srcpath.Path][]extract.Span {
 
 // sortedFiles keeps iteration over a path-keyed map deterministic.
 func sortedFiles[V any](byFile map[srcpath.Path]V) []srcpath.Path {
-	files := make([]srcpath.Path, 0, len(byFile))
-	for file := range byFile {
-		files = append(files, file)
-	}
-	sort.Slice(files, func(i, j int) bool { return files[i] < files[j] })
-	return files
+	return slices.Sorted(maps.Keys(byFile))
 }
 
 // sortSpans orders spans by file then start line.

@@ -1,16 +1,20 @@
 // Command metric-gate scores the methods a change touched against a metric
-// threshold. It takes no flags (ADR 0005): stdout is always one TOON
-// document, stderr is one summary line, and the exit code is 0 pass, 1 tool
-// error, 2 threshold exceeded.
+// threshold. It takes no flags (ADR 0005): stdout is one TOON document,
+// stderr is one summary line, and the exit code is 0 pass, 1 tool error, 2
+// threshold exceeded.
+//
+// The one exception to "stdout is one TOON document" is a failure upstream of
+// the document itself, such as not being in a git repo at all. Those write the
+// cause to stderr, leave stdout empty, and exit 1.
 package main
 
 import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"slices"
-	"sort"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/coverage"
 	"github.com/tvrmsmith/coding-standards/gate/internal/crap"
@@ -167,12 +171,7 @@ func unknownMessage(unknown int) string {
 // changedFiles lists the files the diff touched, in a fixed order so the
 // extractor sees the same stdin on every run.
 func changedFiles(touched map[srcpath.Path][]int) []srcpath.Path {
-	files := make([]srcpath.Path, 0, len(touched))
-	for file := range touched {
-		files = append(files, file)
-	}
-	sort.Slice(files, func(i, j int) bool { return files[i] < files[j] })
-	return files
+	return slices.Sorted(maps.Keys(touched))
 }
 
 // asFailure unwraps a typed exit-1 cause out of an error.
