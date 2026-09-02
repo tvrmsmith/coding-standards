@@ -3,6 +3,11 @@
 // runs git itself rather than taking hunks from a wrapper, so `-w` and
 // `--diff-filter` are fixed in one place and no caller can get them wrong.
 //
+// Every invocation goes through run, which pins the output-shaping config on
+// the command line and drops the environment variables that override it. An
+// ambient `color.ui=always` or `GIT_EXTERNAL_DIFF` would otherwise make the
+// hunk parser match nothing, and a gate that measures nothing passes.
+//
 // The diff covers tracked paths only. A brand-new source file the developer
 // has not yet `git add`ed contributes no touched lines and therefore no
 // changed methods, which ADR 0003 records as a deliberate limitation of the
@@ -98,7 +103,7 @@ func (r Repo) ResolveBase() (Base, error) {
 // whitespace ignored, matches a path the same diff deleted is dropped
 // afterwards, and only a move that also edited the file is measured.
 func (r Repo) TouchedLines(base Base) (map[srcpath.Path][]int, error) {
-	patch, err := r.git("-c", "core.quotePath=false", "diff", "-w", "-U0", "--no-renames", "--diff-filter=ACM", base.Commit)
+	patch, err := r.git(append(diffFlags, "-w", "-U0", "--no-renames", "--diff-filter=ACM", base.Commit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -128,8 +133,13 @@ func (r Repo) TouchedLines(base Base) (map[srcpath.Path][]int, error) {
 //
 // An added path the gate cannot read is left measured, which is the
 // conservative direction.
+//
+// The pairing is one to one. Each deleted blob accounts for exactly one added
+// path, so `git mv src/Old.cs src/New.cs` followed by copying the result to
+// src/Copy.cs drops one of the two adds and leaves the other measured, because
+// only one file's worth of content moved.
 func (r Repo) pureMoves(base Base) ([]srcpath.Path, error) {
-	raw, err := r.git("diff", "--raw", "-z", "--abbrev=40", "--no-renames", "--diff-filter=AD", base.Commit)
+	raw, err := r.git(append(rawFlags, "-z", "--abbrev=40", "--no-renames", "--diff-filter=AD", base.Commit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -140,13 +150,13 @@ func (r Repo) pureMoves(base Base) ([]srcpath.Path, error) {
 	if len(added) == 0 || len(deleted) == 0 {
 		return nil, nil
 	}
-	carried := map[[sha256.Size]byte]bool{}
+	carried := map[[sha256.Size]byte]int{}
 	for _, blob := range deleted {
 		body, err := r.git("cat-file", "blob", blob)
 		if err != nil {
 			return nil, err
 		}
-		carried[squashedDigest([]byte(body))] = true
+		carried[squashedDigest([]byte(body))]++
 	}
 	var moves []srcpath.Path
 	for _, path := range added {
@@ -154,9 +164,12 @@ func (r Repo) pureMoves(base Base) ([]srcpath.Path, error) {
 		if err != nil {
 			continue
 		}
-		if carried[squashedDigest(body)] {
-			moves = append(moves, path)
+		digest := squashedDigest(body)
+		if carried[digest] == 0 {
+			continue
 		}
+		carried[digest]--
+		moves = append(moves, path)
 	}
 	return moves, nil
 }
@@ -171,6 +184,11 @@ func squashedDigest(body []byte) [sha256.Size]byte {
 	}
 	return sha256.Sum256([]byte(strings.Join(lines, "\n")))
 }
+
+// gitlinkMode is the mode git gives a submodule entry. Its object id names a
+// commit in another repository, not a blob this repo can read, so a removed
+// submodule contributes nothing to the deleted-side content.
+const gitlinkMode = "160000"
 
 // parseRawAddsAndDeletes reads `git diff --raw -z` records, returning the
 // paths the diff added and the old-side blob ids it deleted. A record is the
@@ -189,11 +207,17 @@ func parseRawAddsAndDeletes(raw string) (added []srcpath.Path, deleted []string,
 		if len(fields) != 5 {
 			return nil, nil, fmt.Errorf("git diff --raw record is malformed: %q", records[i])
 		}
-		src, status := fields[2], fields[4]
+		oldMode, newMode, src, status := strings.TrimPrefix(fields[0], ":"), fields[1], fields[2], fields[4]
 		switch status {
 		case "A":
+			if newMode == gitlinkMode {
+				continue
+			}
 			added = append(added, srcpath.FromSlash(records[i+1]))
 		case "D":
+			if oldMode == gitlinkMode {
+				continue
+			}
 			deleted = append(deleted, src)
 		}
 	}
@@ -291,6 +315,43 @@ func parseHunkHeader(header string) (start, count int, err error) {
 	return start, count, nil
 }
 
+// configOverrides pin, per invocation, every git setting that can reshape the
+// output these parsers read. They go on the command line rather than being
+// read from the repo, so a hostile or merely unusual .gitconfig cannot turn a
+// diff the parser understands into one it silently reads as empty, which would
+// pass the gate with no changed methods.
+var configOverrides = []string{
+	"-c", "core.quotePath=false",
+	"-c", "color.ui=false",
+	"-c", "diff.external=",
+	"-c", "diff.noprefix=false",
+	"-c", "diff.mnemonicPrefix=false",
+	"-c", "diff.srcPrefix=a/",
+	"-c", "diff.dstPrefix=b/",
+	"-c", "diff.suppressBlankEmpty=false",
+	"-c", "diff.wsErrorHighlight=none",
+}
+
+// diffFlags harden the unified diff the hunk parser reads. The prefixes are
+// repeated as flags because they are what parseNewSidePath strips.
+var diffFlags = []string{"diff", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/"}
+
+// rawFlags harden the `--raw` listing, which carries no prefixes.
+var rawFlags = []string{"diff", "--no-color", "--no-ext-diff", "--raw"}
+
+// hostileEnv names the environment variables that reshape diff output or
+// inject config. They are dropped rather than overridden, because a `-c` flag
+// cannot outrank GIT_CONFIG_PARAMETERS.
+var hostileEnv = []string{
+	"GIT_EXTERNAL_DIFF",
+	"GIT_DIFF_OPTS",
+	"GIT_CONFIG_PARAMETERS",
+	"GIT_CONFIG_COUNT",
+}
+
+// hostileEnvPrefixes names the indexed families GIT_CONFIG_COUNT enumerates.
+var hostileEnvPrefixes = []string{"GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"}
+
 // git runs one git command in the repo root.
 func (r Repo) git(args ...string) (string, error) {
 	return run(r.root.Dir(), args...)
@@ -299,9 +360,9 @@ func (r Repo) git(args ...string) (string, error) {
 // run executes git in dir, or the process working directory when dir is
 // empty, and returns its stdout.
 func run(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", append(append([]string{}, configOverrides...), args...)...)
 	cmd.Dir = dir
-	cmd.Env = os.Environ()
+	cmd.Env = sanitizedEnv()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -309,4 +370,34 @@ func run(dir string, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), nil
+}
+
+// sanitizedEnv is the process environment with the diff-reshaping variables
+// removed. It is built rather than inherited, so what the parser reads does
+// not depend on how the caller's shell was set up.
+func sanitizedEnv() []string {
+	env := os.Environ()
+	kept := make([]string, 0, len(env))
+	for _, entry := range env {
+		if !hostile(entry) {
+			kept = append(kept, entry)
+		}
+	}
+	return kept
+}
+
+// hostile reports whether a "KEY=value" entry names a variable run drops.
+func hostile(entry string) bool {
+	name, _, _ := strings.Cut(entry, "=")
+	for _, banned := range hostileEnv {
+		if name == banned {
+			return true
+		}
+	}
+	for _, prefix := range hostileEnvPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }

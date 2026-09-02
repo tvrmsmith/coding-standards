@@ -1,7 +1,7 @@
 // Package report assembles the one TOON document metric-gate writes on
-// stdout (ADR 0005), the single summary line it writes on stderr, and the
-// exit code that goes with them. The field list is fixed and never varies
-// with the outcome.
+// stdout (ADR 0005), the human summary it writes on stderr, and the exit code
+// that goes with them. The field list is fixed and never varies with the
+// outcome.
 package report
 
 import (
@@ -189,10 +189,11 @@ func (d Document) ExitCode() int {
 	}
 }
 
-// Stderr is the single summary line a human reads, so nobody is asked to
-// parse the machine document. A run that scored methods reports the counts; a
-// run that failed before scoring reports its message verbatim; the one cause
-// that fails with a table reports both.
+// Stderr is the summary a human reads, so nobody is asked to parse the machine
+// document. A run that scored methods reports the counts on one line, a run
+// that failed before scoring reports its message verbatim on one line, and the
+// one cause that fails with a table, unknown_changed_method, reports both, on
+// two lines.
 func (d Document) Stderr() string {
 	var b strings.Builder
 	if d.Failure != nil {

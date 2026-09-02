@@ -28,11 +28,14 @@ import (
 //
 // The extensions beside the name decide one thing only, whether the gate execs
 // the binary at all, so the list is an upper bound on what this language can
-// ever be routed. Over-claiming costs a wasted launch that --capabilities then
-// narrows to nothing; under-claiming silently unscores real source, because a
-// path whose extension no row declares never reaches an extractor. Among the
-// paths the list does select, --capabilities is the sole authority, and a
-// binary that claims none of them fails the run rather than scoring nothing.
+// ever be routed. A row that over-claims costs a launch that finds nothing,
+// while a row that under-claims silently unscores real source, because a path
+// whose extension no row declares never reaches an extractor.
+//
+// Among the paths the list does select, --capabilities is the sole authority,
+// and an extractor whose --capabilities set claims none of them exits 1 with
+// extractor_capabilities_mismatch. Scoring nothing would be indistinguishable
+// from a clean run.
 var languages = map[string]language{
 	"csharp": {binary: "metric-gate-csharp", extensions: []string{".cs"}},
 }
@@ -342,10 +345,12 @@ func (e extractor) collect(parsed extraction, handed []srcpath.Path) ([]Span, er
 		}
 	}
 	spans := make([]Span, 0, len(parsed.Spans))
-	// ADR 0001 identifies a span by file and line range and never by name, so
-	// two spans sharing a range are indistinguishable downstream and one would
-	// silently vanish from the table. That is an extractor contract violation
-	// rather than a join the gate should guess its way through.
+	// The same method emitted twice is an extractor contract violation, because
+	// one of the two rows would silently vanish from the table. Two distinct
+	// methods sharing a line range are not: `class C { int A() => 1; int B() =>
+	// 2; }` on one line is valid C# and both methods must be scored. So the
+	// duplicate test takes the name in, while ADR 0001's span identity, which
+	// the coverage join uses, stays file and line range alone.
 	seen := map[Span]bool{}
 	for _, span := range parsed.Spans {
 		converted := Span{
@@ -355,12 +360,12 @@ func (e extractor) collect(parsed extraction, handed []srcpath.Path) ([]Span, er
 			EndLine:    span.EndLine,
 			Complexity: span.Complexity,
 		}
-		identity := Span{File: converted.File, StartLine: converted.StartLine, EndLine: converted.EndLine}
+		identity := Span{File: converted.File, Name: converted.Name, StartLine: converted.StartLine, EndLine: converted.EndLine}
 		if seen[identity] {
 			return nil, &report.Failure{
 				Code: report.CodeExtractorDuplicateSpan,
-				Message: fmt.Sprintf("%s extractor returned two spans covering %s lines %d-%d",
-					e.language, converted.File, converted.StartLine, converted.EndLine),
+				Message: fmt.Sprintf("%s extractor returned %s twice, covering %s lines %d-%d",
+					e.language, converted.Name, converted.File, converted.StartLine, converted.EndLine),
 			}
 		}
 		seen[identity] = true

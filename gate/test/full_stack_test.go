@@ -67,29 +67,6 @@ func (f *fixture) appendComment(rel string, n int) {
 	f.write(rel, strings.Join(lines, "\n"))
 }
 
-// runIn executes the gate in the fixture repo against the binary and
-// extractor sitting in dir, rather than the shared stub-based binDir, so this
-// case cannot disturb the other eleven.
-func (f *fixture) runIn(dir string) runResult {
-	f.t.Helper()
-	cmd := exec.Command(filepath.Join(dir, "metric-gate"))
-	cmd.Dir = f.root
-	cmd.Env = append(os.Environ(), gitEnv...)
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	result := runResult{stdout: stdout.String(), stderr: stderr.String()}
-	switch e := err.(type) {
-	case nil:
-	case *exec.ExitError:
-		result.exitCode = e.ExitCode()
-	default:
-		f.t.Fatalf("running metric-gate: %v", err)
-	}
-	return result
-}
-
 // installRealExtractor builds a fresh metric-gate binary and packs and
 // installs the real dotnet tool extractor beside it, in a directory separate
 // from the shared stub-based binDir. It returns that directory.

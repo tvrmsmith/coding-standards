@@ -1,7 +1,8 @@
 // Command metric-gate scores the methods a change touched against a metric
 // threshold. It takes no flags (ADR 0005): stdout is one TOON document,
-// stderr is one summary line, and the exit code is 0 pass, 1 tool error, 2
-// threshold exceeded.
+// stderr is the human summary, one line except on the unknown_changed_method
+// path, which prints the cause above the counts, and the exit code is 0 pass,
+// 1 tool error, 2 threshold exceeded.
 //
 // The one exception to "stdout is one TOON document" is a failure upstream of
 // the document itself, such as not being in a git repo at all. Those write the
