@@ -125,6 +125,24 @@ func cobertura(sourceRoot string, classes ...coverageClass) string {
 	return b.String()
 }
 
+// denyRead creates a directory at rel that the process cannot read, so the
+// coverage walk hits a permission error on it. Root ignores the mode, so a
+// case relying on this skips there.
+func (f *fixture) denyRead(rel string) {
+	f.t.Helper()
+	if os.Geteuid() == 0 {
+		f.t.Skip("running as root, which reads a mode 0 directory anyway")
+	}
+	full := filepath.Join(f.root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(full, 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.Chmod(full, 0o000); err != nil {
+		f.t.Fatal(err)
+	}
+	f.t.Cleanup(func() { os.Chmod(full, 0o755) })
+}
+
 // failedToParse marks the named file as one the extractor could not parse.
 func failedToParse(file string) []fileStatus {
 	return []fileStatus{{File: file, Status: "failed"}}

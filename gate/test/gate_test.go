@@ -25,6 +25,58 @@ func TestDocsOnlyChangePassesWithNoCoverageReportPresent(t *testing.T) {
 		"no changed methods, nothing to measure\n")
 }
 
+func TestDocsOnlyChangePassesWithNoExtractorInstalledAtAll(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write("docs/notes.md", "first\n")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.write("docs/notes.md", "first\nsecond\n")
+
+	// No changed path carries an extension the gate's table declares, so no
+	// extractor is located, and the absent binary never matters.
+	f.runIn(gateOnlyDir(t)).assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
+		"no changed methods, nothing to measure\n")
+}
+
+func TestFileMovedWithNoContentChangeReportsNoChangedMethods(t *testing.T) {
+	const origin = "src/Ordering/Origin.cs"
+	const moved = "src/Ordering/Moved.cs"
+	vanish := span{File: moved, Name: "Moved.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(origin, csharpFile(20))
+	f.commitAll("initial")
+	// `--no-renames` splits this into a delete plus an add carrying the whole
+	// file, and ADR 0003 says a rename with no content change touches nothing.
+	f.git("mv", origin, moved)
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(moved), []span{vanish}),
+	}
+
+	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
+		"no changed methods, nothing to measure\n")
+}
+
+func TestCoverageWalkRecordsAPathItCouldNotRead(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	// A second results directory the walk cannot enter. Coverage may be
+	// understated by whatever report it holds, so the path is reported.
+	f.denyRead("TestResults/locked")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "skipped_unreadable_path", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
 func TestWellTestedMethodForItsComplexityPasses(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
