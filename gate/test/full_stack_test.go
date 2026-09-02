@@ -103,13 +103,25 @@ func installRealExtractor(t *testing.T) string {
 		t.Fatalf("building metric-gate: %v\n%s", err, out)
 	}
 
+	// `dotnet tool install` resolves the package id and version out of the
+	// NuGet global packages folder once anything has extracted it there, and
+	// the csproj pins one version forever. Sharing the machine's folder would
+	// install run 1's build on every later run, so this case would verify a
+	// stale extractor and keep passing after a real regression in the tool.
+	nugetPackages := t.TempDir()
+	dotnet := func(args ...string) *exec.Cmd {
+		cmd := exec.Command("dotnet", args...)
+		cmd.Env = append(os.Environ(), "NUGET_PACKAGES="+nugetPackages)
+		return cmd
+	}
+
 	packDir := t.TempDir()
-	pack := exec.Command("dotnet", "pack", dotnetProject, "-c", "Release", "-o", packDir)
+	pack := dotnet("pack", dotnetProject, "-c", "Release", "-o", packDir)
 	if out, err := pack.CombinedOutput(); err != nil {
 		t.Fatalf("dotnet pack: %v\n%s", err, out)
 	}
 
-	install := exec.Command("dotnet", "tool", "install",
+	install := dotnet("tool", "install",
 		"--tool-path", dir, "--add-source", packDir, "Tvrmsmith.MetricGate.CSharp")
 	if out, err := install.CombinedOutput(); err != nil {
 		t.Fatalf("dotnet tool install: %v\n%s", err, out)

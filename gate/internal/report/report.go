@@ -24,13 +24,15 @@ const Scope = "merge-base"
 // The typed error codes for the exit-1 causes this gate can reach. An agent
 // branches on these rather than parsing the message.
 const (
-	CodeNoDiffBase            = "no_diff_base"
-	CodeExtractorFailed       = "extractor_failed"
-	CodeExtractorPathMismatch = "extractor_path_mismatch"
-	CodeParseFailed           = "parse_failed"
-	CodeCoverageMissing       = "coverage_missing"
-	CodeCoverageUnparseable   = "coverage_unparseable"
-	CodeUnknownChangedMethod  = "unknown_changed_method"
+	CodeNoDiffBase                    = "no_diff_base"
+	CodeExtractorFailed               = "extractor_failed"
+	CodeExtractorPathMismatch         = "extractor_path_mismatch"
+	CodeExtractorCapabilitiesMismatch = "extractor_capabilities_mismatch"
+	CodeExtractorDuplicateSpan        = "extractor_duplicate_span"
+	CodeParseFailed                   = "parse_failed"
+	CodeCoverageMissing               = "coverage_missing"
+	CodeCoverageUnparseable           = "coverage_unparseable"
+	CodeUnknownChangedMethod          = "unknown_changed_method"
 )
 
 // ReasonFileUnmatched is the typed reason on an unknown row: the changed

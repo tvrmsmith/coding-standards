@@ -17,9 +17,15 @@ import (
 
 // config is the canned behaviour of one stub run.
 type config struct {
+	// Language is what --capabilities reports, defaulting to the language the
+	// gate's table located this binary under.
+	Language   string   `json:"language"`
 	Extensions []string `json:"extensions"`
-	ExitCode   int      `json:"exitCode"`
-	Stdout     string   `json:"stdout"`
+	// CapabilitiesStdout replaces the rendered --capabilities response
+	// verbatim, so a case can hand the gate a body that is not JSON.
+	CapabilitiesStdout string `json:"capabilitiesStdout"`
+	ExitCode           int    `json:"exitCode"`
+	Stdout             string `json:"stdout"`
 }
 
 func main() {
@@ -60,8 +66,16 @@ func loadConfig() (config, error) {
 
 // writeCapabilities answers --capabilities in the ADR 0006 wire format.
 func writeCapabilities(cfg config) {
+	if cfg.CapabilitiesStdout != "" {
+		fmt.Print(cfg.CapabilitiesStdout)
+		return
+	}
+	language := cfg.Language
+	if language == "" {
+		language = "csharp"
+	}
 	body, err := json.Marshal(map[string]any{
-		"language":   "csharp",
+		"language":   language,
 		"extensions": cfg.Extensions,
 	})
 	if err != nil {

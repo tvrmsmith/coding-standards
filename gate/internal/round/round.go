@@ -12,10 +12,11 @@ import (
 // HalfUp rounds f to precision decimal places, rounding half away from zero
 // rather than Go's default round-half-to-even. It works from strconv's
 // shortest round-tripping decimal representation of f, then rounds that
-// decimal string, so a binary value like 2.675 (stored as
-// 2.67499999999999982236431605997495353221893310546875) rounds as a human
-// reading "2.675" would expect rather than picking up the binary noise a
-// scaled math.Floor(f*scale+0.5) form would.
+// decimal string, so a binary value like 1.005 (stored as
+// 1.00499999999999989341858963598497211933135986328125) rounds to 1.01 as a
+// human reading "1.005" expects, rather than to the 1 a scaled
+// math.Floor(f*scale+0.5) form gives once the binary noise reaches the
+// comparison.
 func HalfUp(f float64, precision int) float64 {
 	s := strconv.FormatFloat(f, 'f', -1, 64)
 	neg := strings.HasPrefix(s, "-")
