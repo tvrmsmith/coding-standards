@@ -21,11 +21,21 @@ import (
 	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
 )
 
-// languageBinaries is the built-in table ADR 0006 fixes: a language yields a
-// binary *name*, looked up beside the gate. Nothing on PATH, no repo config
-// file, and no environment variable participates.
-var languageBinaries = map[string]string{
-	"csharp": "metric-gate-csharp",
+// languages is the built-in table ADR 0006 fixes: a language yields a binary
+// *name*, looked up beside the gate. Nothing on PATH, no repo config file, and
+// no environment variable participates.
+//
+// The extensions beside the name decide one thing only, whether the gate execs
+// the binary at all. They never filter the paths handed in on stdin, so
+// --capabilities remains the sole authority on what the extractor handles.
+var languages = map[string]language{
+	"csharp": {binary: "metric-gate-csharp", extensions: []string{".cs"}},
+}
+
+// language is one row of that table.
+type language struct {
+	binary     string
+	extensions []string
 }
 
 // Span is one method's identity and complexity, as the extractor reports it.
@@ -51,19 +61,21 @@ type Result struct {
 // Extract runs every located extractor over the changed files it claims. It
 // returns a *report.Failure for every exit-1 cause in ADR 0006's contract.
 func Extract(root srcpath.Root, changed []srcpath.Path) (Result, error) {
-	// No changed file means no extractor can be asked for anything, so none
-	// is located or launched. A docs-only change therefore passes in a
-	// deployment that ships the gate without an extractor beside it.
-	if len(changed) == 0 {
-		return Result{Claimed: map[srcpath.Path]bool{}}, nil
+	// An extractor no changed file could possibly belong to is never located
+	// and never launched. A docs-only change therefore passes with an empty
+	// changed set in a deployment that ships the gate without an extractor
+	// beside it.
+	worth := worthRunning(changed)
+	result := Result{Claimed: map[srcpath.Path]bool{}}
+	if len(worth) == 0 {
+		return result, nil
 	}
 	dir, err := extractorDir()
 	if err != nil {
 		return Result{}, err
 	}
-	result := Result{Claimed: map[srcpath.Path]bool{}}
-	for _, language := range sortedLanguages() {
-		e := extractor{language: language, binary: filepath.Join(dir, languageBinaries[language]), root: root}
+	for _, name := range worth {
+		e := extractor{language: name, binary: filepath.Join(dir, languages[name].binary), root: root}
 		spans, claimed, err := e.run(changed)
 		if err != nil {
 			return Result{}, err
@@ -74,6 +86,23 @@ func Extract(root srcpath.Root, changed []srcpath.Path) (Result, error) {
 		}
 	}
 	return result, nil
+}
+
+// worthRunning lists the languages at least one changed path could belong to,
+// judged by the table's static extensions. This is the only use of that list:
+// once a binary is launched, its own --capabilities answer decides which paths
+// it is handed.
+func worthRunning(changed []srcpath.Path) []string {
+	var worth []string
+	for _, name := range sortedLanguages() {
+		for _, path := range changed {
+			if slices.Contains(languages[name].extensions, path.Ext()) {
+				worth = append(worth, name)
+				break
+			}
+		}
+	}
+	return worth
 }
 
 // extractorDir is the directory the gate's own binary sits in, which is the
@@ -89,7 +118,7 @@ func extractorDir() (string, error) {
 // sortedLanguages keeps the order the languages are consulted in fixed, so a
 // run's output does not depend on map iteration.
 func sortedLanguages() []string {
-	return slices.Sorted(maps.Keys(languageBinaries))
+	return slices.Sorted(maps.Keys(languages))
 }
 
 // extractor is one located language extractor.

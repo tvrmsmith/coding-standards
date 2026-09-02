@@ -33,15 +33,18 @@ type Lines map[int]bool
 // changed method in it unknown rather than untested.
 type Set map[srcpath.Path]Lines
 
-// Discover lists the Cobertura reports under the repo root, in a fixed order.
-func Discover(root srcpath.Root) ([]srcpath.Path, error) {
-	var reports []srcpath.Path
-	err := filepath.WalkDir(root.Dir(), func(path string, entry fs.DirEntry, err error) error {
+// Discover lists the Cobertura reports under the repo root, in a fixed order,
+// beside the paths the walk could not read. A skipped path is a report the
+// walk may not have seen, so the document carries it under `skipped_paths`
+// rather than leaving understated coverage unexplained.
+func Discover(root srcpath.Root) (reports []srcpath.Path, skipped []string, err error) {
+	err = filepath.WalkDir(root.Dir(), func(path string, entry fs.DirEntry, err error) error {
 		// One unreadable directory somewhere under the repo root must not
 		// abort discovery: that would exit 1 with no document at all, where
 		// the worst a skipped subtree can cost is a report the walk did not
-		// see, which the coverage_missing path already reports.
+		// see, which the reader now sees in `skipped_paths`.
 		if err != nil {
+			skipped = append(skipped, relative(root, path))
 			if entry != nil && entry.IsDir() {
 				return fs.SkipDir
 			}
@@ -67,10 +70,21 @@ func Discover(root srcpath.Root) ([]srcpath.Path, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("discovering coverage reports: %w", err)
+		return nil, nil, fmt.Errorf("discovering coverage reports: %w", err)
 	}
 	slices.Sort(reports)
-	return reports, nil
+	slices.Sort(skipped)
+	return reports, skipped, nil
+}
+
+// relative renders a walked path the way the document names paths, falling
+// back to the absolute path when it cannot be placed under the root.
+func relative(root srcpath.Root, path string) string {
+	rel, err := filepath.Rel(root.Dir(), path)
+	if err != nil {
+		return filepath.ToSlash(path)
+	}
+	return filepath.ToSlash(rel)
 }
 
 // underResultsDir reports whether any directory component of rel is the

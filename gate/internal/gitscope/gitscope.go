@@ -90,12 +90,91 @@ func (r Repo) ResolveBase() (Base, error) {
 // path is never scored. Decomposing the rename into a delete plus an add
 // gives the add side every line, which is what ADR 0003 means by "a method
 // moved between files appears as added lines at its new location".
+//
+// Decomposition alone would break ADR 0003's other sentence, that a file
+// renamed with no content change reports no touched lines, because the add
+// side of a pure `git mv` is the whole file. So an added path whose content is
+// byte-identical to a path the same diff deleted is dropped afterwards, and
+// only a move that also edited the file is measured.
 func (r Repo) TouchedLines(base Base) (map[srcpath.Path][]int, error) {
 	patch, err := r.git("-c", "core.quotePath=false", "diff", "-w", "-U0", "--no-renames", "--diff-filter=ACM", base.Commit)
 	if err != nil {
 		return nil, err
 	}
-	return parseTouchedLines(patch)
+	touched, err := parseTouchedLines(patch)
+	if err != nil {
+		return nil, err
+	}
+	moved, err := r.pureMoves(base)
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range moved {
+		delete(touched, path)
+	}
+	return touched, nil
+}
+
+// pureMoves lists the added paths carrying content some deleted path in the
+// same diff carried, which is what a rename looks like once `--no-renames`
+// has split it in two.
+//
+// Git leaves the new-side blob id all zeroes whenever the working tree copy
+// differs from what is staged, so a file moved and then edited never matches
+// and stays measured, which is the conservative direction.
+func (r Repo) pureMoves(base Base) ([]srcpath.Path, error) {
+	raw, err := r.git("diff", "--raw", "-z", "--abbrev=40", "--no-renames", "--diff-filter=AD", base.Commit)
+	if err != nil {
+		return nil, err
+	}
+	added, deletedBlobs, err := parseRawAddsAndDeletes(raw)
+	if err != nil {
+		return nil, err
+	}
+	var moves []srcpath.Path
+	for path, blob := range added {
+		if deletedBlobs[blob] {
+			moves = append(moves, path)
+		}
+	}
+	return moves, nil
+}
+
+// parseRawAddsAndDeletes reads `git diff --raw -z` records, returning each
+// added path with its new-side blob id and the set of blob ids the diff
+// deleted. A record is the metadata field ":<mode> <mode> <src> <dst> <status>"
+// followed by the path, both NUL-terminated.
+func parseRawAddsAndDeletes(raw string) (added map[srcpath.Path]string, deleted map[string]bool, err error) {
+	added, deleted = map[srcpath.Path]string{}, map[string]bool{}
+	records := strings.Split(strings.TrimSuffix(raw, "\x00"), "\x00")
+	if len(records) == 1 && records[0] == "" {
+		return added, deleted, nil
+	}
+	if len(records)%2 != 0 {
+		return nil, nil, fmt.Errorf("git diff --raw emitted %d fields, want pairs", len(records))
+	}
+	for i := 0; i < len(records); i += 2 {
+		fields := strings.Fields(records[i])
+		if len(fields) != 5 {
+			return nil, nil, fmt.Errorf("git diff --raw record is malformed: %q", records[i])
+		}
+		src, dst, status := fields[2], fields[3], fields[4]
+		switch status {
+		case "A":
+			if !isNullBlob(dst) {
+				added[srcpath.FromSlash(records[i+1])] = dst
+			}
+		case "D":
+			deleted[src] = true
+		}
+	}
+	return added, deleted, nil
+}
+
+// isNullBlob reports whether an id is git's all-zero placeholder, which the
+// new side carries when git did not hash the working tree copy.
+func isNullBlob(id string) bool {
+	return strings.Trim(id, "0") == ""
 }
 
 // parseTouchedLines reads hunk headers out of a unified diff.

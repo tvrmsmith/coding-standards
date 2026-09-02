@@ -88,7 +88,8 @@ func measure() (report.Document, error) {
 		return doc, nil
 	}
 
-	lines, err := loadCoverage(repo.Root())
+	lines, skipped, err := loadCoverage(repo.Root())
+	doc.SkippedPaths = skipped
 	if failure, ok := asFailure(err); ok {
 		doc.Failure = failure
 		return doc, nil
@@ -113,22 +114,25 @@ func measure() (report.Document, error) {
 
 // loadCoverage resolves the coverage input, and only because
 // crap.DeclaredInputs names it. The failure names the metric that is stuck
-// rather than the file that is absent (ADR 0002).
-func loadCoverage(root srcpath.Root) (coverage.Set, error) {
+// rather than the file that is absent (ADR 0002). The paths discovery could
+// not read come back alongside, including on the missing-report failure,
+// where they are the likeliest explanation for it.
+func loadCoverage(root srcpath.Root) (coverage.Set, []string, error) {
 	if !slices.Contains(crap.DeclaredInputs, inputCoverage) {
-		return nil, nil
+		return nil, nil, nil
 	}
-	reports, err := coverage.Discover(root)
+	reports, skipped, err := coverage.Discover(root)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(reports) == 0 {
-		return nil, &report.Failure{
+		return nil, skipped, &report.Failure{
 			Code:    report.CodeCoverageMissing,
 			Message: crap.DisplayName + " requires a coverage report, none found",
 		}
 	}
-	return coverage.Load(root, reports)
+	set, err := coverage.Load(root, reports)
+	return set, skipped, err
 }
 
 // inputCoverage is the declared input name a coverage report answers.

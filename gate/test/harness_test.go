@@ -60,6 +60,20 @@ func buildBinaries(dir string) error {
 	return nil
 }
 
+// gateOnlyDir builds a metric-gate binary into a directory of its own with no
+// extractor beside it, which is the deployment a docs-only change has to pass
+// in.
+func gateOnlyDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	cmd := exec.Command("go", "build", "-o", filepath.Join(dir, "metric-gate"), "./cmd/metric-gate")
+	cmd.Dir = ".."
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("building metric-gate: %v\n%s", err, out)
+	}
+	return dir
+}
+
 // fixture is a throwaway git repo a case runs the gate against.
 type fixture struct {
 	t    *testing.T
