@@ -8,6 +8,19 @@ per-file parse status. No semantic model, no MSBuild, no project or solution loa
 The gate locates it from a built-in table keyed by language, asks it for its extension list with `--capabilities`,
 and hands it only changed files. Nothing on `PATH` and no repo config file participates in that lookup.
 
+**Amended 2026-09-02.** Each row of the table also carries an extension list, and it decides exactly one thing:
+whether the gate execs that binary at all. Locating and launching the extractor before knowing whether any changed
+file could belong to it made a docs-only commit fail with `extractor_failed` wherever the extractor is not sitting
+beside the gate, which contradicts [ADR 0003](0003-changed-method-is-a-span-holding-a-touched-line.md)'s rule that
+an empty changed-method set exits 0 before resolving any input. `build.sh` ships only the gate binaries and nothing
+packages the extractor with them, so that deployment is the likely one rather than the exotic one. The two rejected
+alternatives were worse: treating an absent extractor as claiming nothing would silently unscore a real `.cs`
+change, and leaving the behaviour while deleting the comment that promised otherwise would keep a gate that refuses
+to pass a README edit. The static list never filters the paths handed in on stdin, so once the gate does exec,
+`--capabilities` remains the sole authority on what the extractor handles and the closing paragraph below stands
+unchanged. A table that under-claims costs a launch that finds nothing; a table that over-claims costs nothing at
+all, because `--capabilities` then narrows it.
+
 [ADR 0001](0001-crap-gate-topology.md) decided that complexity comes from a source-level AST walker.
 [Issue 4](https://github.com/tvrmsmith/coding-standards/issues/4) named `ComplexityRipper` as the tool filling
 that role for .NET today. This ADR replaces the tool, not the decision, and ADR 0001 needs no amendment because it

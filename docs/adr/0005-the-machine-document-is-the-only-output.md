@@ -40,6 +40,22 @@ trailing zero. The decision this ADR records is unaffected; only the example's d
 threshold, while at 0.363 it is 29.94. Half-up rounding would print a target a developer can hit and
 still fail, which defeats the reason the cell exists.
 
+**Amended 2026-09-02.** The `unknown_changed_method` path emits **two** lines on stderr, the failure
+message and then the summary line, so line 5's "one summary line on stderr" describes every path but
+this one. It is the one exit-1 cause that still carries a table, because the join is what discovers
+it, so it is also the one where both the error and the scored-method count have something to say. A
+reader who saw only the failure message would not know how many methods did score, and one who saw
+only the summary would not know why the run failed. The summary line keeps its position last, so a
+consumer reading the final line of stderr gets the same field on every path.
+
+**Amended 2026-09-02.** The `scope` field's value for the default diff mode is the token
+`merge-base`. The worked example above prints `scope: since` because it was written against a run
+given `--since`, and neither this ADR nor [ADR 0003](0003-changed-method-is-a-span-holding-a-touched-line.md)
+fixed the default's spelling, which left a machine-contract value undocumented while every golden
+baked it in. The token is recorded here rather than renamed, because `merge-base` says what the base
+actually is and `since` is the name of the flag that overrides it. One token per diff mode, and a
+consumer may branch on it.
+
 Three parts of that shape are decisions in their own right.
 
 **The fix instruction is two typed cells, never prose.** `action` is one of `raise_coverage`, `split_method`, or
