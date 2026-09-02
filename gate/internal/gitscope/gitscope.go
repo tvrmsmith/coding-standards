@@ -2,6 +2,11 @@
 // commit the run diffs against, and which lines that diff touched. The gate
 // runs git itself rather than taking hunks from a wrapper, so `-w` and
 // `--diff-filter` are fixed in one place and no caller can get them wrong.
+//
+// The diff covers tracked paths only. A brand-new source file the developer
+// has not yet `git add`ed contributes no touched lines and therefore no
+// changed methods, which ADR 0003 records as a deliberate limitation of the
+// merge-base scope rather than an oversight.
 package gitscope
 
 import (
@@ -74,12 +79,19 @@ func (r Repo) ResolveBase() (Base, error) {
 	return Base{}, NoBaseError{}
 }
 
-// TouchedLines returns the new-side lines of `git diff -w -U0
+// TouchedLines returns the new-side lines of `git diff -w -U0 --no-renames
 // --diff-filter=ACM <base>`, keyed by source path and ascending within a
 // file. A zero-length hunk, which is what a pure deletion produces, touches
 // the line at its insertion point.
+//
+// `--no-renames` is not optional. With git's default rename detection on, a
+// file git scores as a rename carries status R, `--diff-filter=ACM` drops it
+// entirely, and a method that gained a decision point on the way to its new
+// path is never scored. Decomposing the rename into a delete plus an add
+// gives the add side every line, which is what ADR 0003 means by "a method
+// moved between files appears as added lines at its new location".
 func (r Repo) TouchedLines(base Base) (map[srcpath.Path][]int, error) {
-	patch, err := r.git("-c", "core.quotePath=false", "diff", "-w", "-U0", "--diff-filter=ACM", base.Commit)
+	patch, err := r.git("-c", "core.quotePath=false", "diff", "-w", "-U0", "--no-renames", "--diff-filter=ACM", base.Commit)
 	if err != nil {
 		return nil, err
 	}
@@ -87,18 +99,29 @@ func (r Repo) TouchedLines(base Base) (map[srcpath.Path][]int, error) {
 }
 
 // parseTouchedLines reads hunk headers out of a unified diff.
+//
+// A "+++ " line only names the new-side file while the parser is inside a
+// file's preamble, between its `diff --git` line and its first hunk. Inside a
+// hunk body, an added line whose own text starts with "++ " renders as
+// "+++ x", and treating that as a file header would silently reattribute
+// every later hunk of the real file to a path that does not exist.
 func parseTouchedLines(patch string) (map[srcpath.Path][]int, error) {
 	touched := map[srcpath.Path][]int{}
 	var current srcpath.Path
+	inPreamble := false
 	for _, line := range strings.Split(patch, "\n") {
 		switch {
-		case strings.HasPrefix(line, "+++ "):
+		case strings.HasPrefix(line, "diff --git "):
+			inPreamble = true
+		case inPreamble && strings.HasPrefix(line, "+++ "):
 			path, err := parseNewSidePath(strings.TrimPrefix(line, "+++ "))
 			if err != nil {
 				return nil, err
 			}
 			current = path
+			inPreamble = false
 		case strings.HasPrefix(line, "@@ "):
+			inPreamble = false
 			start, count, err := parseHunkHeader(line)
 			if err != nil {
 				return nil, err

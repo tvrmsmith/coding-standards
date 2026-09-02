@@ -10,7 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/report"
@@ -37,8 +37,15 @@ type Set map[srcpath.Path]Lines
 func Discover(root srcpath.Root) ([]srcpath.Path, error) {
 	var reports []srcpath.Path
 	err := filepath.WalkDir(root.Dir(), func(path string, entry fs.DirEntry, err error) error {
+		// One unreadable directory somewhere under the repo root must not
+		// abort discovery: that would exit 1 with no document at all, where
+		// the worst a skipped subtree can cost is a report the walk did not
+		// see, which the coverage_missing path already reports.
 		if err != nil {
-			return err
+			if entry != nil && entry.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
 		}
 		if entry.IsDir() {
 			if entry.Name() == ".git" {
@@ -51,7 +58,7 @@ func Discover(root srcpath.Root) ([]srcpath.Path, error) {
 		}
 		rel, err := filepath.Rel(root.Dir(), path)
 		if err != nil {
-			return err
+			return nil
 		}
 		if !underResultsDir(rel) {
 			return nil
@@ -62,7 +69,7 @@ func Discover(root srcpath.Root) ([]srcpath.Path, error) {
 	if err != nil {
 		return nil, fmt.Errorf("discovering coverage reports: %w", err)
 	}
-	sort.Slice(reports, func(i, j int) bool { return reports[i] < reports[j] })
+	slices.Sort(reports)
 	return reports, nil
 }
 

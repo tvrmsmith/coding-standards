@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/tvrmsmith/coding-standards/gate/internal/round"
 )
 
 // SpecVersion is the TOON specification version this encoder targets.
@@ -281,75 +283,7 @@ func scalarToken(v any) (string, error) {
 // canonically is not).
 func cellToken(v any, col Column) (string, error) {
 	if f, ok := v.(float64); ok {
-		return formatCanonicalFloat(roundHalfUp(f, col.Precision)), nil
+		return formatCanonicalFloat(round.HalfUp(f, col.Precision)), nil
 	}
 	return scalarToken(v)
-}
-
-// roundHalfUp rounds f to precision decimal places, rounding half away
-// from zero rather than Go's default round-half-to-even. It works from
-// strconv's shortest round-tripping decimal representation of f, then
-// rounds that decimal string, so a binary value like 0.1 (stored as
-// 0.1000000000000000055511151231257827) rounds as a human reading "0.1"
-// would expect rather than picking up spurious trailing binary noise.
-func roundHalfUp(f float64, precision int) float64 {
-	s := strconv.FormatFloat(f, 'f', -1, 64)
-	neg := strings.HasPrefix(s, "-")
-	s = strings.TrimPrefix(s, "-")
-
-	intPart, fracPart, _ := strings.Cut(s, ".")
-	if len(fracPart) > precision {
-		roundUp := fracPart[precision] >= '5'
-		fracPart = fracPart[:precision]
-		if roundUp {
-			var carry bool
-			fracPart, carry = incrementDigits(fracPart)
-			if carry {
-				intPart = incrementDigits1(intPart)
-			}
-		}
-	}
-
-	rounded := intPart
-	if fracPart != "" {
-		rounded += "." + fracPart
-	}
-	if neg {
-		rounded = "-" + rounded
-	}
-	// The rounded decimal string always round-trips exactly at this
-	// precision, so the reparse below cannot fail.
-	result, _ := strconv.ParseFloat(rounded, 64)
-	return result
-}
-
-// incrementDigits adds one to the least-significant digit of a decimal
-// digit string, propagating any carry leftward. It reports whether the
-// carry propagated past the most significant digit (e.g. "99" -> "00",
-// true).
-func incrementDigits(digits string) (string, bool) {
-	b := []byte(digits)
-	for i := len(b) - 1; i >= 0; i-- {
-		if b[i] != '9' {
-			b[i]++
-			return string(b), false
-		}
-		b[i] = '0'
-	}
-	return string(b), true
-}
-
-// incrementDigits1 adds one to a decimal digit string representing a
-// non-negative integer, growing it by a leading "1" on overflow (e.g.
-// "99" -> "100").
-func incrementDigits1(digits string) string {
-	b := []byte(digits)
-	for i := len(b) - 1; i >= 0; i-- {
-		if b[i] != '9' {
-			b[i]++
-			return string(b)
-		}
-		b[i] = '0'
-	}
-	return "1" + string(b)
 }

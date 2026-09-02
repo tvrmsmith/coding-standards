@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
 
 namespace Tvrmsmith.MetricGate.CSharp.Tests;
 
@@ -36,9 +37,16 @@ internal static class MetricGateCsharpProcess
 
         process.StandardInput.Close();
 
-        var stdOut = process.StandardOutput.ReadToEnd();
-        var stdErr = process.StandardError.ReadToEnd();
+        // Both pipes are drained concurrently. Reading stdout to EOF first
+        // would hang the moment the child wrote more to stderr than its pipe
+        // buffer holds, because it would block writing while nobody read.
+        var stdOutTask = process.StandardOutput.ReadToEndAsync();
+        var stdErrTask = process.StandardError.ReadToEndAsync();
+        Task.WaitAll(stdOutTask, stdErrTask);
         process.WaitForExit();
+
+        var stdOut = stdOutTask.Result;
+        var stdErr = stdErrTask.Result;
 
         return new CliResult(process.ExitCode, stdOut, stdErr);
     }
