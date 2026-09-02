@@ -71,6 +71,15 @@ func (f *fixture) touchLine(rel string, line int) {
 	f.write(rel, replaceLine(f.read(rel), line, fmt.Sprintf("// line %d, edited", line)))
 }
 
+// deleteLines removes the one-based lines from..to of the file at rel, which
+// the diff reports as a zero-length new-side hunk rather than as touched
+// lines of its own.
+func (f *fixture) deleteLines(rel string, from, to int) {
+	f.t.Helper()
+	lines := strings.Split(f.read(rel), "\n")
+	f.write(rel, strings.Join(append(append([]string{}, lines[:from-1]...), lines[to:]...), "\n"))
+}
+
 // read returns the current content of the file at rel.
 func (f *fixture) read(rel string) string {
 	f.t.Helper()
@@ -190,4 +199,39 @@ func (f *fixture) denyRead(rel string) {
 // failedToParse marks the named file as one the extractor could not parse.
 func failedToParse(file string) []fileStatus {
 	return []fileStatus{{File: file, Status: "failed"}}
+}
+
+// addSubmoduleGitlink commits a mode 160000 entry at rel pointing at the
+// fixture's own HEAD. That is what a submodule is in the index, and it needs no
+// second repository on disk. The commit is made without `git add -A`, which
+// would drop an entry that has no working-tree file behind it.
+func (f *fixture) addSubmoduleGitlink(rel string) {
+	f.t.Helper()
+	f.git("update-index", "--add", "--cacheinfo", "160000,"+f.git("rev-parse", "HEAD")+","+rel)
+	f.git("commit", "--quiet", "-m", "add submodule "+rel)
+}
+
+// removeSubmoduleGitlink stages the removal of the gitlink at rel.
+func (f *fixture) removeSubmoduleGitlink(rel string) {
+	f.t.Helper()
+	f.git("update-index", "--force-remove", rel)
+}
+
+// copyFile duplicates the file at src to dst inside the fixture, byte for
+// byte, which is how a case produces a second added path carrying content the
+// diff also deleted.
+func (f *fixture) copyFile(src, dst string) {
+	f.t.Helper()
+	f.write(dst, f.read(src))
+}
+
+// externalDiffScript writes an executable that prints nothing and exits 0, the
+// shape of an external diff driver that hides every change from the parser.
+func externalDiffScript(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "silent-diff")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

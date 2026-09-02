@@ -162,22 +162,48 @@ type runResult struct {
 // run executes the gate in the fixture repo with the case's stub config.
 func (f *fixture) run() runResult {
 	f.t.Helper()
-	cfgPath := filepath.Join(f.t.TempDir(), "stub.json")
+	return f.runWithEnv()
+}
+
+// runWithEnv is run with extra environment variables laid over the case's own,
+// which is how a case puts the gate in a hostile environment.
+func (f *fixture) runWithEnv(extra ...string) runResult {
+	f.t.Helper()
+	return f.exec(binDir, append([]string{"METRIC_GATE_STUB=" + f.stubConfigPath()}, extra...)...)
+}
+
+// runIn executes the gate against the binary and extractor sitting in dir
+// rather than the shared stub-based binDir, so a case that needs its own
+// installation cannot disturb the rest of the suite.
+func (f *fixture) runIn(dir string) runResult {
+	f.t.Helper()
+	return f.exec(dir)
+}
+
+// stubConfigPath writes the case's stub config out and returns its path.
+func (f *fixture) stubConfigPath() string {
+	f.t.Helper()
+	path := filepath.Join(f.t.TempDir(), "stub.json")
 	body, err := json.Marshal(f.stub)
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	if err := os.WriteFile(cfgPath, body, 0o644); err != nil {
+	if err := os.WriteFile(path, body, 0o644); err != nil {
 		f.t.Fatal(err)
 	}
+	return path
+}
 
-	cmd := exec.Command(filepath.Join(binDir, "metric-gate"))
+// exec runs the metric-gate binary in dir against the fixture repo.
+func (f *fixture) exec(dir string, extraEnv ...string) runResult {
+	f.t.Helper()
+	cmd := exec.Command(filepath.Join(dir, "metric-gate"))
 	cmd.Dir = f.root
-	cmd.Env = append(os.Environ(), append(gitEnv, "METRIC_GATE_STUB="+cfgPath)...)
+	cmd.Env = append(os.Environ(), append(append([]string{}, gitEnv...), extraEnv...)...)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err = cmd.Run()
+	err := cmd.Run()
 	result := runResult{stdout: stdout.String(), stderr: stderr.String()}
 	switch e := err.(type) {
 	case nil:

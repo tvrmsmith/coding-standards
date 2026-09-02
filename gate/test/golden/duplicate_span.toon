@@ -8,4 +8,4 @@ touched_lines_outside_spans: 0
 skipped_paths: []
 error:
   code: extractor_duplicate_span
-  message: csharp extractor returned two spans covering src/Ordering/OrderService.cs lines 41-58
+  message: csharp extractor returned OrderService.PlaceAsync twice, covering src/Ordering/OrderService.cs lines 41-58

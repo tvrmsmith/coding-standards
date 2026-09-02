@@ -1,6 +1,11 @@
 package gate_test
 
-import "testing"
+import (
+	"os"
+	"os/exec"
+	"strings"
+	"testing"
+)
 
 // orderService is the source file most cases touch. Its spans are canned by
 // the stub, so only its length matters.
@@ -123,22 +128,46 @@ func TestExtractorClaimingNoneOfTheFilesItWasLocatedForFails(t *testing.T) {
 		"csharp extractor claims none of the changed files the language table located it for\n")
 }
 
-func TestExtractorReturningTwoSpansOverTheSameRangeFails(t *testing.T) {
-	// ADR 0001 identifies a span by range and never by name, so these two are
-	// one span downstream and one of them would vanish from the table.
-	twin := span{File: orderService, Name: "OrderService.Twin", StartLine: 41, EndLine: 58, Complexity: 4}
-
+func TestExtractorReturningTheSameSpanTwiceFails(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 45)
+	// The identical row twice: one of the two would vanish from the table with
+	// nothing said about it, which is an extractor bug and not a join the gate
+	// should guess its way through.
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, twin}),
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, placeAsync}),
 	}
 
 	f.run().assertMatches(t, "duplicate_span", 1, f.baseLabel("main"),
-		"csharp extractor returned two spans covering src/Ordering/OrderService.cs lines 41-58\n")
+		"csharp extractor returned OrderService.PlaceAsync twice, covering src/Ordering/OrderService.cs lines 41-58\n")
+}
+
+func TestTwoMethodsDeclaredOnOneLineAreBothScored(t *testing.T) {
+	const twins = "src/Ordering/Twins.cs"
+	// `public class C { public int A() => 1; public int B() => 2; }` is valid
+	// C#, and the real Roslyn extractor reports both methods over line 14. Two
+	// methods sharing a range are not a duplicate, and neither may be dropped.
+	first := span{File: twins, Name: "Twins.A", StartLine: 14, EndLine: 14, Complexity: 1}
+	second := span{File: twins, Name: "Twins.B", StartLine: 14, EndLine: 14, Complexity: 2}
+
+	f := newFixture(t, "main")
+	f.write(twins, csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(twins, 14)
+	// Line 14 is the only instrumentable line, and it belongs to both methods,
+	// because neither is narrower than the other.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: twins, lines: spanCoverage(14, 1, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(twins), []span{first, second}),
+	}
+
+	f.run().assertMatches(t, "same_line_two_methods", 0, f.baseLabel("main"),
+		"0 of 2 changed methods over CRAP threshold 30, worst score 2.00\n")
 }
 
 func TestChangedSourceFileWithNoExtractorInstalledFails(t *testing.T) {
@@ -476,4 +505,213 @@ func TestCoverageReportThatIsNotValidXMLFails(t *testing.T) {
 
 	f.run().assertMatches(t, "coverage_unparseable", 1, f.baseLabel("main"),
 		"could not parse coverage report TestResults/fixed/coverage.cobertura.xml\n")
+}
+
+func TestMoveWithAnExtraCopyDropsOnlyOneOfTheTwoAddedPaths(t *testing.T) {
+	const origin = "src/Ordering/Origin.cs"
+	const moved = "src/Ordering/Moved.cs"
+	const copied = "src/Ordering/Copy.cs"
+	vanish := span{File: moved, Name: "Moved.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(origin, csharpFile(20))
+	f.commitAll("initial")
+	// One file's worth of content moved, so exactly one of the two added paths
+	// is the move. The other is a new file and every line of it is new code.
+	f.git("mv", origin, moved)
+	f.copyFile(moved, copied)
+	f.git("add", copied)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: moved, lines: spanCoverage(6, 4, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(moved), []span{vanish}),
+	}
+
+	// The deleted blob is consumed by the first added path in diff order,
+	// Copy.cs, leaving Moved.cs measured whole, which is renamed_file's
+	// document. Pairing many-to-one would drop both and measure nothing.
+	f.run().assertMatches(t, "renamed_file", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 10.75\n")
+}
+
+func TestRemovingASubmoduleStillEmitsADocument(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	// A gitlink's object id names a commit in another repository, so reading it
+	// as a blob fails. The move detection has to skip it rather than let the
+	// error escape and leave the run with no document at all.
+	f.addSubmoduleGitlink("vendor/lib")
+	f.removeSubmoduleGitlink("vendor/lib")
+	f.touchLine(orderService, 62)
+	// An added path of some kind is what sends the move detection to read the
+	// deleted side at all, and the gitlink is on that deleted side.
+	f.write("docs/notes.md", "new file\n")
+	f.git("add", "docs/notes.md")
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestHostileGitConfigAndEnvironmentDoNotHideTheChange(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// Each of these reshapes `git diff` into something the hunk parser reads as
+	// no change at all: colour codes ahead of every header, a w/ prefix instead
+	// of b/, no prefix, or an external driver that prints nothing. A gate that
+	// measures nothing passes, so every one of them is a silent green build.
+	f.git("config", "color.ui", "always")
+	f.git("config", "diff.mnemonicPrefix", "true")
+	f.git("config", "diff.noprefix", "true")
+	f.git("config", "diff.external", externalDiffScript(t))
+
+	result := f.runWithEnv(
+		"GIT_EXTERNAL_DIFF="+externalDiffScript(t),
+		"GIT_CONFIG_PARAMETERS='color.ui=always' 'diff.noprefix=true'",
+	)
+
+	result.assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestLinesDeletedFromInsideAMethodChangeIt(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	// A pure deletion produces a zero-length new-side hunk, "@@ -62,2 +61,0 @@".
+	// Nothing was added, but Cancel is not the method it was.
+	f.deleteLines(orderService, 62, 63)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestFirstLineOfAFileDeletedChangesTheMethodThatStartsThere(t *testing.T) {
+	const head = "src/Ordering/Head.cs"
+	first := span{File: head, Name: "Head.First", StartLine: 1, EndLine: 5, Complexity: 2}
+
+	f := newFixture(t, "main")
+	f.write(head, csharpFile(20))
+	f.commitAll("initial")
+	// git reports the insertion point of a deletion at the top of a file as 0,
+	// which is not a line. Line 1 is the nearest line that exists.
+	f.deleteLines(head, 1, 1)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: head, lines: spanCoverage(2, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(head), []span{first}),
+	}
+
+	f.run().assertMatches(t, "top_of_file_deletion", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 2.15\n")
+}
+
+func TestAnAddedLineThatLooksLikeAFileHeaderDoesNotStealLaterHunks(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	// An added line whose own text starts with "++ " renders as "+++ fake".
+	// Reading that as a file header would reattribute the file's later hunks to
+	// a path that does not exist, and Cancel would go unscored under a pass.
+	f.write(orderService, replaceLine(f.read(orderService), 45, "++ fake"))
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: append(spanCoverage(42, 10, 1), spanCoverage(61, 3, 2)...)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("main"),
+		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
+}
+
+func TestTwoCoverageReportsAreUnionedRatherThanOverwritten(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// Two test projects each list all three of Cancel's lines and each hits a
+	// different one, so a hit anywhere is a hit and two of three are covered.
+	// Neither report alone reaches that, whichever order the walk reads them
+	// in, so letting the later one overwrite the earlier scores one of three.
+	f.write("TestResults/unit/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 4}, {number: 62, hits: 0}, {number: 63, hits: 0}}}))
+	f.write("TestResults/integration/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 0}, {number: 62, hits: 1}, {number: 63, hits: 0}}}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestCoverageReportOutsideAResultsDirectoryIsNotFound(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// ADR 0004 anchors discovery on a TestResults directory. A report at the
+	// repo root is not one, and quietly reading it would make the gate's idea
+	// of coverage depend on stray files.
+	f.write("coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_missing", 1, f.baseLabel("main"),
+		"CRAP requires a coverage report, none found\n")
+}
+
+func TestRunOutsideAGitRepoWritesNoDocumentAndExitsOne(t *testing.T) {
+	f := &fixture{t: t, root: t.TempDir()}
+	if inRepo(t, f.root) {
+		t.Skip("the temp directory is itself inside a git repo")
+	}
+
+	result := f.run()
+
+	// This failure is upstream of the document, so ADR 0005's one-TOON-document
+	// rule cannot apply: there is no base and no scope to report.
+	if result.exitCode != 1 || result.stdout != "" || !strings.Contains(result.stderr, "not a git repository") {
+		t.Errorf("gate outside a repo: got exit %d, stdout %q, stderr %q; want exit 1, empty stdout, stderr naming the missing repo",
+			result.exitCode, result.stdout, result.stderr)
+	}
+}
+
+// inRepo reports whether dir sits inside a git working tree, which decides
+// whether the non-repo case can run at all.
+func inRepo(t *testing.T, dir string) bool {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), gitEnv...)
+	return cmd.Run() == nil
 }

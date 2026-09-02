@@ -21,21 +21,23 @@ import (
 // is outside the measurement rather than outside a span.
 func Changed(extracted extract.Result, touched map[srcpath.Path][]int) (changed []extract.Span, outsideSpans int) {
 	byFile := groupByFile(extracted.Spans)
-	inside := map[key]extract.Span{}
+	inside := map[extract.Span]bool{}
 	for _, file := range sortedFiles(touched) {
 		if !extracted.Claimed[file] {
 			continue
 		}
 		for _, line := range touched[file] {
-			span, ok := smallestContaining(byFile[file], line)
-			if !ok {
+			narrowest := narrowestContaining(byFile[file], line)
+			if len(narrowest) == 0 {
 				outsideSpans++
 				continue
 			}
-			inside[keyOf(span)] = span
+			for _, span := range narrowest {
+				inside[span] = true
+			}
 		}
 	}
-	for _, span := range inside {
+	for span := range inside {
 		changed = append(changed, span)
 	}
 	sortSpans(changed)
@@ -54,21 +56,36 @@ func keyOf(span extract.Span) key {
 	return key{file: span.File, start: span.StartLine, end: span.EndLine}
 }
 
-// smallestContaining picks the narrowest span holding line. Where spans nest,
-// a local function's own span wins over its container's, which is what stops
-// the container absorbing lines that are not its own.
-func smallestContaining(spans []extract.Span, line int) (extract.Span, bool) {
-	var best extract.Span
-	found := false
+// narrowestContaining returns every span of minimal width holding line. Where
+// spans nest, a local function's own span wins over its container's, which is
+// what stops the container absorbing lines that are not its own. Where two
+// distinct methods share the same range, as two one-line methods declared on
+// one line do, both win and both are scored.
+func narrowestContaining(spans []extract.Span, line int) []extract.Span {
+	var best []extract.Span
 	for _, span := range spans {
 		if line < span.StartLine || line > span.EndLine {
 			continue
 		}
-		if !found || width(span) < width(best) {
-			best, found = span, true
+		switch {
+		case len(best) == 0 || width(span) < width(best[0]):
+			best = []extract.Span{span}
+		case width(span) == width(best[0]):
+			best = append(best, span)
 		}
 	}
-	return best, found
+	return best
+}
+
+// smallestContaining picks one narrowest span holding line, in extractor
+// order. Its callers compare ranges, and the tie this resolves is between two
+// methods declared on the same lines, so the pick does not change the range.
+func smallestContaining(spans []extract.Span, line int) (extract.Span, bool) {
+	narrowest := narrowestContaining(spans, line)
+	if len(narrowest) == 0 {
+		return extract.Span{}, false
+	}
+	return narrowest[0], true
 }
 
 func width(span extract.Span) int { return span.EndLine - span.StartLine }
@@ -87,13 +104,23 @@ func sortedFiles[V any](byFile map[srcpath.Path]V) []srcpath.Path {
 	return slices.Sorted(maps.Keys(byFile))
 }
 
-// sortSpans orders spans by file then start line.
+// sortSpans puts spans in a total order, so the set Changed drains out of a
+// map lands in the table the same way every run. File, start and end alone
+// leave two methods declared on the same lines tied, and a tie here would
+// reorder the document between runs.
 func sortSpans(spans []extract.Span) {
 	sort.Slice(spans, func(i, j int) bool {
-		if spans[i].File != spans[j].File {
-			return spans[i].File < spans[j].File
+		left, right := spans[i], spans[j]
+		switch {
+		case left.File != right.File:
+			return left.File < right.File
+		case left.StartLine != right.StartLine:
+			return left.StartLine < right.StartLine
+		case left.EndLine != right.EndLine:
+			return left.EndLine < right.EndLine
+		default:
+			return left.Name < right.Name
 		}
-		return spans[i].StartLine < spans[j].StartLine
 	})
 }
 
