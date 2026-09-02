@@ -3,15 +3,18 @@
 Personal coding standards, in one place: the guidance skills **and** the lint rules that
 mechanically enforce them.
 
-## Three enforcement modes
+## Four enforcement modes
 
-Every guideline has exactly one home, and each home corresponds to *when* it acts:
+A mode is an enforcement mechanism, distinguished by *when* it fires and what kind of judgement it
+applies. Every guideline is assigned to exactly one mode, but a mode stands on its own, and a mode
+with no guideline behind it is legitimate.
 
 | Mode | When | What it is |
 |---|---|---|
 | **skill-as-guidance** | before the code is written | The skills below, loaded by the agent while writing code. |
 | **lint** | after, mechanical | ESLint + Roslyn rules. Deterministic shapes only — an off-the-shelf rule where one exists, a custom rule where none does. |
 | **skill-as-review** | after, judgement | The same skills, read while reviewing. |
+| **metric-gate** | after | Mechanical, measured quantity against a threshold, requires executing the tests. |
 
 There is no separate review skill and no review tooling — the guidance and review modes are the
 same text read at different times.
