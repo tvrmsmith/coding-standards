@@ -1,3 +1,4 @@
+using System.Linq;
 using FluentAssertions;
 using Xunit;
 
@@ -117,6 +118,57 @@ public class ExtractionTests
         {
             new { File = "fixtures/Plain.cs", Name = "Plain.Simple" },
             new { File = "fixtures/Plain.cs", Name = "Plain.Branchy" },
+        }, o => o.WithStrictOrdering());
+    }
+
+    [Fact]
+    public void TwoOverloadsOnOneLineAreTwoSpansToldApartByTheirSignatures()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Overloads.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Where(span => span.Name == "Overloads.F").Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Overloads.F", Signature = "(int)", StartLine = 7, EndLine = 7 },
+            new { Name = "Overloads.F", Signature = "(string)", StartLine = 7, EndLine = 7 },
+        }, o => o.WithStrictOrdering());
+    }
+
+    /// <summary>
+    /// The signature spelling <c>MethodSpanResult</c> documents, so an extractor for another
+    /// language can match it. Modifiers in order, the source spelling of the type, generic arity as
+    /// a backtick count, and never a parameter name.
+    /// </summary>
+    [Fact]
+    public void ASignatureSpellsModifiersSourceTypesAndGenericArityButNeverParameterNames()
+    {
+        var (_, result) = ExtractorRun.Run("fixtures/Overloads.cs");
+
+        result.Spans.Should().Contain(span => span.Name == "Overloads.G")
+            .Which.Signature.Should().Be("(ref int, out string, params int[])");
+        result.Spans.Should().Contain(span => span.Name == "Overloads.H")
+            .Which.Signature.Should().Be("(Dictionary<string, int>, int[]?, (int x, string y))");
+        result.Spans.Should().Contain(span => span.Name == "Overloads.I")
+            .Which.Signature.Should().Be("`1(T)");
+    }
+
+    /// <summary>
+    /// One point each for a foreach, an ||, a pattern case label and a case guard. Guarded is a
+    /// constant case label plus its when clause, so its delta over Constant is the guard alone.
+    /// </summary>
+    [Fact]
+    public void ForeachOrPatternCaseAndCaseGuardEachScoreOnePoint()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Constructs.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Constructs.Each", Complexity = 2 },
+            new { Name = "Constructs.Either", Complexity = 2 },
+            new { Name = "Constructs.Constant", Complexity = 2 },
+            new { Name = "Constructs.Typed", Complexity = 2 },
+            new { Name = "Constructs.Guarded", Complexity = 3 },
         }, o => o.WithStrictOrdering());
     }
 

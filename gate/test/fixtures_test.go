@@ -2,11 +2,13 @@ package gate_test
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf16"
 )
 
 // csharpFile renders a C# source file of exactly lines lines. The stub
@@ -101,6 +103,7 @@ func replaceLine(body string, n int, replacement string) string {
 type span struct {
 	File       string `json:"file"`
 	Name       string `json:"name"`
+	Signature  string `json:"signature"`
 	StartLine  int    `json:"startLine"`
 	EndLine    int    `json:"endLine"`
 	Complexity int    `json:"complexity"`
@@ -168,13 +171,24 @@ func cobertura(sourceRoot string, classes ...coverageClass) string {
 	fmt.Fprintf(&b, "  <sources><source>%s</source></sources>\n", sourceRoot)
 	b.WriteString("  <packages><package name=\"Ordering\"><classes>\n")
 	for _, class := range classes {
-		fmt.Fprintf(&b, "    <class name=%q filename=%q>\n      <lines>\n", class.filename, class.filename)
+		name := xmlAttribute(class.filename)
+		fmt.Fprintf(&b, "    <class name=\"%s\" filename=\"%s\">\n      <lines>\n", name, name)
 		for _, line := range class.lines {
 			fmt.Fprintf(&b, "        <line number=\"%d\" hits=\"%d\" branch=\"false\" />\n", line.number, line.hits)
 		}
 		b.WriteString("      </lines>\n    </class>\n")
 	}
 	b.WriteString("  </classes></package></packages>\n</coverage>\n")
+	return b.String()
+}
+
+// xmlAttribute escapes a value for an XML attribute, which a filename holding
+// a double quote needs and Go quoting would get wrong.
+func xmlAttribute(value string) string {
+	var b strings.Builder
+	if err := xml.EscapeText(&b, []byte(value)); err != nil {
+		panic(err)
+	}
 	return b.String()
 }
 
@@ -223,6 +237,37 @@ func (f *fixture) removeSubmoduleGitlink(rel string) {
 func (f *fixture) copyFile(src, dst string) {
 	f.t.Helper()
 	f.write(dst, f.read(src))
+}
+
+// writeUTF16LE puts content at rel encoded as UTF-16LE behind a byte order
+// mark, which is a C# source encoding Visual Studio still writes and which git
+// calls binary, because every ASCII character carries a NUL byte beside it.
+func (f *fixture) writeUTF16LE(rel, content string) {
+	f.t.Helper()
+	body := []byte{0xff, 0xfe}
+	for _, unit := range utf16.Encode([]rune(content)) {
+		body = append(body, byte(unit), byte(unit>>8))
+	}
+	f.write(rel, string(body))
+}
+
+// cleanFilterEnv names a clean filter for every .cs file that strips back out
+// exactly what touchLine writes in. A clean filter runs on the working-tree
+// side of every diff and no command-line flag turns one off, so this hides the
+// change from the hunk parser unless the gate drops these variables.
+func cleanFilterEnv(t *testing.T) []string {
+	t.Helper()
+	attributes := filepath.Join(t.TempDir(), "attributes")
+	if err := os.WriteFile(attributes, []byte("*.cs filter=hide\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return []string{
+		"GIT_CONFIG_COUNT=2",
+		"GIT_CONFIG_KEY_0=core.attributesFile",
+		"GIT_CONFIG_VALUE_0=" + attributes,
+		"GIT_CONFIG_KEY_1=filter.hide.clean",
+		"GIT_CONFIG_VALUE_1=sed 's/, edited//'",
+	}
 }
 
 // externalDiffScript writes an executable that prints nothing and exits 0, the

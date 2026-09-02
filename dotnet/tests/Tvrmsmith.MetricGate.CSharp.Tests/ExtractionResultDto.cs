@@ -8,6 +8,12 @@ namespace Tvrmsmith.MetricGate.CSharp.Tests;
 /// </summary>
 internal sealed record FileStatusDto(string File, string Status);
 
-internal sealed record MethodSpanDto(string File, string Name, int StartLine, int EndLine, int Complexity);
+internal sealed record MethodSpanDto(
+    string File,
+    string Name,
+    string Signature,
+    int StartLine,
+    int EndLine,
+    int Complexity);
 
 internal sealed record ExtractionResultDto(List<FileStatusDto> Files, List<MethodSpanDto> Spans);

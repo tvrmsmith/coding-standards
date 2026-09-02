@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
@@ -32,6 +33,7 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
         _spans.Add(new MethodSpanResult(
             _file,
             QualifiedName(node),
+            Signature(node),
             lineSpan.StartLinePosition.Line + 1,
             lineSpan.EndLinePosition.Line + 1,
             complexityWalker.Complexity));
@@ -47,5 +49,25 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
             .Select(type => type.Identifier.Text);
 
         return string.Join(".", typeNames.Append(node.Identifier.Text));
+    }
+
+    /// <summary>Builds the spelling <see cref="MethodSpanResult"/> documents.</summary>
+    private static string Signature(MethodDeclarationSyntax node)
+    {
+        var arity = node.TypeParameterList?.Parameters.Count ?? 0;
+        var prefix = arity > 0 ? "`" + arity : string.Empty;
+        var parameters = node.ParameterList.Parameters.Select(Parameter);
+
+        return prefix + "(" + string.Join(", ", parameters) + ")";
+    }
+
+    private static string Parameter(ParameterSyntax parameter)
+    {
+        var modifiers = parameter.Modifiers.Select(modifier => modifier.Text + " ");
+        var type = parameter.Type is null
+            ? string.Empty
+            : parameter.Type.NormalizeWhitespace().ToFullString();
+
+        return string.Concat(modifiers) + type;
     }
 }

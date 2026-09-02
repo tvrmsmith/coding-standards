@@ -106,8 +106,9 @@ func sortedFiles[V any](byFile map[srcpath.Path]V) []srcpath.Path {
 
 // sortSpans puts spans in a total order, so the set Changed drains out of a
 // map lands in the table the same way every run. File, start and end alone
-// leave two methods declared on the same lines tied, and a tie here would
-// reorder the document between runs.
+// leave two methods declared on the same lines tied, and two overloads tie on
+// the name as well, so the signature settles it. A tie here would reorder the
+// document between runs.
 func sortSpans(spans []extract.Span) {
 	sort.Slice(spans, func(i, j int) bool {
 		left, right := spans[i], spans[j]
@@ -118,8 +119,10 @@ func sortSpans(spans []extract.Span) {
 			return left.StartLine < right.StartLine
 		case left.EndLine != right.EndLine:
 			return left.EndLine < right.EndLine
-		default:
+		case left.Name != right.Name:
 			return left.Name < right.Name
+		default:
+			return left.Signature < right.Signature
 		}
 	})
 }

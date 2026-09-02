@@ -47,9 +47,16 @@ type language struct {
 }
 
 // Span is one method's identity and complexity, as the extractor reports it.
+//
+// Signature is the parameter spelling the extractor gives the method, and it
+// exists for one question: whether two spans over the same lines are two
+// methods or one method reported twice. Two overloads declared on one line
+// share a name and a line range and differ only here. It never reaches the
+// document, where Name is the whole of a method's printed identity.
 type Span struct {
 	File       srcpath.Path
 	Name       string
+	Signature  string
 	StartLine  int
 	EndLine    int
 	Complexity int
@@ -161,6 +168,7 @@ type extraction struct {
 	Spans []struct {
 		File       string `json:"file"`
 		Name       string `json:"name"`
+		Signature  string `json:"signature"`
 		StartLine  int    `json:"startLine"`
 		EndLine    int    `json:"endLine"`
 		Complexity int    `json:"complexity"`
@@ -348,19 +356,23 @@ func (e extractor) collect(parsed extraction, handed []srcpath.Path) ([]Span, er
 	// The same method emitted twice is an extractor contract violation, because
 	// one of the two rows would silently vanish from the table. Two distinct
 	// methods sharing a line range are not: `class C { int A() => 1; int B() =>
-	// 2; }` on one line is valid C# and both methods must be scored. So the
-	// duplicate test takes the name in, while ADR 0001's span identity, which
-	// the coverage join uses, stays file and line range alone.
+	// 2; }` is valid C# and so is `class C { int F(int x) => 1; int F(string x)
+	// => 2; }`, and every method in both must be scored. The first pair differs
+	// by name and the second only by signature, so the duplicate test takes
+	// both. ADR 0001's span identity, which the coverage join uses, stays file
+	// and line range alone.
 	seen := map[Span]bool{}
 	for _, span := range parsed.Spans {
 		converted := Span{
 			File:       srcpath.FromSlash(span.File),
 			Name:       span.Name,
+			Signature:  span.Signature,
 			StartLine:  span.StartLine,
 			EndLine:    span.EndLine,
 			Complexity: span.Complexity,
 		}
-		identity := Span{File: converted.File, Name: converted.Name, StartLine: converted.StartLine, EndLine: converted.EndLine}
+		identity := converted
+		identity.Complexity = 0
 		if seen[identity] {
 			return nil, &report.Failure{
 				Code: report.CodeExtractorDuplicateSpan,
