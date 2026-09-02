@@ -84,9 +84,11 @@ type fixture struct {
 // stubConfig is the canned extractor behaviour for one case, in the shape
 // the stub reads from METRIC_GATE_STUB.
 type stubConfig struct {
-	Extensions []string `json:"extensions"`
-	ExitCode   int      `json:"exitCode"`
-	Stdout     string   `json:"stdout"`
+	Language           string   `json:"language"`
+	Extensions         []string `json:"extensions"`
+	CapabilitiesStdout string   `json:"capabilitiesStdout"`
+	ExitCode           int      `json:"exitCode"`
+	Stdout             string   `json:"stdout"`
 }
 
 // gitEnv pins the identity and dates git commits with, and cuts the

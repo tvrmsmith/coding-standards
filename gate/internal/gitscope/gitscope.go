@@ -11,6 +11,7 @@ package gitscope
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"os/exec"
@@ -93,9 +94,9 @@ func (r Repo) ResolveBase() (Base, error) {
 //
 // Decomposition alone would break ADR 0003's other sentence, that a file
 // renamed with no content change reports no touched lines, because the add
-// side of a pure `git mv` is the whole file. So an added path whose content is
-// byte-identical to a path the same diff deleted is dropped afterwards, and
-// only a move that also edited the file is measured.
+// side of a pure `git mv` is the whole file. So an added path whose content,
+// whitespace ignored, matches a path the same diff deleted is dropped
+// afterwards, and only a move that also edited the file is measured.
 func (r Repo) TouchedLines(base Base) (map[srcpath.Path][]int, error) {
 	patch, err := r.git("-c", "core.quotePath=false", "diff", "-w", "-U0", "--no-renames", "--diff-filter=ACM", base.Commit)
 	if err != nil {
@@ -119,36 +120,66 @@ func (r Repo) TouchedLines(base Base) (map[srcpath.Path][]int, error) {
 // same diff carried, which is what a rename looks like once `--no-renames`
 // has split it in two.
 //
-// Git leaves the new-side blob id all zeroes whenever the working tree copy
-// differs from what is staged, so a file moved and then edited never matches
-// and stays measured, which is the conservative direction.
+// The comparison ignores whitespace, because `TouchedLines` diffs with `-w`
+// and one rule cannot hold two definitions of "changed". Comparing raw bytes
+// would leave a `git mv` combined with a reindent looking like a whole-file
+// add, and every method in it would demand coverage attribution, which is the
+// wall of failures ADR 0003 gives `-w` to prevent.
+//
+// An added path the gate cannot read is left measured, which is the
+// conservative direction.
 func (r Repo) pureMoves(base Base) ([]srcpath.Path, error) {
 	raw, err := r.git("diff", "--raw", "-z", "--abbrev=40", "--no-renames", "--diff-filter=AD", base.Commit)
 	if err != nil {
 		return nil, err
 	}
-	added, deletedBlobs, err := parseRawAddsAndDeletes(raw)
+	added, deleted, err := parseRawAddsAndDeletes(raw)
 	if err != nil {
 		return nil, err
 	}
+	if len(added) == 0 || len(deleted) == 0 {
+		return nil, nil
+	}
+	carried := map[[sha256.Size]byte]bool{}
+	for _, blob := range deleted {
+		body, err := r.git("cat-file", "blob", blob)
+		if err != nil {
+			return nil, err
+		}
+		carried[squashedDigest([]byte(body))] = true
+	}
 	var moves []srcpath.Path
-	for path, blob := range added {
-		if deletedBlobs[blob] {
+	for _, path := range added {
+		body, err := os.ReadFile(r.root.Abs(path))
+		if err != nil {
+			continue
+		}
+		if carried[squashedDigest(body)] {
 			moves = append(moves, path)
 		}
 	}
 	return moves, nil
 }
 
-// parseRawAddsAndDeletes reads `git diff --raw -z` records, returning each
-// added path with its new-side blob id and the set of blob ids the diff
-// deleted. A record is the metadata field ":<mode> <mode> <src> <dst> <status>"
-// followed by the path, both NUL-terminated.
-func parseRawAddsAndDeletes(raw string) (added map[srcpath.Path]string, deleted map[string]bool, err error) {
-	added, deleted = map[srcpath.Path]string{}, map[string]bool{}
+// squashedDigest digests body in the form `git diff -w` compares it in: every
+// whitespace character dropped from each line, and the line structure kept, so
+// a reindent normalises away while a real edit does not.
+func squashedDigest(body []byte) [sha256.Size]byte {
+	lines := strings.Split(string(body), "\n")
+	for i, line := range lines {
+		lines[i] = strings.Join(strings.Fields(line), "")
+	}
+	return sha256.Sum256([]byte(strings.Join(lines, "\n")))
+}
+
+// parseRawAddsAndDeletes reads `git diff --raw -z` records, returning the
+// paths the diff added and the old-side blob ids it deleted. A record is the
+// metadata field ":<mode> <mode> <src> <dst> <status>" followed by the path,
+// both NUL-terminated.
+func parseRawAddsAndDeletes(raw string) (added []srcpath.Path, deleted []string, err error) {
 	records := strings.Split(strings.TrimSuffix(raw, "\x00"), "\x00")
 	if len(records) == 1 && records[0] == "" {
-		return added, deleted, nil
+		return nil, nil, nil
 	}
 	if len(records)%2 != 0 {
 		return nil, nil, fmt.Errorf("git diff --raw emitted %d fields, want pairs", len(records))
@@ -158,23 +189,15 @@ func parseRawAddsAndDeletes(raw string) (added map[srcpath.Path]string, deleted 
 		if len(fields) != 5 {
 			return nil, nil, fmt.Errorf("git diff --raw record is malformed: %q", records[i])
 		}
-		src, dst, status := fields[2], fields[3], fields[4]
+		src, status := fields[2], fields[4]
 		switch status {
 		case "A":
-			if !isNullBlob(dst) {
-				added[srcpath.FromSlash(records[i+1])] = dst
-			}
+			added = append(added, srcpath.FromSlash(records[i+1]))
 		case "D":
-			deleted[src] = true
+			deleted = append(deleted, src)
 		}
 	}
 	return added, deleted, nil
-}
-
-// isNullBlob reports whether an id is git's all-zero placeholder, which the
-// new side carries when git did not hash the working tree copy.
-func isNullBlob(id string) bool {
-	return strings.Trim(id, "0") == ""
 }
 
 // parseTouchedLines reads hunk headers out of a unified diff.

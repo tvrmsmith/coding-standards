@@ -58,6 +58,156 @@ func TestFileMovedWithNoContentChangeReportsNoChangedMethods(t *testing.T) {
 		"no changed methods, nothing to measure\n")
 }
 
+func TestFileMovedAndReindentedReportsNoChangedMethods(t *testing.T) {
+	const origin = "src/Ordering/Origin.cs"
+	const moved = "src/Ordering/Moved.cs"
+	vanish := span{File: moved, Name: "Moved.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(origin, indented(csharpFile(20), "    "))
+	f.commitAll("initial")
+	f.git("mv", origin, moved)
+	// Reindenting is the only edit, and TouchedLines diffs with `-w`, so the
+	// move has to drop the file rather than report every line of it as added.
+	f.write(moved, indented(csharpFile(20), "\t\t"))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(moved), []span{vanish}),
+	}
+
+	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
+		"no changed methods, nothing to measure\n")
+}
+
+func TestMethodScoringExactlyAtTheThresholdPasses(t *testing.T) {
+	f := newFixture(t, "main")
+	boundaryFixture(t, f, 30)
+
+	// comp² × (1 − 1)³ + comp is exactly the threshold, and the verdict
+	// compares strictly greater, so the run passes and no fix applies.
+	f.run().assertMatches(t, "threshold_boundary_pass", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 30.00\n")
+}
+
+func TestMethodScoringJustOverTheThresholdFails(t *testing.T) {
+	f := newFixture(t, "main")
+	boundaryFixture(t, f, 29)
+
+	// One uncovered line of thirty puts the score at 30.03, the smallest
+	// margin the two-decimal cell can show, and that already fails.
+	f.run().assertMatches(t, "threshold_boundary_fail", 2, f.baseLabel("main"),
+		"1 of 1 changed methods over CRAP threshold 30, worst score 30.03\n")
+}
+
+func TestExtractorReportingADifferentLanguageThanItWasLocatedUnderFails(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.stub = stubConfig{Language: "fsharp", Extensions: []string{".cs"}}
+
+	f.run().assertMatches(t, "capabilities_language_mismatch", 1, f.baseLabel("main"),
+		"csharp extractor reported language fsharp\n")
+}
+
+func TestExtractorClaimingNoneOfTheFilesItWasLocatedForFails(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The table located csharp because a .cs file changed; a binary that then
+	// handles only .fs would leave that .cs file scored by nobody.
+	f.stub = stubConfig{Extensions: []string{".fs"}}
+
+	f.run().assertMatches(t, "capabilities_claims_nothing", 1, f.baseLabel("main"),
+		"csharp extractor claims none of the changed files the language table located it for\n")
+}
+
+func TestExtractorReturningTwoSpansOverTheSameRangeFails(t *testing.T) {
+	// ADR 0001 identifies a span by range and never by name, so these two are
+	// one span downstream and one of them would vanish from the table.
+	twin := span{File: orderService, Name: "OrderService.Twin", StartLine: 41, EndLine: 58, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 45)
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, twin}),
+	}
+
+	f.run().assertMatches(t, "duplicate_span", 1, f.baseLabel("main"),
+		"csharp extractor returned two spans covering src/Ordering/OrderService.cs lines 41-58\n")
+}
+
+func TestChangedSourceFileWithNoExtractorInstalledFails(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+
+	// Unlike a docs-only change, a changed .cs file selects the csharp row, so
+	// the absent binary is the run's failure rather than nobody's business.
+	f.runIn(gateOnlyDir(t)).assertMatches(t, "extractor_missing", 1, f.baseLabel("main"),
+		"csharp extractor not found: metric-gate-csharp\n")
+}
+
+func TestExtractorThatIsPresentButNotExecutableFails(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+
+	dir := gateOnlyDir(t)
+	plantUnrunnableExtractor(t, dir)
+
+	f.runIn(dir).assertMatches(t, "extractor_not_executable", 1, f.baseLabel("main"),
+		"csharp extractor metric-gate-csharp could not be run: permission denied\n")
+}
+
+func TestExtractorEmittingSomethingOtherThanJSONFails(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.stub = stubConfig{Extensions: []string{".cs"}, Stdout: "not json"}
+
+	f.run().assertMatches(t, "extractor_invalid_json", 1, f.baseLabel("main"),
+		"csharp extractor emitted invalid JSON\n")
+}
+
+func TestExtractorEmittingCapabilitiesThatAreNotJSONFails(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.stub = stubConfig{Extensions: []string{".cs"}, CapabilitiesStdout: "not json"}
+
+	f.run().assertMatches(t, "extractor_invalid_capabilities_json", 1, f.baseLabel("main"),
+		"csharp extractor emitted invalid capabilities JSON\n")
+}
+
+func TestExtractorSilentAboutAFileItWasGivenFails(t *testing.T) {
+	const ghost = "src/Ordering/Ghost.cs"
+
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write(ghost, csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.touchLine(ghost, 7)
+	// Ghost.cs was handed in and never reported on, which is neither "nothing
+	// here" nor "I failed", so its methods must not go unmeasured under a pass.
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "extractor_no_parse_status", 1, f.baseLabel("main"),
+		"csharp extractor reported no parse status for src/Ordering/Ghost.cs\n")
+}
+
 func TestCoverageWalkRecordsAPathItCouldNotRead(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))

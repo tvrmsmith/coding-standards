@@ -20,6 +20,50 @@ func csharpFile(lines int) string {
 	return b.String()
 }
 
+// indented prefixes every non-empty line of body, which is exactly the
+// difference `git diff -w` is defined to ignore.
+func indented(body, prefix string) string {
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		if line != "" {
+			lines[i] = prefix + line
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// boundaryFixture lays out one complexity 30 method whose thirty
+// instrumentable lines are covered `covered` times, which is how the two
+// threshold cases put the same span either side of a score of exactly 30.
+func boundaryFixture(t *testing.T, f *fixture, covered int) {
+	t.Helper()
+	const boundary = "src/Ordering/Boundary.cs"
+	knot := span{File: boundary, Name: "Boundary.Knot", StartLine: 10, EndLine: 40, Complexity: 30}
+
+	f.write(boundary, csharpFile(60))
+	f.commitAll("initial")
+	f.touchLine(boundary, 20)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: boundary, lines: spanCoverage(11, 30, covered)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(boundary), []span{knot}),
+	}
+}
+
+// plantUnrunnableExtractor puts a file under the extractor's name in dir that
+// is present but carries no execute bit, which is the misinstall the "could
+// not be run" cause exists to tell apart from an absent binary.
+func plantUnrunnableExtractor(t *testing.T, dir string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("running as root, which some platforms let exec a file with no execute bit")
+	}
+	if err := os.WriteFile(filepath.Join(dir, extractorName), []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // touchLine rewrites the file at rel so exactly one line differs, which the
 // diff reports as a single touched line.
 func (f *fixture) touchLine(rel string, line int) {

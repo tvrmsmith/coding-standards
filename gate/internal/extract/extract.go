@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/report"
@@ -26,8 +27,12 @@ import (
 // no environment variable participates.
 //
 // The extensions beside the name decide one thing only, whether the gate execs
-// the binary at all. They never filter the paths handed in on stdin, so
-// --capabilities remains the sole authority on what the extractor handles.
+// the binary at all, so the list is an upper bound on what this language can
+// ever be routed. Over-claiming costs a wasted launch that --capabilities then
+// narrows to nothing; under-claiming silently unscores real source, because a
+// path whose extension no row declares never reaches an extractor. Among the
+// paths the list does select, --capabilities is the sole authority, and a
+// binary that claims none of them fails the run rather than scoring nothing.
 var languages = map[string]language{
 	"csharp": {binary: "metric-gate-csharp", extensions: []string{".cs"}},
 }
@@ -75,7 +80,7 @@ func Extract(root srcpath.Root, changed []srcpath.Path) (Result, error) {
 		return Result{}, err
 	}
 	for _, name := range worth {
-		e := extractor{language: name, binary: filepath.Join(dir, languages[name].binary), root: root}
+		e := extractor{language: name, binary: filepath.Join(dir, binaryName(languages[name].binary)), root: root}
 		spans, claimed, err := e.run(changed)
 		if err != nil {
 			return Result{}, err
@@ -103,6 +108,16 @@ func worthRunning(changed []srcpath.Path) []string {
 		}
 	}
 	return worth
+}
+
+// binaryName is the table's binary name as the running platform spells it. A
+// dotnet tool installs as "<name>.exe" on Windows, and the gate hands
+// exec.Command an absolute path, so Go does no PATHEXT resolution of its own.
+func binaryName(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".exe"
+	}
+	return name
 }
 
 // extractorDir is the directory the gate's own binary sits in, which is the
@@ -157,8 +172,16 @@ func (e extractor) run(changed []srcpath.Path) (spans []Span, claimed []srcpath.
 		return nil, nil, err
 	}
 	claimed = e.filter(changed, caps.Extensions)
+	// The table only located this binary because a changed path carried one of
+	// the extensions the row declares, so a binary that then claims none of
+	// them disagrees with the table. Returning an empty result here would score
+	// nothing and exit 0 `pass` on a real source change, which is the silent
+	// outcome ADR 0006 rejects.
 	if len(claimed) == 0 {
-		return nil, nil, nil
+		return nil, nil, &report.Failure{
+			Code:    report.CodeExtractorCapabilitiesMismatch,
+			Message: fmt.Sprintf("%s extractor claims none of the changed files the language table located it for", e.language),
+		}
 	}
 	body, err := e.invoke(claimed)
 	if err != nil {
@@ -191,6 +214,15 @@ func (e extractor) capabilities() (capabilities, error) {
 		return capabilities{}, &report.Failure{
 			Code:    report.CodeExtractorFailed,
 			Message: e.language + " extractor emitted invalid capabilities JSON",
+		}
+	}
+	// The table picked this binary for a language, so a binary answering with
+	// a different one is the misroute ADR 0006 puts the list on the binary to
+	// catch, not a language the gate should quietly go along with.
+	if caps.Language != e.language {
+		return capabilities{}, &report.Failure{
+			Code:    report.CodeExtractorCapabilitiesMismatch,
+			Message: fmt.Sprintf("%s extractor reported language %s", e.language, caps.Language),
 		}
 	}
 	return caps, nil
@@ -254,8 +286,18 @@ func (e extractor) exec(stdin *bytes.Buffer, args ...string) ([]byte, error) {
 	// from an absent one, and the reader needs the cause to tell them apart.
 	return nil, &report.Failure{
 		Code:    report.CodeExtractorFailed,
-		Message: fmt.Sprintf("%s extractor %s could not be run: %v", e.language, filepath.Base(e.binary), err),
+		Message: fmt.Sprintf("%s extractor %s could not be run: %v", e.language, filepath.Base(e.binary), launchCause(err)),
 	}
+}
+
+// launchCause strips the wrapping os/exec puts around a spawn failure, so the
+// message carries the reason and not a machine-specific absolute path.
+func launchCause(err error) error {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err
+	}
+	return err
 }
 
 // collect checks the echoed paths and the per-file parse status, then turns
@@ -300,14 +342,29 @@ func (e extractor) collect(parsed extraction, handed []srcpath.Path) ([]Span, er
 		}
 	}
 	spans := make([]Span, 0, len(parsed.Spans))
+	// ADR 0001 identifies a span by file and line range and never by name, so
+	// two spans sharing a range are indistinguishable downstream and one would
+	// silently vanish from the table. That is an extractor contract violation
+	// rather than a join the gate should guess its way through.
+	seen := map[Span]bool{}
 	for _, span := range parsed.Spans {
-		spans = append(spans, Span{
+		converted := Span{
 			File:       srcpath.FromSlash(span.File),
 			Name:       span.Name,
 			StartLine:  span.StartLine,
 			EndLine:    span.EndLine,
 			Complexity: span.Complexity,
-		})
+		}
+		identity := Span{File: converted.File, StartLine: converted.StartLine, EndLine: converted.EndLine}
+		if seen[identity] {
+			return nil, &report.Failure{
+				Code: report.CodeExtractorDuplicateSpan,
+				Message: fmt.Sprintf("%s extractor returned two spans covering %s lines %d-%d",
+					e.language, converted.File, converted.StartLine, converted.EndLine),
+			}
+		}
+		seen[identity] = true
+		spans = append(spans, converted)
 	}
 	return spans, nil
 }

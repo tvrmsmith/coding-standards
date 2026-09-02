@@ -397,6 +397,55 @@ func TestEncode_TableFloatCellRoundsHalfUpNotHalfToEven(t *testing.T) {
 	}
 }
 
+func TestEncode_TableFloatCellRoundsTheDecimalTheReaderSeesNotItsBinaryValue(t *testing.T) {
+	// 1.005 is stored as 1.004999999999999893..., so the scaled
+	// math.Floor(f*100+0.5) form the encoder used to share with crap renders
+	// 1. Rounding the shortest round-tripping decimal instead gives the 1.01 a
+	// developer reading "1.005" in the report expects.
+	doc := toon.Doc{Fields: []toon.Field{
+		{Key: "crap", Value: &toon.Table{
+			Columns: []toon.Column{{Name: "score", Precision: 2}},
+			Rows: [][]any{
+				{1.005},
+			},
+		}},
+	}}
+
+	got, err := doc.Encode()
+
+	if err != nil {
+		t.Fatalf("Encode returned error: %v", err)
+	}
+	want := "crap[1|]{score}:\n  1.01\n"
+	if string(got) != want {
+		t.Errorf("Encode() = %q, want %q", got, want)
+	}
+}
+
+func TestEncode_TableFloatCellCarriesTheRoundingPastTheDecimalPoint(t *testing.T) {
+	// Rounding 9.995 at two decimals carries through both nines and out of
+	// the fractional part entirely, so the whole part gains a digit and the
+	// stripped result is the bare integer 10.
+	doc := toon.Doc{Fields: []toon.Field{
+		{Key: "crap", Value: &toon.Table{
+			Columns: []toon.Column{{Name: "score", Precision: 2}},
+			Rows: [][]any{
+				{9.995},
+			},
+		}},
+	}}
+
+	got, err := doc.Encode()
+
+	if err != nil {
+		t.Fatalf("Encode returned error: %v", err)
+	}
+	want := "crap[1|]{score}:\n  10\n"
+	if string(got) != want {
+		t.Errorf("Encode() = %q, want %q", got, want)
+	}
+}
+
 // TestEncode_ADR0005WorkedExample is the fixed-bytes contract from
 // ADR 0005 ("The machine document is the only output"), as amended
 // after the spec §2 ruling on Column.Precision (round, then render
