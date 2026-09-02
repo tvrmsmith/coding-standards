@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The fixtures are data for the black-box tests, not C# to compile into this assembly;
+         several of them (Broken.cs) are deliberately invalid syntax. -->
+    <Compile Remove="fixtures/**/*.cs" />
+    <None Include="fixtures/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="FluentAssertions" Version="$(FluentAssertionsVersion)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Black-box only: this reference exists so the tool builds first and lands next to the
+         test assembly, not so the test calls into it in-process. Every test drives the tool by
+         spawning it as a process and reading stdout, per the contract. -->
+    <ProjectReference Include="../../src/Tvrmsmith.MetricGate.CSharp/Tvrmsmith.MetricGate.CSharp.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -20,11 +20,25 @@ skipped_paths: []
 metrics[1|]{name|threshold|measured|failed}:
   crap|30|4|2
 crap[4|]{file|start|end|name|complexity|coverage|score|state|action|target_coverage|reason}:
-  src/Ordering/Pricing.cs|18|71|Pricing.Quote|34|0.550|139.34|measured|split_method|null|null
-  src/Ordering/OrderService.cs|41|58|OrderService.PlaceAsync|9|0.100|68.05|measured|raise_coverage|0.363|null
+  src/Ordering/Pricing.cs|18|71|Pricing.Quote|34|0.55|139.34|measured|split_method|null|null
+  src/Ordering/OrderService.cs|41|58|OrderService.PlaceAsync|9|0.1|68.05|measured|raise_coverage|0.363|null
   src/Ordering/OrderService.cs|60|64|OrderService.Cancel|3|0.667|3.33|measured|none|null|null
-  src/Ordering/Order.cs|14|14|Order.get_Id|1|1.000|1.00|structural_na|none|null|null
+  src/Ordering/Order.cs|14|14|Order.get_Id|1|1|1|structural_na|none|null|null
 ```
+
+**Amended 2026-09-02.** The `coverage` and `score` cells originally read `0.550`, `0.100`, `1.000`
+and `1.00`. Spec v4.1.1 section 2 makes stripping fractional trailing zeros a MUST for any value in
+the canonical range, so `1.500` renders as `1.5`, and section 7.2 makes a quoted `"0.550"` the only
+way to keep the padding, which would turn every measured cell into a string. Fixed-width columns
+lost. Precision is a rounding rule, not a padding rule: the gate rounds `coverage` and
+`target_coverage` at three decimals and `score` at two, then renders the canonical form. Every score
+issue 12 names survives the change untouched, since `68.05`, `3.33`, `139.34` and `0.363` carry no
+trailing zero. The decision this ADR records is unaffected; only the example's digits move.
+
+**Amended 2026-09-02.** `target_coverage` rounds **up** at three decimals rather than half up.
+`1 - cbrt((30 - 9) / 81)` is 0.36236, and at coverage 0.362 the score is 30.03, still over the
+threshold, while at 0.363 it is 29.94. Half-up rounding would print a target a developer can hit and
+still fail, which defeats the reason the cell exists.
 
 Three parts of that shape are decisions in their own right.
 
