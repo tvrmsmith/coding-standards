@@ -21,7 +21,7 @@ This is a single-context repo:
 ├── docs/adr/
 │   ├── 0001-....md
 │   └── 0002-....md
-└── packages/, dotnet/, plugins/, harness/
+└── packages/, dotnet/, gate/, plugins/, harness/
 ```
 
 ## Use the glossary's vocabulary

@@ -1,9 +1,9 @@
 # coding-standards
 
-Personal coding standards, in one place: the guidance skills **and** the lint rules that
-mechanically enforce them.
+Personal coding standards, in one place: the guidance skills, the lint rules that mechanically
+enforce them, **and** the metric gate that scores changed methods against a threshold.
 
-## Three enforcement modes
+## Four enforcement modes
 
 Every guideline has exactly one home, and each home corresponds to *when* it acts:
 
@@ -12,9 +12,13 @@ Every guideline has exactly one home, and each home corresponds to *when* it act
 | **skill-as-guidance** | before the code is written | The skills below, loaded by the agent while writing code. |
 | **lint** | after, mechanical | ESLint + Roslyn rules. Deterministic shapes only — an off-the-shelf rule where one exists, a custom rule where none does. |
 | **skill-as-review** | after, judgement | The same skills, read while reviewing. |
+| **metric-gate** | after, mechanical, needs the tests run | The `gate/` binary. Measures a quantity per changed method and compares it against a threshold, so it costs a test run and can fail because a test was deleted. |
 
 There is no separate review skill and no review tooling — the guidance and review modes are the
 same text read at different times.
+
+`CONTEXT.md` defines the terms these modes are built from, and `docs/adr/` records the decisions
+behind the metric gate.
 
 **The skills carry guidelines, never enforcement.** No rule ids, no plugin names, no `[review-only]`
 tags. An agent that follows the guidance needs none of it, and an agent that ignores the guidance
@@ -55,11 +59,16 @@ packages/                            # npm
   eslint-plugin-tvrmsmith/           # the one custom ESLint rule
 dotnet/                              # NuGet
   src/Tvrmsmith.Analyzers/           # the three custom analyzers + curated severities
-  tests/                             # analyzer unit tests, a stand-in consumer, the severity proof
+  src/Tvrmsmith.MetricGate.CSharp/   # the C# extractor: method spans + cyclomatic complexity
+  tests/                             # analyzer and extractor tests, a stand-in consumer, the severity proof
+gate/                                # the metric gate: a Go binary, one TOON document on stdout
+  cmd/metric-gate/
+  internal/                          # diff scope, coverage, join, CRAP, TOON encoder
+  test/                              # black-box tests against the built binary, with goldens
 harness/                             # machine-local adoption harness: editor layer + pre-commit
 ```
 
-The plugin loader ignores `packages/` and `dotnet/` — it reads only `.claude-plugin/` and
+The plugin loader ignores `packages/`, `dotnet/` and `gate/` — it reads only `.claude-plugin/` and
 `skills/`.
 
 ## The three custom rules (v1)
