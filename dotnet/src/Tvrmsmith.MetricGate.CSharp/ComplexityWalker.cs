@@ -9,13 +9,21 @@ namespace Tvrmsmith.MetricGate.CSharp;
 /// decision point. The scored set, spelled out here so a future widening (issue 18) amends this
 /// list deliberately rather than by omission:
 ///
-///   if, while, do, for, foreach, a case label (default scores nothing), catch,
-///   a when filter clause, &amp;&amp;, ||, ?:, ??
+///   if, while, do, for, foreach, a case label (default scores nothing), a switch expression arm,
+///   catch, a when filter clause, a pattern combinator (and, or), &amp;&amp;, ||, ?:, ??
 ///
-/// Nothing else scores. In particular ??= is not on this list and does not count, and a switch
-/// expression arm is out of scope for this slice (spans come only from MethodDeclarationSyntax).
-/// Walks the whole method node, so a nested lambda or local function's decision points fold into
-/// the enclosing method's score, matching how spans exist only at the method-declaration level.
+/// A pattern combinator scores for the reason &amp;&amp; and || do: each side is a test the method
+/// can branch on, and `o is int or string` is the same control flow as `o is int || o is string`.
+/// Both combinators count, so the pattern spelling of a condition never scores under the operator
+/// spelling of it. A `not` pattern adds no branch and does not count.
+///
+/// An arm counts even when its pattern is the discard `_`, which is where this list parts company
+/// with `default:`. An arm is always a pattern matched in turn, and the catch-all arm is written
+/// as one; a `default:` label is not a pattern and scores nothing.
+///
+/// Nothing else scores. In particular ??= is not on this list and does not count. Walks the whole
+/// method node, so a nested lambda or local function's decision points fold into the enclosing
+/// method's score, matching how spans exist only at the method-declaration level.
 /// </summary>
 internal sealed class ComplexityWalker : CSharpSyntaxWalker
 {
@@ -61,6 +69,18 @@ internal sealed class ComplexityWalker : CSharpSyntaxWalker
     {
         Complexity++;
         base.VisitCasePatternSwitchLabel(node);
+    }
+
+    public override void VisitSwitchExpressionArm(SwitchExpressionArmSyntax node)
+    {
+        Complexity++;
+        base.VisitSwitchExpressionArm(node);
+    }
+
+    public override void VisitBinaryPattern(BinaryPatternSyntax node)
+    {
+        Complexity++;
+        base.VisitBinaryPattern(node);
     }
 
     public override void VisitCatchClause(CatchClauseSyntax node)

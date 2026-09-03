@@ -251,22 +251,67 @@ func (f *fixture) writeUTF16LE(rel, content string) {
 	f.write(rel, string(body))
 }
 
-// cleanFilterEnv names a clean filter for every .cs file that strips back out
-// exactly what touchLine writes in. A clean filter runs on the working-tree
-// side of every diff and no command-line flag turns one off, so this hides the
-// change from the hunk parser unless the gate drops these variables.
-func cleanFilterEnv(t *testing.T) []string {
+// hideEditFilter writes an attributes file marking every .cs file filtered and
+// an executable clean filter stripping back out exactly what touchLine writes
+// in, and returns the two config values that install them. A clean filter runs
+// on the working-tree side of every diff and no command-line flag turns one
+// off, so a run that reads this config sees the two sides of the change as
+// equal and measures nothing.
+func hideEditFilter(t *testing.T) (attributesFile, cleanCommand string) {
 	t.Helper()
-	attributes := filepath.Join(t.TempDir(), "attributes")
-	if err := os.WriteFile(attributes, []byte("*.cs filter=hide\n"), 0o644); err != nil {
+	dir := t.TempDir()
+	attributesFile = filepath.Join(dir, "attributes")
+	if err := os.WriteFile(attributesFile, []byte("*.cs filter=hide\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// A path rather than a command line, because the config value has to survive
+	// GIT_CONFIG_PARAMETERS' own single-quote packing intact.
+	cleanCommand = filepath.Join(dir, "hide-edit")
+	if err := os.WriteFile(cleanCommand, []byte("#!/bin/sh\nexec sed 's/, edited//'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return attributesFile, cleanCommand
+}
+
+// cleanFilterEnv installs that filter through the GIT_CONFIG_COUNT family.
+func cleanFilterEnv(t *testing.T) []string {
+	t.Helper()
+	attributes, clean := hideEditFilter(t)
 	return []string{
 		"GIT_CONFIG_COUNT=2",
 		"GIT_CONFIG_KEY_0=core.attributesFile",
 		"GIT_CONFIG_VALUE_0=" + attributes,
 		"GIT_CONFIG_KEY_1=filter.hide.clean",
-		"GIT_CONFIG_VALUE_1=sed 's/, edited//'",
+		"GIT_CONFIG_VALUE_1=" + clean,
+	}
+}
+
+// cleanFilterParameters installs the same filter through the one-variable form,
+// GIT_CONFIG_PARAMETERS, which is what git itself exports.
+func cleanFilterParameters(t *testing.T) string {
+	t.Helper()
+	attributes, clean := hideEditFilter(t)
+	return fmt.Sprintf("GIT_CONFIG_PARAMETERS='core.attributesFile=%s' 'filter.hide.clean=%s'", attributes, clean)
+}
+
+// constantTextconvScript writes an executable that prints the same line for
+// every input, which is a textconv driver that flattens both sides of a diff
+// into one identical text and so erases every hunk header.
+func constantTextconvScript(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "constant-textconv")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho constant\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// removeLooseObject deletes the loose object file for sha from the fixture's
+// object store, which is how a case reproduces an object the gate cannot read.
+func (f *fixture) removeLooseObject(sha string) {
+	f.t.Helper()
+	if err := os.Remove(filepath.Join(f.root, ".git", "objects", sha[:2], sha[2:])); err != nil {
+		f.t.Fatal(err)
 	}
 }
 
