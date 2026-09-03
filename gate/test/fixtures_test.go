@@ -183,10 +183,38 @@ func spanCoverage(start, count, covered int) []coverageLine {
 // root in <sources> and each class's filename relative to it, which is the
 // pairing ADR 0004 resolves paths from.
 func cobertura(sourceRoot string, classes ...coverageClass) string {
+	return coberturaMultiSource([]string{sourceRoot}, classes...)
+}
+
+// coberturaMultiSource is cobertura for a report naming more than one
+// <source>, which is what a class yielding two in-root candidates (issue 16,
+// file_ambiguous) and a report split across two checkouts both need.
+func coberturaMultiSource(sources []string, classes ...coverageClass) string {
+	return renderCobertura(sources, classes...)
+}
+
+// coberturaNoSources is cobertura with <sources/> empty, the shape
+// DeterministicReport=true and UseSourceLink=true both emit (issue 16,
+// coverage_source_root_erased).
+func coberturaNoSources(classes ...coverageClass) string {
+	return renderCobertura(nil, classes...)
+}
+
+// renderCobertura is the shared document builder every cobertura variant
+// above calls, differing only in how many <source> elements they pass.
+func renderCobertura(sources []string, classes ...coverageClass) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>` + "\n")
 	b.WriteString(`<coverage line-rate="0" version="1.9" timestamp="1767225600">` + "\n")
-	fmt.Fprintf(&b, "  <sources><source>%s</source></sources>\n", sourceRoot)
+	if len(sources) == 0 {
+		b.WriteString("  <sources/>\n")
+	} else {
+		b.WriteString("  <sources>")
+		for _, source := range sources {
+			fmt.Fprintf(&b, "<source>%s</source>", source)
+		}
+		b.WriteString("</sources>\n")
+	}
 	b.WriteString("  <packages><package name=\"Ordering\"><classes>\n")
 	for _, class := range classes {
 		name := xmlAttribute(class.filename)
@@ -208,6 +236,33 @@ func xmlAttribute(value string) string {
 		panic(err)
 	}
 	return b.String()
+}
+
+// writeAbsolute puts content at an absolute path outside the fixture,
+// creating parents, which is how a case builds the source tree of a second
+// checkout that is not the git repo under test (issue 16,
+// coverage_outside_repo).
+func writeAbsolute(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// resolvedPath is filepath.EvalSymlinks for a path a case knows exists,
+// mirroring srcpath.ResolveOrAsBuilt's successful branch so a golden's
+// {{EXAMPLE}}/{{ROOT}} hole can be filled with the value the gate itself
+// would compute.
+func resolvedPath(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.ToSlash(resolved)
 }
 
 // denyRead creates a directory at rel that the process cannot read, so the

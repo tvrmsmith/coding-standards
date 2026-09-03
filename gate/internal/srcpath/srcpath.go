@@ -71,3 +71,14 @@ func (r Root) Resolve(candidate string) (Path, bool) {
 // FromSlash adopts an already repo-relative, slash-separated path, which is
 // the form `git diff` emits.
 func FromSlash(rel string) Path { return Path(rel) }
+
+// ResolveOrAsBuilt resolves candidate's symlinks when it can, and returns it
+// exactly as built otherwise. It exists for a diagnostic that wants "the best
+// available reading of this path" without reaching for filepath.EvalSymlinks
+// itself; issue 16's coverage_outside_repo message is the one caller.
+func ResolveOrAsBuilt(candidate string) string {
+	if resolved, err := filepath.EvalSymlinks(candidate); err == nil {
+		return resolved
+	}
+	return candidate
+}

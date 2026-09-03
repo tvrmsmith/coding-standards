@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -111,7 +112,9 @@ func Load(root srcpath.Root, reports []srcpath.Path) (Set, error) {
 				Message: "could not parse coverage report " + path.String(),
 			}
 		}
-		parsed.mergeInto(set, root)
+		if failure := parsed.mergeInto(set, root, path); failure != nil {
+			return nil, failure
+		}
 	}
 	return set, nil
 }
@@ -148,14 +151,47 @@ func parseReport(path string) (coberturaReport, error) {
 	return parsed, nil
 }
 
+// erasedSourceRootPrefix is the placeholder DeterministicReport=true rewrites
+// every class filename under once it erases <sources>.
+const erasedSourceRootPrefix = "/_/"
+
+// sourceLinkScheme matches a filename UseSourceLink=true emits in place of a
+// path: the raw source-link document key, which SourceLink always spells as a
+// URI.
+var sourceLinkScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
+
 // mergeInto resolves each class to a source path and folds its lines into the
-// set. Resolution runs per report, with that report's own <sources>.
-func (r coberturaReport) mergeInto(set Set, root srcpath.Root) {
+// set. Resolution runs per report, with that report's own <sources>. ADR
+// 0004's 2026-09-03 amendment (issue 16) adds three checks ahead of the join,
+// in precedence order: an erased source root voids the whole report before
+// any candidate is built, a class resolving to more than one path inside the
+// root contradicts itself, and a report contributing no class inside the root
+// at all is the git-worktree case. Any one candidate resolving nowhere, or
+// resolving outside the root, stays the silent ignore ADR 0004 already
+// decided.
+func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath srcpath.Path) *report.Failure {
+	if failure := r.erasedSourceRoot(reportPath); failure != nil {
+		return failure
+	}
+
+	resolvedAnyClass := false
 	for _, class := range r.Classes {
-		path, ok := r.resolve(class.Filename, root)
-		if !ok {
+		distinct := distinctResolved(r.candidates(class.Filename), root)
+		if len(distinct) > 1 {
+			sorted := append([]srcpath.Path{}, distinct...)
+			slices.Sort(sorted)
+			return &report.Failure{
+				Code: report.CodeFileAmbiguous,
+				Message: fmt.Sprintf(
+					"class %s in coverage report %s resolved to more than one path inside the repo root, %s and %s",
+					class.Filename, reportPath, sorted[0], sorted[1]),
+			}
+		}
+		if len(distinct) == 0 {
 			continue
 		}
+		resolvedAnyClass = true
+		path := distinct[0]
 		lines, ok := set[path]
 		if !ok {
 			lines = Lines{}
@@ -165,23 +201,87 @@ func (r coberturaReport) mergeInto(set Set, root srcpath.Root) {
 			lines[line.Number] = lines[line.Number] || line.Hits > 0
 		}
 	}
+
+	if !resolvedAnyClass && len(r.Classes) > 0 {
+		return outsideRepoFailure(r, reportPath, root)
+	}
+	return nil
 }
 
-// resolve turns a class filename into a source path per ADR 0004: each
-// <source> joined to the filename, plus the filename itself when it is
-// already absolute, resolved through symlinks and relativized against the
-// repo root. A candidate that will not resolve, or resolves outside the repo,
-// is ignored rather than fatal, because a report describes a moment in the
-// past.
-func (r coberturaReport) resolve(filename string, root srcpath.Root) (srcpath.Path, bool) {
-	for _, source := range r.Sources {
-		candidate := filepath.Join(source, filepath.FromSlash(filename))
-		if path, ok := root.Resolve(candidate); ok {
-			return path, true
+// erasedSourceRoot checks the two shapes MSBuild produces when the source
+// root that would otherwise anchor every class filename has been rewritten
+// away, ahead of any resolution attempt: cheaper, and the candidates built
+// from either shape would only mislead.
+func (r coberturaReport) erasedSourceRoot(reportPath srcpath.Path) *report.Failure {
+	for _, class := range r.Classes {
+		if strings.HasPrefix(class.Filename, erasedSourceRootPrefix) {
+			return &report.Failure{
+				Code: report.CodeCoverageSourceRootErased,
+				Message: fmt.Sprintf(
+					"coverage report %s carries no source root, erased by DeterministicReport=true; collect coverage with DeterministicReport=false",
+					reportPath),
+			}
 		}
 	}
-	if filepath.IsAbs(filename) {
-		return root.Resolve(filepath.FromSlash(filename))
+	for _, class := range r.Classes {
+		if sourceLinkScheme.MatchString(class.Filename) {
+			return &report.Failure{
+				Code: report.CodeCoverageSourceRootErased,
+				Message: fmt.Sprintf(
+					"coverage report %s carries a source link document key rather than a path, erased by UseSourceLink=true; collect coverage with UseSourceLink=false",
+					reportPath),
+			}
+		}
 	}
-	return "", false
+	return nil
+}
+
+// candidates lists every absolute path ADR 0004 derives from one class
+// filename: each <source> joined to it, plus the filename itself when it is
+// already absolute.
+func (r coberturaReport) candidates(filename string) []string {
+	candidates := make([]string, 0, len(r.Sources)+1)
+	for _, source := range r.Sources {
+		candidates = append(candidates, filepath.Join(source, filepath.FromSlash(filename)))
+	}
+	if filepath.IsAbs(filename) {
+		candidates = append(candidates, filepath.FromSlash(filename))
+	}
+	return candidates
+}
+
+// distinctResolved resolves every candidate that lands inside the root and
+// dedupes the result. More than one distinct path is what makes a class
+// ambiguous; ADR 0004 reasons this can only happen when the reasoning behind
+// "one repo root, one drive letter" is wrong.
+func distinctResolved(candidates []string, root srcpath.Root) []srcpath.Path {
+	seen := map[srcpath.Path]bool{}
+	var distinct []srcpath.Path
+	for _, candidate := range candidates {
+		path, ok := root.Resolve(candidate)
+		if !ok || seen[path] {
+			continue
+		}
+		seen[path] = true
+		distinct = append(distinct, path)
+	}
+	return distinct
+}
+
+// outsideRepoFailure names the git-worktree case: every class in the report
+// resolved outside the root, or not at all. The example is the first
+// candidate of the first class in document order, which is what a reader
+// checks first, resolved through symlinks when that succeeds and left as
+// built when it does not, per srcpath.ResolveOrAsBuilt.
+func outsideRepoFailure(r coberturaReport, reportPath srcpath.Path, root srcpath.Root) *report.Failure {
+	example := filepath.FromSlash(r.Classes[0].Filename)
+	if candidates := r.candidates(r.Classes[0].Filename); len(candidates) > 0 {
+		example = candidates[0]
+	}
+	return &report.Failure{
+		Code: report.CodeCoverageOutsideRepo,
+		Message: fmt.Sprintf(
+			"coverage report %s resolved no class inside the repo root; example resolved path %s, repo root %s",
+			reportPath, srcpath.ResolveOrAsBuilt(example), root.Dir()),
+	}
 }
