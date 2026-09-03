@@ -24,8 +24,10 @@
 // driver runs over the working-tree side of every diff, so one that prints its
 // input back unchanged, or prints nothing, empties the patch. There is no flag
 // that turns filtering off, so the drivers the repo configures are enumerated
-// and each is blanked with its own `-c` override, which is protected config and
-// outranks the repo-local value that named it.
+// and each is set empty in command scope, which outranks the repo-local value
+// that named it. The blanks travel through the GIT_CONFIG_COUNT family rather
+// than `-c`, because the key carries a name the repository chose and a `-c`
+// argument splits on its first `=`.
 //
 // None of the three reach git's own NUL-byte autodetection or a `.gitattributes`
 // line marking a source file `-diff`, which live in the tree and in the file's
@@ -63,7 +65,7 @@ type Repo struct {
 
 // Open finds the repo containing the process working directory.
 func Open() (Repo, error) {
-	out, err := run("", "rev-parse", "--show-toplevel")
+	out, err := run("", nil, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return Repo{}, err
 	}
@@ -144,11 +146,11 @@ func (r Repo) TouchedLines(base Base) (map[srcpath.Path][]int, error) {
 }
 
 func (r Repo) touchedLines(base Base) (map[srcpath.Path][]int, error) {
-	neutralized, err := r.blankedFilterDrivers()
+	drivers, err := r.filterDrivers()
 	if err != nil {
 		return nil, err
 	}
-	patch, err := r.git(append(neutralized, append(diffFlags, "-w", "-U0", "--no-renames", "--diff-filter=ACM", base.Commit)...)...)
+	patch, err := r.gitBlanking(drivers, append(diffFlags, "-w", "-U0", "--no-renames", "--diff-filter=ACM", base.Commit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +158,7 @@ func (r Repo) touchedLines(base Base) (map[srcpath.Path][]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	moved, err := r.pureMoves(base, neutralized)
+	moved, err := r.pureMoves(base, drivers)
 	if err != nil {
 		return nil, err
 	}
@@ -166,9 +168,9 @@ func (r Repo) touchedLines(base Base) (map[srcpath.Path][]int, error) {
 	return touched, nil
 }
 
-// blankedFilterDrivers is a `-c <key>=` override for every content filter the
-// repository configures, which is what a diff has to be run under for a clean
-// driver not to decide what the gate can see.
+// filterDrivers is the config key of every content filter the repository
+// configures. Blanking each of them is what a diff has to be run under for a
+// clean driver not to decide what the gate can see.
 //
 // The drivers are enumerated rather than named, because their names are the
 // repository's to choose. All three keys of the interface are blanked. `.clean`
@@ -184,11 +186,13 @@ func (r Repo) touchedLines(base Base) (map[srcpath.Path][]int, error) {
 // the pointer file. That is the same text Roslyn parses off the working tree, so
 // the two halves of the measurement agree.
 //
-// The keys come back NUL-separated. A filter's subsection name is arbitrary text
-// and may hold spaces, so splitting the listing on whitespace would break
-// `filter.my driver.clean` into two fragments, leave the real driver installed,
-// and hand git a `-c .clean=` it refuses to parse.
-func (r Repo) blankedFilterDrivers() ([]string, error) {
+// A subsection name is arbitrary text the repository chooses, so the key never
+// gets parsed as syntax on either leg of the trip. It comes back NUL-separated,
+// because a listing split on whitespace breaks `filter.my driver.clean` in two,
+// and it goes back out through blankingEnv rather than a `-c` flag, because a
+// `-c` argument is split on its first `=` and `filter.ev=il.clean=` therefore
+// sets `filter.ev` and leaves the real driver installed.
+func (r Repo) filterDrivers() ([]string, error) {
 	out, err := r.git("config", "--name-only", "--get-regexp", "-z", filterDriverKeys)
 	if noMatch(err) {
 		// `git config --get-regexp` exits 1 on no match, which is the ordinary
@@ -198,14 +202,37 @@ func (r Repo) blankedFilterDrivers() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var overrides []string
+	var keys []string
 	for _, key := range strings.Split(strings.TrimSuffix(out, "\x00"), "\x00") {
 		if key == "" {
 			continue
 		}
-		overrides = append(overrides, "-c", key+"=")
+		keys = append(keys, key)
 	}
-	return overrides, nil
+	return keys, nil
+}
+
+// blankingEnv sets each key to the empty string through the GIT_CONFIG_COUNT
+// family, which carries the key and its value in separate variables and so has
+// no delimiter for the key's own text to collide with. The family lands in
+// command scope, the same scope as configOverrides, so the two combine rather
+// than one replacing the other, and it outranks the repository's own config the
+// way a `-c` flag does.
+//
+// This is the transport for every override whose text the repository controls.
+// configOverrides keeps the `-c` route because each of its keys is a fixed
+// literal this package wrote.
+func blankingEnv(keys []string) []string {
+	if len(keys) == 0 {
+		return nil
+	}
+	env := []string{"GIT_CONFIG_COUNT=" + strconv.Itoa(len(keys))}
+	for i, key := range keys {
+		env = append(env,
+			fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, key),
+			fmt.Sprintf("GIT_CONFIG_VALUE_%d=", i))
+	}
+	return env
 }
 
 // filterDriverKeys matches every spelling of a content filter driver.
@@ -247,8 +274,8 @@ func noMatch(err error) bool {
 // what removes git's own answer to which of the two is the move, and guessing
 // would silently unscore a brand-new file. Counting depends on no `git diff
 // --raw` ordering, so the answer is the same whichever order git lists them in.
-func (r Repo) pureMoves(base Base, neutralized []string) ([]srcpath.Path, error) {
-	raw, err := r.git(append(neutralized, append(rawFlags, "-z", "--abbrev=40", "--no-renames", "--diff-filter=AD", base.Commit)...)...)
+func (r Repo) pureMoves(base Base, drivers []string) ([]srcpath.Path, error) {
+	raw, err := r.gitBlanking(drivers, append(rawFlags, "-z", "--abbrev=40", "--no-renames", "--diff-filter=AD", base.Commit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -515,7 +542,8 @@ var rawFlags = []string{"diff", "--no-color", "--no-ext-diff", "--raw"}
 // naming them is a list that has to be extended for every variable somebody
 // thinks of and the one nobody thought of is the same silent pass again.
 // GIT_EXTERNAL_DIFF and GIT_DIFF_OPTS reshape the diff, GIT_CONFIG_PARAMETERS
-// and the GIT_CONFIG_COUNT family inject config a `-c` flag cannot outrank, and
+// and the GIT_CONFIG_COUNT family inject config into the same scope the `-c`
+// overrides occupy, so an inherited one sets keys the overrides never name, and
 // GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE and their relatives outrank cmd.Dir and
 // answer every question about a different repository. That last family is not
 // exotic: git exports it into every hook it runs, and a pre-commit hook is what
@@ -525,7 +553,8 @@ var rawFlags = []string{"diff", "--no-color", "--no-ext-diff", "--raw"}
 // and the settings the parsers depend on come from configOverrides.
 const gitNamespace = "GIT_"
 
-// pinnedConfigFiles is what run puts back after the scrub.
+// pinnedConfigFiles is what run puts back after the scrub, alongside whatever
+// blankingEnv contributes for the invocation.
 //
 // Dropping GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM with the rest of the
 // namespace sends git to its default config locations instead, so the run would
@@ -537,8 +566,8 @@ const gitNamespace = "GIT_"
 // it for, and the run carries the settings it needs on the command line.
 //
 // This does not answer the same key set in the repository's own .git/config,
-// which the pins deliberately leave readable. blankedFilterDrivers is what
-// covers that scope.
+// which the pins deliberately leave readable. filterDrivers and blankingEnv
+// are what cover that scope.
 var pinnedConfigFiles = []string{
 	"GIT_CONFIG_GLOBAL=" + os.DevNull,
 	"GIT_CONFIG_SYSTEM=" + os.DevNull,
@@ -546,15 +575,22 @@ var pinnedConfigFiles = []string{
 
 // git runs one git command in the repo root.
 func (r Repo) git(args ...string) (string, error) {
-	return run(r.root.Dir(), args...)
+	return run(r.root.Dir(), nil, args...)
+}
+
+// gitBlanking is git with every named config key forced empty for the length of
+// the one invocation, which is how the repository's filter drivers are taken out
+// of the commands that read content.
+func (r Repo) gitBlanking(keys []string, args ...string) (string, error) {
+	return run(r.root.Dir(), blankingEnv(keys), args...)
 }
 
 // run executes git in dir, or the process working directory when dir is
 // empty, and returns its stdout.
-func run(dir string, args ...string) (string, error) {
+func run(dir string, extraEnv []string, args ...string) (string, error) {
 	cmd := exec.Command("git", append(append([]string{}, configOverrides...), args...)...)
 	cmd.Dir = dir
-	cmd.Env = sanitizedEnv()
+	cmd.Env = append(sanitizedEnv(), extraEnv...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

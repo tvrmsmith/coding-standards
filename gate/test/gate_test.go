@@ -883,6 +883,27 @@ func TestAFilterNamedWithATrailingSpaceDoesNotBreakTheRun(t *testing.T) {
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
+func TestAFilterNamedWithAnEqualsIsStillBlanked(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	// The subsection name is the repository's to choose and an attribute value
+	// can select one holding an `=`. Delivered as `-c filter.ev=il.clean=`, git
+	// splits on the first `=`, sets `filter.ev`, and the real driver empties the
+	// diff into a green run that measured nothing.
+	f.configureFilterNamedWithAnEquals()
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
 func TestAnFsmonitorHookInTheRepositorysOwnConfigIsNeverRun(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))

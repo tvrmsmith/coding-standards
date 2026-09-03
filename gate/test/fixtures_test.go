@@ -381,6 +381,21 @@ func (f *fixture) configureFilterNamedWithATrailingSpace() {
 	f.git("config", "filter.hide .clean", clean)
 }
 
+// configureFilterNamedWithAnEquals configures the hiding filter under a
+// subsection name holding an `=`, and selects it from .gitattributes, which an
+// attribute value holding an `=` can do.
+//
+// A `-c` argument is split on its first `=`, so blanking this driver that way
+// sends the override to `filter.ev` and leaves the real one installed. git then
+// runs it over the working-tree side, the diff comes back empty, and the gate
+// reports no changed methods and exits 0.
+func (f *fixture) configureFilterNamedWithAnEquals() {
+	f.t.Helper()
+	_, clean := hideEditFilter(f.t)
+	f.write(".gitattributes", "*.cs filter=ev=il\n")
+	f.git("config", "filter.ev=il.clean", clean)
+}
+
 // configureFsmonitorHook installs a repo-local core.fsmonitor hook that appends
 // a line to a marker file, and returns the marker's path. git runs the hook to
 // refresh the index, which a diff does on every invocation, so the marker
