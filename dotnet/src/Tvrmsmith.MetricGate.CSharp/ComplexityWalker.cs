@@ -22,12 +22,28 @@ namespace Tvrmsmith.MetricGate.CSharp;
 /// as one; a `default:` label is not a pattern and scores nothing.
 ///
 /// Nothing else scores. In particular ??= is not on this list and does not count. Walks the whole
-/// method node, so a nested lambda or local function's decision points fold into the enclosing
-/// method's score, matching how spans exist only at the method-declaration level.
+/// node it is handed, but stops at a nested declaration that carries a span of its own: a local
+/// function's decision points score against the local function alone, never against whatever
+/// declares it. A lambda or anonymous method is not such a declaration, so its decision points do
+/// fold into whichever span holds it, which is what keeps a method from hiding its branches in one.
 /// </summary>
 internal sealed class ComplexityWalker : CSharpSyntaxWalker
 {
+    private SyntaxNode? _root;
+
     public int Complexity { get; private set; } = 1;
+
+    /// <summary>
+    /// Records the node the walk started from, so <see cref="VisitLocalFunctionStatement"/> can
+    /// tell "the local function this walker was asked to score" (the root, when a caller scores a
+    /// local function's own span) from "a local function nested inside whatever this walker was
+    /// asked to score" (never the root, always skipped).
+    /// </summary>
+    public override void Visit(SyntaxNode? node)
+    {
+        _root ??= node;
+        base.Visit(node);
+    }
 
     public override void VisitIfStatement(IfStatementSyntax node)
     {
@@ -117,5 +133,21 @@ internal sealed class ComplexityWalker : CSharpSyntaxWalker
         }
 
         base.VisitBinaryExpression(node);
+    }
+
+    /// <summary>
+    /// A local function carries a span of its own, so its decision points must not fold into
+    /// whatever span is currently being scored, unless this walker was asked to score the local
+    /// function itself, in which case <paramref name="node"/> is the root and must be walked. Not
+    /// calling <c>base</c> for any other local function stops the walk there rather than
+    /// descending, which also keeps a local function nested inside another local function from
+    /// folding into either of its ancestors.
+    /// </summary>
+    public override void VisitLocalFunctionStatement(LocalFunctionStatementSyntax node)
+    {
+        if (ReferenceEquals(node, _root))
+        {
+            base.VisitLocalFunctionStatement(node);
+        }
     }
 }

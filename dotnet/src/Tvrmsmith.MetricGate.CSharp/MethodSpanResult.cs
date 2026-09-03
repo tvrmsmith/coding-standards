@@ -1,8 +1,14 @@
 namespace Tvrmsmith.MetricGate.CSharp;
 
-/// <summary>One measured method span. <c>Name</c> is declaring type names joined by <c>.</c>,
-/// then the method name — no namespace, no parameter list. Lines are 1-based and cover the whole
-/// declaration, signature through closing brace.
+/// <summary>One measured method span. <c>Name</c> is declaring type names joined by <c>.</c>, then
+/// the member name as metadata spells it, so a constructor is <c>Order..ctor</c>, a getter is
+/// <c>Order.get_Id</c>, an operator is <c>Order.op_Addition</c> and a local function is its
+/// container's name, a dot, then the local name. Type parameters are part of a name, so a generic
+/// method reads <c>Order.Map&lt;TKey, TValue&gt;</c> and a generic type qualifies its members as
+/// <c>Cache&lt;TKey, TValue&gt;.Get</c>. No namespace and no parameter list. The full table, and
+/// which declarations get a span at all, live in <c>docs/csharp-decision-points.md</c>.
+///
+/// <para>Lines are 1-based and cover the whole declaration, signature through closing brace.</para>
 ///
 /// <para><c>Signature</c> is what tells two overloads declared on the same line apart, since they
 /// share <c>Name</c>, <c>StartLine</c> and <c>EndLine</c>. The gate never prints it; it uses it
@@ -10,7 +16,7 @@ namespace Tvrmsmith.MetricGate.CSharp;
 /// extractor for another language must spell it the same way:</para>
 ///
 /// <list type="bullet">
-/// <item>a backtick and the type-parameter count when the method declares any, so
+/// <item>a backtick and the type-parameter count when the declaration declares any, so
 /// <c>M&lt;T&gt;(T x)</c> is <c>`1(T)</c>, and nothing when it declares none;</item>
 /// <item>then the parameter types in declaration order, comma-space separated, inside
 /// parentheses;</item>
@@ -23,6 +29,12 @@ namespace Tvrmsmith.MetricGate.CSharp;
 /// spaced them;</item>
 /// <item>parameter names, attributes and default values never appear.</item>
 /// </list>
+///
+/// <para>A constructor, finalizer, operator, conversion operator or local function spells its own
+/// parameter list the same way a method does. A property or event accessor takes <c>()</c>, since
+/// the declaration itself carries no parameter list and the implicit <c>value</c> parameter is
+/// never spelled. An indexer accessor takes the indexer's own parameter list instead, so
+/// <c>get_Item</c> on <c>this[int index]</c> is <c>(int)</c>.</para>
 ///
 /// <para>It is syntactic, never resolved, so <c>List&lt;int&gt;</c> and an alias for it read as
 /// different signatures. That is enough for the one question the gate asks of it, because two

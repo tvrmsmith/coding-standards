@@ -148,7 +148,7 @@ public class ExtractionTests
             .Which.Signature.Should().Be("(ref int, out string, params int[])");
         result.Spans.Should().Contain(span => span.Name == "Overloads.H")
             .Which.Signature.Should().Be("(Dictionary<string, int>, int[]?, (int x, string y))");
-        result.Spans.Should().Contain(span => span.Name == "Overloads.I")
+        result.Spans.Should().Contain(span => span.Name == "Overloads.I<T>")
             .Which.Signature.Should().Be("`1(T)");
     }
 
@@ -263,22 +263,25 @@ public class ExtractionTests
             new { Name = "Enumerated.DefaultLabel", Complexity = 1 },
             new { Name = "Enumerated.NotPattern", Complexity = 1 },
             new { Name = "Enumerated.CoalesceAssign", Complexity = 1 },
-            new { Name = "Enumerated.Folded", Complexity = 2 },
+            new { Name = "Enumerated.Folded", Complexity = 1 },
+            new { Name = "Enumerated.Folded.Inner", Complexity = 2 },
         }, o => o.WithStrictOrdering());
     }
 
     /// <summary>
-    /// A local function is not a span of its own, and the decision points inside it fold into the
-    /// method that declares it, which is what keeps a method from hiding its branches in one.
+    /// A local function is a span of its own, so its branches score against itself and not against
+    /// the method that declares it, the opposite of how a lambda's branches fold into the method
+    /// holding it.
     /// </summary>
     [Fact]
-    public void ALocalFunctionIsNoSpanOfItsOwnAndItsBranchesFoldIntoItsMethod()
+    public void ALocalFunctionIsASpanOfItsOwnAndItsBranchesDoNotFoldIntoItsMethod()
     {
         var (_, result) = ExtractorRun.Run("fixtures/Enumerated.cs");
 
-        result.Spans.Should().ContainSingle(span => span.Name.StartsWith("Enumerated.Folded"))
+        result.Spans.Should().Contain(span => span.Name == "Enumerated.Folded")
+            .Which.Complexity.Should().Be(1);
+        result.Spans.Should().Contain(span => span.Name == "Enumerated.Folded.Inner")
             .Which.Complexity.Should().Be(2);
-        result.Spans.Should().NotContain(span => span.Name.Contains("Inner"));
     }
 
     [Fact]
@@ -311,5 +314,116 @@ public class ExtractionTests
             new { File = "fixtures/\0.cs", Status = "failed" },
         });
         result.Spans.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Every declaration kind that carries a body or an expression body gets a span, named
+    /// metadata style: constructors as <c>.ctor</c>/<c>.cctor</c>, the finalizer as
+    /// <c>Finalize</c>, accessors prefixed by their kind, and operators by their metadata name.
+    /// An auto-property accessor gets a span too, spanning its own line, even though it carries
+    /// neither a body nor an expression body.
+    /// </summary>
+    [Fact]
+    public void EveryMemberKindThatCarriesLinesGetsASpanNamedMetadataStyle()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Widened.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Widened..cctor", Signature = "()", StartLine = 13, EndLine = 16, Complexity = 1 },
+            new { Name = "Widened..ctor", Signature = "(int)", StartLine = 18, EndLine = 24, Complexity = 2 },
+            new { Name = "Widened.Finalize", Signature = "()", StartLine = 26, EndLine = 29, Complexity = 1 },
+            new { Name = "Widened.get_Id", Signature = "()", StartLine = 31, EndLine = 31, Complexity = 1 },
+            new { Name = "Widened.set_Id", Signature = "()", StartLine = 31, EndLine = 31, Complexity = 1 },
+            new { Name = "Widened.get_Count", Signature = "()", StartLine = 35, EndLine = 43, Complexity = 2 },
+            new { Name = "Widened.set_Count", Signature = "()", StartLine = 44, EndLine = 44, Complexity = 1 },
+            new { Name = "Widened.get_Total", Signature = "()", StartLine = 47, EndLine = 47, Complexity = 1 },
+            new { Name = "Widened.get_Item", Signature = "(int)", StartLine = 49, EndLine = 49, Complexity = 2 },
+            new { Name = "Widened.add_Changed", Signature = "()", StartLine = 53, EndLine = 59, Complexity = 2 },
+            new { Name = "Widened.remove_Changed", Signature = "()", StartLine = 60, EndLine = 60, Complexity = 1 },
+            new { Name = "Widened.op_Addition", Signature = "(Widened, Widened)", StartLine = 63, EndLine = 63, Complexity = 1 },
+            new { Name = "Widened.op_Implicit", Signature = "(Widened)", StartLine = 65, EndLine = 65, Complexity = 1 },
+        }, o => o.WithStrictOrdering());
+    }
+
+    /// <summary>
+    /// An interface member with no default implementation, an abstract member, an extern member
+    /// and a field-like event carry no lines a developer can branch in, so none of them gets a
+    /// span, and the file still parses.
+    /// </summary>
+    [Fact]
+    public void ADeclarationCarryingNoBodyGetsNoSpanAndTheFileStillParses()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Bodyless.cs");
+
+        exitCode.Should().Be(0);
+        result.Files.Should().BeEquivalentTo(new[]
+        {
+            new { File = "fixtures/Bodyless.cs", Status = "parsed" },
+        });
+        result.Spans.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// A lambda's branches score against the method holding it, so <c>WithLambda</c>'s <c>&amp;&amp;</c>
+    /// counts against the method itself. A local function is its own span, so <c>WithLocal</c> does
+    /// not absorb <c>Running</c>'s branches, and a local function declared inside a lambda still
+    /// takes the name of the span holding the lambda, not the lambda itself.
+    /// </summary>
+    [Fact]
+    public void ALambdaFoldsIntoItsMethodWhileALocalFunctionIsItsOwnSpan()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Nesting.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Nesting.WithLambda", Signature = "(int[])", StartLine = 9, EndLine = 13, Complexity = 2 },
+            new { Name = "Nesting.WithLocal", Signature = "(int[])", StartLine = 15, EndLine = 34, Complexity = 2 },
+            new { Name = "Nesting.WithLocal.Running", Signature = "(int)", StartLine = 17, EndLine = 25, Complexity = 2 },
+            new { Name = "Nesting.LocalInsideLambda", Signature = "(int[])", StartLine = 36, EndLine = 43, Complexity = 1 },
+            new { Name = "Nesting.LocalInsideLambda.Twice", Signature = "(int)", StartLine = 40, EndLine = 40, Complexity = 2 },
+            new { Name = "Nesting.get_Accessed", Signature = "()", StartLine = 47, EndLine = 60, Complexity = 1 },
+            new { Name = "Nesting.get_Accessed.Sign", Signature = "(int)", StartLine = 49, EndLine = 57, Complexity = 2 },
+        }, o => o.WithStrictOrdering());
+    }
+
+    /// <summary>
+    /// An async method and an iterator are scored on the lines they are written on, and a local
+    /// function declared inside an async method is still its own span.
+    /// </summary>
+    [Fact]
+    public void AnAsyncMethodAndAnIteratorAreScoredOnTheirOwnSourceLines()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Asynchrony.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Asynchrony.LoadAsync", Signature = "(int)", StartLine = 10, EndLine = 19, Complexity = 2 },
+            new { Name = "Asynchrony.Evens", Signature = "(int[])", StartLine = 21, EndLine = 30, Complexity = 3 },
+            new { Name = "Asynchrony.StreamAsync", Signature = "(int[])", StartLine = 32, EndLine = 39, Complexity = 2 },
+            new { Name = "Asynchrony.RunAsync", Signature = "()", StartLine = 41, EndLine = 52, Complexity = 1 },
+            new { Name = "Asynchrony.RunAsync.InnerAsync", Signature = "(int)", StartLine = 43, EndLine = 49, Complexity = 2 },
+        }, o => o.WithStrictOrdering());
+    }
+
+    /// <summary>
+    /// A generic method's qualified name carries its own type parameters, and a method on a
+    /// generic type carries the type's parameters too, both comma-space separated.
+    /// </summary>
+    [Fact]
+    public void AGenericMethodsQualifiedNameCarriesItsTypeParameters()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Generics.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Generics<TKey, TValue>.Map<TA, TB>", Signature = "`2(TA, TB)", StartLine = 9, EndLine = 9, Complexity = 1 },
+            new { Name = "Generics<TKey, TValue>.Single<T>", Signature = "`1(T)", StartLine = 11, EndLine = 11, Complexity = 1 },
+            new { Name = "Generics<TKey, TValue>.Plain", Signature = "(int)", StartLine = 13, EndLine = 13, Complexity = 1 },
+        }, o => o.WithStrictOrdering());
     }
 }
