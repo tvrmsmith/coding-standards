@@ -25,6 +25,22 @@ The gate resolves the changed set and looks coverage up against it. It does not 
 every path a report mentions, so a report path outside the repo root, or inside it but untouched by the
 diff, is ignored in silence.
 
+**Amended 2026-09-03.** "Case folding for macOS. Rejected" below governs **coverage-path resolution**, where the
+candidate is matched against a file on disk and folding can merge two real files on Linux. It does not govern
+**extension routing**, where the gate decides whether a changed path is worth handing to an extractor at all.
+[ADR 0006](0006-the-csharp-extractor-is-written-in-house.md) folds case there, because a touched `Order.CS` matched
+no row and passed with `changed_methods: 0`, and because the only cost of over-claiming is a process launch that
+finds nothing. Recorded here so the rejection is not read wider than the evidence behind it.
+
+**Amended 2026-09-03.** Three of the exit-1 resolution rules in Consequences are **not implemented in the tracer**
+and land with [issue 16](https://github.com/tvrmsmith/coding-standards/issues/16): the erased source root naming
+the MSBuild property, the report contributing zero classes inside the repo root, and the surviving `file_ambiguous`
+assertion. The gate resolves what it can and lets an unresolvable report path fall through to the ignore path the
+last Consequences paragraph describes, so a report produced in another checkout presents today as the wall of
+unknown methods that the zero-classes diagnostic exists to replace. Every `unknown` still fails the run per
+[ADR 0001](0001-crap-gate-topology.md), so nothing silently passes; only the diagnosis is deferred. The rules stand
+as decided, and this notes their arrival date rather than reopening them.
+
 ## Considered options
 
 **Longest-suffix matching.** The standard fallback, and the one every prior implementation reaches for.

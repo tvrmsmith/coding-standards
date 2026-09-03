@@ -30,12 +30,14 @@ still attributed to the smallest span containing a line, with nothing but `(file
 consulted, so every argument above stands. But two distinct methods can occupy one span: `class C { int F(int x)
 => 1; int F(string x) => 2; }` is valid C# and Roslyn reports both at the same file and line range. Keying the
 changed-method set on the span alone silently collapsed them into one row, and rejecting the pair as a duplicated
-report failed valid input. The gate therefore keys a method on `(file, startLine, endLine, signature)`, where
+report failed valid input. The gate therefore keys a method on `(file, name, startLine, endLine, signature)`, where
 `signature` is the parameter spelling
 [ADR 0006](0006-the-csharp-extractor-is-written-in-house.md) makes the extractor emit. The two overloads then score
 as two rows against the same attributed lines, which is the honest answer, since line coverage cannot tell which
 overload a hit belongs to. Nothing about the async and state-machine reasoning changes, because a mangled
-identifier still never appears on either side.
+identifier still never appears on either side. (This paragraph first spelled the tuple without `name`. That was a
+transcription error, not a narrower decision: `class C { int A() => 1; int B() => 2; }` gives two methods one file,
+one line range and one empty parameter spelling, so dropping `name` would reject valid C# as a duplicated span.)
 
 Adding a second language means writing an extractor, not touching the gate. That was the reason for the seam and it is the reason ReportGenerator lost.
 

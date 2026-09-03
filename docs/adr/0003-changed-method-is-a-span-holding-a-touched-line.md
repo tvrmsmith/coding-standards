@@ -15,11 +15,19 @@ it pairs **one to one**. The amendment above says byte-identical, and that spell
 rule is built on: a `git mv` combined with a reindent is one edit under `-w` and a whole-file add under a byte
 comparison, which puts every method in the moved file back in the changed set and rebuilds the wall of failures
 `-w` exists to prevent. The gate therefore hashes each side with every whitespace character dropped from each line
-and the line structure kept. The pairing matters for the same reason: each deleted blob accounts for exactly one
-added path, so `git mv src/Old.cs src/New.cs` followed by copying the result to `src/Copy.cs` drops one add and
-leaves the other measured, where an unpaired set-membership test dropped both and reported `changed_methods: 0` on
-a genuinely new file. A deleted submodule is skipped rather than read, because a gitlink's object id names a commit
-in another repository and reading it as a blob failed the run with no document at all.
+and the line structure kept. A deleted submodule is skipped rather than read, because a gitlink's object id names a
+commit in another repository and reading it as a blob failed the run with no document at all.
+
+Which added paths the drop applies to is decided **by counting, per digest**. If as many added paths carry a digest
+as deleted paths carried it, the same set of files moved and every one of them is dropped, so relocating two
+identical files together measures nothing. If more added paths carry it than deleted paths did, content exists that
+was not on the diff's deleted side, so **none** of them is dropped and all are measured. Fewer adds than deletes is
+a partial move and the adds are all accounted for, so they drop. Two earlier spellings were wrong in opposite
+directions. An unpaired set-membership test dropped every match, so `git mv src/Old.cs src/New.cs` followed by
+copying the result to `src/Copy.cs` reported `changed_methods: 0` on a genuinely new file. One-to-one consumption
+then dropped exactly one of that pair, but which one fell out of `git diff --raw` ordering, and a rule whose verdict
+turns on a filename is the opposite of what `--no-renames` was chosen to buy. Counting decides both cases without
+picking a winner, and nothing in the gate depends on diff order.
 
 **Amended 2026-09-02.** The gate pins the git settings its parsers depend on rather than inheriting them, because
 every one of them turns a real change into `changed_methods: 0`, exit 0, which is a silent pass and the worst
@@ -29,6 +37,32 @@ as `color.ui=always` is overridden with `-c` flags on the command line. Environm
 `.gitattributes` or git's NUL-byte autodetection, so the diff also passes `--text`, which forces hunk headers out
 of a file git would otherwise summarise as "Binary files differ", covering UTF-16 source and any path marked
 `-diff` or `binary`. Only hunk headers are parsed, so whatever the forced cells hold is irrelevant.
+
+**Amended 2026-09-03.** "Three mechanisms" is now **four**, and the pinning is stricter than the paragraph above
+describes. Dropping git's environment namespace is not enough on its own, because the scrub hands the run back to
+an ambient `~/.gitconfig`, so `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` are then pinned at the null device. That
+in turn puts `safe.directory` out of reach, since git honours it only from protected configuration, so
+`-c safe.directory=*` goes on the command line; the ownership check is not load-bearing for a tool that reads a
+repo the caller pointed it at and never writes. The fourth mechanism is a **content filter**. A clean driver is
+named by the repository's own `.git/config`, which the pins deliberately leave in place, and selected by a
+`.gitattributes` line in the tree, which is where git-lfs and git-crypt install themselves. A driver that prints
+its input back unchanged empties the patch, and no flag turns filtering off, so the gate enumerates the drivers the
+repo configures and sets each one empty in command scope, `required` included, or a repo marking a driver required
+fails every run instead. Those blanks travel through the `GIT_CONFIG_COUNT` family rather than `-c`, because the
+key carries a subsection name the repository chose and a `-c` argument splits on its first `=`. Repo-local
+`core.fsmonitor` is blanked for the same reason the filters are, since it names a program the gate's own git calls
+would otherwise execute.
+
+The pattern behind three of those four is one rule. **Repo-controlled text is never interpolated into a place
+where it can be read as syntax.** A subsection name holding a space, and later one holding `=`, each defeated an
+earlier spelling of the filter blanking and each produced a silent pass, which is the same defect twice.
+
+**Amended 2026-09-03.** The **staleness rule** below, comparing the report timestamp against the newest mtime among
+files that contributed a changed method, is **not implemented in the tracer** and lands with
+[issue 15](https://github.com/tvrmsmith/coding-standards/issues/15). The gate reads no `timestamp` attribute and
+stats no source file, so editing code without re-running the tests scores against the previous report and exits 0.
+The rule stands as decided; only its arrival is deferred. It is recorded here so a reader meets a dated deferral
+rather than guessing whether the gap is a defect.
 
 ## Considered options
 

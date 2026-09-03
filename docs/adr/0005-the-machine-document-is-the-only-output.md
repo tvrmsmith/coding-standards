@@ -69,10 +69,25 @@ flag, in a later issue.
 `extractor_capabilities_mismatch` is an extractor whose `--capabilities` set claims none of the changed paths the
 gate's static table routed to it, recorded in
 [ADR 0006](0006-the-csharp-extractor-is-written-in-house.md). `extractor_duplicate_span` is the same span reported
-twice, where a span is now `(file, startLine, endLine, signature)`. Both are upstream of the join, so both emit
-`status: error` with an `error` block and no table, exactly as the rule below says. The gate reaches nine typed
-codes with these two, which supersedes the count of eleven in the Consequences section; that number was written
-against a longer list of causes, several of which later collapsed into `extractor_failed`.
+twice, where a span's identity is `(file, name, startLine, endLine, signature)`. Both are upstream of the join, so
+both emit `status: error` with an `error` block and no table, exactly as the rule below says.
+
+**Amended 2026-09-03.** The enumeration is **eleven** codes, and this list supersedes every count above. Two more
+joined after the paragraph above was written. `diff_unparseable` is any failure on the diff path, typed at the
+boundary rather than at hand-picked call sites, so a git invocation that fails cannot reach the caller as a bare
+exit 1 with empty stdout; that shape was chosen deliberately, because guarding two parse sites left the rule true
+by luck rather than by construction. `extractor_invalid_span` is a span whose numbers violate the contract, a
+complexity below 1, a start line below 1, or an end line before its start, each of which otherwise reads as a clean
+pass, a zero-complexity row scoring 0 or a method that vanishes from the table entirely. The full list is
+`no_diff_base`, `diff_unparseable`, `extractor_failed`, `extractor_path_mismatch`,
+`extractor_capabilities_mismatch`, `extractor_duplicate_span`, `extractor_invalid_span`, `parse_failed`,
+`coverage_missing`, `coverage_unparseable`, and `unknown_changed_method`. Adding a code is a contract change and
+belongs in this list on the same commit.
+
+**Amended 2026-09-03.** The **staleness** cause this ADR treats as typed is deferred to
+[issue 15](https://github.com/tvrmsmith/coding-standards/issues/15) and is absent from the list above. The gate
+reads no report timestamp today, so a stale report scores silently rather than failing. Recorded so the gap reads
+as a deferral rather than an omission.
 
 Three parts of that shape are decisions in their own right.
 
