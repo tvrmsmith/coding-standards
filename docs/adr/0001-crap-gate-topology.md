@@ -24,6 +24,19 @@ A method whose span contains no instrumentable lines is treated as fully covered
 
 **Amended 2026-09-02.** "Exceed a fraction of the changed set" is superseded. **Any single `unknown` fails the run**, with no tolerated fraction and no tunable. A fraction needs a number, and no evidence sets one: the honest default is zero, at which point the fraction is a knob whose only safe position is off. Worse, a tolerance means the gate can pass while holding a method it could not measure, which is the same class of silent false pass the span join exists to prevent. The typed reason and the exclusion from scoring both stand, and [ADR 0005](0005-the-machine-document-is-the-only-output.md) keeps the table present on that failure so the reader sees which method broke.
 
+**Amended 2026-09-02.** "No method name, signature, or mangled CLR identifier appears in the join" holds for
+**attribution**, which is what that sentence is about, and needs one qualification for **identity**. Coverage is
+still attributed to the smallest span containing a line, with nothing but `(file path, start line, end line)`
+consulted, so every argument above stands. But two distinct methods can occupy one span: `class C { int F(int x)
+=> 1; int F(string x) => 2; }` is valid C# and Roslyn reports both at the same file and line range. Keying the
+changed-method set on the span alone silently collapsed them into one row, and rejecting the pair as a duplicated
+report failed valid input. The gate therefore keys a method on `(file, startLine, endLine, signature)`, where
+`signature` is the parameter spelling
+[ADR 0006](0006-the-csharp-extractor-is-written-in-house.md) makes the extractor emit. The two overloads then score
+as two rows against the same attributed lines, which is the honest answer, since line coverage cannot tell which
+overload a hit belongs to. Nothing about the async and state-machine reasoning changes, because a mangled
+identifier still never appears on either side.
+
 Adding a second language means writing an extractor, not touching the gate. That was the reason for the seam and it is the reason ReportGenerator lost.
 
 The gate is written in Go, shipped as per-platform static binaries. The seam is what allows this: because the extractor is a separate process emitting JSON, the gate never links against a language toolchain, so it can be the one artifact that runs in a repo holding neither the .NET SDK nor node. A compiled binary also fixes the gate's behaviour to its version rather than to whichever runtime a shim resolved, which matters for a metric-gate that many agents run concurrently on machines nobody controls. The cost is a cross-compile and release step the harness does not need today.

@@ -10,6 +10,26 @@ The rule has no special cases. A method moved within a file or between files app
 
 **Amended 2026-09-02.** Touched lines come from **tracked paths only**. `git diff <base>` does not see a file that has never been added to the index, so a brand-new source file the developer has not staged contributes no touched lines and no changed methods, and the run exits 0 on it. That leaves "a new file is entirely added lines, so every method in it is measured" true only once the file is staged. The alternative, unioning in `git ls-files --others --exclude-standard`, was rejected: it makes an untracked scratch file gate the run, and it adds a second input source to a definition whose whole value is being one sentence long. The limitation is recorded here and in the `gitscope` package doc rather than worked around.
 
+**Amended 2026-09-02.** The pure-move drop compares content **the way `-w` compares it**, not byte for byte, and
+it pairs **one to one**. The amendment above says byte-identical, and that spelling contradicts the flag the same
+rule is built on: a `git mv` combined with a reindent is one edit under `-w` and a whole-file add under a byte
+comparison, which puts every method in the moved file back in the changed set and rebuilds the wall of failures
+`-w` exists to prevent. The gate therefore hashes each side with every whitespace character dropped from each line
+and the line structure kept. The pairing matters for the same reason: each deleted blob accounts for exactly one
+added path, so `git mv src/Old.cs src/New.cs` followed by copying the result to `src/Copy.cs` drops one add and
+leaves the other measured, where an unpaired set-membership test dropped both and reported `changed_methods: 0` on
+a genuinely new file. A deleted submodule is skipped rather than read, because a gitlink's object id names a commit
+in another repository and reading it as a blob failed the run with no document at all.
+
+**Amended 2026-09-02.** The gate pins the git settings its parsers depend on rather than inheriting them, because
+every one of them turns a real change into `changed_methods: 0`, exit 0, which is a silent pass and the worst
+outcome a blocking gate has. Three mechanisms reach the diff and each takes a different answer. Ambient config such
+as `color.ui=always` is overridden with `-c` flags on the command line. Environment config such as
+`GIT_EXTERNAL_DIFF`, which outranks a `-c` flag, is dropped from the command's environment instead. Neither reaches
+`.gitattributes` or git's NUL-byte autodetection, so the diff also passes `--text`, which forces hunk headers out
+of a file git would otherwise summarise as "Binary files differ", covering UTF-16 source and any path marked
+`-diff` or `binary`. Only hunk headers are parsed, so whatever the forced cells hold is irrelevant.
+
 ## Considered options
 
 **Take method line ranges from the coverage report.** No second parse, and the ranges arrive already aligned with the coverage they scope. Rejected because it makes identity depend on a language-specific artifact the gate does not own, which is the seam [ADR 0001](0001-crap-gate-topology.md) exists to draw, and because a method absent from the report would then be invisible rather than `unknown`.

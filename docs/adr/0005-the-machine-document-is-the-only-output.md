@@ -56,6 +56,24 @@ baked it in. The token is recorded here rather than renamed, because `merge-base
 actually is and `since` is the name of the flag that overrides it. One token per diff mode, and a
 consumer may branch on it.
 
+**Amended 2026-09-02.** `skipped_paths` is not the `--files` list. It carries the paths **coverage discovery could
+not read**, on every run rather than under one flag, and the Consequences section below describes a narrower field
+than the one the gate emits. One unreadable directory under the repo root must not abort discovery, because that
+would exit 1 with no document at all, while the worst a skipped subtree costs is a report the walk did not see. The
+field is what keeps the resulting understated coverage from being unexplained, and it is populated even on the
+`coverage_missing` failure, where an unreadable `TestResults` subtree is the likeliest reason no report was found.
+It still never gates. The `--files` list the Consequences section names is a second producer that arrives with that
+flag, in a later issue.
+
+**Amended 2026-09-02.** Two typed exit-1 codes join the enumeration, both from the extractor seam.
+`extractor_capabilities_mismatch` is an extractor whose `--capabilities` set claims none of the changed paths the
+gate's static table routed to it, recorded in
+[ADR 0006](0006-the-csharp-extractor-is-written-in-house.md). `extractor_duplicate_span` is the same span reported
+twice, where a span is now `(file, startLine, endLine, signature)`. Both are upstream of the join, so both emit
+`status: error` with an `error` block and no table, exactly as the rule below says. The gate reaches nine typed
+codes with these two, which supersedes the count of eleven in the Consequences section; that number was written
+against a longer list of causes, several of which later collapsed into `extractor_failed`.
+
 Three parts of that shape are decisions in their own right.
 
 **The fix instruction is two typed cells, never prose.** `action` is one of `raise_coverage`, `split_method`, or
