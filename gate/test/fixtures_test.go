@@ -217,12 +217,19 @@ func failedToParse(file string) []fileStatus {
 
 // addSubmoduleGitlink commits a mode 160000 entry at rel pointing at the
 // fixture's own HEAD. That is what a submodule is in the index, and it needs no
-// second repository on disk. The commit is made without `git add -A`, which
-// would drop an entry that has no working-tree file behind it.
+// second repository on disk.
 func (f *fixture) addSubmoduleGitlink(rel string) {
 	f.t.Helper()
-	f.git("update-index", "--add", "--cacheinfo", "160000,"+f.git("rev-parse", "HEAD")+","+rel)
-	f.git("commit", "--quiet", "-m", "add submodule "+rel)
+	f.addGitlink(rel, f.git("rev-parse", "HEAD"))
+}
+
+// addGitlink commits a mode 160000 entry at rel naming objectID, whatever kind
+// of object that id turns out to name. The commit is made without `git add -A`,
+// which would drop an entry that has no working-tree file behind it.
+func (f *fixture) addGitlink(rel, objectID string) {
+	f.t.Helper()
+	f.git("update-index", "--add", "--cacheinfo", "160000,"+objectID+","+rel)
+	f.git("commit", "--quiet", "-m", "add gitlink "+rel)
 }
 
 // removeSubmoduleGitlink stages the removal of the gitlink at rel.
@@ -292,6 +299,23 @@ func cleanFilterParameters(t *testing.T) string {
 	t.Helper()
 	attributes, clean := hideEditFilter(t)
 	return fmt.Sprintf("GIT_CONFIG_PARAMETERS='core.attributesFile=%s' 'filter.hide.clean=%s'", attributes, clean)
+}
+
+// cleanFilterHome writes a home directory whose ~/.gitconfig installs the same
+// filter, and returns the environment that points git's global config at it.
+// This is the ambient user config a run falls back to when nothing pins the
+// global config file, and no variable in git's own namespace carries it.
+func cleanFilterHome(t *testing.T) []string {
+	t.Helper()
+	attributes, clean := hideEditFilter(t)
+	home := t.TempDir()
+	config := fmt.Sprintf("[core]\n\tattributesFile = %s\n[filter \"hide\"]\n\tclean = %s\n", attributes, clean)
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// XDG_CONFIG_HOME is the other place git looks for a global config, and an
+	// ambient one would answer ahead of the home this case just built.
+	return []string{"HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, ".config")}
 }
 
 // constantTextconvScript writes an executable that prints the same line for

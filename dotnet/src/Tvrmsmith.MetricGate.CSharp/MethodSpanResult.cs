@@ -15,7 +15,7 @@ namespace Tvrmsmith.MetricGate.CSharp;
 /// <item>then the parameter types in declaration order, comma-space separated, inside
 /// parentheses;</item>
 /// <item>each parameter is its modifiers in declaration order (<c>ref</c>, <c>out</c>, <c>in</c>,
-/// <c>params</c>, <c>readonly</c>, <c>scope</c>, <c>this</c>) each followed by a space, then the
+/// <c>params</c>, <c>readonly</c>, <c>scoped</c>, <c>this</c>) each followed by a space, then the
 /// type as written;</item>
 /// <item>the type is written exactly as the source spells it, whitespace normalised to one space
 /// after each comma and none elsewhere, so <c>Dictionary&lt;string, int&gt;</c>,

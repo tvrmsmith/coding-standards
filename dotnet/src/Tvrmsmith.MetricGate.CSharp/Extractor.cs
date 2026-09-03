@@ -27,12 +27,13 @@ public static class Extractor
             {
                 source = File.ReadAllText(path);
             }
-            catch (IOException)
-            {
-                files.Add(new FileStatusResult(path, "failed"));
-                continue;
-            }
-            catch (UnauthorizedAccessException)
+            // ArgumentException and NotSupportedException are the two a malformed
+            // path raises rather than a missing one, and they are as much a file the
+            // extractor could not read as a permission error is. Letting either
+            // escape crashes the process, so the gate gets no JSON at all in place of
+            // the one failed row this loop is here to build.
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException
+                or ArgumentException or NotSupportedException)
             {
                 files.Add(new FileStatusResult(path, "failed"));
                 continue;

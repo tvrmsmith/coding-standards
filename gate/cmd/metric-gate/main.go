@@ -66,7 +66,10 @@ func measure() (report.Document, error) {
 	doc.Base = &label
 
 	touched, err := repo.TouchedLines(base)
-	if err != nil {
+	if failure, ok := asFailure(err); ok {
+		doc.Failure = failure
+		return doc, nil
+	} else if err != nil {
 		return doc, err
 	}
 

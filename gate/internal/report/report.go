@@ -25,6 +25,7 @@ const Scope = "merge-base"
 // branches on these rather than parsing the message.
 const (
 	CodeNoDiffBase                    = "no_diff_base"
+	CodeDiffUnparseable               = "diff_unparseable"
 	CodeExtractorFailed               = "extractor_failed"
 	CodeExtractorPathMismatch         = "extractor_path_mismatch"
 	CodeExtractorCapabilitiesMismatch = "extractor_capabilities_mismatch"

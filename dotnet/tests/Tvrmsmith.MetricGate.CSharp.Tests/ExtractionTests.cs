@@ -240,4 +240,23 @@ public class ExtractionTests
         });
         result.Spans.Should().BeEmpty();
     }
+
+    /// <summary>
+    /// A NUL byte in a path is rejected before any I/O, with an ArgumentException rather than the
+    /// IOException a missing file raises. It is still a file the extractor could not read, so it
+    /// has to come back as the one failed row rather than as a crashed process that leaves the
+    /// gate no JSON to read at all.
+    /// </summary>
+    [Fact]
+    public void APathTheFilesystemCannotExpressIsAFailedRowNotACrash()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/\0.cs");
+
+        exitCode.Should().Be(0);
+        result.Files.Should().BeEquivalentTo(new[]
+        {
+            new { File = "fixtures/\0.cs", Status = "failed" },
+        });
+        result.Spans.Should().BeEmpty();
+    }
 }
