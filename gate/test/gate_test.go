@@ -533,6 +533,32 @@ func TestBranchIsScoredAgainstTheMergeBaseAndNotTheTipOfMain(t *testing.T) {
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
+func TestWholeFileReformatWithNoLogicChangeMeasuresNothing(t *testing.T) {
+	const legacy = "src/Ordering/Legacy.cs"
+	knot := span{File: legacy, Name: "Legacy.Knot", StartLine: 10, EndLine: 40, Complexity: 34}
+	tangle := span{File: legacy, Name: "Legacy.Tangle", StartLine: 42, EndLine: 58, Complexity: 20}
+
+	f := newFixture(t, "main")
+	f.write(legacy, csharpFile(60))
+	f.commitAll("initial")
+	// Indenting the whole file is the only change. Under -w this produces no
+	// "+++" line and no hunk at all for Legacy.cs, so it never reaches the
+	// extractor and the stub's spans, which would both blow the threshold if
+	// they were ever measured, are never read.
+	f.write(legacy, indented(csharpFile(60), "        "))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		// Never read: the run has to see no changed methods without ever
+		// asking for a coverage report. Writing none is load-bearing, since
+		// a single measured method would fail coverage_missing instead of
+		// passing, which is the only way this case could fail wrong.
+		Stdout: extractorOutput(t, parsed(legacy), []span{knot, tangle}),
+	}
+
+	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
+		"no changed methods, nothing to measure\n")
+}
+
 func TestMethodMovedToANewPathAndEditedIsScoredAtItsNewLocation(t *testing.T) {
 	const origin = "src/Ordering/Origin.cs"
 	const moved = "src/Ordering/Moved.cs"
@@ -555,6 +581,159 @@ func TestMethodMovedToANewPathAndEditedIsScoredAtItsNewLocation(t *testing.T) {
 
 	f.run().assertMatches(t, "renamed_file", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 10.75\n")
+}
+
+func TestMethodMovedBetweenFilesWithItsBodyUnchangedIsMeasuredAtItsNewLocation(t *testing.T) {
+	const origin = "src/Ordering/Origin.cs"
+	const destination = "src/Ordering/Destination.cs"
+	// Does not contain line 9, the line Origin's own touch lands on, so
+	// Origin's side of the move is a diagnostic and never a changed method.
+	originKeep := span{File: origin, Name: "Origin.Keep", StartLine: 20, EndLine: 30, Complexity: 2}
+	// Proves only the moved method is measured, not everything sitting near it.
+	destinationUntouched := span{File: destination, Name: "Destination.Untouched", StartLine: 5, EndLine: 15, Complexity: 12}
+	destinationVanish := span{File: destination, Name: "Destination.Vanish", StartLine: 30, EndLine: 40, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(origin, csharpFile(60))
+	f.write(destination, csharpFile(60))
+	f.commitAll("initial")
+	// Neither file is renamed, both stay status M, so the pure-move drop never
+	// fires and the method's body is byte-identical at its new home. git
+	// reports Origin's removal as a zero-length hunk touching line 9 alone,
+	// and Destination's insertion as lines 30 through 40.
+	f.moveLines(origin, 10, 20, destination, 29)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: destination, lines: spanCoverage(31, 4, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout: extractorOutput(t, parsed(origin, destination),
+			[]span{originKeep, destinationUntouched, destinationVanish}),
+	}
+
+	f.run().assertMatches(t, "moved_between_files", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 10.75\n")
+}
+
+func TestDeletedMethodIsNotMeasuredAndItsDeletionChangesTheCodeAroundIt(t *testing.T) {
+	const legacy = "src/Ordering/Legacy.cs"
+	neighbour := span{File: legacy, Name: "Legacy.Neighbour", StartLine: 5, EndLine: 12, Complexity: 3}
+
+	f := newFixture(t, "main")
+	f.write(legacy, csharpFile(60))
+	f.commitAll("initial")
+	// Lines 10-40 held a complexity-34 method well over the threshold. Deleting
+	// it produces a zero-length hunk that touches line 9 alone, and the working
+	// tree no longer holds a span for the deleted method at all, so it cannot
+	// appear in the table however badly it once scored. The deletion still
+	// lands on Neighbour, the method that surrounded it.
+	f.deleteLines(legacy, 10, 40)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: legacy, lines: spanCoverage(6, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(legacy), []span{neighbour}),
+	}
+
+	f.run().assertMatches(t, "deleted_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestEveryMethodInANewlyAddedFileIsMeasured(t *testing.T) {
+	const fresh = "src/Ordering/Fresh.cs"
+	first := span{File: fresh, Name: "Fresh.First", StartLine: 3, EndLine: 8, Complexity: 4}
+	second := span{File: fresh, Name: "Fresh.Second", StartLine: 10, EndLine: 16, Complexity: 9}
+
+	f := newFixture(t, "main")
+	// A file already on main so a base exists for Fresh.cs to diff against.
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.write(fresh, csharpFile(20))
+	// `git add` is required, not incidental: ADR 0003's third amendment says
+	// touched lines come from tracked paths only, so an unstaged new file
+	// contributes nothing.
+	f.git("add", fresh)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: fresh, lines: append(spanCoverage(4, 4, 1), spanCoverage(11, 5, 1)...)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		// Lines 1, 2, 9, 17, 18, 19 and 20 fall inside no span, seven
+		// diagnostics against an entirely-added file.
+		Stdout: extractorOutput(t, parsed(fresh), []span{first, second}),
+	}
+
+	f.run().assertMatches(t, "new_file", 2, f.baseLabel("main"),
+		"1 of 2 changed methods over CRAP threshold 30, worst score 50.47\n")
+}
+
+// TestRealCommitMixingEditMoveDeletionAdditionRenameAndReflow is the
+// capstone issue 13 is named for: one commit doing everything at once, and
+// the gate sorting each kind of change into the right bucket without a
+// special case for any of them.
+//
+//   - OrderService.cs gets an ordinary edit, an easy sanity check that
+//     everything else in the tree does not drown it out.
+//   - Legacy.cs is reflowed with no logic change; -w gives it no hunk at all,
+//     so it never even reaches the ACM filter, let alone the extractor.
+//   - Origin.cs and Destination.cs repeat the moved-method case: the method
+//     is measured at its new home in Destination, and Origin's own touch is
+//     a diagnostic only.
+//   - Doomed.cs is deleted outright, which is status D and --diff-filter=ACM
+//     drops it before it can be measured or even named.
+//   - Stable.cs is renamed to Renamed.cs with no content change. --no-renames
+//     turns that into a D/A pair, and the pure-move drop, driven by the raw
+//     listing pairing them on one content digest, removes it again.
+//   - Fresh.cs is added and staged, so every method in it is measured, and
+//     Fresh.cs is what proves the pure-move drop above did not also catch an
+//     unrelated new file that happens to share the diff.
+//   - notes.md is touched but no extractor claims .md files, so its line
+//     counts toward nothing, not even the outside-spans diagnostic.
+func TestRealCommitMixingEditMoveDeletionAdditionRenameAndReflow(t *testing.T) {
+	const legacy = "src/Ordering/Legacy.cs"
+	const origin = "src/Ordering/Origin.cs"
+	const destination = "src/Ordering/Destination.cs"
+	const doomed = "src/Ordering/Doomed.cs"
+	const stable = "src/Ordering/Stable.cs"
+	const renamed = "src/Ordering/Renamed.cs"
+	const fresh = "src/Ordering/Fresh.cs"
+	const notes = "docs/notes.md"
+
+	originKeep := span{File: origin, Name: "Origin.Keep", StartLine: 20, EndLine: 30, Complexity: 2}
+	destinationUntouched := span{File: destination, Name: "Destination.Untouched", StartLine: 5, EndLine: 15, Complexity: 12}
+	destinationVanish := span{File: destination, Name: "Destination.Vanish", StartLine: 30, EndLine: 40, Complexity: 4}
+	freshFirst := span{File: fresh, Name: "Fresh.First", StartLine: 3, EndLine: 8, Complexity: 4}
+	freshSecond := span{File: fresh, Name: "Fresh.Second", StartLine: 10, EndLine: 16, Complexity: 9}
+
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write(legacy, csharpFile(60))
+	f.write(origin, csharpFile(60))
+	f.write(destination, csharpFile(60))
+	f.write(doomed, csharpFile(40))
+	f.write(stable, csharpFile(30))
+	f.write(notes, "first\n")
+	f.commitAll("initial")
+
+	f.touchLine(orderService, 45)
+	f.write(legacy, indented(csharpFile(60), "        "))
+	f.moveLines(origin, 10, 20, destination, 29)
+	f.git("rm", "-q", doomed)
+	f.git("mv", stable, renamed)
+	f.write(fresh, csharpFile(20))
+	f.git("add", fresh)
+	f.write(notes, "first\nsecond\n")
+
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(42, 10, 1)},
+		coverageClass{filename: destination, lines: spanCoverage(31, 4, 1)},
+		coverageClass{filename: fresh, lines: append(spanCoverage(4, 4, 1), spanCoverage(11, 5, 1)...)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout: extractorOutput(t, parsed(destination, fresh, orderService, origin),
+			[]span{placeAsync, cancel, originKeep, destinationUntouched, destinationVanish, freshFirst, freshSecond}),
+	}
+
+	f.run().assertMatches(t, "real_commit", 2, f.baseLabel("main"),
+		"2 of 4 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
 
 func TestANestedSpanTakesTheTouchedLineAndItsOwnCoverageFromItsContainer(t *testing.T) {
@@ -597,7 +776,7 @@ func TestChangedMethodWithNoCoverageReportAnywhereFails(t *testing.T) {
 		"CRAP requires a coverage report, none found\n")
 }
 
-func TestRepoWithNoOriginAndNoMainOrMasterFails(t *testing.T) {
+func TestRepoWithNoResolvableDiffBaseNamesEveryRefAndPointsAtTheFlag(t *testing.T) {
 	f := newFixture(t, "trunk")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -605,7 +784,7 @@ func TestRepoWithNoOriginAndNoMainOrMasterFails(t *testing.T) {
 	f.stub = stubConfig{Extensions: []string{".cs"}}
 
 	f.run().assertMatches(t, "no_diff_base", 1, "",
-		"no diff base: tried origin/HEAD, origin/main, origin/master, main, master\n")
+		"no diff base: tried origin/HEAD, origin/main, origin/master, main, master; name one with --since <ref>\n")
 }
 
 func TestChangedMethodInAFileNoReportPathMatchedFails(t *testing.T) {
