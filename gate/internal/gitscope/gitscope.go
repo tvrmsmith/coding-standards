@@ -89,11 +89,14 @@ type Base struct {
 // Label renders the base as the document's `base` field, "<ref>@<7-char sha>".
 func (b Base) Label() string { return b.Ref + "@" + b.Commit[:7] }
 
-// NoBaseError reports that none of ADR 0003's candidate refs resolved.
+// NoBaseError reports that none of ADR 0003's candidate refs resolved. The
+// message points at `--since`, issue 14's flag, per ADR 0003's Consequences:
+// a caller with no resolvable base needs a way to name one explicitly, and
+// the ADR already decided what that way is called.
 type NoBaseError struct{}
 
 func (NoBaseError) Error() string {
-	return "no diff base: tried " + strings.Join(BaseCandidates, ", ")
+	return "no diff base: tried " + strings.Join(BaseCandidates, ", ") + "; name one with --since <ref>"
 }
 
 // ResolveBase walks BaseCandidates and returns the merge base of HEAD and

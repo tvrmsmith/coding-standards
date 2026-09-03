@@ -82,6 +82,21 @@ func (f *fixture) deleteLines(rel string, from, to int) {
 	f.write(rel, strings.Join(append(append([]string{}, lines[:from-1]...), lines[to:]...), "\n"))
 }
 
+// moveLines cuts the one-based lines from..to (inclusive) out of the file at
+// src and inserts them into dst immediately after dst's line after. Both
+// files are left at status M, so the pure-move drop never fires and the
+// moved lines are byte-identical at their new home.
+func (f *fixture) moveLines(src string, from, to int, dst string, after int) {
+	f.t.Helper()
+	srcLines := strings.Split(f.read(src), "\n")
+	cut := append([]string{}, srcLines[from-1:to]...)
+	f.write(src, strings.Join(append(append([]string{}, srcLines[:from-1]...), srcLines[to:]...), "\n"))
+
+	dstLines := strings.Split(f.read(dst), "\n")
+	inserted := append(append([]string{}, dstLines[:after]...), append(cut, dstLines[after:]...)...)
+	f.write(dst, strings.Join(inserted, "\n"))
+}
+
 // read returns the current content of the file at rel.
 func (f *fixture) read(rel string) string {
 	f.t.Helper()
