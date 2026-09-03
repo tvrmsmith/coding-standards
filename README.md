@@ -5,7 +5,10 @@ enforce them, **and** the metric gate that scores changed methods against a thre
 
 ## Four enforcement modes
 
-Every guideline has exactly one home, and each home corresponds to *when* it acts:
+A mode is an enforcement mechanism, distinguished by *when* it fires and what kind of judgement it
+applies. Every guideline is assigned to exactly one mode, but a mode stands on its own: one with no
+guideline behind it is legitimate, in the same way an off-the-shelf lint rule earns its place
+without a guideline being written for it first.
 
 | Mode | When | What it is |
 |---|---|---|
