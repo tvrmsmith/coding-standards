@@ -31,8 +31,8 @@ do. Only the empty intersection is typed, because that is the one case where the
 part of a change it was handed.
 
 **Amended 2026-09-02.** The extractor emits a `signature` beside `name` on every span, carrying the parameter
-spelling, and the gate uses `(file, startLine, endLine, signature)` to decide whether two spans are two methods or
-one method reported twice. `class C { int F(int x) => 1; int F(string x) => 2; }` is valid C# and Roslyn reports
+spelling, and the gate uses `(file, name, startLine, endLine, signature)` to decide whether two spans are two
+methods or one method reported twice. `class C { int F(int x) => 1; int F(string x) => 2; }` is valid C# and Roslyn reports
 two spans agreeing on file, name, start line and end line, so name alone cannot separate them and the gate failed
 that input with `extractor_duplicate_span`. `signature` is confined to the extractor's JSON wire and never reaches
 the document, where `name` remains the whole of a method's printed identity, so no golden and no consumer moves.
@@ -41,6 +41,45 @@ every document to buy disambiguation the reader almost never needs, and ordering
 their line range was rejected because it leaves the two rows printing the same name with nothing to tell them
 apart. An extractor in another language owes the same field, spelled however that language spells a parameter
 list, and the obligation is only that it be stable across runs and different for overloads.
+
+**Amended 2026-09-03.** Three further decisions on the extractor seam, each authorized on its own evidence.
+
+**Extension routing folds case.** A touched `Order.CS` matched no row and the run passed with
+`changed_methods: 0`, which on macOS and Windows is a file a developer creates without noticing. Folding widens
+what the gate offers the extractor, and the asymmetry above says that is the cheap direction, since
+`--capabilities` remains the authority on what the binary actually handles.
+[ADR 0004](0004-source-paths-are-repo-relative-and-resolved-deterministically.md)'s rejection of case folding does
+not reach this: it governs resolving a coverage-report path onto a file on disk, where folding can merge two real
+files, while routing only decides whether to launch a process.
+
+**`extractor_capabilities_mismatch` has a second trigger.** Beyond the empty intersection the amendment above
+records, an extractor answering `--capabilities` with a language other than the one the table routed to it fails
+the same way. A binary sitting under the expected name but answering for another language is a misroute, and the
+paragraph above scoped the code to one condition only because the second had not been written yet.
+
+**Span numbers are validated.** A span reporting complexity below 1, a start line below 1, or an end line before
+its start fails the run with `extractor_invalid_span`. Both violations otherwise read as a clean pass rather than
+an error, an absent complexity unmarshalling to 0 and scoring 0, and an inverted range making the method vanish
+from the table. The gate already types four extractor-contract violations on the principle that a broken extractor
+must not read as a clean run, so leaving the numbers untyped was the inconsistency. The Roslyn extractor emits
+neither; this is defence against a version-skewed or third-party one.
+
+**Amended 2026-09-03.** The complexity contract **counts a switch expression arm and a pattern combinator**, each
+at +1, alongside the constructs the walker already scored. A twenty-arm switch expression previously reported
+complexity 1 and scored CRAP at or below 2 at any coverage, while the same logic as a `switch` statement scored 20,
+so the metric was blind to a construct ordinary C# uses. The walker was also inconsistent with itself, since an
+arm's `when` guard scored while the arm it guarded did not. This ADR's Consequences already says whether such an
+arm counts is a line in this repo, and this is that line. It is not a widening of the **span** rule: which
+declarations get a row is a separate question, answered next.
+
+**Amended 2026-09-03.** The opening's "walks the method-like declarations" describes the finished extractor. The
+tracer walks **`MethodDeclarationSyntax` alone**, so no constructor, accessor or local function gets a span, and
+the widening lands with [issue 18](https://github.com/tvrmsmith/coding-standards/issues/18). Two consequences
+follow while it is deferred, and both are deliberate.
+[ADR 0005](0005-the-machine-document-is-the-only-output.md)'s worked document prints an `Order.get_Id` row this
+extractor cannot yet produce, and with no local-function span the containing method absorbs a local function's
+lines, which is the absorption [ADR 0001](0001-crap-gate-topology.md) calls out. Recorded so a reader meets a dated
+deferral rather than reading either as a defect.
 
 [ADR 0001](0001-crap-gate-topology.md) decided that complexity comes from a source-level AST walker.
 [Issue 4](https://github.com/tvrmsmith/coding-standards/issues/4) named `ComplexityRipper` as the tool filling
