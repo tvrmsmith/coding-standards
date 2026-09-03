@@ -219,6 +219,80 @@ func TestExtractorReturningTheSameSpanWithTwoComplexitiesFails(t *testing.T) {
 		"csharp extractor returned OrderService.PlaceAsync twice, covering src/Ordering/OrderService.cs lines 41-58\n")
 }
 
+func TestExtractorReportingAComplexityBelowTheMcCabeBaseFails(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 45)
+	// An absent `complexity` field unmarshals to exactly this, and 0 scores 0, so
+	// letting it through prints a passing row for a method nobody measured.
+	uncounted := placeAsync
+	uncounted.Complexity = 0
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{uncounted}),
+	}
+
+	f.run().assertMatches(t, "invalid_span_complexity", 1, f.baseLabel("main"),
+		"csharp extractor reported OrderService.PlaceAsync in src/Ordering/OrderService.cs with complexity 0, which is below the McCabe base of 1\n")
+}
+
+func TestExtractorReportingAStartLineBelowOneFails(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 45)
+	unplaced := placeAsync
+	unplaced.StartLine = 0
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{unplaced}),
+	}
+
+	f.run().assertMatches(t, "invalid_span_start", 1, f.baseLabel("main"),
+		"csharp extractor reported OrderService.PlaceAsync in src/Ordering/OrderService.cs with start line 0, which names no line\n")
+}
+
+func TestExtractorReportingAnEndLineBelowItsStartFails(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 45)
+	// A negative width is the quietest of the three: no line is ever inside the
+	// span, so the method leaves the table and the run says nothing changed.
+	inverted := placeAsync
+	inverted.StartLine, inverted.EndLine = 58, 41
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{inverted}),
+	}
+
+	f.run().assertMatches(t, "invalid_span_range", 1, f.baseLabel("main"),
+		"csharp extractor reported OrderService.PlaceAsync in src/Ordering/OrderService.cs with end line 41 below start line 58\n")
+}
+
+func TestChangedFileWhoseExtensionIsSpeltInAnotherCaseIsStillMeasured(t *testing.T) {
+	// macOS and Windows both carry case-insensitive filesystems, so this is an
+	// ordinary file a developer creates without noticing. Routed by an exact
+	// match it reaches no extractor, and the run passes with the method unscored.
+	const shouted = "src/Ordering/Order.CS"
+	vanish := span{File: shouted, Name: "Order.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(shouted, csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(shouted, 7)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: shouted, lines: spanCoverage(6, 4, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(shouted), []span{vanish}),
+	}
+
+	f.run().assertMatches(t, "case_variant_extension", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 10.75\n")
+}
+
 func TestTwoMethodsDeclaredOnOneLineAreBothScored(t *testing.T) {
 	const twins = "src/Ordering/Twins.cs"
 	// `public class C { public int A() => 1; public int B() => 2; }` is valid
@@ -694,6 +768,67 @@ func TestRemovedGitlinkNamingABlobDoesNotDropTheAddedFile(t *testing.T) {
 
 	f.run().assertMatches(t, "gitlink_naming_a_blob", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 10.75\n")
+}
+
+func TestACleanFilterInTheRepositorysOwnConfigDoesNotHideTheChange(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	// The repo-local scope, which is where git-lfs and git-crypt install
+	// themselves, and which neither the environment scrub nor the pinned config
+	// files reach. The driver strips exactly what the edit below writes in, so
+	// git sees the two sides of the change as equal, prints no hunk at all, and
+	// the gate passes green having measured nothing.
+	f.configureCleanFilter()
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestAProcessFilterInTheRepositorysOwnConfigIsNeverLaunched(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	// `filter.<name>.process` is the long-running protocol git prefers over
+	// `.clean` when both are set, and the half git-lfs actually installs. It has
+	// to be blanked beside `.clean`, or a repository that installs only this half
+	// still decides what the gate is allowed to see.
+	f.configureProcessFilter()
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestADiffGitRefusesToPrintIsATypedDocumentNotAnEmptyStdout(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	// Base resolution reads commits and still succeeds, so the document exists
+	// and ADR 0005 requires it on stdout. The diff itself reads the old side's
+	// blob, which is gone, so git exits 128 before printing a patch.
+	blob := f.git("rev-parse", "HEAD:"+orderService)
+	f.touchLine(orderService, 62)
+	f.removeLooseObject(blob)
+
+	result := f.run()
+
+	result.assertMatchesWith(t, "diff_unreadable", 1, f.baseLabel("main"),
+		"could not read the diff: fatal: unable to read "+blob+"\n",
+		map[string]string{"BLOB": blob})
 }
 
 func TestHostileGitConfigAndEnvironmentDoNotHideTheChange(t *testing.T) {

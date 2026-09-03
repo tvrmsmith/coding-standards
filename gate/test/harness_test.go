@@ -219,7 +219,19 @@ func (f *fixture) exec(dir string, extraEnv ...string) runResult {
 // code and stderr in one place, so a case carries one assertion.
 func (r runResult) assertMatches(t *testing.T, golden string, exitCode int, base, stderr string) {
 	t.Helper()
+	r.assertMatchesWith(t, golden, exitCode, base, stderr, nil)
+}
+
+// assertMatchesWith is assertMatches for a golden carrying a second hole, in
+// the shape {{NAME}}. A run whose document quotes an object id has no fixed
+// text to compare against, and naming the hole keeps the golden the authored
+// expected value rather than something the case regenerates.
+func (r runResult) assertMatchesWith(t *testing.T, golden string, exitCode int, base, stderr string, holes map[string]string) {
+	t.Helper()
 	want := readGolden(t, golden, base)
+	for name, value := range holes {
+		want = strings.ReplaceAll(want, "{{"+name+"}}", value)
+	}
 	if r.stdout == want && r.exitCode == exitCode && r.stderr == stderr {
 		return
 	}

@@ -4,17 +4,32 @@
 // `--diff-filter` are fixed in one place and no caller can get them wrong.
 //
 // A gate that measures nothing passes, so anything able to reshape the diff
-// into something the hunk parser reads as empty is a silent green build. Three
-// separate mechanisms can do that and each needs its own answer. Ambient config
-// such as `color.ui=always` is beaten by the `-c` overrides run pins on the
-// command line. The environment outranks a `-c` flag, whether it reshapes the
-// diff directly (GIT_EXTERNAL_DIFF), injects config (GIT_CONFIG_PARAMETERS), or
-// points the whole run at another repository (GIT_DIR), so git's namespace is
-// dropped from the command's environment entirely and the two config-file
-// variables are then pinned at the null device, which is what keeps the scrub
-// from handing the run back to an ambient ~/.gitconfig. Neither reaches
-// `.gitattributes` or git's own NUL-byte autodetection, which live in the repo
-// and in the file's bytes; `--text` on the diff answers those.
+// into something the hunk parser reads as empty is a silent green build. Four
+// separate mechanisms can do that and each needs its own answer.
+//
+// Ambient config such as `color.ui=always` is beaten by the `-c` overrides run
+// pins on the command line. The environment outranks a `-c` flag, whether it
+// reshapes the diff directly (GIT_EXTERNAL_DIFF), injects config
+// (GIT_CONFIG_PARAMETERS), or points the whole run at another repository
+// (GIT_DIR), so git's namespace is dropped from the command's environment
+// entirely and the two config-file variables are then pinned at the null device,
+// which is what keeps the scrub from handing the run back to an ambient
+// ~/.gitconfig.
+//
+// A content filter is the third, and neither of the first two answers reach it.
+// A filter driver is named by the repository's own .git/config, which the pins
+// leave in place because a repo-local key is the only thing that can say what a
+// checkout means, and it is selected by a `.gitattributes` line, which lives in
+// the tree. That is where git-lfs and git-crypt install themselves. A clean
+// driver runs over the working-tree side of every diff, so one that prints its
+// input back unchanged, or prints nothing, empties the patch. There is no flag
+// that turns filtering off, so the drivers the repo configures are enumerated
+// and each is blanked with its own `-c` override, which is protected config and
+// outranks the repo-local value that named it.
+//
+// None of the three reach git's own NUL-byte autodetection or a `.gitattributes`
+// line marking a source file `-diff`, which live in the tree and in the file's
+// bytes; `--text` on the diff answers those.
 //
 // The diff covers tracked paths only. A brand-new source file the developer
 // has not yet `git add`ed contributes no touched lines and therefore no
@@ -25,6 +40,7 @@ package gitscope
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -111,16 +127,36 @@ func (r Repo) ResolveBase() (Base, error) {
 // side of a pure `git mv` is the whole file. So an added path whose content,
 // whitespace ignored, is the only match for a path the same diff deleted is
 // dropped afterwards, and only a move that also edited the file is measured.
+//
+// Nothing gets out of here untyped. Base resolution has already succeeded, so
+// the document exists and ADR 0005's one-document rule binds: every cause below
+// this line, a git invocation that failed as much as a patch the parser refused,
+// comes back as a report.Failure so main can put it in the document's error
+// block. Exiting 1 with an empty stdout instead is a shape the caller cannot
+// tell from a crash, and typing the boundary rather than the individual return
+// sites is what stops the next cause added underneath it reopening that hole.
 func (r Repo) TouchedLines(base Base) (map[srcpath.Path][]int, error) {
-	patch, err := r.git(append(diffFlags, "-w", "-U0", "--no-renames", "--diff-filter=ACM", base.Commit)...)
+	touched, err := r.touchedLines(base)
+	if err != nil {
+		return nil, unreadableDiff(err)
+	}
+	return touched, nil
+}
+
+func (r Repo) touchedLines(base Base) (map[srcpath.Path][]int, error) {
+	neutralized, err := r.blankedFilterDrivers()
+	if err != nil {
+		return nil, err
+	}
+	patch, err := r.git(append(neutralized, append(diffFlags, "-w", "-U0", "--no-renames", "--diff-filter=ACM", base.Commit)...)...)
 	if err != nil {
 		return nil, err
 	}
 	touched, err := parseTouchedLines(patch)
 	if err != nil {
-		return nil, unparseableDiff(err)
+		return nil, err
 	}
-	moved, err := r.pureMoves(base)
+	moved, err := r.pureMoves(base, neutralized)
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +164,47 @@ func (r Repo) TouchedLines(base Base) (map[srcpath.Path][]int, error) {
 		delete(touched, path)
 	}
 	return touched, nil
+}
+
+// blankedFilterDrivers is a `-c <key>=` override for every content filter the
+// repository configures, which is what a diff has to be run under for a clean
+// driver not to decide what the gate can see.
+//
+// The drivers are enumerated rather than named, because their names are the
+// repository's to choose. Both halves of the interface are blanked: `.clean` is
+// the one-shot driver, and `.process` is the long-running protocol git prefers
+// when it is set, which is the half git-lfs actually installs. Blanking the
+// latter makes git fall back to the former, which is blanked beside it.
+//
+// In a git-lfs repository this measures the pointer-expanded content rather than
+// the pointer file. That is the same text Roslyn parses off the working tree, so
+// the two halves of the measurement agree.
+func (r Repo) blankedFilterDrivers() ([]string, error) {
+	out, err := r.git("config", "--name-only", "--get-regexp", filterDriverKeys)
+	if noMatch(err) {
+		// `git config --get-regexp` exits 1 on no match, which is the ordinary
+		// case of a repository configuring no filter at all.
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var overrides []string
+	for _, key := range strings.Fields(out) {
+		overrides = append(overrides, "-c", key+"=")
+	}
+	return overrides, nil
+}
+
+// filterDriverKeys matches both spellings of a content filter driver.
+const filterDriverKeys = `^filter\..*\.(clean|process)$`
+
+// noMatch reports whether err is `git config --get-regexp` finding nothing,
+// which it reports as exit 1 with no output. Any other exit code is a real
+// failure to read the repository's config and is not an empty answer.
+func noMatch(err error) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == 1
 }
 
 // pureMoves lists the added paths carrying content some deleted path in the
@@ -152,14 +229,14 @@ func (r Repo) TouchedLines(base Base) (map[srcpath.Path][]int, error) {
 // src/Old.cs src/New.cs` followed by copying the result to src/Copy.cs leaves
 // both adds measured. `--no-renames` is what removes git's own answer to which
 // of the two is the move, and guessing would silently unscore a brand-new file.
-func (r Repo) pureMoves(base Base) ([]srcpath.Path, error) {
-	raw, err := r.git(append(rawFlags, "-z", "--abbrev=40", "--no-renames", "--diff-filter=AD", base.Commit)...)
+func (r Repo) pureMoves(base Base, neutralized []string) ([]srcpath.Path, error) {
+	raw, err := r.git(append(neutralized, append(rawFlags, "-z", "--abbrev=40", "--no-renames", "--diff-filter=AD", base.Commit)...)...)
 	if err != nil {
 		return nil, err
 	}
 	added, deleted, err := parseRawAddsAndDeletes(raw)
 	if err != nil {
-		return nil, unparseableDiff(err)
+		return nil, err
 	}
 	if len(added) == 0 || len(deleted) == 0 {
 		return nil, nil
@@ -346,17 +423,19 @@ func parseHunkHeader(header string) (start, count int, err error) {
 	return start, count, nil
 }
 
-// unparseableDiff types a parser's refusal to read what git printed. Base
-// resolution has already succeeded by then, so the document exists and ADR
-// 0005's one-document rule applies: main puts this in the error block rather
-// than exiting 1 with nothing on stdout, which a caller cannot tell from a
-// crash. Every parse failure on this path shares the code, because they all say
-// the same thing, that git answered and the answer was not a diff the gate
-// understands.
-func unparseableDiff(err error) error {
+// unreadableDiff types whatever went wrong between asking git for the diff and
+// having a set of touched lines. One code covers the whole stretch because every
+// cause on it says the same thing to a caller, that the gate could not establish
+// what the change touched and therefore measured nothing, and because a code per
+// cause would be a list to extend every time a line is added under the boundary.
+func unreadableDiff(err error) error {
+	var failure *report.Failure
+	if errors.As(err, &failure) {
+		return failure
+	}
 	return &report.Failure{
 		Code:    report.CodeDiffUnparseable,
-		Message: "could not read the diff git printed: " + err.Error(),
+		Message: "could not read the diff: " + cause(err),
 	}
 }
 
@@ -365,7 +444,18 @@ func unparseableDiff(err error) error {
 // read from the repo, so a hostile or merely unusual .gitconfig cannot turn a
 // diff the parser understands into one it silently reads as empty, which would
 // pass the gate with no changed methods.
+//
+// `safe.directory` is the one entry here that is not about the shape of the
+// output. git honours it only from protected config, which the pinned-empty
+// config files no longer supply, so without it the gate refuses any working tree
+// owned by another uid and a container runner that mounts the checkout gets exit
+// 1 where the developer's own git works. The ownership check is not load-bearing
+// for this tool: it exists to stop a repository's own config running commands on
+// behalf of whoever wanders into the directory, and the gate reads a repository
+// the caller pointed it at, runs no repo-named program now that filter drivers
+// are blanked, and never writes.
 var configOverrides = []string{
+	"-c", "safe.directory=*",
 	"-c", "core.quotePath=false",
 	"-c", "color.ui=false",
 	"-c", "diff.external=",
@@ -411,10 +501,14 @@ const gitNamespace = "GIT_"
 // namespace sends git to its default config locations instead, so the run would
 // read whatever ~/.gitconfig and /etc/gitconfig happen to hold. That is the same
 // hole the scrub exists to close, only reached through a file rather than a
-// variable: one `filter.*.clean` entry there hides an edit from the diff and no
-// command-line flag turns a clean filter off. Both are therefore pinned at the
-// null device, an empty file on every platform Go names it for, and the run
-// carries the settings it needs on the command line.
+// variable: a `filter.*.clean` entry there installs a driver over every file the
+// diff reads, and nothing on the command line turns filtering off. Both are
+// therefore pinned at the null device, an empty file on every platform Go names
+// it for, and the run carries the settings it needs on the command line.
+//
+// This does not answer the same key set in the repository's own .git/config,
+// which the pins deliberately leave readable. blankedFilterDrivers is what
+// covers that scope.
 var pinnedConfigFiles = []string{
 	"GIT_CONFIG_GLOBAL=" + os.DevNull,
 	"GIT_CONFIG_SYSTEM=" + os.DevNull,
@@ -435,9 +529,35 @@ func run(dir string, args ...string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+		return "", &gitError{args: args, err: err, stderr: strings.TrimSpace(stderr.String())}
 	}
 	return stdout.String(), nil
+}
+
+// gitError is one failed git invocation. The two halves are kept apart because
+// they have different readers: the whole thing, argv included, is what a
+// developer needs off stderr, while the document's error block wants git's own
+// complaint on its own, since the argv is a fixed flag list carrying nothing a
+// caller can act on.
+type gitError struct {
+	args   []string
+	err    error
+	stderr string
+}
+
+func (e *gitError) Error() string {
+	return fmt.Sprintf("git %s: %v: %s", strings.Join(e.args, " "), e.err, e.stderr)
+}
+
+func (e *gitError) Unwrap() error { return e.err }
+
+// cause is what git said, or the whole error when it was not git that spoke.
+func cause(err error) string {
+	var gitErr *gitError
+	if errors.As(err, &gitErr) && gitErr.stderr != "" {
+		return gitErr.stderr
+	}
+	return err.Error()
 }
 
 // sanitizedEnv is the process environment with git's own namespace removed and
