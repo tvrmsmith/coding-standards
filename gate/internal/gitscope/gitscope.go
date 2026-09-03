@@ -171,16 +171,25 @@ func (r Repo) touchedLines(base Base) (map[srcpath.Path][]int, error) {
 // driver not to decide what the gate can see.
 //
 // The drivers are enumerated rather than named, because their names are the
-// repository's to choose. Both halves of the interface are blanked: `.clean` is
-// the one-shot driver, and `.process` is the long-running protocol git prefers
-// when it is set, which is the half git-lfs actually installs. Blanking the
+// repository's to choose. All three keys of the interface are blanked. `.clean`
+// is the one-shot driver, `.process` is the long-running protocol git prefers
+// when it is set, which is the half git-lfs actually installs, and blanking the
 // latter makes git fall back to the former, which is blanked beside it.
+// `.required` is the third: with it left true and the driver blanked, git aborts
+// the diff with "clean filter failed" instead of passing the content through, so
+// every run in a repository that ran `git lfs install --local` or git-crypt
+// would exit 1. Blanking all three is what makes those repositories measurable.
 //
 // In a git-lfs repository this measures the pointer-expanded content rather than
 // the pointer file. That is the same text Roslyn parses off the working tree, so
 // the two halves of the measurement agree.
+//
+// The keys come back NUL-separated. A filter's subsection name is arbitrary text
+// and may hold spaces, so splitting the listing on whitespace would break
+// `filter.my driver.clean` into two fragments, leave the real driver installed,
+// and hand git a `-c .clean=` it refuses to parse.
 func (r Repo) blankedFilterDrivers() ([]string, error) {
-	out, err := r.git("config", "--name-only", "--get-regexp", filterDriverKeys)
+	out, err := r.git("config", "--name-only", "--get-regexp", "-z", filterDriverKeys)
 	if noMatch(err) {
 		// `git config --get-regexp` exits 1 on no match, which is the ordinary
 		// case of a repository configuring no filter at all.
@@ -190,14 +199,17 @@ func (r Repo) blankedFilterDrivers() ([]string, error) {
 		return nil, err
 	}
 	var overrides []string
-	for _, key := range strings.Fields(out) {
+	for _, key := range strings.Split(strings.TrimSuffix(out, "\x00"), "\x00") {
+		if key == "" {
+			continue
+		}
 		overrides = append(overrides, "-c", key+"=")
 	}
 	return overrides, nil
 }
 
-// filterDriverKeys matches both spellings of a content filter driver.
-const filterDriverKeys = `^filter\..*\.(clean|process)$`
+// filterDriverKeys matches every spelling of a content filter driver.
+const filterDriverKeys = `^filter\..*\.(clean|process|required)$`
 
 // noMatch reports whether err is `git config --get-regexp` finding nothing,
 // which it reports as exit 1 with no output. Any other exit code is a real
@@ -224,11 +236,17 @@ func noMatch(err error) bool {
 // object from the comparison rather than escaping and leaving the run with no
 // document at all.
 //
-// Ambiguity resolves the same way. An added path is dropped only when it is the
-// only added path in the diff carrying that deleted content, so `git mv
-// src/Old.cs src/New.cs` followed by copying the result to src/Copy.cs leaves
-// both adds measured. `--no-renames` is what removes git's own answer to which
-// of the two is the move, and guessing would silently unscore a brand-new file.
+// Ambiguity resolves by counting rather than by picking a winner. For each
+// content digest the diff compares how many paths were added carrying it
+// against how many were deleted carrying it. Added no more than deleted means
+// every add is accounted for by a delete, so all of them are dropped, and moving
+// two identical files together measures nothing, which is the pure-move rule.
+// Added more than deleted means content appeared that the deleted side does not
+// explain, so none are dropped and `git mv src/Old.cs src/New.cs` followed by
+// copying the result to src/Copy.cs leaves both adds measured. `--no-renames` is
+// what removes git's own answer to which of the two is the move, and guessing
+// would silently unscore a brand-new file. Counting depends on no `git diff
+// --raw` ordering, so the answer is the same whichever order git lists them in.
 func (r Repo) pureMoves(base Base, neutralized []string) ([]srcpath.Path, error) {
 	raw, err := r.git(append(neutralized, append(rawFlags, "-z", "--abbrev=40", "--no-renames", "--diff-filter=AD", base.Commit)...)...)
 	if err != nil {
@@ -241,13 +259,13 @@ func (r Repo) pureMoves(base Base, neutralized []string) ([]srcpath.Path, error)
 	if len(added) == 0 || len(deleted) == 0 {
 		return nil, nil
 	}
-	carried := map[[sha256.Size]byte]bool{}
+	carried := map[[sha256.Size]byte]int{}
 	for _, blob := range deleted {
 		body, err := r.git("cat-file", "blob", blob)
 		if err != nil {
 			continue
 		}
-		carried[squashedDigest([]byte(body))] = true
+		carried[squashedDigest([]byte(body))]++
 	}
 	digests := map[srcpath.Path][sha256.Size]byte{}
 	claimants := map[[sha256.Size]byte]int{}
@@ -263,7 +281,7 @@ func (r Repo) pureMoves(base Base, neutralized []string) ([]srcpath.Path, error)
 	var moves []srcpath.Path
 	for _, path := range added {
 		digest, read := digests[path]
-		if !read || !carried[digest] || claimants[digest] != 1 {
+		if !read || carried[digest] == 0 || claimants[digest] > carried[digest] {
 			continue
 		}
 		moves = append(moves, path)
@@ -445,17 +463,29 @@ func unreadableDiff(err error) error {
 // diff the parser understands into one it silently reads as empty, which would
 // pass the gate with no changed methods.
 //
-// `safe.directory` is the one entry here that is not about the shape of the
-// output. git honours it only from protected config, which the pinned-empty
-// config files no longer supply, so without it the gate refuses any working tree
-// owned by another uid and a container runner that mounts the checkout gets exit
-// 1 where the developer's own git works. The ownership check is not load-bearing
-// for this tool: it exists to stop a repository's own config running commands on
-// behalf of whoever wanders into the directory, and the gate reads a repository
-// the caller pointed it at, runs no repo-named program now that filter drivers
-// are blanked, and never writes.
+// `core.fsmonitor` and `core.pager` are the two entries that are not about the
+// shape of the output either. Both name a program the repository chooses and
+// git runs. git executes the fsmonitor hook to refresh the index, which a diff
+// does on every invocation, and it spawns the pager whenever stdout is a
+// terminal. Blanking the first turns the refresh back into a plain stat walk,
+// and pinning the second at `cat` stops a repo-named pager from standing between
+// git and the parsers.
+//
+// `safe.directory` is the entry that pays for those two. git honours it only
+// from protected config, which the pinned-empty config files no longer supply,
+// so without it the gate refuses any working tree owned by another uid and a
+// container runner that mounts the checkout gets exit 1 where the developer's
+// own git works. What the ownership check buys is that a repository's own config
+// cannot run a program on behalf of whoever wanders into the directory, and the
+// four subcommands the gate runs, diff, rev-parse, merge-base and cat-file, reach
+// exactly four repo-named programs: the filter drivers, which blankedFilterDrivers
+// blanks, the external diff and textconv drivers, which `--no-ext-diff` and
+// `--no-textconv` refuse, and these two. None of the four survives, and the gate
+// never writes to the tree.
 var configOverrides = []string{
 	"-c", "safe.directory=*",
+	"-c", "core.fsmonitor=",
+	"-c", "core.pager=cat",
 	"-c", "core.quotePath=false",
 	"-c", "color.ui=false",
 	"-c", "diff.external=",

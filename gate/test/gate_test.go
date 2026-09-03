@@ -85,6 +85,35 @@ func TestFileMovedAndReindentedReportsNoChangedMethods(t *testing.T) {
 		"no changed methods, nothing to measure\n")
 }
 
+func TestTwoIdenticalFilesMovedTogetherReportNoChangedMethods(t *testing.T) {
+	const firstOrigin = "src/Ordering/First.cs"
+	const secondOrigin = "src/Ordering/Second.cs"
+	const firstMoved = "src/Ordering/FirstMoved.cs"
+	const secondMoved = "src/Ordering/SecondMoved.cs"
+	firstVanish := span{File: firstMoved, Name: "FirstMoved.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+	secondVanish := span{File: secondMoved, Name: "SecondMoved.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(firstOrigin, csharpFile(20))
+	f.write(secondOrigin, csharpFile(20))
+	f.commitAll("initial")
+	// Two adds and two deletes carrying one content digest. Every add is
+	// accounted for by a delete, so the diff explains itself as a move of both
+	// and neither add is measured. Refusing to drop either, because the digest
+	// has more than one claimant, would demand coverage for every method in both
+	// files and turn a directory rename into the wall of failures the drop
+	// exists to prevent.
+	f.git("mv", firstOrigin, firstMoved)
+	f.git("mv", secondOrigin, secondMoved)
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(firstMoved, secondMoved), []span{firstVanish, secondVanish}),
+	}
+
+	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
+		"no changed methods, nothing to measure\n")
+}
+
 func TestMethodScoringExactlyAtTheThresholdPasses(t *testing.T) {
 	f := newFixture(t, "main")
 	boundaryFixture(t, f, 30)
@@ -813,6 +842,71 @@ func TestAProcessFilterInTheRepositorysOwnConfigIsNeverLaunched(t *testing.T) {
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
+func TestARequiredCleanFilterInTheRepositorysOwnConfigStillMeasuresTheChange(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	// `git lfs install --local` and git-crypt both mark their driver required.
+	// Blanking the driver and leaving the flag makes git abort the diff rather
+	// than pass the content through, so the gate would exit 1 on every run in
+	// the deployment it claims to support.
+	f.configureRequiredCleanFilter()
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestAFilterNamedWithATrailingSpaceDoesNotBreakTheRun(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	// The gate reads the repository's filter keys and blanks each one. Split on
+	// whitespace, this name yields the fragment `.clean`, git refuses the
+	// resulting `-c`, and the run dies before it can diff anything.
+	f.configureFilterNamedWithATrailingSpace()
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestAnFsmonitorHookInTheRepositorysOwnConfigIsNeverRun(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	// The gate turns git's ownership check off with `-c safe.directory=*`, which
+	// it can only afford if no program the repository names gets executed.
+	// core.fsmonitor is one git runs to refresh the index on every diff.
+	marker := f.configureFsmonitorHook()
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("the repository's core.fsmonitor hook ran: stat %s gave %v, want it never created", marker, err)
+	}
+}
+
 func TestADiffGitRefusesToPrintIsATypedDocumentNotAnEmptyStdout(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
@@ -852,10 +946,14 @@ func TestHostileGitConfigAndEnvironmentDoNotHideTheChange(t *testing.T) {
 	f.git("config", "diff.noprefix", "true")
 	f.git("config", "diff.external", externalDiffScript(t))
 
-	// The config the variable carries is a clean filter, which no command-line
-	// flag turns off, rather than one of the settings the `-c` overrides already
-	// pin. A payload a flag beats would leave this case green with the whole
-	// environment scrub deleted.
+	// What this case pins is the repo-local half, the four settings above, each
+	// of which configOverrides and diffFlags outrank. The two environment
+	// payloads ride along rather than carrying the case: `--no-ext-diff` refuses
+	// GIT_EXTERNAL_DIFF on its own, and a `-c filter.hide.clean=` outranks the
+	// same key arriving through GIT_CONFIG_PARAMETERS. The environment payload no
+	// flag can answer is a repository redirect, and
+	// TestGitDirPointedAtAnotherRepositoryDoesNotHideTheChange is what pins the
+	// scrub with one.
 	result := f.runWithEnv(
 		"GIT_EXTERNAL_DIFF="+externalDiffScript(t),
 		cleanFilterParameters(t),
@@ -1098,16 +1196,18 @@ func TestCleanFilterInjectedThroughTheEnvironmentDoesNotHideTheChange(t *testing
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// GIT_CONFIG_COUNT config outranks a -c flag, and there is no flag for this
-	// anyway, so the only defence is dropping the variables from the child's
-	// environment. The filter reverses the edit and leaves the two sides equal.
+	// The filter reverses the edit and leaves the two sides equal, and the
+	// GIT_CONFIG_COUNT family is the other way an ambient environment installs
+	// one. Two answers hold it, the scrub that drops the variables and the
+	// blanking `-c` that outranks the key wherever it came from, so this case
+	// goes red only if both are gone.
 	result := f.runWithEnv(cleanFilterEnv(t)...)
 
 	result.assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
-func TestGlobalGitConfigDoesNotHideTheChange(t *testing.T) {
+func TestGlobalGitConfigTheRunCannotParseDoesNotStopTheMeasurement(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1120,10 +1220,10 @@ func TestGlobalGitConfigDoesNotHideTheChange(t *testing.T) {
 	}
 
 	// Dropping git's namespace from the environment is not enough on its own:
-	// with GIT_CONFIG_GLOBAL gone, git reads ~/.gitconfig instead, and the clean
-	// filter installed there reverses the edit and leaves the two sides equal.
-	// Only pinning the config file at the null device answers this.
-	result := f.runWithEnv(cleanFilterHome(t)...)
+	// with GIT_CONFIG_GLOBAL gone, git reads ~/.gitconfig instead. This one it
+	// cannot read at all, which no `-c` override and no driver blanking can
+	// answer, so the run reaches a diff only by never opening the file.
+	result := f.runWithEnv(unparseableGlobalConfigHome(t)...)
 
 	result.assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
@@ -1224,11 +1324,14 @@ func TestRunOutsideAGitRepoWritesNoDocumentAndExitsOne(t *testing.T) {
 	result := f.run()
 
 	// This failure is upstream of the document, so ADR 0005's one-TOON-document
-	// rule cannot apply: there is no base and no scope to report. What git says
-	// about it is git's own text in git's own language, so the contract here is
-	// the exit code, the empty stdout, and a cause on stderr rather than silence.
-	if result.exitCode != 1 || result.stdout != "" || strings.TrimSpace(result.stderr) == "" {
-		t.Errorf("gate outside a repo: got exit %d, stdout %q, stderr %q; want exit 1, empty stdout, a cause on stderr",
+	// rule cannot apply: there is no base and no scope to report. git's own
+	// explanation is in git's own language, but the failing argv is not, and
+	// gitError.Error carries it, so naming the invocation that failed keeps the
+	// case specific without pinning it to English. A panic or an unrelated
+	// wrapped error would satisfy "exit 1 with something on stderr" and must not
+	// satisfy this.
+	if result.exitCode != 1 || result.stdout != "" || !strings.Contains(result.stderr, "rev-parse") {
+		t.Errorf("gate outside a repo: got exit %d, stdout %q, stderr %q; want exit 1, empty stdout, a failed rev-parse on stderr",
 			result.exitCode, result.stdout, result.stderr)
 	}
 }
