@@ -81,6 +81,19 @@ extractor cannot yet produce, and with no local-function span the containing met
 lines, which is the absorption [ADR 0001](0001-crap-gate-topology.md) calls out. Recorded so a reader meets a dated
 deferral rather than reading either as a defect.
 
+**Amended 2026-09-03.** [Issue 18](https://github.com/tvrmsmith/coding-standards/issues/18) landed, and
+it retires both named consequences of the "Amended 2026-09-03" deferral paragraph above: the walker now
+walks constructors, accessors, and local functions alongside methods, so [ADR 0005](0005-the-machine-document-is-the-only-output.md)'s
+worked document's `Order.get_Id` row is producible, and a local function is its own span rather than
+being absorbed into its container's line count. The decision-point rules, including the switch
+expression arm and pattern combinator points the earlier amendment named and every rule this widened
+walker adds, live in [`docs/csharp-decision-points.md`](../csharp-decision-points.md), not here. An ADR
+is append-only, and a reference table that gets edited as constructs are added or reconsidered needs a
+home that isn't. The span rule that document states, a declaration gets a row when it carries a body or
+an expression body and none when it carries neither, is keyed on body-or-expression-body rather than on
+declaration kind because a body is exactly what gives a declaration lines to attribute complexity and
+coverage to; a declaration without one has nothing for a span to measure.
+
 [ADR 0001](0001-crap-gate-topology.md) decided that complexity comes from a source-level AST walker.
 [Issue 4](https://github.com/tvrmsmith/coding-standards/issues/4) named `ComplexityRipper` as the tool filling
 that role for .NET today. This ADR replaces the tool, not the decision, and ADR 0001 needs no amendment because it

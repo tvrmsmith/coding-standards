@@ -11,7 +11,8 @@ paths on stdin and writes one JSON document of method spans and cyclomatic compl
 or its extension list when run with `--capabilities`. It is syntax only, never a project load. The
 gate that consumes it lives in `gate/`;
 [ADR 0006](../docs/adr/0006-the-csharp-extractor-is-written-in-house.md) records why it is written
-in house.
+in house, and [docs/csharp-decision-points.md](../docs/csharp-decision-points.md) is the list of
+what scores a point, which declarations get a span, and how each one is named.
 
 The Claude Code plugin loader ignores this directory.
 
