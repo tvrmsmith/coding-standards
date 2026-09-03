@@ -1,7 +1,17 @@
 # dotnet/
 
+Two projects, both Roslyn.
+
 `Tvrmsmith.Analyzers` — the C# half of the lint layer: the three custom Roslyn analyzers, plus
-curated severities for the off-the-shelf analyzers they sit alongside.
+curated severities for the off-the-shelf analyzers they sit alongside. Everything below the Layout
+section is about this one.
+
+`Tvrmsmith.MetricGate.CSharp` — the C# half of the metric gate: a console tool that reads source
+paths on stdin and writes one JSON document of method spans and cyclomatic complexities on stdout,
+or its extension list when run with `--capabilities`. It is syntax only, never a project load. The
+gate that consumes it lives in `gate/`;
+[ADR 0006](../docs/adr/0006-the-csharp-extractor-is-written-in-house.md) records why it is written
+in house.
 
 The Claude Code plugin loader ignores this directory.
 
@@ -22,7 +32,14 @@ src/Tvrmsmith.Analyzers/
   build/Tvrmsmith.Analyzers.props            # nupkg auto-import, for the published package
   local/Tvrmsmith.Analyzers.Local.props      # bare-DLL injection, for local adoption
   local/tvrmsmith-scope-changed.sh           # generates the changed-files-only severities
+src/Tvrmsmith.MetricGate.CSharp/
+  Program.cs                                 # --capabilities, or paths on stdin, JSON on stdout
+  Extractor.cs                               # per-file parse status and spans
+  MethodSpanCollector.cs                     # the spans, with the signature spelling the gate keys on
+  ComplexityWalker.cs                        # the cyclomatic decision points
+  CapabilitiesResult.cs, ExtractionResult.cs, FileStatusResult.cs, MethodSpanResult.cs
 tests/Tvrmsmith.Analyzers.Tests/             # the analyzers, against a real compilation
+tests/Tvrmsmith.MetricGate.CSharp.Tests/     # the extractor, over fixtures/, through the real process
 tests/Consumer/                              # stands in for a consuming repo
 tests/verify-severities.sh                   # proves the analyzers and severities reach a build
 artifacts/local/                             # generated; the stable path consumers point at
@@ -111,6 +128,7 @@ relative to itself and the directory can be moved or symlinked anywhere.
 
 ```bash
 dotnet test tests/Tvrmsmith.Analyzers.Tests/Tvrmsmith.Analyzers.Tests.csproj
+dotnet test tests/Tvrmsmith.MetricGate.CSharp.Tests/Tvrmsmith.MetricGate.CSharp.Tests.csproj
 dotnet build src/Tvrmsmith.Analyzers/Tvrmsmith.Analyzers.csproj -c Release
 ./tests/verify-severities.sh
 ```

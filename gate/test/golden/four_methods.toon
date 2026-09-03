@@ -1,0 +1,15 @@
+status: fail
+tool: metric-gate/0.1.0
+spec: toon/4.1.1
+scope: merge-base
+base: {{BASE}}
+changed_methods: 4
+touched_lines_outside_spans: 1
+skipped_paths: []
+metrics[1|]{name|threshold|measured|failed}:
+  crap|30|4|2
+crap[4|]{file|start|end|name|complexity|coverage|score|state|action|target_coverage|reason}:
+  src/Ordering/Pricing.cs|18|71|Pricing.Quote|34|0.55|139.34|measured|split_method|null|null
+  src/Ordering/OrderService.cs|41|58|OrderService.PlaceAsync|9|0.1|68.05|measured|raise_coverage|0.363|null
+  src/Ordering/OrderService.cs|60|64|OrderService.Cancel|3|0.667|3.33|measured|none|null|null
+  src/Ordering/Order.cs|14|14|Order.get_Id|1|1|1|structural_na|none|null|null
