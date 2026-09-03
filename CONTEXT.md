@@ -55,6 +55,10 @@ The identity of a method for measurement purposes: its file path plus its first 
 line. Both the complexity number and the coverage number are attributed to a span, never to a
 method name. Where spans nest, a source line belongs to the smallest span containing it.
 
+Two methods can share one span, since `int F(int x) => 1; int F(string x) => 2;` on one line is
+valid C#. Attribution still consults nothing but the span, so both overloads score against the same
+lines, and the extractor's parameter spelling separates them only as identities.
+
 Prefer "span" over "method identity" or "method key". The latter two invite a name-based reading,
 which is the reading this project rejects.
 

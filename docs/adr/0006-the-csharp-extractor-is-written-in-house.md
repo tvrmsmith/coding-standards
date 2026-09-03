@@ -18,8 +18,29 @@ alternatives were worse: treating an absent extractor as claiming nothing would 
 change, and leaving the behaviour while deleting the comment that promised otherwise would keep a gate that refuses
 to pass a README edit. The static list never filters the paths handed in on stdin, so once the gate does exec,
 `--capabilities` remains the sole authority on what the extractor handles and the closing paragraph below stands
-unchanged. A table that under-claims costs a launch that finds nothing; a table that over-claims costs nothing at
-all, because `--capabilities` then narrows it.
+unchanged. A table that over-claims costs a launch that finds nothing; a table that under-claims silently unscores
+real source, because a path whose extension no row declares never reaches an extractor at all. That asymmetry is
+why the list is an upper bound and why a new extension is added to the row before the extractor learns to parse it.
+
+**Amended 2026-09-02.** Among the paths the static list selects, an extractor whose `--capabilities` set claims
+**none** of them fails the run with exit 1 and the typed code `extractor_capabilities_mismatch`. The paragraph
+above leaves `--capabilities` free to narrow the selection to nothing, and a gate that scores nothing emits the
+same `status: pass`, `changed_methods: 0`, exit 0 as a docs-only commit, so a stale or wrongly built extractor
+reads as a clean run. Narrowing to a subset stays silent, because that is the routing `--capabilities` exists to
+do. Only the empty intersection is typed, because that is the one case where the gate can prove it measured no
+part of a change it was handed.
+
+**Amended 2026-09-02.** The extractor emits a `signature` beside `name` on every span, carrying the parameter
+spelling, and the gate uses `(file, startLine, endLine, signature)` to decide whether two spans are two methods or
+one method reported twice. `class C { int F(int x) => 1; int F(string x) => 2; }` is valid C# and Roslyn reports
+two spans agreeing on file, name, start line and end line, so name alone cannot separate them and the gate failed
+that input with `extractor_duplicate_span`. `signature` is confined to the extractor's JSON wire and never reaches
+the document, where `name` remains the whole of a method's printed identity, so no golden and no consumer moves.
+Appending the parameter list to `name` instead was rejected because it changes the `name` cell of every row in
+every document to buy disambiguation the reader almost never needs, and ordering the duplicates by position within
+their line range was rejected because it leaves the two rows printing the same name with nothing to tell them
+apart. An extractor in another language owes the same field, spelled however that language spells a parameter
+list, and the obligation is only that it be stable across runs and different for overloads.
 
 [ADR 0001](0001-crap-gate-topology.md) decided that complexity comes from a source-level AST walker.
 [Issue 4](https://github.com/tvrmsmith/coding-standards/issues/4) named `ComplexityRipper` as the tool filling
