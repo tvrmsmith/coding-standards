@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/report"
 	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
@@ -107,11 +108,21 @@ func Extract(root srcpath.Root, changed []srcpath.Path) (Result, error) {
 // judged by the table's static extensions. This is the only use of that list:
 // once a binary is launched, its own --capabilities answer decides which paths
 // it is handed.
+//
+// The comparison folds case, so `Order.CS` routes where `Order.cs` does. Both
+// macOS and Windows carry case-insensitive filesystems, which makes the odd
+// spelling an ordinary file a developer creates without noticing, and the two
+// directions of a wrong answer are not the same size: over-claiming costs a
+// launch that finds nothing, while under-claiming leaves real source unscored
+// under exit 0 pass. --capabilities remains the authority on which of the paths
+// the list selects the extractor is actually handed.
 func worthRunning(changed []srcpath.Path) []string {
 	var worth []string
 	for _, name := range sortedLanguages() {
 		for _, path := range changed {
-			if slices.Contains(languages[name].extensions, path.Ext()) {
+			if slices.ContainsFunc(languages[name].extensions, func(ext string) bool {
+				return strings.EqualFold(ext, path.Ext())
+			}) {
 				worth = append(worth, name)
 				break
 			}
@@ -131,11 +142,17 @@ func binaryName(name string) string {
 }
 
 // extractorDir is the directory the gate's own binary sits in, which is the
-// only place an extractor is looked for.
+// only place an extractor is looked for. Not being able to name it is not
+// being able to locate any extractor, so it is typed like every other way the
+// run fails to reach one, rather than escaping untyped and costing the caller
+// the document.
 func extractorDir() (string, error) {
 	self, err := os.Executable()
 	if err != nil {
-		return "", fmt.Errorf("locating the gate binary: %w", err)
+		return "", &report.Failure{
+			Code:    report.CodeExtractorFailed,
+			Message: "could not locate the gate binary, so no extractor beside it: " + err.Error(),
+		}
 	}
 	return filepath.Dir(self), nil
 }
@@ -240,13 +257,17 @@ func (e extractor) capabilities() (capabilities, error) {
 }
 
 // filter selects the changed files carrying one of the extractor's
-// extensions. ADR 0004 rejects case folding, so an extension matches as
-// written.
+// extensions. It folds case for the reason worthRunning does, and has to fold
+// it the same way: the two comparisons are the two halves of one routing
+// decision, and a table that routes `Order.CS` to a binary whose filter then
+// refuses it turns a silent miss into a capabilities mismatch on a file the
+// extractor would have parsed. ADR 0004's rejection of case folding is about
+// resolving a coverage report's paths against the tree and does not reach here.
 func (e extractor) filter(changed []srcpath.Path, extensions []string) []srcpath.Path {
 	var mine []srcpath.Path
 	for _, path := range changed {
 		for _, ext := range extensions {
-			if path.Ext() == ext {
+			if strings.EqualFold(path.Ext(), ext) {
 				mine = append(mine, path)
 				break
 			}
@@ -371,6 +392,9 @@ func (e extractor) collect(parsed extraction, handed []srcpath.Path) ([]Span, er
 			EndLine:    span.EndLine,
 			Complexity: span.Complexity,
 		}
+		if err := e.checkNumbers(converted); err != nil {
+			return nil, err
+		}
 		identity := converted
 		identity.Complexity = 0
 		if seen[identity] {
@@ -384,6 +408,39 @@ func (e extractor) collect(parsed extraction, handed []srcpath.Path) ([]Span, er
 		spans = append(spans, converted)
 	}
 	return spans, nil
+}
+
+// checkNumbers rejects a span whose numbers cannot describe a method, which is
+// the one part of the wire contract nothing else on this path reads back.
+//
+// Each of the three is a silent pass rather than a visible wrong answer. A
+// complexity below 1 is arithmetically impossible, McCabe's base being 1, and an
+// absent `complexity` field unmarshals to exactly that 0, which scores 0 and
+// prints a passing row for a method nobody measured. A start line below 1 names
+// no line of any file. An end line below its start gives the span a negative
+// width, and the smallest-containing-span rule then never selects it, so the
+// method leaves the table entirely and the run reports "no changed methods".
+//
+// The gate already refuses a mismatched path, a mismatched capability set, an
+// absent parse status and a duplicated span on the same principle, that a broken
+// extractor must not read as a clean run, so these take the same shape.
+func (e extractor) checkNumbers(span Span) error {
+	var wrong string
+	switch {
+	case span.Complexity < 1:
+		wrong = fmt.Sprintf("complexity %d, which is below the McCabe base of 1", span.Complexity)
+	case span.StartLine < 1:
+		wrong = fmt.Sprintf("start line %d, which names no line", span.StartLine)
+	case span.EndLine < span.StartLine:
+		wrong = fmt.Sprintf("end line %d below start line %d", span.EndLine, span.StartLine)
+	default:
+		return nil
+	}
+	return &report.Failure{
+		Code: report.CodeExtractorInvalidSpan,
+		Message: fmt.Sprintf("%s extractor reported %s in %s with %s",
+			e.language, span.Name, span.File, wrong),
+	}
 }
 
 // echoedPaths lists every path the response mentions, in the order it

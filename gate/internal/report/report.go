@@ -30,6 +30,7 @@ const (
 	CodeExtractorPathMismatch         = "extractor_path_mismatch"
 	CodeExtractorCapabilitiesMismatch = "extractor_capabilities_mismatch"
 	CodeExtractorDuplicateSpan        = "extractor_duplicate_span"
+	CodeExtractorInvalidSpan          = "extractor_invalid_span"
 	CodeParseFailed                   = "parse_failed"
 	CodeCoverageMissing               = "coverage_missing"
 	CodeCoverageUnparseable           = "coverage_unparseable"

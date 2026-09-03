@@ -228,6 +228,59 @@ public class ExtractionTests
         });
     }
 
+    /// <summary>
+    /// Every construct <c>ComplexityWalker</c>'s contract enumerates, one per method, so a
+    /// construct that stops scoring fails under its own name. A construct dropped from the walker
+    /// while it stays in the doc, or added to the walker while the doc says it is out of scope,
+    /// has to move a number here. The last three are the contract's stated non-points, and a
+    /// guard rides its case label, so <c>CaseGuard</c> is the only one carrying two points.
+    /// </summary>
+    [Fact]
+    public void EveryEnumeratedConstructScoresExactlyThePointsTheContractGivesIt()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Enumerated.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Enumerated.If", Complexity = 2 },
+            new { Name = "Enumerated.While", Complexity = 2 },
+            new { Name = "Enumerated.Do", Complexity = 2 },
+            new { Name = "Enumerated.For", Complexity = 2 },
+            new { Name = "Enumerated.Foreach", Complexity = 2 },
+            new { Name = "Enumerated.CaseLabel", Complexity = 2 },
+            new { Name = "Enumerated.CasePatternLabel", Complexity = 2 },
+            new { Name = "Enumerated.CaseGuard", Complexity = 3 },
+            new { Name = "Enumerated.SwitchExpressionArm", Complexity = 2 },
+            new { Name = "Enumerated.Catch", Complexity = 2 },
+            new { Name = "Enumerated.CatchFilter", Complexity = 3 },
+            new { Name = "Enumerated.AndPattern", Complexity = 2 },
+            new { Name = "Enumerated.OrPattern", Complexity = 2 },
+            new { Name = "Enumerated.AndAlso", Complexity = 2 },
+            new { Name = "Enumerated.OrElse", Complexity = 2 },
+            new { Name = "Enumerated.Conditional", Complexity = 2 },
+            new { Name = "Enumerated.Coalesce", Complexity = 2 },
+            new { Name = "Enumerated.DefaultLabel", Complexity = 1 },
+            new { Name = "Enumerated.NotPattern", Complexity = 1 },
+            new { Name = "Enumerated.CoalesceAssign", Complexity = 1 },
+            new { Name = "Enumerated.Folded", Complexity = 2 },
+        }, o => o.WithStrictOrdering());
+    }
+
+    /// <summary>
+    /// A local function is not a span of its own, and the decision points inside it fold into the
+    /// method that declares it, which is what keeps a method from hiding its branches in one.
+    /// </summary>
+    [Fact]
+    public void ALocalFunctionIsNoSpanOfItsOwnAndItsBranchesFoldIntoItsMethod()
+    {
+        var (_, result) = ExtractorRun.Run("fixtures/Enumerated.cs");
+
+        result.Spans.Should().ContainSingle(span => span.Name.StartsWith("Enumerated.Folded"))
+            .Which.Complexity.Should().Be(2);
+        result.Spans.Should().NotContain(span => span.Name.Contains("Inner"));
+    }
+
     [Fact]
     public void ANonExistentPathIsAFailedRowNotACrash()
     {

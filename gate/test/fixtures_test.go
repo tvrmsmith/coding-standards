@@ -318,6 +318,34 @@ func cleanFilterHome(t *testing.T) []string {
 	return []string{"HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, ".config")}
 }
 
+// configureCleanFilter installs the hiding filter in the fixture's own
+// .git/config under key, which is `filter.hide.clean` or `filter.hide.process`,
+// and commits the .gitattributes line selecting it. This is the repo-local
+// scope, the one git-lfs and git-crypt write to, and neither the environment
+// scrub nor the pinned config files reach it.
+func (f *fixture) configureCleanFilter() {
+	f.t.Helper()
+	_, clean := hideEditFilter(f.t)
+	f.write(".gitattributes", "*.cs filter=hide\n")
+	f.git("config", "filter.hide.clean", clean)
+}
+
+// configureProcessFilter does the same through `filter.hide.process`, the
+// long-running protocol git prefers over `.clean` when both are set and the half
+// git-lfs installs. The driver quits without speaking a word of that protocol,
+// so a run that launches it dies rather than measuring anything, which is a
+// regression that fails in a second instead of hanging until the suite's
+// deadline.
+func (f *fixture) configureProcessFilter() {
+	f.t.Helper()
+	script := filepath.Join(f.t.TempDir(), "mute-process")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	f.write(".gitattributes", "*.cs filter=hide\n")
+	f.git("config", "filter.hide.process", script)
+}
+
 // constantTextconvScript writes an executable that prints the same line for
 // every input, which is a textconv driver that flattens both sides of a diff
 // into one identical text and so erases every hunk header.
