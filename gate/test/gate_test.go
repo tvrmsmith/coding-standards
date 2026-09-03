@@ -3,6 +3,7 @@ package gate_test
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -102,6 +103,54 @@ func TestMethodScoringJustOverTheThresholdFails(t *testing.T) {
 	// margin the two-decimal cell can show, and that already fails.
 	f.run().assertMatches(t, "threshold_boundary_fail", 2, f.baseLabel("main"),
 		"1 of 1 changed methods over CRAP threshold 30, worst score 30.03\n")
+}
+
+func TestMethodWhoseRawScoreRoundsDownOntoTheThresholdPasses(t *testing.T) {
+	const boundary = "src/Ordering/Boundary.cs"
+	knot := span{File: boundary, Name: "Boundary.Knot", StartLine: 10, EndLine: 80, Complexity: 30}
+
+	f := newFixture(t, "main")
+	f.write(boundary, csharpFile(100))
+	f.commitAll("initial")
+	f.touchLine(boundary, 20)
+	// One uncovered line in sixty puts the raw score at 30.0042, over the
+	// threshold, while the cell the document prints is 30. The verdict compares
+	// the rounded score, so the run passes and no reader is asked to fail on a
+	// digit that is nowhere in the document.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: boundary, lines: spanCoverage(11, 60, 59)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(boundary), []span{knot}),
+	}
+
+	f.run().assertMatches(t, "threshold_boundary_rounded_pass", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 30.00\n")
+}
+
+func TestTwoSameRangeMethodsScoringTheSameAreOrderedByName(t *testing.T) {
+	const pair = "src/Ordering/Pair.cs"
+	// Same file, same range, same complexity and the same coverage, so the two
+	// rows tie on every cell the table sorts by. Only the name settles the order,
+	// and the set the rows are drained from is a map.
+	a := span{File: pair, Name: "Pair.A", StartLine: 14, EndLine: 14, Complexity: 1}
+	b := span{File: pair, Name: "Pair.B", StartLine: 14, EndLine: 14, Complexity: 1}
+
+	f := newFixture(t, "main")
+	f.write(pair, csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(pair, 14)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: pair, lines: spanCoverage(14, 1, 1)}))
+	// Reported the other way round, so the document's order cannot be the order
+	// the extractor happened to use.
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(pair), []span{b, a}),
+	}
+
+	f.run().assertMatches(t, "same_line_equal_scores", 0, f.baseLabel("main"),
+		"0 of 2 changed methods over CRAP threshold 30, worst score 1.00\n")
 }
 
 func TestExtractorReportingADifferentLanguageThanItWasLocatedUnderFails(t *testing.T) {
@@ -333,10 +382,13 @@ func TestBranchIsScoredAgainstTheMergeBaseAndNotTheTipOfMain(t *testing.T) {
 	f.commitAll("edit Cancel on the branch")
 
 	// main moves on without the branch, so the tip of main is no longer an
-	// ancestor of HEAD and only the merge base scopes the diff correctly.
+	// ancestor of HEAD and only the merge base scopes the diff correctly. The
+	// commit it moves on by edits a line inside PlaceAsync, so a diff scoped to
+	// main's tip would report that method changed as well and this document
+	// would not match.
 	f.git("checkout", "--quiet", "main")
-	f.write("docs/unrelated.md", "main moved on\n")
-	f.commitAll("unrelated work on main")
+	f.touchLine(orderService, 45)
+	f.commitAll("edit PlaceAsync on main")
 	f.git("checkout", "--quiet", "feature")
 
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
@@ -507,32 +559,62 @@ func TestCoverageReportThatIsNotValidXMLFails(t *testing.T) {
 		"could not parse coverage report TestResults/fixed/coverage.cobertura.xml\n")
 }
 
-func TestMoveWithAnExtraCopyDropsOnlyOneOfTheTwoAddedPaths(t *testing.T) {
+func TestMoveWithAnExtraCopyMeasuresBothAddedPaths(t *testing.T) {
 	const origin = "src/Ordering/Origin.cs"
 	const moved = "src/Ordering/Moved.cs"
 	const copied = "src/Ordering/Copy.cs"
-	vanish := span{File: moved, Name: "Moved.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+	movedVanish := span{File: moved, Name: "Moved.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+	copiedVanish := span{File: copied, Name: "Copy.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
 
 	f := newFixture(t, "main")
 	f.write(origin, csharpFile(20))
 	f.commitAll("initial")
-	// One file's worth of content moved, so exactly one of the two added paths
-	// is the move. The other is a new file and every line of it is new code.
+	// Two added paths carry the deleted file's content and `--no-renames` is
+	// what removed git's own answer to which of them is the move, so neither is
+	// dropped. Picking one would silently unscore a brand-new file.
 	f.git("mv", origin, moved)
 	f.copyFile(moved, copied)
 	f.git("add", copied)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
-		coverageClass{filename: moved, lines: spanCoverage(6, 4, 1)}))
+		coverageClass{filename: moved, lines: spanCoverage(6, 4, 1)},
+		coverageClass{filename: copied, lines: spanCoverage(6, 4, 1)}))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(moved), []span{vanish}),
+		Stdout:     extractorOutput(t, parsed(copied, moved), []span{movedVanish, copiedVanish}),
 	}
 
-	// The deleted blob is consumed by the first added path in diff order,
-	// Copy.cs, leaving Moved.cs measured whole, which is renamed_file's
-	// document. Pairing many-to-one would drop both and measure nothing.
-	f.run().assertMatches(t, "renamed_file", 0, f.baseLabel("main"),
-		"0 of 1 changed methods over CRAP threshold 30, worst score 10.75\n")
+	f.run().assertMatches(t, "move_with_copy", 0, f.baseLabel("main"),
+		"0 of 2 changed methods over CRAP threshold 30, worst score 10.75\n")
+}
+
+func TestADeletedObjectTheGateCannotReadStillEmitsADocument(t *testing.T) {
+	const gone = "src/Ordering/Gone.cs"
+
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write(gone, csharpFile(20))
+	f.commitAll("initial")
+	// A blobless partial clone has no local object for a deleted file, and the
+	// promisor fetch that `cat-file` then attempts fails offline. Removing the
+	// object is that condition, and the move detection has to skip the object
+	// rather than let the error escape and leave the run with no document.
+	blob := f.git("rev-parse", "HEAD:"+gone)
+	f.git("rm", "--quiet", gone)
+	f.removeLooseObject(blob)
+	f.touchLine(orderService, 62)
+	// An added path of some kind is what sends the move detection to read the
+	// deleted side at all.
+	f.write("docs/notes.md", "new file\n")
+	f.git("add", "docs/notes.md")
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
 func TestRemovingASubmoduleStillEmitsADocument(t *testing.T) {
@@ -581,12 +663,70 @@ func TestHostileGitConfigAndEnvironmentDoNotHideTheChange(t *testing.T) {
 	f.git("config", "diff.noprefix", "true")
 	f.git("config", "diff.external", externalDiffScript(t))
 
+	// The config the variable carries is a clean filter, which no command-line
+	// flag turns off, rather than one of the settings the `-c` overrides already
+	// pin. A payload a flag beats would leave this case green with the whole
+	// environment scrub deleted.
 	result := f.runWithEnv(
 		"GIT_EXTERNAL_DIFF="+externalDiffScript(t),
-		"GIT_CONFIG_PARAMETERS='color.ui=always' 'diff.noprefix=true'",
+		cleanFilterParameters(t),
 	)
 
 	result.assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestGitDirPointedAtAnotherRepositoryDoesNotHideTheChange(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// These outrank the working directory the gate runs git in, so every
+	// question it asks would be answered by a second, unchanged repository: the
+	// root resolves there, the diff comes back empty, and the run passes with no
+	// changed methods. git exports them into every hook it runs, so they are
+	// present in the exact deployment this gate is built for.
+	other := newFixture(t, "main")
+	other.write("src/Ordering/Elsewhere.cs", csharpFile(20))
+	other.commitAll("initial")
+
+	result := f.runWithEnv(
+		"GIT_DIR="+filepath.Join(other.root, ".git"),
+		"GIT_WORK_TREE="+other.root,
+		"GIT_INDEX_FILE="+filepath.Join(other.root, ".git", "index"),
+		"GIT_CEILING_DIRECTORIES="+f.root,
+	)
+
+	result.assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestATextconvDriverDoesNotHideTheChange(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	// A textconv driver replaces both sides of the diff with whatever it prints,
+	// and this one prints the same constant for every input, so every hunk header
+	// disappears. The attribute lives in the repository, ahead of anything the
+	// run can pass on the command line, and only `--no-textconv` answers it.
+	f.write(".gitattributes", "*.cs diff=hide\n")
+	f.commitAll("initial")
+	f.git("config", "diff.hide.textconv", constantTextconvScript(t))
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 

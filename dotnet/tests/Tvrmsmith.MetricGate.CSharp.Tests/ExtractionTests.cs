@@ -172,6 +172,62 @@ public class ExtractionTests
         }, o => o.WithStrictOrdering());
     }
 
+    /// <summary>
+    /// One point per switch expression arm, the discard arm included, so a method built from a
+    /// switch expression is no cheaper than the same logic written as a switch statement.
+    /// </summary>
+    [Fact]
+    public void EverySwitchExpressionArmScoresOnePoint()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Patterns.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Where(span => span.Name == "Patterns.Arms").Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Patterns.Arms", Complexity = 4 },
+        });
+    }
+
+    /// <summary>
+    /// An arm's guard scores on top of the arm, the way a case guard scores on top of its case
+    /// label. Two arms plus one guard over base 1.
+    /// </summary>
+    [Fact]
+    public void ASwitchExpressionArmGuardScoresOnTopOfItsArm()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Patterns.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Where(span => span.Name == "Patterns.GuardedArm").Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Patterns.GuardedArm", Complexity = 4 },
+        });
+    }
+
+    /// <summary>
+    /// A pattern combinator scores what the operator spelling of the same condition scores, so
+    /// rewriting <c>o is int || o is string</c> as <c>o is int or string</c> cannot lower a score.
+    /// <c>not</c> adds no branch and does not count.
+    /// </summary>
+    [Fact]
+    public void APatternCombinatorScoresLikeTheOperatorSpellingOfTheSameCondition()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Patterns.cs");
+
+        exitCode.Should().Be(0);
+        var combinators = new[]
+        {
+            "Patterns.OrPattern", "Patterns.AndPattern", "Patterns.OrOperator", "Patterns.NotPattern",
+        };
+        result.Spans.Where(span => combinators.Contains(span.Name)).Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Patterns.OrPattern", Complexity = 2 },
+            new { Name = "Patterns.AndPattern", Complexity = 2 },
+            new { Name = "Patterns.OrOperator", Complexity = 2 },
+            new { Name = "Patterns.NotPattern", Complexity = 1 },
+        });
+    }
+
     [Fact]
     public void ANonExistentPathIsAFailedRowNotACrash()
     {

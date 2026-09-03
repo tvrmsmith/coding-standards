@@ -7,9 +7,10 @@
 // into something the hunk parser reads as empty is a silent green build. Three
 // separate mechanisms can do that and each needs its own answer. Ambient config
 // such as `color.ui=always` is beaten by the `-c` overrides run pins on the
-// command line. Environment config such as `GIT_EXTERNAL_DIFF`, or a clean
-// filter injected through the GIT_CONFIG_COUNT family, outranks a `-c` flag and
-// is instead dropped from the command's environment. Neither reaches
+// command line. The environment outranks a `-c` flag, whether it reshapes the
+// diff directly (GIT_EXTERNAL_DIFF), injects config (GIT_CONFIG_PARAMETERS), or
+// points the whole run at another repository (GIT_DIR), so git's namespace is
+// dropped from the command's environment entirely. Neither reaches
 // `.gitattributes` or git's own NUL-byte autodetection, which live in the repo
 // and in the file's bytes; `--text` on the diff answers those.
 //
@@ -105,8 +106,8 @@ func (r Repo) ResolveBase() (Base, error) {
 // Decomposition alone would break ADR 0003's other sentence, that a file
 // renamed with no content change reports no touched lines, because the add
 // side of a pure `git mv` is the whole file. So an added path whose content,
-// whitespace ignored, matches a path the same diff deleted is dropped
-// afterwards, and only a move that also edited the file is measured.
+// whitespace ignored, is the only match for a path the same diff deleted is
+// dropped afterwards, and only a move that also edited the file is measured.
 func (r Repo) TouchedLines(base Base) (map[srcpath.Path][]int, error) {
 	patch, err := r.git(append(diffFlags, "-w", "-U0", "--no-renames", "--diff-filter=ACM", base.Commit)...)
 	if err != nil {
@@ -136,13 +137,18 @@ func (r Repo) TouchedLines(base Base) (map[srcpath.Path][]int, error) {
 // add, and every method in it would demand coverage attribution, which is the
 // wall of failures ADR 0003 gives `-w` to prevent.
 //
-// An added path the gate cannot read is left measured, which is the
-// conservative direction.
+// Every unreadable side resolves towards measuring, which is the conservative
+// direction. An added path the gate cannot read stays measured, and so does
+// every add paired with a deleted object the gate cannot read: a `cat-file`
+// failure, which is what a blobless partial clone gives offline, drops that
+// object from the comparison rather than escaping and leaving the run with no
+// document at all.
 //
-// The pairing is one to one. Each deleted blob accounts for exactly one added
-// path, so `git mv src/Old.cs src/New.cs` followed by copying the result to
-// src/Copy.cs drops one of the two adds and leaves the other measured, because
-// only one file's worth of content moved.
+// Ambiguity resolves the same way. An added path is dropped only when it is the
+// only added path in the diff carrying that deleted content, so `git mv
+// src/Old.cs src/New.cs` followed by copying the result to src/Copy.cs leaves
+// both adds measured. `--no-renames` is what removes git's own answer to which
+// of the two is the move, and guessing would silently unscore a brand-new file.
 func (r Repo) pureMoves(base Base) ([]srcpath.Path, error) {
 	raw, err := r.git(append(rawFlags, "-z", "--abbrev=40", "--no-renames", "--diff-filter=AD", base.Commit)...)
 	if err != nil {
@@ -155,25 +161,31 @@ func (r Repo) pureMoves(base Base) ([]srcpath.Path, error) {
 	if len(added) == 0 || len(deleted) == 0 {
 		return nil, nil
 	}
-	carried := map[[sha256.Size]byte]int{}
+	carried := map[[sha256.Size]byte]bool{}
 	for _, blob := range deleted {
 		body, err := r.git("cat-file", "blob", blob)
 		if err != nil {
-			return nil, err
+			continue
 		}
-		carried[squashedDigest([]byte(body))]++
+		carried[squashedDigest([]byte(body))] = true
 	}
-	var moves []srcpath.Path
+	digests := map[srcpath.Path][sha256.Size]byte{}
+	claimants := map[[sha256.Size]byte]int{}
 	for _, path := range added {
 		body, err := os.ReadFile(r.root.Abs(path))
 		if err != nil {
 			continue
 		}
 		digest := squashedDigest(body)
-		if carried[digest] == 0 {
+		digests[path] = digest
+		claimants[digest]++
+	}
+	var moves []srcpath.Path
+	for _, path := range added {
+		digest, read := digests[path]
+		if !read || !carried[digest] || claimants[digest] != 1 {
 			continue
 		}
-		carried[digest]--
 		moves = append(moves, path)
 	}
 	return moves, nil
@@ -348,18 +360,23 @@ var diffFlags = []string{"diff", "--no-color", "--no-ext-diff", "--no-textconv",
 // rawFlags harden the `--raw` listing, which carries no prefixes.
 var rawFlags = []string{"diff", "--no-color", "--no-ext-diff", "--raw"}
 
-// hostileEnv names the environment variables that reshape diff output or
-// inject config. They are dropped rather than overridden, because a `-c` flag
-// cannot outrank GIT_CONFIG_PARAMETERS.
-var hostileEnv = []string{
-	"GIT_EXTERNAL_DIFF",
-	"GIT_DIFF_OPTS",
-	"GIT_CONFIG_PARAMETERS",
-	"GIT_CONFIG_COUNT",
-}
-
-// hostileEnvPrefixes names the indexed families GIT_CONFIG_COUNT enumerates.
-var hostileEnvPrefixes = []string{"GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"}
+// gitNamespace is the prefix of git's own environment namespace, and run drops
+// every variable carrying it.
+//
+// The whole namespace goes rather than a list of the dangerous ones, because
+// naming them is a list that has to be extended for every variable somebody
+// thinks of and the one nobody thought of is the same silent pass again.
+// GIT_EXTERNAL_DIFF and GIT_DIFF_OPTS reshape the diff, GIT_CONFIG_PARAMETERS
+// and the GIT_CONFIG_COUNT family inject config a `-c` flag cannot outrank, and
+// GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE and their relatives outrank cmd.Dir and
+// answer every question about a different repository. That last family is not
+// exotic: git exports it into every hook it runs, and a pre-commit hook is what
+// this gate is built to be.
+//
+// Nothing in the namespace is needed to run git. The repo comes from cmd.Dir,
+// the settings the parsers depend on come from configOverrides, and config
+// files still reach git through their default locations.
+const gitNamespace = "GIT_"
 
 // git runs one git command in the repo root.
 func (r Repo) git(args ...string) (string, error) {
@@ -381,32 +398,17 @@ func run(dir string, args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
-// sanitizedEnv is the process environment with the diff-reshaping variables
-// removed. It is built rather than inherited, so what the parser reads does
-// not depend on how the caller's shell was set up.
+// sanitizedEnv is the process environment with git's own namespace removed. It
+// is built rather than inherited, so neither what the parser reads nor which
+// repository it reads it from depends on how the caller's shell was set up.
 func sanitizedEnv() []string {
 	env := os.Environ()
 	kept := make([]string, 0, len(env))
 	for _, entry := range env {
-		if !hostile(entry) {
-			kept = append(kept, entry)
+		if name, _, _ := strings.Cut(entry, "="); strings.HasPrefix(name, gitNamespace) {
+			continue
 		}
+		kept = append(kept, entry)
 	}
 	return kept
-}
-
-// hostile reports whether a "KEY=value" entry names a variable run drops.
-func hostile(entry string) bool {
-	name, _, _ := strings.Cut(entry, "=")
-	for _, banned := range hostileEnv {
-		if name == banned {
-			return true
-		}
-	}
-	for _, prefix := range hostileEnvPrefixes {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
-	}
-	return false
 }
