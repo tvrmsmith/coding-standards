@@ -261,8 +261,7 @@ func (e extractor) capabilities() (capabilities, error) {
 // it the same way: the two comparisons are the two halves of one routing
 // decision, and a table that routes `Order.CS` to a binary whose filter then
 // refuses it turns a silent miss into a capabilities mismatch on a file the
-// extractor would have parsed. ADR 0004's rejection of case folding is about
-// resolving a coverage report's paths against the tree and does not reach here.
+// extractor would have parsed.
 func (e extractor) filter(changed []srcpath.Path, extensions []string) []srcpath.Path {
 	var mine []srcpath.Path
 	for _, path := range changed {

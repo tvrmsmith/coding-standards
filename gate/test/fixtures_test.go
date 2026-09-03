@@ -301,16 +301,19 @@ func cleanFilterParameters(t *testing.T) string {
 	return fmt.Sprintf("GIT_CONFIG_PARAMETERS='core.attributesFile=%s' 'filter.hide.clean=%s'", attributes, clean)
 }
 
-// cleanFilterHome writes a home directory whose ~/.gitconfig installs the same
-// filter, and returns the environment that points git's global config at it.
-// This is the ambient user config a run falls back to when nothing pins the
-// global config file, and no variable in git's own namespace carries it.
-func cleanFilterHome(t *testing.T) []string {
+// unparseableGlobalConfigHome writes a home directory whose ~/.gitconfig git
+// refuses to read, and returns the environment pointing git at it.
+//
+// The payload is a broken section header rather than a hostile setting on
+// purpose. Every setting the gate cares about it can outrank with a `-c` flag
+// or blank by enumeration, so a case built on one of those would stay green
+// with the config-file pin deleted. A file git cannot parse is answerable only
+// by not reading the file: git aborts every invocation with "bad config line",
+// so with GIT_CONFIG_GLOBAL unpinned the run has no diff and no document at all.
+func unparseableGlobalConfigHome(t *testing.T) []string {
 	t.Helper()
-	attributes, clean := hideEditFilter(t)
 	home := t.TempDir()
-	config := fmt.Sprintf("[core]\n\tattributesFile = %s\n[filter \"hide\"]\n\tclean = %s\n", attributes, clean)
-	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte(config), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[core\n\tquotePath = false\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// XDG_CONFIG_HOME is the other place git looks for a global config, and an
@@ -344,6 +347,55 @@ func (f *fixture) configureProcessFilter() {
 	}
 	f.write(".gitattributes", "*.cs filter=hide\n")
 	f.git("config", "filter.hide.process", script)
+}
+
+// configureRequiredCleanFilter installs the hiding filter and marks it
+// required, which is what `git lfs install --local` and git-crypt write. git
+// then refuses to fall back when the driver produces nothing, so blanking the
+// driver without also clearing this flag aborts the diff instead of passing the
+// content through, and every run in such a repository exits 1.
+func (f *fixture) configureRequiredCleanFilter() {
+	f.t.Helper()
+	_, clean := hideEditFilter(f.t)
+	f.write(".gitattributes", "*.cs filter=hide\n")
+	f.git("config", "filter.hide.clean", clean)
+	f.git("config", "filter.hide.required", "true")
+}
+
+// configureFilterNamedWithATrailingSpace configures a driver whose subsection
+// name ends in a space, alongside the ordinary hiding filter that the
+// .gitattributes line actually selects.
+//
+// A subsection name is arbitrary text, so `filter.hide .clean` is one key. A
+// reader that splits the config listing on whitespace turns it into `filter.hide`
+// and `.clean`, and the second is a key git refuses on the command line, so the
+// gate hands git an unparseable `-c` and dies on every run in this repository.
+// A name holding a space anywhere else has the same cause, but no .gitattributes
+// line can select it, since an attribute value cannot contain a space, so this
+// spelling is the one the gate can be caught on.
+func (f *fixture) configureFilterNamedWithATrailingSpace() {
+	f.t.Helper()
+	_, clean := hideEditFilter(f.t)
+	f.write(".gitattributes", "*.cs filter=hide\n")
+	f.git("config", "filter.hide.clean", clean)
+	f.git("config", "filter.hide .clean", clean)
+}
+
+// configureFsmonitorHook installs a repo-local core.fsmonitor hook that appends
+// a line to a marker file, and returns the marker's path. git runs the hook to
+// refresh the index, which a diff does on every invocation, so the marker
+// existing after a run means the repository chose a program the gate executed.
+func (f *fixture) configureFsmonitorHook() string {
+	f.t.Helper()
+	dir := f.t.TempDir()
+	marker := filepath.Join(dir, "ran")
+	script := filepath.Join(dir, "fsmonitor")
+	body := fmt.Sprintf("#!/bin/sh\necho ran >> %s\nexit 1\n", marker)
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	f.git("config", "core.fsmonitor", script)
+	return marker
 }
 
 // constantTextconvScript writes an executable that prints the same line for

@@ -16,8 +16,10 @@ type Path string
 // String renders the path as it appears in the gate's output.
 func (p Path) String() string { return string(p) }
 
-// Ext is the path's file extension, including the dot. ADR 0004 rejects case
-// folding, so the extension is returned and compared exactly as written.
+// Ext is the path's file extension, including the dot, returned exactly as the
+// path spells it. Extractor routing compares it case-insensitively, in
+// extract.worthRunning and extract.filter, so a language table row spelling its
+// extensions in lower case still routes `Order.CS`.
 func (p Path) Ext() string { return filepath.Ext(string(p)) }
 
 // Root is a repo root with its symlinks already resolved, which is what

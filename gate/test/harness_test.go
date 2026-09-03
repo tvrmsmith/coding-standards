@@ -93,7 +93,15 @@ type stubConfig struct {
 
 // gitEnv pins the identity and dates git commits with, and cuts the
 // machine's own config out, so a fixture repo is the same everywhere.
+//
+// The locale is pinned with it. A golden that quotes git's own diagnostic is a
+// byte-for-byte comparison against English, and git ships translations, so on a
+// runner whose LANG names one of them the case goes red for a reason that has
+// nothing to do with the gate. LANGUAGE is emptied beside LC_ALL because it
+// outranks LC_ALL for message translation.
 var gitEnv = []string{
+	"LC_ALL=C",
+	"LANGUAGE=",
 	"GIT_AUTHOR_NAME=Fixture Author",
 	"GIT_AUTHOR_EMAIL=author@fixture.invalid",
 	"GIT_COMMITTER_NAME=Fixture Committer",
