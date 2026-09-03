@@ -107,8 +107,11 @@ func sortedFiles[V any](byFile map[srcpath.Path]V) []srcpath.Path {
 // sortSpans puts spans in a total order, so the set Changed drains out of a
 // map lands in the table the same way every run. File, start and end alone
 // leave two methods declared on the same lines tied, and two overloads tie on
-// the name as well, so the signature settles it. A tie here would reorder the
-// document between runs.
+// the name as well, so the signature settles it. The name is the arm that keeps
+// two same-range methods from swapping rows between runs; two spans that get
+// past it share every cell the table prints, since the coverage join keys on
+// the range alone, so what the signature buys is a total order for sort.Slice
+// rather than a visible one.
 func sortSpans(spans []extract.Span) {
 	sort.Slice(spans, func(i, j int) bool {
 		left, right := spans[i], spans[j]

@@ -10,7 +10,9 @@
 // command line. The environment outranks a `-c` flag, whether it reshapes the
 // diff directly (GIT_EXTERNAL_DIFF), injects config (GIT_CONFIG_PARAMETERS), or
 // points the whole run at another repository (GIT_DIR), so git's namespace is
-// dropped from the command's environment entirely. Neither reaches
+// dropped from the command's environment entirely and the two config-file
+// variables are then pinned at the null device, which is what keeps the scrub
+// from handing the run back to an ambient ~/.gitconfig. Neither reaches
 // `.gitattributes` or git's own NUL-byte autodetection, which live in the repo
 // and in the file's bytes; `--text` on the diff answers those.
 //
@@ -29,6 +31,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tvrmsmith/coding-standards/gate/internal/report"
 	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
 )
 
@@ -115,7 +118,7 @@ func (r Repo) TouchedLines(base Base) (map[srcpath.Path][]int, error) {
 	}
 	touched, err := parseTouchedLines(patch)
 	if err != nil {
-		return nil, err
+		return nil, unparseableDiff(err)
 	}
 	moved, err := r.pureMoves(base)
 	if err != nil {
@@ -156,7 +159,7 @@ func (r Repo) pureMoves(base Base) ([]srcpath.Path, error) {
 	}
 	added, deleted, err := parseRawAddsAndDeletes(raw)
 	if err != nil {
-		return nil, err
+		return nil, unparseableDiff(err)
 	}
 	if len(added) == 0 || len(deleted) == 0 {
 		return nil, nil
@@ -295,7 +298,18 @@ func hunkLines(start, count int) []int {
 
 // parseNewSidePath strips the "b/" prefix git puts on the new-side path,
 // unquoting it first when git had to quote it.
+//
+// git appends a TAB to the name on a "---" or "+++" line whenever the path
+// holds a space, so a reader can tell where a name with spaces ends, and it
+// does that whether or not the name is quoted. The TAB sits outside the closing
+// quote, so it has to come off before the quote check: left on the unquoted
+// form it makes the extension read ".cs\t", no extractor is located for the
+// file, and every changed method under a directory with a space in its name
+// goes unmeasured under a pass. A path whose own last character is a TAB is
+// quoted and carries that TAB escaped inside the quotes, so trimming one here
+// can never eat part of a name.
 func parseNewSidePath(field string) (srcpath.Path, error) {
+	field = strings.TrimSuffix(field, "\t")
 	if strings.HasPrefix(field, `"`) {
 		unquoted, err := strconv.Unquote(field)
 		if err != nil {
@@ -330,6 +344,20 @@ func parseHunkHeader(header string) (start, count int, err error) {
 		}
 	}
 	return start, count, nil
+}
+
+// unparseableDiff types a parser's refusal to read what git printed. Base
+// resolution has already succeeded by then, so the document exists and ADR
+// 0005's one-document rule applies: main puts this in the error block rather
+// than exiting 1 with nothing on stdout, which a caller cannot tell from a
+// crash. Every parse failure on this path shares the code, because they all say
+// the same thing, that git answered and the answer was not a diff the gate
+// understands.
+func unparseableDiff(err error) error {
+	return &report.Failure{
+		Code:    report.CodeDiffUnparseable,
+		Message: "could not read the diff git printed: " + err.Error(),
+	}
 }
 
 // configOverrides pin, per invocation, every git setting that can reshape the
@@ -373,10 +401,24 @@ var rawFlags = []string{"diff", "--no-color", "--no-ext-diff", "--raw"}
 // exotic: git exports it into every hook it runs, and a pre-commit hook is what
 // this gate is built to be.
 //
-// Nothing in the namespace is needed to run git. The repo comes from cmd.Dir,
-// the settings the parsers depend on come from configOverrides, and config
-// files still reach git through their default locations.
+// Nothing in the namespace is needed to run git. The repo comes from cmd.Dir
+// and the settings the parsers depend on come from configOverrides.
 const gitNamespace = "GIT_"
+
+// pinnedConfigFiles is what run puts back after the scrub.
+//
+// Dropping GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM with the rest of the
+// namespace sends git to its default config locations instead, so the run would
+// read whatever ~/.gitconfig and /etc/gitconfig happen to hold. That is the same
+// hole the scrub exists to close, only reached through a file rather than a
+// variable: one `filter.*.clean` entry there hides an edit from the diff and no
+// command-line flag turns a clean filter off. Both are therefore pinned at the
+// null device, an empty file on every platform Go names it for, and the run
+// carries the settings it needs on the command line.
+var pinnedConfigFiles = []string{
+	"GIT_CONFIG_GLOBAL=" + os.DevNull,
+	"GIT_CONFIG_SYSTEM=" + os.DevNull,
+}
 
 // git runs one git command in the repo root.
 func (r Repo) git(args ...string) (string, error) {
@@ -398,17 +440,18 @@ func run(dir string, args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
-// sanitizedEnv is the process environment with git's own namespace removed. It
-// is built rather than inherited, so neither what the parser reads nor which
-// repository it reads it from depends on how the caller's shell was set up.
+// sanitizedEnv is the process environment with git's own namespace removed and
+// the two config-file variables pinned. It is built rather than inherited, so
+// neither what the parser reads, nor which repository it reads it from, nor
+// whose config it reads it under depends on how the caller's shell was set up.
 func sanitizedEnv() []string {
 	env := os.Environ()
-	kept := make([]string, 0, len(env))
+	kept := make([]string, 0, len(env)+len(pinnedConfigFiles))
 	for _, entry := range env {
 		if name, _, _ := strings.Cut(entry, "="); strings.HasPrefix(name, gitNamespace) {
 			continue
 		}
 		kept = append(kept, entry)
 	}
-	return kept
+	return append(kept, pinnedConfigFiles...)
 }

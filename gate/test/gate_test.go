@@ -133,8 +133,13 @@ func TestTwoSameRangeMethodsScoringTheSameAreOrderedByName(t *testing.T) {
 	// Same file, same range, same complexity and the same coverage, so the two
 	// rows tie on every cell the table sorts by. Only the name settles the order,
 	// and the set the rows are drained from is a map.
-	a := span{File: pair, Name: "Pair.A", StartLine: 14, EndLine: 14, Complexity: 1}
-	b := span{File: pair, Name: "Pair.B", StartLine: 14, EndLine: 14, Complexity: 1}
+	//
+	// The signatures run against the names, so the arm below the name is a total
+	// order pointing the other way. Without that the case would be a coin flip:
+	// drop the name arm and the rows come out in whatever order the map yielded,
+	// which matches this golden about half the time.
+	a := span{File: pair, Name: "Pair.A", Signature: "(string)", StartLine: 14, EndLine: 14, Complexity: 1}
+	b := span{File: pair, Name: "Pair.B", Signature: "(int)", StartLine: 14, EndLine: 14, Complexity: 1}
 
 	f := newFixture(t, "main")
 	f.write(pair, csharpFile(20))
@@ -188,6 +193,26 @@ func TestExtractorReturningTheSameSpanTwiceFails(t *testing.T) {
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, placeAsync}),
+	}
+
+	f.run().assertMatches(t, "duplicate_span", 1, f.baseLabel("main"),
+		"csharp extractor returned OrderService.PlaceAsync twice, covering src/Ordering/OrderService.cs lines 41-58\n")
+}
+
+func TestExtractorReturningTheSameSpanWithTwoComplexitiesFails(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 45)
+	// The same method twice under two complexities. One of the two rows still
+	// vanishes from the table, and which one survived is the difference between a
+	// pass and a fail here, so the duplicate test cannot let a differing score
+	// make two rows into two methods.
+	rescored := placeAsync
+	rescored.Complexity = 40
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, rescored}),
 	}
 
 	f.run().assertMatches(t, "duplicate_span", 1, f.baseLabel("main"),
@@ -642,6 +667,35 @@ func TestRemovingASubmoduleStillEmitsADocument(t *testing.T) {
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
+func TestRemovedGitlinkNamingABlobDoesNotDropTheAddedFile(t *testing.T) {
+	const origin = "src/Ordering/Origin.cs"
+	const copied = "src/Ordering/Copy.cs"
+	vanish := span{File: copied, Name: "Copy.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(origin, csharpFile(20))
+	f.commitAll("initial")
+	// A gitlink's object id names a commit in another repository, so the move
+	// detection must not read it as content this repository deleted. Here the id
+	// is also a blob id in this repository, which is what tells the guard apart
+	// from the `cat-file` failure that otherwise hides its absence: read as a
+	// blob, the removed gitlink carries Origin.cs's content, and the brand-new
+	// file carrying that same content is dropped as a move and never scored.
+	f.addGitlink("vendor/lib", f.git("rev-parse", "HEAD:"+origin))
+	f.removeSubmoduleGitlink("vendor/lib")
+	f.copyFile(origin, copied)
+	f.git("add", copied)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: copied, lines: spanCoverage(6, 4, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(copied), []span{vanish}),
+	}
+
+	f.run().assertMatches(t, "gitlink_naming_a_blob", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 10.75\n")
+}
+
 func TestHostileGitConfigAndEnvironmentDoNotHideTheChange(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
@@ -918,6 +972,74 @@ func TestCleanFilterInjectedThroughTheEnvironmentDoesNotHideTheChange(t *testing
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
+func TestGlobalGitConfigDoesNotHideTheChange(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// Dropping git's namespace from the environment is not enough on its own:
+	// with GIT_CONFIG_GLOBAL gone, git reads ~/.gitconfig instead, and the clean
+	// filter installed there reverses the edit and leaves the two sides equal.
+	// Only pinning the config file at the null device answers this.
+	result := f.runWithEnv(cleanFilterHome(t)...)
+
+	result.assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestChangedMethodInADirectoryWhoseNameHoldsASpaceIsStillMeasured(t *testing.T) {
+	const spaced = "My Project/A.cs"
+	vanish := span{File: spaced, Name: "A.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	// git appends a TAB to the name on a "+++" line whenever the path holds a
+	// space. Read literally the header names "My Project/A.cs\t", whose extension
+	// is not .cs, so the language table locates no extractor for it and every
+	// changed method in the file goes unscored under a pass.
+	f.write(spaced, csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(spaced, 7)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: spaced, lines: spanCoverage(6, 4, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(spaced), []span{vanish}),
+	}
+
+	f.run().assertMatches(t, "spaced_diff_path", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 10.75\n")
+}
+
+func TestChangedMethodInAQuotedPathHoldingASpaceIsStillMeasured(t *testing.T) {
+	const awkward = `src/a "b" c.cs`
+	vanish := span{File: awkward, Name: "Awkward.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	// Both at once, which is the worse half of the same defect: the double quote
+	// makes git quote the name and the space makes it append a TAB after the
+	// closing quote, so unquoting the field whole fails and the run would exit 1
+	// with nothing on stdout at all.
+	f.write(awkward, csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(awkward, 7)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: awkward, lines: spanCoverage(6, 4, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(awkward), []span{vanish}),
+	}
+
+	f.run().assertMatches(t, "quoted_spaced_diff_path", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 10.75\n")
+}
+
 func TestChangedMethodInAPathGitQuotesIsStillMeasured(t *testing.T) {
 	const weird = `src/Ordering/we"ird.cs`
 	vanish := span{File: weird, Name: "Weird.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
@@ -967,9 +1089,11 @@ func TestRunOutsideAGitRepoWritesNoDocumentAndExitsOne(t *testing.T) {
 	result := f.run()
 
 	// This failure is upstream of the document, so ADR 0005's one-TOON-document
-	// rule cannot apply: there is no base and no scope to report.
-	if result.exitCode != 1 || result.stdout != "" || !strings.Contains(result.stderr, "not a git repository") {
-		t.Errorf("gate outside a repo: got exit %d, stdout %q, stderr %q; want exit 1, empty stdout, stderr naming the missing repo",
+	// rule cannot apply: there is no base and no scope to report. What git says
+	// about it is git's own text in git's own language, so the contract here is
+	// the exit code, the empty stdout, and a cause on stderr rather than silence.
+	if result.exitCode != 1 || result.stdout != "" || strings.TrimSpace(result.stderr) == "" {
+		t.Errorf("gate outside a repo: got exit %d, stdout %q, stderr %q; want exit 1, empty stdout, a cause on stderr",
 			result.exitCode, result.stdout, result.stderr)
 	}
 }
