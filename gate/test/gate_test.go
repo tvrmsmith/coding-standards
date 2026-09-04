@@ -542,16 +542,15 @@ func TestWholeFileReformatWithNoLogicChangeMeasuresNothing(t *testing.T) {
 	f.write(legacy, csharpFile(60))
 	f.commitAll("initial")
 	// Indenting the whole file is the only change. Under -w this produces no
-	// "+++" line and no hunk at all for Legacy.cs, so it never reaches the
-	// extractor and the stub's spans, which would both blow the threshold if
-	// they were ever measured, are never read.
+	// "+++" line and no hunk at all for Legacy.cs, so Legacy.cs never reaches
+	// the extractor and the run never reads the stub's spans.
 	f.write(legacy, indented(csharpFile(60), "        "))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
-		// Never read: the run has to see no changed methods without ever
-		// asking for a coverage report. Writing none is load-bearing, since
-		// a single measured method would fail coverage_missing instead of
-		// passing, which is the only way this case could fail wrong.
+		// The fixture writes no coverage report anywhere, which is
+		// load-bearing. A run that measured even one method here would stop
+		// at coverage_missing and exit 1, so this case cannot pass by
+		// accident.
 		Stdout: extractorOutput(t, parsed(legacy), []span{knot, tangle}),
 	}
 
@@ -614,24 +613,55 @@ func TestMethodMovedBetweenFilesWithItsBodyUnchangedIsMeasuredAtItsNewLocation(t
 		"0 of 1 changed methods over CRAP threshold 30, worst score 10.75\n")
 }
 
+func TestMethodMovedWithinOneFileIsMeasuredAtItsNewLocation(t *testing.T) {
+	const shuffle = "src/Ordering/Shuffle.cs"
+	// Holds neither the vacated position nor the moved block, so it stays out
+	// of the table and shows the gate measures the move alone.
+	keep := span{File: shuffle, Name: "Shuffle.Keep", StartLine: 20, EndLine: 30, Complexity: 2}
+	vanish := span{File: shuffle, Name: "Shuffle.Vanish", StartLine: 35, EndLine: 45, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(shuffle, csharpFile(60))
+	f.commitAll("initial")
+	// moveLines rewrites src before it re-reads dst, so with one file the
+	// after argument counts lines in the shortened file. 34 there is old line
+	// 45, and the moved block lands at 35 through 45. git reports two hunks,
+	// a zero-length one touching line 9 alone where the block used to sit and
+	// an insertion covering lines 35 through 45. Line 9 falls inside no span,
+	// so the vacated position contributes exactly one diagnostic.
+	f.moveLines(shuffle, 10, 20, shuffle, 34)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: shuffle, lines: spanCoverage(36, 4, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(shuffle), []span{keep, vanish}),
+	}
+
+	f.run().assertMatches(t, "moved_within_file", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 10.75\n")
+}
+
 func TestDeletedMethodIsNotMeasuredAndItsDeletionChangesTheCodeAroundIt(t *testing.T) {
 	const legacy = "src/Ordering/Legacy.cs"
-	neighbour := span{File: legacy, Name: "Legacy.Neighbour", StartLine: 5, EndLine: 12, Complexity: 3}
+	neighbour := span{File: legacy, Name: "Legacy.Neighbour", StartLine: 5, EndLine: 9, Complexity: 3}
+	// Well over the threshold and holding no touched line, so the gate never
+	// measures it and it never reaches the table.
+	survivor := span{File: legacy, Name: "Legacy.Survivor", StartLine: 15, EndLine: 25, Complexity: 34}
 
 	f := newFixture(t, "main")
 	f.write(legacy, csharpFile(60))
 	f.commitAll("initial")
-	// Lines 10-40 held a complexity-34 method well over the threshold. Deleting
-	// it produces a zero-length hunk that touches line 9 alone, and the working
-	// tree no longer holds a span for the deleted method at all, so it cannot
-	// appear in the table however badly it once scored. The deletion still
-	// lands on Neighbour, the method that surrounded it.
+	// Deleting lines 10-40 produces a zero-length hunk whose insertion point
+	// is line 9, so line 9 is the only touched line. Neighbour ends at 9 and
+	// Survivor starts at 15, which makes Neighbour the only span the gate can
+	// attribute the deletion to. The deleted lines carry no working-tree span
+	// of their own, so nothing stands in for the method that lived there.
 	f.deleteLines(legacy, 10, 40)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: legacy, lines: spanCoverage(6, 3, 2)}))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(legacy), []span{neighbour}),
+		Stdout:     extractorOutput(t, parsed(legacy), []span{neighbour, survivor}),
 	}
 
 	f.run().assertMatches(t, "deleted_method", 0, f.baseLabel("main"),
@@ -648,9 +678,9 @@ func TestEveryMethodInANewlyAddedFileIsMeasured(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.write(fresh, csharpFile(20))
-	// `git add` is required, not incidental: ADR 0003's third amendment says
-	// touched lines come from tracked paths only, so an unstaged new file
-	// contributes nothing.
+	// `git add` is required, not incidental. ADR 0003's tracked-paths-only
+	// amendment says touched lines come from tracked paths only, so an
+	// unstaged new file contributes nothing.
 	f.git("add", fresh)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: fresh, lines: append(spanCoverage(4, 4, 1), spanCoverage(11, 5, 1)...)}))
@@ -672,8 +702,9 @@ func TestEveryMethodInANewlyAddedFileIsMeasured(t *testing.T) {
 //
 //   - OrderService.cs gets an ordinary edit, an easy sanity check that
 //     everything else in the tree does not drown it out.
-//   - Legacy.cs is reflowed with no logic change; -w gives it no hunk at all,
-//     so it never even reaches the ACM filter, let alone the extractor.
+//   - Legacy.cs is reflowed with no logic change. It passes --diff-filter=ACM
+//     as status M, but -w leaves it with no hunk, so no touched line is
+//     attributed to it and it never reaches the extractor.
 //   - Origin.cs and Destination.cs repeat the moved-method case: the method
 //     is measured at its new home in Destination, and Origin's own touch is
 //     a diagnostic only.
@@ -780,6 +811,12 @@ func TestRepoWithNoResolvableDiffBaseNamesEveryRefAndPointsAtTheFlag(t *testing.
 	f := newFixture(t, "trunk")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
+	// A second commit is what makes the absent HEAD~1 fallback load-bearing.
+	// With one commit HEAD~1 does not resolve either, so a gate that did fall
+	// back would emit this same document. With two, a fallback would resolve
+	// a base, find a changed method and fail coverage_missing instead.
+	f.touchLine(orderService, 20)
+	f.commitAll("second")
 	f.touchLine(orderService, 62)
 	f.stub = stubConfig{Extensions: []string{".cs"}}
 
