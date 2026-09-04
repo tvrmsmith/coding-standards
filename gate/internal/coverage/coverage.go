@@ -263,8 +263,11 @@ func joinPaths(paths []srcpath.Path) string {
 	for _, path := range paths {
 		rendered = append(rendered, path.String())
 	}
-	if len(rendered) < 2 {
-		return strings.Join(rendered, "")
+	switch len(rendered) {
+	case 0:
+		return ""
+	case 1:
+		return rendered[0]
 	}
 	return strings.Join(rendered[:len(rendered)-1], ", ") + " and " + rendered[len(rendered)-1]
 }
@@ -306,47 +309,46 @@ func (r coberturaReport) erasedSourceRoot(reportPath srcpath.Path) *report.Failu
 // root and is the legitimate shape coverlet writes when no computed source
 // root prefixes the document; so is a report with no <source> at all.
 func (r coberturaReport) sourceLinked() bool {
-	for _, class := range r.Classes {
-		if sourceLinkScheme.MatchString(class.Filename) {
-			return true
-		}
+	if slices.ContainsFunc(r.Classes, func(class coberturaClass) bool {
+		return sourceLinkScheme.MatchString(class.Filename)
+	}) {
+		return true
 	}
 	if len(r.Sources) == 0 {
 		return false
 	}
-	for _, source := range r.Sources {
-		if source != "" {
-			return false
-		}
+	if slices.ContainsFunc(r.Sources, func(source string) bool { return source != "" }) {
+		return false
 	}
-	for _, class := range r.Classes {
-		if !filepath.IsAbs(class.Filename) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(r.Classes, func(class coberturaClass) bool {
+		return !filepath.IsAbs(class.Filename)
+	})
 }
 
-// candidates lists every path ADR 0004 derives from one class filename. Each
-// <source> is joined to it, plus the filename itself when it is already
-// absolute; the join is absolute only when the <source> it started from was.
-// A filename naming no file at all, whether it is empty, ".", ".." or a bare
-// separator, yields nothing, because joining any of those onto a <source> names
-// a directory, which resolves inside the root and would let one malformed class
-// stand in for a whole report's worth of classes that did not. ".." is the same
-// case as "." one level up, and a filename that merely starts with ".." still
-// names a file, so only the bare form is carved out.
+// candidates lists every path ADR 0004 derives from one class filename. A
+// filename that is already absolute carries its own root and is its own only
+// candidate: joining a <source> onto it would name a path no report ever
+// carried, /src/src/app/Order.cs off <source> /src, and the outside-repo
+// diagnostic quotes the first candidate. A relative filename is joined to each
+// <source>, and the join is absolute only when the <source> it started from
+// was. A filename naming no file at all, whether it is empty, ".", ".." or a
+// bare separator, yields nothing, because joining any of those onto a <source>
+// names a directory rather than a file and would let one malformed class stand
+// in for a whole report's worth of classes that did not resolve. ".." is the
+// same case as "." one level up, and a filename that merely starts with ".."
+// still names a file, so only the bare form is carved out here; srcpath.Place
+// refuses every other directory-shaped filename by what it resolves to.
 func (r coberturaReport) candidates(filename string) []string {
 	switch filepath.Clean(filepath.FromSlash(filename)) {
 	case ".", "..", string(filepath.Separator):
 		return nil
 	}
-	candidates := make([]string, 0, len(r.Sources)+1)
+	if filepath.IsAbs(filename) {
+		return []string{filepath.FromSlash(filename)}
+	}
+	candidates := make([]string, 0, len(r.Sources))
 	for _, source := range r.Sources {
 		candidates = append(candidates, filepath.Join(source, filepath.FromSlash(filename)))
-	}
-	if filepath.IsAbs(filename) {
-		candidates = append(candidates, filepath.FromSlash(filename))
 	}
 	return candidates
 }
@@ -361,9 +363,9 @@ func (r coberturaReport) candidates(filename string) []string {
 // placed nowhere still has a path worth showing the reader.
 func placeCandidates(candidates []string, root srcpath.Root) (distinct []srcpath.Path, first string) {
 	seen := map[srcpath.Path]bool{}
-	for _, candidate := range candidates {
+	for i, candidate := range candidates {
 		placed := root.Place(candidate)
-		if first == "" {
+		if i == 0 {
 			first = placed.Resolved()
 		}
 		path, inside := placed.Inside()

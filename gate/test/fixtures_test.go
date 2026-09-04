@@ -3,7 +3,9 @@ package gate_test
 import (
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -187,10 +189,13 @@ func cobertura(sourceRoot string, classes ...coverageClass) string {
 }
 
 // coberturaNoSources is cobertura with <sources/> empty, so every class
-// filename stands alone. That document reads as an erased source root when the
-// filenames are relative or carry the /_/ placeholder DeterministicReport=true
-// writes (issue 16, coverage_source_root_erased), and as the legitimate
-// coverlet shape when they are absolute and carry their own root.
+// filename stands alone. That document reads as an erased source root only
+// when the filenames carry the /_/ placeholder DeterministicReport=true writes
+// (issue 16, coverage_source_root_erased). Relative filenames with no <source>
+// beside them are a different failure: nothing anchors them, so they build no
+// candidate and the report is named as placing no class inside the root (issue
+// 16, coverage_outside_repo). Absolute filenames carry their own root and are
+// the legitimate coverlet shape.
 // UseSourceLink=true is a different document again, keeping one <source> that
 // is empty, so a case for it calls cobertura("").
 func coberturaNoSources(classes ...coverageClass) string {
@@ -339,6 +344,33 @@ func (f *fixture) denyReadFile(rel string) {
 		f.t.Fatal(err)
 	}
 	f.t.Cleanup(func() { os.Chmod(full, 0o644) })
+}
+
+// readCause is the cause the gate renders when it cannot read the file at rel:
+// the operating system's own wording for the same failed read, stripped of the
+// absolute path the way parseCause strips it. The wording belongs to the OS,
+// "Access is denied." rather than "permission denied" on Windows, so a case
+// pins the sentence the gate owns around the hole and asks the OS for the rest.
+func (f *fixture) readCause(rel string) string {
+	f.t.Helper()
+	_, err := os.ReadFile(filepath.Join(f.root, filepath.FromSlash(rel)))
+	var pathErr *fs.PathError
+	if !errors.As(err, &pathErr) {
+		f.t.Fatalf("reading %s returned %v, which the case needs to be a path error", rel, err)
+	}
+	return pathErr.Err.Error()
+}
+
+// xmlUnmarshalCause is the cause the gate renders for a report that is not
+// valid XML: encoding/xml's own error for the same bytes, which the gate only
+// passes through and this repo does not own the wording of.
+func xmlUnmarshalCause(t *testing.T, body string) string {
+	t.Helper()
+	err := xml.Unmarshal([]byte(body), &struct{}{})
+	if err == nil {
+		t.Fatalf("encoding/xml accepted %q, which the case needs to be malformed", body)
+	}
+	return err.Error()
 }
 
 // failedToParse marks the named file as one the extractor could not parse.

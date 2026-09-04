@@ -905,17 +905,21 @@ func TestCoverageReportThatIsNotValidXMLFails(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	f.write("TestResults/fixed/coverage.cobertura.xml", "<coverage><packages>\n")
+	const malformed = "<coverage><packages>\n"
+	f.write("TestResults/fixed/coverage.cobertura.xml", malformed)
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
 	// The cause is carried into the message, so a read error and a malformed
-	// document do not reach the reader as the same sentence.
-	f.run().assertMatches(t, "coverage_unparseable", 1, f.baseLabel("main"),
-		"could not parse coverage report TestResults/fixed/coverage.cobertura.xml; "+
-			"XML syntax error on line 2: unexpected EOF\n")
+	// document do not reach the reader as the same sentence. The cause itself
+	// is encoding/xml's wording, so the case asks the same parser for it
+	// rather than pinning a sentence this repo does not own.
+	cause := xmlUnmarshalCause(t, malformed)
+	f.run().assertMatchesWith(t, "coverage_unparseable", 1, f.baseLabel("main"),
+		"could not parse coverage report TestResults/fixed/coverage.cobertura.xml; "+cause+"\n",
+		map[string]string{"CAUSE": cause})
 }
 
 func TestCoverageReportTheGateCannotReadFailsNamingTheCauseOnly(t *testing.T) {
@@ -933,9 +937,13 @@ func TestCoverageReportTheGateCannotReadFailsNamingTheCauseOnly(t *testing.T) {
 
 	// The read error carries the absolute path the process opened, which the
 	// message has already named repo-relative, so only the cause is carried
-	// into it and the document stays free of machine-specific paths.
-	f.run().assertMatches(t, "coverage_unreadable", 1, f.baseLabel("main"),
-		"could not parse coverage report TestResults/fixed/coverage.cobertura.xml; permission denied\n")
+	// into it and the document stays free of machine-specific paths. The cause
+	// is the operating system's wording, so the case reads the same denied file
+	// for it rather than pinning "permission denied" on every platform.
+	cause := f.readCause("TestResults/fixed/coverage.cobertura.xml")
+	f.run().assertMatchesWith(t, "coverage_unreadable", 1, f.baseLabel("main"),
+		"could not parse coverage report TestResults/fixed/coverage.cobertura.xml; "+cause+"\n",
+		map[string]string{"CAUSE": cause})
 }
 
 func TestMoveWithAnExtraCopyMeasuresBothAddedPaths(t *testing.T) {
@@ -1714,15 +1722,21 @@ func TestClassFilenameNamingNoFileDoesNotSuppressTheOutsideRepoDiagnostic(t *tes
 	// it has to contribute no evidence, exactly as an empty filename does;
 	// otherwise one malformed class stands in for the real class, which
 	// resolved in another checkout entirely. ".." is the same case one level
-	// up, resolving to the repo root itself from a <source> inside it.
+	// up, resolving to the repo root itself from a <source> inside it, "/" is
+	// the same case from the other end, and "../.." is the case no spelling of
+	// the filename can be carved out for: off the deepest <source> here it
+	// names the repo root, and only what it resolves to, a directory rather
+	// than a file, tells it apart from a path worth scoring.
 	otherCheckout := t.TempDir()
 	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
 	writeAbsolute(t, classPath, csharpFile(80))
 	f.write("TestResults/coverage.cobertura.xml", renderCobertura(
-		[]string{otherCheckout, filepath.Join(f.root, "src")},
+		[]string{otherCheckout, filepath.Join(f.root, "src"), filepath.Join(f.root, "src", "Ordering")},
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)},
 		coverageClass{filename: ".", lines: spanCoverage(1, 1, 1)},
-		coverageClass{filename: "..", lines: spanCoverage(1, 1, 1)}))
+		coverageClass{filename: "..", lines: spanCoverage(1, 1, 1)},
+		coverageClass{filename: "/", lines: spanCoverage(1, 1, 1)},
+		coverageClass{filename: "../..", lines: spanCoverage(1, 1, 1)}))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
@@ -1733,6 +1747,49 @@ func TestClassFilenameNamingNoFileDoesNotSuppressTheOutsideRepoDiagnostic(t *tes
 	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
 		outsideRepoStderr(example, root),
 		map[string]string{"EXAMPLE": example, "ROOT": root})
+}
+
+func TestClassFilenameClimbingBackIntoTheRootScores(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// A filename that starts with ".." but names a real file once joined: the
+	// <source> is the class's own directory and the filename climbs out of it
+	// and back in. It is not the ".." case, it names a file, and reading the
+	// two leading characters rather than what the join resolves to would drop
+	// every class a multi-project solution writes this way.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(filepath.Join(f.root, "src", "Ordering"),
+		coverageClass{filename: "../Ordering/OrderService.cs", lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestTwoClassesOnOneFileInOneReportAreUnioned(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// coverlet writes one <class> per class, so a file holding two of them
+	// appears twice in the same report, each element listing only its own
+	// lines. Cancel's three lines are split across the pair, so letting the
+	// second element replace the first rather than fold into it would score
+	// the method on one line instead of three.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 4}, {number: 62, hits: 0}}},
+		coverageClass{filename: orderService, lines: []coverageLine{{number: 63, hits: 1}}}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
 func TestReportMeasuredAgainstAContainerMountFailsNamingTheMismatch(t *testing.T) {
