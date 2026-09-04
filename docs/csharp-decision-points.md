@@ -164,7 +164,7 @@ quoted, while pipe never needs to quote it.
 
 ## The language ceiling
 
-**The ceiling is C# 13**, set by the `Microsoft.CodeAnalysis.CSharp` 4.13.0 reference in
+**The ceiling is C# 14**, set by the `Microsoft.CodeAnalysis.CSharp` 5.9.0 reference in
 `dotnet/src/Tvrmsmith.MetricGate.CSharp/Tvrmsmith.MetricGate.CSharp.csproj`. The extractor asks that
 parser for `LanguageVersion.Preview`, which is the highest setting it exposes, so every feature the
 referenced parser implements is open. The setting cannot reach past the reference, though. The package
@@ -172,12 +172,21 @@ version is the real limit, and raising it is the only way to raise the ceiling.
 
 A construct newer than the ceiling makes its file a `failed` row, even though the consumer's own
 compiler accepts it, and a `failed` row stops the run naming that file. So the ceiling is a real
-constraint on which repositories the gate can score, not just a note. C# 14 extension members,
-`public static class E { extension(string s) { ... } }`, are the first construct past it. Getting them
-needs `Microsoft.CodeAnalysis.CSharp` 4.14.0 or later, and that bump also forces two decisions this
-extractor has not made: how a member declared inside an `extension` block is qualified, and what to do
-about the arity check in `OperatorName`, which reads a binary operator inside an extension block as
-unary because the receiver is not in the parameter list.
+constraint on which repositories the gate can score, not just a note.
 
-`fixtures/Recent.cs` and `fixtures/Beyond.cs` pin the ceiling from both sides, so a silent downgrade of
-the reference reddens the suite and a bump reddens it too, which is the signal to update this section.
+C# 14 extension members, `public static class E { extension(string s) { ... } }`, are inside the
+ceiling as of the 5.9.0 reference, and they settled the two questions the C# 13 ceiling left open:
+
+- **Qualification.** An `extension` block is a `TypeDeclarationSyntax` with an empty identifier, so
+  it contributes no name segment. A member declared in one qualifies to the enclosing static class,
+  `Beyond.get_IsLong`. Keeping the empty segment would spell `Beyond..get_IsLong`, whose doubled dot
+  reads as the `..ctor` convention. Two extension blocks in one class can then declare the same
+  member name; their spans still differ by line, which is what span identity turns on.
+- **Operator arity.** No change was needed. The receiver is not an operand for naming purposes, so a
+  one-parameter `operator +` in an extension block really is unary plus. Compiling both forms
+  confirms it: the emitted metadata is `op_UnaryPlus` for `operator +(string b)` and
+  `op_Subtraction` for `operator -(string a, string b)`, which is what `OperatorName` already
+  produces from the parameter list alone.
+
+`fixtures/Recent.cs` and `fixtures/Beyond.cs` pin the ceiling from below, so a silent downgrade of the
+reference reddens the suite. `fixtures/TwoExtensions.cs` pins the qualification rule.

@@ -3,7 +3,7 @@
 # Proves the curated severities actually reach a build through the phase-1 bare-DLL path.
 #
 # Two builds of tests/Consumer, which references neither Tvrmsmith.Analyzers nor
-# FluentAssertions.Analyzers and has Central Package Management on:
+# AwesomeAssertions.Analyzers and has Central Package Management on:
 #
 #   baseline  no CustomAfterMicrosoftCommonProps  -> zero FAA and zero TVRM diagnostics
 #   injected  with it                             -> FAA0001, FAA0002, TVRM0001-0003 as *warnings*
@@ -28,15 +28,15 @@ trap 'rm -rf "$workdir"' EXIT
 fail() { printf '\nFAIL: %s\n' "$1" >&2; exit 1; }
 
 # Single source of truth for the assertion-library version lives in Directory.Build.props.
-fa_version="$(sed -n 's/.*<FluentAssertionsVersion>\(.*\)<\/FluentAssertionsVersion>.*/\1/p' \
+aa_version="$(sed -n 's/.*<AwesomeAssertionsVersion>\(.*\)<\/AwesomeAssertionsVersion>.*/\1/p' \
   "$dotnet_root/Directory.Build.props")"
-[ -n "$fa_version" ] || fail "could not read FluentAssertionsVersion from Directory.Build.props"
+[ -n "$aa_version" ] || fail "could not read AwesomeAssertionsVersion from Directory.Build.props"
 
 echo "==> Building Tvrmsmith.Analyzers"
 dotnet build "$dotnet_root/src/Tvrmsmith.Analyzers/Tvrmsmith.Analyzers.csproj" \
   -c Release --nologo -v quiet
 
-for f in Tvrmsmith.Analyzers.dll FluentAssertions.Analyzers.dll \
+for f in Tvrmsmith.Analyzers.dll AwesomeAssertions.Analyzers.dll \
          Tvrmsmith.Analyzers.globalconfig Tvrmsmith.Analyzers.Local.props \
          tvrmsmith-scope-changed.sh; do
   [ -f "$artifacts/$f" ] || fail "the build did not stage $f into $artifacts"
@@ -131,7 +131,7 @@ cat > "$twae/Twae.csproj" <<EOF
     <WarningsAsErrors />
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="FluentAssertions" Version="$fa_version" />
+    <PackageReference Include="AwesomeAssertions" Version="$aa_version" />
     <PackageReference Include="xunit" Version="2.9.2" />
   </ItemGroup>
 </Project>
@@ -217,7 +217,7 @@ cat > "$pkgconsumer/PkgConsumer.csproj" <<EOF
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="FluentAssertions" Version="$fa_version" />
+    <PackageReference Include="AwesomeAssertions" Version="$aa_version" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <!-- No PrivateAssets here on purpose: developmentDependency=true in the nuspec should be
          what keeps this from leaking downstream. -->
@@ -265,7 +265,7 @@ cat > "$scoped/Scoped.csproj" <<EOF
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="FluentAssertions" Version="$fa_version" />
+    <PackageReference Include="AwesomeAssertions" Version="$aa_version" />
     <PackageReference Include="xunit" Version="2.9.2" />
   </ItemGroup>
 </Project>

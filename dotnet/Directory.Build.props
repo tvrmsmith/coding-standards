@@ -6,14 +6,17 @@
     <DotnetRoot>$(MSBuildThisFileDirectory)</DotnetRoot>
     <LocalArtifactsDir>$(DotnetRoot)artifacts/local/</LocalArtifactsDir>
 
-    <!-- Pinned deliberately: the curated severities in
-         src/Tvrmsmith.Analyzers/config/Tvrmsmith.Analyzers.globalconfig were written against
-         this version's FAA0001-FAA0004. Bump both together. -->
-    <FluentAssertionsAnalyzersVersion>0.34.1</FluentAssertionsAnalyzersVersion>
+    <!-- The curated severities in
+         src/Tvrmsmith.Analyzers/config/Tvrmsmith.Analyzers.globalconfig are written against this
+         version's FAA0001-FAA0004. The fork kept the FAA prefix, so those ids carry over from
+         FluentAssertions.Analyzers unchanged. Bump both together. -->
+    <AwesomeAssertionsAnalyzersVersion>9.0.8</AwesomeAssertionsAnalyzersVersion>
 
-    <!-- FluentAssertions 6.x is the assumed baseline, which is why the analyzer pairing is
-         FluentAssertions.Analyzers and not AwesomeAssertions.Analyzers. -->
-    <FluentAssertionsVersion>6.12.2</FluentAssertionsVersion>
+    <!-- AwesomeAssertions is the assumed baseline, which is why the analyzer pairing is
+         AwesomeAssertions.Analyzers and not FluentAssertions.Analyzers. It is the Apache-2.0
+         community fork of FluentAssertions 7; FluentAssertions 8 moved to a licence that bills
+         commercial users, and this repo's own suite is the worked example of its standards. -->
+    <AwesomeAssertionsVersion>9.6.0</AwesomeAssertionsVersion>
   </PropertyGroup>
 
 </Project>
