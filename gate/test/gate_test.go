@@ -1651,26 +1651,29 @@ func TestClassWithNoFilenameDoesNotSuppressTheOutsideRepoDiagnostic(t *testing.T
 		map[string]string{"EXAMPLE": example, "ROOT": root})
 }
 
-func TestSourceRootAbsentFromThisMachineFailsNamingTheMismatch(t *testing.T) {
+func TestReportMeasuredAgainstAContainerMountFailsNamingTheMismatch(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 
-	// dotnet test ran in a container with the repo bind-mounted, so <source>
-	// names the mount and the filenames hang off it, and the gate runs on the
-	// host where that directory does not exist. Nothing resolves anywhere, so
-	// the source root itself is the evidence: it is the report's own claim
-	// about where the source was, and it is not here.
-	containerMount := filepath.Join(t.TempDir(), "src")
-	f.write("TestResults/coverage.cobertura.xml", cobertura(containerMount,
-		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	// dotnet test ran in a container with the repo bind-mounted, and the gate
+	// runs on the host where that mount does not exist. This is the <source>
+	// coverlet actually writes on Unix, "/", with the whole mount path carried
+	// in the filename, so no candidate resolves anywhere at all and the report
+	// still has to be named rather than presenting as unattributable methods.
+	mounted := filepath.Join(t.TempDir(), "srv", "repo", filepath.FromSlash(orderService))
+	f.write("TestResults/coverage.cobertura.xml", cobertura("/",
+		coverageClass{
+			filename: strings.TrimPrefix(filepath.ToSlash(mounted), "/"),
+			lines:    spanCoverage(61, 3, 2),
+		}))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	example := filepath.ToSlash(containerMount)
+	example := filepath.ToSlash(mounted)
 	root := resolvedPath(t, f.root)
 	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
 		fmt.Sprintf("coverage report TestResults/coverage.cobertura.xml resolved no class inside the repo root; "+
@@ -1915,7 +1918,7 @@ func TestReportPathNoLongerOnDiskIsIgnoredRatherThanFatal(t *testing.T) {
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
-func TestReportWhoseEveryClassIsGoneFromDiskIsIgnoredRatherThanFatal(t *testing.T) {
+func TestReportWhoseEveryClassIsGoneFromDiskFailsNamingTheMismatch(t *testing.T) {
 	const deletedFile = "src/Ordering/Deleted.cs"
 
 	f := newFixture(t, "main")
@@ -1923,10 +1926,11 @@ func TestReportWhoseEveryClassIsGoneFromDiskIsIgnoredRatherThanFatal(t *testing.
 	f.write(deletedFile, csharpFile(10))
 	f.commitAll("initial")
 	// Every class the report names is gone, which is the shape a report left
-	// behind in a gitignored TestResults/ takes after a branch switch. Nothing
-	// resolved outside the root, so there is no evidence of another checkout
-	// and the run falls through to unknown_changed_method rather than
-	// coverage_outside_repo.
+	// behind in a gitignored TestResults/ takes after a branch switch. ADR 0004
+	// fails a report that places no class inside the root whatever became of
+	// the candidates, and the message hands the reader the path to look at, so
+	// a stale report is diagnosed as one rather than as a wall of methods
+	// nothing could be attributed to.
 	f.git("rm", "--quiet", deletedFile)
 	f.commitAll("delete the only file the coverage report names")
 	f.touchLine(orderService, 62)
@@ -1938,7 +1942,32 @@ func TestReportWhoseEveryClassIsGoneFromDiskIsIgnoredRatherThanFatal(t *testing.
 		Stdout:     extractorOutput(t, parsed(orderService), []span{cancel}),
 	}
 
-	f.run().assertMatches(t, "report_classes_all_deleted", 1, f.baseLabel("main"),
+	// The candidate no longer resolves, so the example is the path as the join
+	// built it, unresolved, beside a repo root that is resolved.
+	example := filepath.ToSlash(filepath.Join(f.root, filepath.FromSlash(deletedFile)))
+	root := resolvedPath(t, f.root)
+	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
+		fmt.Sprintf("coverage report TestResults/coverage.cobertura.xml resolved no class inside the repo root; "+
+			"example resolved path %s, repo root %s\n", example, root),
+		map[string]string{"EXAMPLE": example, "ROOT": root})
+}
+
+func TestReportCarryingNoClassesDoesNotTripTheOutsideRepoDiagnostic(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// A report with a source root and no <class> at all resolved nothing, so
+	// there is nothing that could have been outside the repo and no path the
+	// diagnostic could quote. The run still fails, on the pre-existing
+	// unknown_changed_method path.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{cancel}),
+	}
+
+	f.run().assertMatches(t, "report_with_no_classes", 1, f.baseLabel("main"),
 		"1 changed method could not be attributed to a coverage report\n"+
 			"0 of 1 changed methods over CRAP threshold 30, worst score 0.00\n")
 }
