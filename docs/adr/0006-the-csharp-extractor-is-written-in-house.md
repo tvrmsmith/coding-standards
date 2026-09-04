@@ -151,3 +151,17 @@ would oblige every future extractor author to find an encoder for their language
 argv because a large rename can exceed `ARG_MAX`, and that failure is rare enough to escape testing.
 `--capabilities` is asked of the located binary rather than recorded in the gate's table, because ADR 0003 made
 the extension list the extractor's obligation and a table that disagrees with the binary is a silent misroute.
+
+**Amended 2026-09-04.** "Spelled however that language spells a parameter list" is superseded as a description of
+`signature`, though not as a decision. Scoring the constructs real code is written in turned up four collisions a
+parameter list alone cannot break: two same-named local functions on one line, two conversion operators differing
+only in target type (both named `op_Explicit`), two members of C# 14 `extension` blocks on one line, and generic
+arity. The field therefore carries a backtick arity prefix, a local function's start column, a conversion's target
+type and an extension block's receiver, none of which is a parameter. The obligation is unchanged and is still the
+whole of what another language owes: stable across runs, and different for any two declarations the gate would
+otherwise read as one span reported twice.
+
+The format itself is deliberately recorded in exactly one place, the C# extractor's `MethodSpanResult` doc comment.
+Three copies of the phrase "the parameter spelling" had accumulated, in this ADR, in [ADR 0001](0001-crap-gate-topology.md)
+and in the gate's `Span` struct, and all three went stale together the moment the format widened, because each
+restated the format instead of pointing at it. Prose that names the owner cannot rot that way.
