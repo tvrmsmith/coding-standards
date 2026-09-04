@@ -75,7 +75,9 @@ whole report that fails.
 The gate resolves the changed set and looks coverage up against it, rather than canonicalizing every
 path a report mentions. One report path the gate cannot place inside the repo, or places inside it
 but the diff never touched, is not the gate's business. A whole report that places no class inside
-the repo root, or whose source root was erased before it was written, fails the run.
+the repo root, or whose source root was erased before it was written, fails the run, and so does a
+single class the gate places at two different paths inside the root, because that report contradicts
+itself rather than falling short.
 
 Prefer "source path" over "file path" or "normalized path". The point of the term is that there is
 exactly one form, not that some normalizing happened.
