@@ -17,8 +17,9 @@
     <Authors>Trevor Smith</Authors>
     <Description>
       C# complexity extractor for metric-gate. Parses source with Roslyn's syntax parser alone
-      (no semantic model, no MSBuild) and emits one span per declaration that carries a body or
-      an expression body.
+      (no semantic model, no MSBuild) and emits one span per declaration the compiler gives a body
+      to, which is every declaration carrying a body or an expression body, plus an auto-property
+      accessor.
     </Description>
     <RepositoryUrl>https://github.com/tvrmsmith/coding-standards</RepositoryUrl>
   </PropertyGroup>

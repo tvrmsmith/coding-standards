@@ -22,7 +22,9 @@ namespace Tvrmsmith.MetricGate.CSharp;
 /// A local function's name is its containing span's name, then <c>.</c>, then the local name. A
 /// local function declared inside a lambda takes the name of the span holding the lambda, and
 /// nested local functions append again. <c>_nameStack</c> tracks "the span currently being
-/// collected" for exactly this purpose; a lambda never pushes onto it.
+/// collected" for exactly this purpose; a lambda never pushes onto it. A local function with no
+/// enclosing span at all, which is what a top-level-statements file or a field or property
+/// initializer lambda produces, takes its bare local name with no container prefix.
 /// </summary>
 internal sealed class MethodSpanCollector : CSharpSyntaxWalker
 {
@@ -44,7 +46,10 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
             return;
         }
 
-        var name = QualifiedName(node, WithTypeParameters(node.Identifier.Text, node.TypeParameterList));
+        var name = QualifiedName(
+            node,
+            WithTypeParameters(node.Identifier.Text, node.TypeParameterList),
+            node.ExplicitInterfaceSpecifier);
         RecordSpan(node, name, Signature(node.ParameterList, node.TypeParameterList));
         Descend(name, () => base.VisitMethodDeclaration(node));
     }
@@ -106,7 +111,7 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
             return;
         }
 
-        var name = QualifiedName(node, "get_" + node.Identifier.Text);
+        var name = QualifiedName(node, "get_" + node.Identifier.Text, node.ExplicitInterfaceSpecifier);
         RecordSpan(node, name, "()");
         Descend(name, () => base.VisitPropertyDeclaration(node));
     }
@@ -119,20 +124,25 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
             return;
         }
 
-        var name = QualifiedName(node, "get_Item");
+        var name = QualifiedName(node, "get_Item", node.ExplicitInterfaceSpecifier);
         RecordSpan(node, name, Signature(node.ParameterList));
         Descend(name, () => base.VisitIndexerDeclaration(node));
     }
 
     public override void VisitAccessorDeclaration(AccessorDeclarationSyntax node)
     {
-        var hasImplementation = node.Body is not null || node.ExpressionBody is not null;
-        if (!hasImplementation && !IsConcreteAutoAccessor(node))
+        if (node.Parent?.Parent is not MemberDeclarationSyntax member)
         {
             return;
         }
 
-        var (name, signature) = AccessorIdentity(node);
+        var hasImplementation = node.Body is not null || node.ExpressionBody is not null;
+        if (!hasImplementation && !IsConcreteAutoAccessor(member))
+        {
+            return;
+        }
+
+        var (name, signature) = AccessorIdentity(node, member);
         RecordSpan(node, name, signature);
 
         if (hasImplementation)
@@ -143,8 +153,8 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
 
     public override void VisitLocalFunctionStatement(LocalFunctionStatementSyntax node)
     {
-        var containerName = _nameStack.Peek();
-        var name = containerName + "." + node.Identifier.Text;
+        var localName = WithTypeParameters(node.Identifier.Text, node.TypeParameterList);
+        var name = _nameStack.Count == 0 ? localName : _nameStack.Peek() + "." + localName;
         RecordSpan(node, name, Signature(node.ParameterList, node.TypeParameterList));
         Descend(name, () => base.VisitLocalFunctionStatement(node));
     }
@@ -159,7 +169,7 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
     private void RecordSpan(SyntaxNode node, string name, string signature)
     {
         var lineSpan = node.GetLocation().GetLineSpan();
-        var complexityWalker = new ComplexityWalker();
+        var complexityWalker = new ComplexityWalker(node);
         complexityWalker.Visit(node);
 
         _spans.Add(new MethodSpanResult(
@@ -171,34 +181,47 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
             complexityWalker.Complexity));
     }
 
-    private static bool IsConcreteAutoAccessor(AccessorDeclarationSyntax node)
+    /// <summary>
+    /// Whether a bodyless <c>get;</c>/<c>set;</c> is one the compiler synthesizes a body for, which
+    /// is the single carve-out to the body-or-expression-body span rule. An <c>abstract</c>,
+    /// <c>extern</c> or <c>partial</c> member declares an accessor the compiler does not fill in, so
+    /// none of them earns a span; a partial property's two declarations would otherwise earn four.
+    /// An interface member is the same case, except when it is <c>static</c>, since a static
+    /// auto-property on an interface has been legal and compiler-synthesized since C# 11.
+    /// </summary>
+    private static bool IsConcreteAutoAccessor(MemberDeclarationSyntax member)
     {
-        if (node.Parent?.Parent is not MemberDeclarationSyntax member)
+        if (member.Modifiers.Any(SyntaxKind.AbstractKeyword)
+            || member.Modifiers.Any(SyntaxKind.ExternKeyword)
+            || member.Modifiers.Any(SyntaxKind.PartialKeyword))
         {
             return false;
         }
 
-        if (member.Modifiers.Any(SyntaxKind.AbstractKeyword) || member.Modifiers.Any(SyntaxKind.ExternKeyword))
+        if (member.Modifiers.Any(SyntaxKind.StaticKeyword))
         {
-            return false;
+            return true;
         }
 
         return member.Ancestors().OfType<TypeDeclarationSyntax>().FirstOrDefault() is not InterfaceDeclarationSyntax;
     }
 
-    private static (string Name, string Signature) AccessorIdentity(AccessorDeclarationSyntax node)
+    private static (string Name, string Signature) AccessorIdentity(
+        AccessorDeclarationSyntax node,
+        MemberDeclarationSyntax member)
     {
         var prefix = AccessorPrefix(node.Kind());
-        var member = (MemberDeclarationSyntax)node.Parent!.Parent!;
 
         return member switch
         {
             IndexerDeclarationSyntax indexer =>
-                (QualifiedName(indexer, prefix + "Item"), Signature(indexer.ParameterList)),
+                (QualifiedName(indexer, prefix + "Item", indexer.ExplicitInterfaceSpecifier),
+                    Signature(indexer.ParameterList)),
             PropertyDeclarationSyntax property =>
-                (QualifiedName(property, prefix + property.Identifier.Text), "()"),
+                (QualifiedName(property, prefix + property.Identifier.Text, property.ExplicitInterfaceSpecifier),
+                    "()"),
             EventDeclarationSyntax evt =>
-                (QualifiedName(evt, prefix + evt.Identifier.Text), "()"),
+                (QualifiedName(evt, prefix + evt.Identifier.Text, evt.ExplicitInterfaceSpecifier), "()"),
             _ => throw new InvalidOperationException($"Unexpected accessor container: {member.GetType()}"),
         };
     }
@@ -213,12 +236,6 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
         _ => throw new InvalidOperationException($"Unexpected accessor kind: {kind}"),
     };
 
-    /// <summary>
-    /// Metadata operator names, keyed by operator token. A token this table does not name (a
-    /// future language version's operator) falls back to <c>op_</c> plus the token's
-    /// <see cref="SyntaxKind"/> name with a trailing <c>Token</c> stripped, so an unrecognized
-    /// operator degrades to an ugly but stable name rather than crashing the extractor.
-    /// </summary>
     private static string OperatorName(OperatorDeclarationSyntax node)
     {
         var checkedPrefix = node.CheckedKeyword.IsKind(SyntaxKind.CheckedKeyword) ? "Checked" : string.Empty;
@@ -235,6 +252,13 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
         return "op_" + checkedPrefix + kind;
     }
 
+    /// <summary>
+    /// Metadata operator names, keyed by operator token. <c>+</c> and <c>-</c> name a different
+    /// operator depending on their arity, which is what <paramref name="isUnary"/> decides. A token
+    /// this table does not name (a future language version's operator) falls back to the token's
+    /// <see cref="SyntaxKind"/> name with a trailing <c>Token</c> stripped, so an unrecognized
+    /// operator degrades to an ugly but stable name rather than crashing the extractor.
+    /// </summary>
     private static string OperatorBaseName(SyntaxKind tokenKind, bool isUnary) => tokenKind switch
     {
         SyntaxKind.PlusToken => isUnary ? "UnaryPlus" : "Addition",
@@ -271,14 +295,27 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
             : kindName;
     }
 
-    private static string QualifiedName(SyntaxNode node, string memberName)
+    /// <summary>
+    /// Declaring type names outermost first, then the member name. An explicit interface
+    /// implementation takes the interface it implements between the two, the way metadata spells
+    /// it, so <c>int IA.M()</c> on <c>C</c> reads <c>C.IA.M</c> rather than colliding with the
+    /// <c>IB.M</c> declared beside it.
+    /// </summary>
+    private static string QualifiedName(
+        SyntaxNode node,
+        string memberName,
+        ExplicitInterfaceSpecifierSyntax? explicitInterface = null)
     {
         var typeNames = node.Ancestors()
             .OfType<TypeDeclarationSyntax>()
             .Reverse()
             .Select(type => WithTypeParameters(type.Identifier.Text, type.TypeParameterList));
 
-        return string.Join(".", typeNames.Append(memberName));
+        var qualified = explicitInterface is null
+            ? memberName
+            : explicitInterface.Name.NormalizeWhitespace().ToFullString() + "." + memberName;
+
+        return string.Join(".", typeNames.Append(qualified));
     }
 
     private static string WithTypeParameters(string identifier, TypeParameterListSyntax? typeParameterList)
@@ -292,7 +329,7 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
         return identifier + "<" + string.Join(", ", names) + ">";
     }
 
-    /// <summary>Builds the spelling <see cref="MethodSpanResult"/> documents.</summary>
+    /// <summary>Builds the signature spelling <see cref="MethodSpanResult"/> documents.</summary>
     private static string Signature(BaseParameterListSyntax parameterList, TypeParameterListSyntax? typeParameterList = null)
     {
         var arity = typeParameterList?.Parameters.Count ?? 0;
