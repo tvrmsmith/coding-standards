@@ -46,47 +46,37 @@ func (r Root) Abs(p Path) string {
 	return filepath.Join(r.resolved, filepath.FromSlash(string(p)))
 }
 
-// Placement is what became of one candidate path. Neither NotOnDisk nor
-// OutsideRoot is fatal here, per ADR 0004, but they are different evidence and
-// a caller may escalate on one and not the other: a candidate that resolved
-// somewhere outside the root says the report was built against another working
-// tree, while one that did not resolve at all says only that the file has
-// moved on since the test run. coverage.mergeInto fails a report whose classes
-// were all OutsideRoot on the strength of that difference.
-type Placement int
-
-const (
-	// NotOnDisk is a candidate filepath.EvalSymlinks could not read, or one
-	// that is not absolute and so names nothing to read.
-	NotOnDisk Placement = iota
-	// OutsideRoot is a candidate that resolved to a real file, elsewhere.
-	OutsideRoot
-	// InsideRoot is a candidate that resolved under the root.
-	InsideRoot
-)
-
 // Placed is one candidate's resolution, kept whole so a caller that needs the
 // absolute path a candidate landed on does not resolve symlinks a second time.
+// Only landing inside the root is a distinction the gate acts on: ADR 0004
+// ignores one candidate that does not, whatever the reason, and fails a whole
+// report that never lands.
 type Placed struct {
-	Placement Placement
-	// Path is the repo-relative path, set only for InsideRoot.
+	// Inside reports whether the candidate landed under the root.
+	Inside bool
+	// Path is the repo-relative path, set only when Inside.
 	Path Path
 	// Resolved is the absolute slash-separated path the candidate landed on,
-	// set for InsideRoot and OutsideRoot and empty for NotOnDisk. It is what a
-	// diagnostic quotes, so it is the path the gate actually compared.
+	// symlink-resolved when it resolves and as built when it does not. It is
+	// what a diagnostic quotes, so it is the best available reading of the path
+	// the gate compared.
 	Resolved string
 }
 
-// Place resolves an absolute candidate path and says where it landed.
+// Place resolves an absolute candidate path and says where it landed. A
+// candidate that is not absolute names nothing to read, and resolving it
+// against the process working directory would place a report's own relative
+// filename inside the root by accident.
 func (r Root) Place(candidate string) Placed {
+	asBuilt := Placed{Resolved: filepath.ToSlash(candidate)}
 	if !filepath.IsAbs(candidate) {
-		return Placed{Placement: NotOnDisk}
+		return asBuilt
 	}
 	resolved, err := filepath.EvalSymlinks(candidate)
 	if err != nil {
-		return Placed{Placement: NotOnDisk}
+		return asBuilt
 	}
-	outside := Placed{Placement: OutsideRoot, Resolved: filepath.ToSlash(resolved)}
+	outside := Placed{Resolved: filepath.ToSlash(resolved)}
 	rel, err := filepath.Rel(r.resolved, resolved)
 	if err != nil {
 		return outside
@@ -94,7 +84,7 @@ func (r Root) Place(candidate string) Placed {
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return outside
 	}
-	return Placed{Placement: InsideRoot, Path: Path(filepath.ToSlash(rel)), Resolved: filepath.ToSlash(resolved)}
+	return Placed{Inside: true, Path: Path(filepath.ToSlash(rel)), Resolved: filepath.ToSlash(resolved)}
 }
 
 // FromSlash adopts an already repo-relative, slash-separated path, which is

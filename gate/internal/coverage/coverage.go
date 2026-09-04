@@ -3,7 +3,7 @@
 // hit. It resolves report paths by ADR 0004's one rule, and the rule cuts two
 // ways: one path it cannot place inside the repo is a silent ignore, while a
 // report with an erased source root, a class contradicting itself, or no class
-// at all placed inside the root fails the run with a typed code.
+// placed inside the root fails the run with a typed code.
 package coverage
 
 import (
@@ -168,23 +168,22 @@ var sourceLinkScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
 // 0004's 2026-09-03 amendment (issue 16) adds three checks ahead of the join,
 // in precedence order: an erased source root voids the whole report before
 // any candidate is built, a class resolving to more than one path inside the
-// root contradicts itself, and a report placing no class inside the root is
-// the wrong-tree case, evidenced either by a class that resolved outside it or
-// by a source root that is not on this machine. Any one candidate resolving
-// nowhere, or resolving outside the root, stays the silent ignore ADR 0004
-// already decided, and so does a report whose source root is there and whose
-// classes merely no longer are.
+// root contradicts itself, and a report that lands no class inside the root at
+// all was measured against other source than the source being gated. Any one
+// candidate resolving nowhere, or resolving outside the root, stays the silent
+// ignore ADR 0004 already decided; it is only a report with nothing left that
+// fails.
 func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath srcpath.Path) *report.Failure {
 	if failure := r.erasedSourceRoot(reportPath); failure != nil {
 		return failure
 	}
 
 	resolvedAnyClass := false
-	outsideExample := ""
+	example := ""
 	for _, class := range r.Classes {
-		distinct, outside := placeCandidates(r.candidates(class.Filename), root)
-		if outsideExample == "" {
-			outsideExample = outside
+		distinct, first := placeCandidates(r.candidates(class.Filename), root)
+		if example == "" {
+			example = first
 		}
 		if len(distinct) > 1 {
 			sorted := append([]srcpath.Path{}, distinct...)
@@ -211,36 +210,10 @@ func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath srcpat
 		}
 	}
 
-	if resolvedAnyClass || len(r.Classes) == 0 {
+	if resolvedAnyClass || example == "" {
 		return nil
 	}
-	if outsideExample != "" {
-		return outsideRepoFailure(outsideExample, reportPath, root)
-	}
-	if missing := r.missingSourceRoot(root); missing != "" {
-		return outsideRepoFailure(missing, reportPath, root)
-	}
-	return nil
-}
-
-// missingSourceRoot is the first <source> directory the report anchors its
-// classes on that is not on the gating machine at all, or "" when every source
-// it names is there. A report whose classes place nowhere is read against that
-// difference: a source root that exists and classes that do not is the stale
-// report ADR 0004 ignores, while a source root that does not exist is a report
-// measured somewhere else, the container bind mount as much as the second
-// checkout, and the reader is owed the path rather than a wall of unattributed
-// methods.
-func (r coberturaReport) missingSourceRoot(root srcpath.Root) string {
-	for _, source := range r.Sources {
-		if !filepath.IsAbs(source) {
-			continue
-		}
-		if root.Place(source).Placement == srcpath.NotOnDisk {
-			return filepath.ToSlash(source)
-		}
-	}
-	return ""
+	return outsideRepoFailure(example, reportPath, root)
 }
 
 // erasedSourceRoot checks the two shapes MSBuild produces when the source
@@ -325,36 +298,32 @@ func (r coberturaReport) candidates(filename string) []string {
 }
 
 // placeCandidates resolves every candidate, returning the distinct paths that
-// landed inside the root and the first candidate that landed outside it, or
-// "" when none did. More than one distinct path is what makes a class
-// ambiguous; ADR 0004 reasons this can only happen when the reasoning behind
-// "one repo root, one drive letter" is wrong. The outside candidate is
-// returned separately because it, and not a candidate that failed to resolve
-// at all, is the evidence that the report was built in another checkout.
-func placeCandidates(candidates []string, root srcpath.Root) (distinct []srcpath.Path, outside string) {
+// landed inside the root and the reading of the first candidate in document
+// order, whether it landed or not. More than one distinct path is what makes a
+// class ambiguous; ADR 0004 reasons this can only happen when the reasoning
+// behind "one repo root, one drive letter" is wrong. The first candidate is
+// returned because it is what the outside-repo diagnostic quotes, and a class
+// that placed nowhere still has a path worth showing the reader.
+func placeCandidates(candidates []string, root srcpath.Root) (distinct []srcpath.Path, first string) {
 	seen := map[srcpath.Path]bool{}
 	for _, candidate := range candidates {
 		placed := root.Place(candidate)
-		switch placed.Placement {
-		case srcpath.OutsideRoot:
-			if outside == "" {
-				outside = placed.Resolved
-			}
-		case srcpath.InsideRoot:
-			if !seen[placed.Path] {
-				seen[placed.Path] = true
-				distinct = append(distinct, placed.Path)
-			}
+		if first == "" {
+			first = placed.Resolved
+		}
+		if placed.Inside && !seen[placed.Path] {
+			seen[placed.Path] = true
+			distinct = append(distinct, placed.Path)
 		}
 	}
-	return distinct, outside
+	return distinct, first
 }
 
-// outsideRepoFailure names the wrong-tree case: no class in the report placed
-// inside the root. The example is the first candidate that resolved outside it
-// in document order, or the first source root the report names that is not on
-// this machine, so the reader sees the path the gate compared, spelled the
-// same way as the root beside it.
+// outsideRepoFailure names the wrong-tree case, where no class in the report
+// placed inside the root. The example is the first candidate of the first
+// class in document order, so the reader sees a path the gate compared and can
+// tell a report from another checkout, a container mount, or a test run whose
+// files are gone apart by looking at it.
 func outsideRepoFailure(example string, reportPath srcpath.Path, root srcpath.Root) *report.Failure {
 	return &report.Failure{
 		Code: report.CodeCoverageOutsideRepo,
