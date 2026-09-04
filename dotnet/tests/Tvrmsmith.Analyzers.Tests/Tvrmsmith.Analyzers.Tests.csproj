@@ -9,29 +9,39 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
-    <PackageReference Include="xunit" Version="2.9.2" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
+    <PackageReference Include="xunit" Version="$(XunitVersion)" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0" />
 
     <!-- Microsoft.CodeAnalysis.Testing. Each test spins up a real compilation, so the analyzers
          are exercised against bound symbols rather than syntax alone — which is the half that
          matters here: every rule gates on Should() resolving to an extension method returning an
          *Assertions type. -->
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Analyzer.Testing" Version="1.1.2" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Analyzer.Testing" Version="1.1.4" />
 
     <!-- Pin Roslyn to the version the analyzers are compiled against. The testing package pulls
          an older one, and the analyzers would then run against an API surface they were not
-         built for. -->
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.8.0" />
+         built for. This tracks the floor in Tvrmsmith.Analyzers.csproj, so the tests exercise the
+         oldest Roslyn a consumer can load the package on rather than the newest available. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.14.0" />
 
     <!-- Not compiled against — resolved as a metadata reference for the test compilations, so
-         .Should() binds to the same FluentAssertions a consuming repo pins. -->
-    <PackageReference Include="FluentAssertions" Version="$(FluentAssertionsVersion)" />
+         .Should() binds to the same AwesomeAssertions a consuming repo pins. -->
+    <PackageReference Include="AwesomeAssertions" Version="$(AwesomeAssertionsVersion)" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- ExcludeAssets="analyzers" so FluentAssertions.Analyzers, which the analyzer project
+    <!-- Hands AssertionAnalyzerTest the pinned version at runtime, so the package the test
+         compilations bind against cannot drift from the one Directory.Build.props resolves. -->
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadata">
+      <_Parameter1>AwesomeAssertionsVersion</_Parameter1>
+      <_Parameter2>$(AwesomeAssertionsVersion)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- ExcludeAssets="analyzers" so AwesomeAssertions.Analyzers, which the analyzer project
          deliberately flows to its consumers, does not also analyse this project. -->
     <ProjectReference Include="../../src/Tvrmsmith.Analyzers/Tvrmsmith.Analyzers.csproj"
                       ExcludeAssets="analyzers" />

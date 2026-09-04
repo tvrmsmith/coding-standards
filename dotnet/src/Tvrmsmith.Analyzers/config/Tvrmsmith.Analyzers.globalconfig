@@ -17,10 +17,10 @@ is_global = true
 # These are a floor, not an override.
 
 ##
-## FluentAssertions.Analyzers 0.34.1
+## AwesomeAssertions.Analyzers 9.0.8
 ##
-## Pairing matters and fails silently: FluentAssertions 6.x <-> FluentAssertions.Analyzers,
-## AwesomeAssertions 9.x <-> AwesomeAssertions.Analyzers. The diagnostic IDs and these
+## Pairing matters and fails silently: AwesomeAssertions 9.x <-> AwesomeAssertions.Analyzers,
+## FluentAssertions 6.x <-> FluentAssertions.Analyzers. The diagnostic IDs and these
 ## editorconfig keys are identical across both packages, so this block is portable. Get the
 ## pairing wrong and the analyzer gates on a type name that does not exist: zero diagnostics,
 ## no warning, a run that looks clean.

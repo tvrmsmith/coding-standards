@@ -195,7 +195,7 @@ dotnet build "$hub/dotnet/src/Tvrmsmith.Analyzers/Tvrmsmith.Analyzers.csproj" \
   -c Release --nologo -v quiet >/dev/null || die 'the analyzer project failed to build'
 
 local_props=$artifacts/Tvrmsmith.Analyzers.Local.props
-for f in Tvrmsmith.Analyzers.dll FluentAssertions.Analyzers.dll \
+for f in Tvrmsmith.Analyzers.dll AwesomeAssertions.Analyzers.dll \
          Tvrmsmith.Analyzers.globalconfig Tvrmsmith.Analyzers.Local.props \
          tvrmsmith-scope-changed.sh; do
   [ -f "$artifacts/$f" ] || die "the build did not stage $f into $artifacts"
@@ -378,8 +378,8 @@ if [ "$lang" = dotnet ]; then
        die 'the analyzers did not reach this project — check the scoping condition path' ;;
   esac
   case "$evaluated" in
-    *FluentAssertions.Analyzers.dll*) info 'ok   FluentAssertions.Analyzers.dll too' ;;
-    *) warn 'FluentAssertions.Analyzers.dll is missing from the Analyzer item group' ;;
+    *AwesomeAssertions.Analyzers.dll*) info 'ok   AwesomeAssertions.Analyzers.dll too' ;;
+    *) warn 'AwesomeAssertions.Analyzers.dll is missing from the Analyzer item group' ;;
   esac
   case "$evaluated" in
     *TVRM0001*CS9057*) info 'ok   WarningsNotAsErrors carries the exemption list' ;;

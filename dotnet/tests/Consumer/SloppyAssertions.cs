@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Consumer;
@@ -25,7 +25,7 @@ public class SloppyAssertions
         numbers.Where(n => n > 1).Should().NotBeEmpty();
     }
 
-    // FAA0002 — a raw Xunit assertion where a FluentAssertions one belongs.
+    // FAA0002 — a raw Xunit assertion where an AwesomeAssertions one belongs.
     [Fact]
     public void RawXunitAssert()
     {

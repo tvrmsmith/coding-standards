@@ -5,29 +5,42 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace Tvrmsmith.MetricGate.CSharp;
 
 /// <summary>
-/// McCabe cyclomatic complexity for a single method's full syntax, base 1 plus one point per
-/// decision point. The scored set, spelled out here so a future widening (issue 18) amends this
-/// list deliberately rather than by omission:
+/// McCabe cyclomatic complexity for a single span's full syntax, base 1 plus one point per decision
+/// point. Which constructs score, which do not, and why each is on the side it is on live in
+/// <c>docs/csharp-decision-points.md</c>, along with every point where this list departs from
+/// Roslyn's own; the overrides below are that document in code.
 ///
-///   if, while, do, for, foreach, a case label (default scores nothing), a switch expression arm,
-///   catch, a when filter clause, a pattern combinator (and, or), &amp;&amp;, ||, ?:, ??
-///
-/// A pattern combinator scores for the reason &amp;&amp; and || do: each side is a test the method
-/// can branch on, and `o is int or string` is the same control flow as `o is int || o is string`.
-/// Both combinators count, so the pattern spelling of a condition never scores under the operator
-/// spelling of it. A `not` pattern adds no branch and does not count.
-///
-/// An arm counts even when its pattern is the discard `_`, which is where this list parts company
-/// with `default:`. An arm is always a pattern matched in turn, and the catch-all arm is written
-/// as one; a `default:` label is not a pattern and scores nothing.
-///
-/// Nothing else scores. In particular ??= is not on this list and does not count. Walks the whole
-/// method node, so a nested lambda or local function's decision points fold into the enclosing
-/// method's score, matching how spans exist only at the method-declaration level.
+/// Walks the whole node it is handed, but stops at a nested declaration that carries a span of its
+/// own: a local function's decision points score against the local function alone, never against
+/// whatever declares it. A lambda or anonymous method is not such a declaration, so its decision
+/// points do fold into whichever span holds it, which is what keeps a method from hiding its
+/// branches in one. The root is the node <see cref="Score"/> was handed, so that
+/// <see cref="VisitLocalFunctionStatement"/> tells a local function being scored in its own right
+/// from one nested inside the span under measure.
 /// </summary>
 internal sealed class ComplexityWalker : CSharpSyntaxWalker
 {
-    public int Complexity { get; private set; } = 1;
+    private readonly SyntaxNode _root;
+
+    private ComplexityWalker(SyntaxNode root)
+    {
+        _root = root;
+    }
+
+    private int Complexity { get; set; } = 1;
+
+    /// <summary>
+    /// Scores <paramref name="node"/>. The only entry point, so the root the walk starts from and
+    /// the root <see cref="VisitLocalFunctionStatement"/> compares against are the same node by
+    /// construction rather than by the caller remembering to pass it twice.
+    /// </summary>
+    public static int Score(SyntaxNode node)
+    {
+        var walker = new ComplexityWalker(node);
+        walker.Visit(node);
+
+        return walker.Complexity;
+    }
 
     public override void VisitIfStatement(IfStatementSyntax node)
     {
@@ -57,6 +70,16 @@ internal sealed class ComplexityWalker : CSharpSyntaxWalker
     {
         Complexity++;
         base.VisitForEachStatement(node);
+    }
+
+    /// <summary>
+    /// A deconstructing <c>foreach (var (a, b) in pairs)</c> parses to its own node type rather than
+    /// to <see cref="ForEachStatementSyntax"/>, and it is the same loop, so it scores the same point.
+    /// </summary>
+    public override void VisitForEachVariableStatement(ForEachVariableStatementSyntax node)
+    {
+        Complexity++;
+        base.VisitForEachVariableStatement(node);
     }
 
     public override void VisitCaseSwitchLabel(CaseSwitchLabelSyntax node)
@@ -117,5 +140,21 @@ internal sealed class ComplexityWalker : CSharpSyntaxWalker
         }
 
         base.VisitBinaryExpression(node);
+    }
+
+    /// <summary>
+    /// A local function carries a span of its own, so its decision points must not fold into
+    /// whatever span is currently being scored, unless this walker was asked to score the local
+    /// function itself, in which case <paramref name="node"/> is the root and must be walked. Not
+    /// calling <c>base</c> for any other local function stops the walk there rather than
+    /// descending, which also keeps a local function nested inside another local function from
+    /// folding into either of its ancestors.
+    /// </summary>
+    public override void VisitLocalFunctionStatement(LocalFunctionStatementSyntax node)
+    {
+        if (ReferenceEquals(node, _root))
+        {
+            base.VisitLocalFunctionStatement(node);
+        }
     }
 }
