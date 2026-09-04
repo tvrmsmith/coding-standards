@@ -1693,6 +1693,27 @@ func TestUseSourceLinkFailsNamingTheProperty(t *testing.T) {
 			"path, erased by UseSourceLink=true; collect coverage with UseSourceLink=false\n")
 }
 
+func TestUseSourceLinkWithASchemelessDocumentKeyFailsNamingTheProperty(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The document key need not be a URL, and this one reads as an ordinary
+	// repo-relative path. The empty <source> is the half of the shape that
+	// still gives it away, and without reading it the run would degrade to the
+	// wall of unknown methods the diagnostic exists to replace.
+	f.write("TestResults/coverage.cobertura.xml", cobertura("",
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_source_root_erased_sourcelink", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml carries a source link document key rather than a "+
+			"path, erased by UseSourceLink=true; collect coverage with UseSourceLink=false\n")
+}
+
 func TestReportCarryingBothErasedShapesNamesDeterministicReport(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))

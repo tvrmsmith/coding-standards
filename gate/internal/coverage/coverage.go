@@ -160,8 +160,8 @@ const erasedSourceRootPrefix = "/_/"
 
 // sourceLinkScheme matches a filename UseSourceLink=true emits in place of a
 // path: the raw source-link document key, which ADR 0004 records as one that
-// can be a URL. A key carrying no scheme is not detected here and falls
-// through to the ordinary resolution path, where it is a silent ignore.
+// can be a URL. A key carrying no scheme looks like an ordinary relative path,
+// so it is the empty <source> beside it that gives the shape away.
 var sourceLinkScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
 
 // mergeInto resolves each class to a source path and folds its lines into the
@@ -220,10 +220,9 @@ func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath srcpat
 // erasedSourceRoot checks the two shapes MSBuild produces when the source
 // root that would otherwise anchor every class filename has been rewritten
 // away, ahead of any resolution attempt: cheaper, and the candidates built
-// from either shape would only mislead. The two passes are separate on
-// purpose. That is what makes DeterministicReport win over UseSourceLink in a
-// report carrying both shapes, whatever order the classes appear in; one loop
-// testing both conditions would report whichever class came first instead.
+// from either shape would only mislead. DeterministicReport is tested over
+// every class first, so it wins over UseSourceLink in a report carrying both
+// shapes whatever order the classes appear in.
 func (r coberturaReport) erasedSourceRoot(reportPath srcpath.Path) *report.Failure {
 	for _, class := range r.Classes {
 		if strings.HasPrefix(class.Filename, erasedSourceRootPrefix) {
@@ -235,17 +234,42 @@ func (r coberturaReport) erasedSourceRoot(reportPath srcpath.Path) *report.Failu
 			}
 		}
 	}
-	for _, class := range r.Classes {
-		if sourceLinkScheme.MatchString(class.Filename) {
-			return &report.Failure{
-				Code: report.CodeCoverageSourceRootErased,
-				Message: fmt.Sprintf(
-					"coverage report %s carries a source link document key rather than a path, erased by UseSourceLink=true; collect coverage with UseSourceLink=false",
-					reportPath),
-			}
+	if r.sourceLinked() {
+		return &report.Failure{
+			Code: report.CodeCoverageSourceRootErased,
+			Message: fmt.Sprintf(
+				"coverage report %s carries a source link document key rather than a path, erased by UseSourceLink=true; collect coverage with UseSourceLink=false",
+				reportPath),
 		}
 	}
 	return nil
+}
+
+// sourceLinked reports whether the classes carry source-link document keys
+// rather than paths. ADR 0004 names two halves of that shape and either one
+// settles it: UseSourceLink=true writes the source root out as one blank
+// <source>, and the key it leaves in the filename can be a URL but need not
+// be, so a schemeless key is caught by the blank source beside it. A report
+// with no <source> at all is the separate, legitimate shape coverlet writes
+// when no computed source root prefixes the document, and is left alone.
+func (r coberturaReport) sourceLinked() bool {
+	if len(r.Classes) == 0 {
+		return false
+	}
+	for _, class := range r.Classes {
+		if sourceLinkScheme.MatchString(class.Filename) {
+			return true
+		}
+	}
+	if len(r.Sources) == 0 {
+		return false
+	}
+	for _, source := range r.Sources {
+		if strings.TrimSpace(source) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // candidates lists every absolute path ADR 0004 derives from one class
