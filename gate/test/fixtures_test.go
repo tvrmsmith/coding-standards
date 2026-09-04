@@ -85,9 +85,9 @@ func (f *fixture) deleteLines(rel string, from, to int) {
 
 // moveLines cuts the one-based lines from..to (inclusive) out of the file at
 // src and inserts them into dst immediately after dst's line after. It copies
-// the lines verbatim, so they are byte-identical at their new home. Callers
-// must have committed both src and dst already and must leave src non-empty,
-// which is what keeps both files at status M and the pure-move drop quiet.
+// the lines verbatim, so they are byte-identical at their new home. Both src
+// and dst must already exist on disk, since the helper reads each one before
+// it rewrites it.
 // The helper rewrites src before it re-reads dst, so when src and dst name the
 // same file, after counts lines in the shortened file.
 func (f *fixture) moveLines(src string, from, to int, dst string, after int) {
