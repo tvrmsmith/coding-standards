@@ -77,6 +77,18 @@ what the gate emits:
   placeholder per source root past the first, `/_1/`, `/_2/` and so on, and the shipped detector matches
   `^/_[0-9]*/` to cover them.
 
+Two further resolution rules the implementation settled, both narrowing what counts as landing inside the root:
+
+- A candidate resolving to anything other than a **regular file** lands nowhere, the same as one that resolves
+  nowhere at all. A class filename of `..`, `../..`, or a bare directory name joins onto an in-root `<source>` to
+  name a directory, which sits inside the root without naming any source the report measured, and one such class
+  would otherwise stand in for a whole report's worth of classes that placed nothing, suppressing the zero-in-root
+  diagnostic. This is the same reasoning as the rule above, applied to what the path turns out to be rather than to
+  where it landed.
+- An **already absolute** filename is its own only candidate, and no `<source>` is joined onto it. Joining would
+  name a path no report ever carried, `/src/src/app/Order.cs` off `<source>` `/src`, and the outside-repo
+  diagnostic quotes the first candidate, so the reader would be shown a path the gate invented.
+
 ## Considered options
 
 **Longest-suffix matching.** The standard fallback, and the one every prior implementation reaches for.
