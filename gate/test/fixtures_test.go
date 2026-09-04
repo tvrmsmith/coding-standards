@@ -248,7 +248,7 @@ func writeAbsolute(t *testing.T, path, content string) {
 }
 
 // resolvedPath is filepath.EvalSymlinks for a path a case knows exists,
-// mirroring srcpath.ResolveOrAsBuilt's successful branch so a golden's
+// mirroring srcpath.Root.Place's resolving branch so a golden's
 // {{EXAMPLE}}/{{ROOT}} hole can be filled with the value the gate itself
 // would compute.
 func resolvedPath(t *testing.T, path string) string {
