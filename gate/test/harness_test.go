@@ -160,6 +160,13 @@ func (f *fixture) baseLabel(ref string) string {
 	return ref + "@" + sha[:7]
 }
 
+// headLabel is the "HEAD@<7-char sha>" a --staged run resolves, read back out
+// of the fixture rather than out of the gate's own output.
+func (f *fixture) headLabel() string {
+	f.t.Helper()
+	return "HEAD@" + f.git("rev-parse", "HEAD")[:7]
+}
+
 // runResult is one gate invocation.
 type runResult struct {
 	exitCode int
@@ -202,6 +209,13 @@ func (f *fixture) runFromWithArgs(sub string, args ...string) runResult {
 	f.t.Helper()
 	workdir := filepath.Join(f.root, filepath.FromSlash(sub))
 	return f.exec(binDir, workdir, args, "METRIC_GATE_STUB="+f.stubConfigPath())
+}
+
+// runArgs is how a scope case picks a scope other than the default. It is
+// runWithArgs under the name the scope cases were written against.
+func (f *fixture) runArgs(args ...string) runResult {
+	f.t.Helper()
+	return f.runWithArgs(args...)
 }
 
 // stubConfigPath writes the case's stub config out and returns its path.

@@ -2186,11 +2186,11 @@ func TestUnknownArgumentIsAUsageError(t *testing.T) {
 	// carries no commit, no source, no report and no extractor config: nothing
 	// about the tree can change the answer.
 	assertUsageError(t, f.runWithArgs("--nope"),
-		"unknown argument: --nope\nusage: metric-gate [--coverage <path>]...\n")
+		"metric-gate: unknown argument '--nope'"+usage)
 }
 
 func TestCoverageFlagWithNoPathIsAUsageError(t *testing.T) {
-	const want = "--coverage needs a path\nusage: metric-gate [--coverage <path>]...\n"
+	const want = "metric-gate: --coverage needs a path" + usage
 	spellings := map[string][]string{
 		"nothing follows the flag": {"--coverage"},
 		"empty joined value":       {"--coverage="},
@@ -2222,7 +2222,7 @@ func TestCoverageFlagGivenAnotherFlagIsAUsageError(t *testing.T) {
 			f := newFixture(t, "main")
 
 			assertUsageError(t, f.runWithArgs(args...),
-				"--coverage needs a path, not the flag --nope\nusage: metric-gate [--coverage <path>]...\n")
+				"metric-gate: --coverage needs a path, not the flag '--nope'"+usage)
 		})
 	}
 }

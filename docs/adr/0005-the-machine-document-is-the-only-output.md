@@ -103,6 +103,33 @@ land inside the repo root, the git-worktree and container cases. The full list i
 code is a contract change and belongs in this list on the same commit, which is the 2026-09-03 rule restated
 against the list that now governs.
 
+**Amended 2026-09-04.** [Issue 14](https://github.com/tvrmsmith/coding-standards/issues/14) fills in the `scope`
+field's remaining values and adds two codes.
+
+The four tokens are `merge-base` for the default, and `staged`, `since` and `files` for the flags that override
+it, each named for the flag rather than for what it resolves to, which is the spelling
+`lint-changed-dotnet.sh` already uses. `merge-base` keeps the exception the 2026-09-02 amendment gave it, since no
+flag spells the default and there is nothing to name it after. Under `--files` there is no commit to diff against,
+so `base` is `null` and `touched_lines_outside_spans` is `0`; a file list carries no line information, so ADR 0003
+makes every method in a listed file changed and neither field has anything to say.
+
+The enumeration is **sixteen** codes, and this list supersedes every count above. `staged_file_dirty` is a
+`--staged` run refusing a file staged in one state and on disk in another: the index reports the line numbers and
+the extractor parses the disk copy, so scoring it would attribute coverage to the wrong text, which ADR 0003 makes
+exit 1 rather than a warning. `file_unresolved` is a `--files` path the gate cannot place inside the repo root,
+because it does not exist or because it resolves above the root, and its message names the path as the developer
+typed it rather than as the gate resolved it. Both are upstream of the join, so both emit `status: error` with an
+`error` block and no table. The full list is `no_diff_base`, `diff_unparseable`, `extractor_failed`,
+`extractor_path_mismatch`, `extractor_capabilities_mismatch`, `extractor_duplicate_span`,
+`extractor_invalid_span`, `parse_failed`, `coverage_missing`, `coverage_unparseable`,
+`coverage_source_root_erased`, `file_ambiguous`, `coverage_outside_repo`, `staged_file_dirty`, `file_unresolved`,
+and `unknown_changed_method`.
+
+The second `skipped_paths` producer the 2026-09-02 amendment predicted arrives here. A path named on `--files` that
+resolves inside the repo but that no extractor claims is neither measured nor an error, so it is listed rather than
+dropped in silence, and the named paths sort ahead of whatever coverage discovery could not read. The field still
+never gates.
+
 **Amended 2026-09-05.** The enumeration is **fifteen** codes, and this list supersedes every count above. One
 joined with [issue 15](https://github.com/tvrmsmith/coding-standards/issues/15), which closes the deferral the
 2026-09-03 amendment recorded: the gate now reads the report's own `timestamp` attribute and stats every file
