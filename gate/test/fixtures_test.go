@@ -203,7 +203,41 @@ func coberturaStamped(stamp, sourceRoot string, classes ...coverageClass) string
 // nowStamp is the current second, as a Cobertura timestamp attribute spells
 // it.
 func nowStamp() string {
-	return strconv.FormatInt(time.Now().Unix(), 10)
+	return stampAt(time.Now())
+}
+
+// stampAt renders an instant as a Cobertura timestamp attribute spells it.
+func stampAt(at time.Time) string {
+	return strconv.FormatInt(at.Unix(), 10)
+}
+
+// editStamp is the whole second the file at rel was last modified, shifted by
+// offset, as a Cobertura timestamp attribute spells it. The staleness rule
+// compares whole seconds on both sides, so a case that means to sit exactly on
+// that boundary has to read the source's own mtime rather than trust how fast
+// it ran.
+func (f *fixture) editStamp(rel string, offset time.Duration) string {
+	f.t.Helper()
+	return stampAt(f.modTime(rel).Add(offset))
+}
+
+// modTime is the truncated modification time of the file at rel.
+func (f *fixture) modTime(rel string) time.Time {
+	f.t.Helper()
+	info, err := os.Stat(filepath.Join(f.root, filepath.FromSlash(rel)))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return info.ModTime().Truncate(time.Second)
+}
+
+// setModTime backdates the file at rel, which is how a case pins the ordering
+// of two edits the filesystem would otherwise stamp within the same second.
+func (f *fixture) setModTime(rel string, at time.Time) {
+	f.t.Helper()
+	if err := os.Chtimes(filepath.Join(f.root, filepath.FromSlash(rel)), at, at); err != nil {
+		f.t.Fatal(err)
+	}
 }
 
 // coberturaNoSources is cobertura with <sources/> empty, so every class

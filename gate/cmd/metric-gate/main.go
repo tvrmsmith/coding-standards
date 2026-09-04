@@ -1,5 +1,8 @@
 // Command metric-gate scores the methods a change touched against a metric
-// threshold. It takes no flags (ADR 0005): stdout is one TOON document,
+// threshold. It takes one flag, --coverage <path>, repeatable, naming the
+// coverage reports to read in place of discovery; the rest of ADR 0005's
+// command line lands with its own issues, and any other argument is a usage
+// error. Stdout is one TOON document,
 // stderr is the human summary, one line except on the unknown_changed_method
 // path, which prints the cause above the counts, and the exit code is 0 pass,
 // 1 tool error, 2 threshold exceeded.
@@ -59,7 +62,10 @@ func parseArgs(args []string) ([]string, error) {
 		switch {
 		case arg == "--coverage":
 			i++
-			if i >= len(args) {
+			// An empty value is rejected on both spellings, so an unset
+			// shell variable expanding to nothing cannot reach the reader
+			// as a report that names nothing.
+			if i >= len(args) || args[i] == "" {
 				return nil, fmt.Errorf("--coverage needs a path\n%s", usageLine)
 			}
 			coveragePaths = append(coveragePaths, args[i])
@@ -131,12 +137,7 @@ func measure(args []string) (report.Document, error) {
 		return doc, nil
 	}
 
-	newest, err := newestEdit(repo.Root(), changed)
-	if err != nil {
-		return doc, err
-	}
-
-	lines, skipped, err := loadCoverage(repo.Root(), coveragePaths, newest)
+	lines, skipped, err := loadCoverage(repo.Root(), coveragePaths, changed)
 	doc.SkippedPaths = skipped
 	if failure, ok := asFailure(err); ok {
 		doc.Failure = failure
@@ -166,17 +167,23 @@ func measure(args []string) (report.Document, error) {
 // not read come back alongside, including on the missing-report failure,
 // where they are the likeliest explanation for it. When the developer named
 // any report, discovery does not run at all: skipped_paths stays empty, and
-// the named sources go straight to Load.
-func loadCoverage(root srcpath.Root, named []string, newest coverage.Newest) (coverage.Set, []string, error) {
+// the named sources go straight to Load. The newest edit is computed here,
+// behind the declared-input guard, so a metric asking for no coverage pays no
+// stat for one.
+func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (coverage.Set, []string, error) {
 	if !slices.Contains(crap.DeclaredInputs, inputCoverage) {
 		return nil, nil, nil
+	}
+	newest, err := newestEdit(root, changed)
+	if err != nil {
+		return nil, nil, err
 	}
 	if len(named) > 0 {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return nil, nil, err
 		}
-		set, err := coverage.Load(root, coverage.Named(cwd, named), newest)
+		set, err := coverage.Load(root, coverage.Named(root, cwd, named), newest)
 		return set, nil, err
 	}
 	sources, skipped, err := coverage.Discover(root)
@@ -212,10 +219,7 @@ func newestEdit(root srcpath.Root, changed []extract.Span) (coverage.Newest, err
 			return coverage.Newest{}, fmt.Errorf("stat %s: %w", span.File, err)
 		}
 		at := info.ModTime().Truncate(time.Second)
-		switch {
-		case newest.File == "", at.After(newest.At):
-			newest = coverage.Newest{File: span.File, At: at}
-		case at.Equal(newest.At) && span.File < newest.File:
+		if newest.File == "" || at.After(newest.At) || (at.Equal(newest.At) && span.File < newest.File) {
 			newest = coverage.Newest{File: span.File, At: at}
 		}
 	}

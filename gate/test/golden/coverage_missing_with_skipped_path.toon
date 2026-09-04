@@ -8,4 +8,4 @@ touched_lines_outside_spans: 0
 skipped_paths[1|]: TestResults/locked
 error:
   code: coverage_missing
-  message: CRAP requires a coverage report, none found matching TestResults/**/coverage.cobertura.xml under the repo root
+  message: CRAP requires a coverage report, none found matching **/TestResults/**/coverage.cobertura.xml under the repo root

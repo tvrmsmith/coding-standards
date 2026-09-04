@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,13 +29,15 @@ import (
 const ReportName = "coverage.cobertura.xml"
 
 // resultsDir is the directory component a report has to sit under to be
-// discovered, matching the glob **/TestResults/**/coverage.cobertura.xml.
+// discovered, at any depth below the repo root.
 const resultsDir = "TestResults"
 
 // Glob is the pattern discovery matches, relative to the repo root. The
 // missing-report failure names it, so a developer who ran the tests
-// somewhere else can see where the gate looked.
-const Glob = "TestResults/**/coverage.cobertura.xml"
+// somewhere else can see where the gate looked. It is composed from the two
+// constants discovery actually tests, so a rename cannot leave the message
+// quoting a pattern the walk no longer matches.
+const Glob = "**/" + resultsDir + "/**/" + ReportName
 
 // Source is one coverage report the gate will read, and the name the
 // document gives it.
@@ -108,19 +111,38 @@ func Discover(root srcpath.Root) (sources []Source, skipped []string, err error)
 	return sources, skipped, nil
 }
 
-// Named resolves each developer-typed path against cwd with filepath.Abs when
-// it is relative, and keeps Name exactly as the developer typed it. A named
-// path may live anywhere, inside the repo or outside it (ADR 0004).
-func Named(cwd string, paths []string) []Source {
+// Named resolves each developer-typed path against cwd when it is relative,
+// then relativizes it for the Name the document carries, which is ADR 0004's
+// one rule for a human-typed path. A named path may live anywhere, inside the
+// repo or outside it, and one outside has no repo-relative form, so it keeps
+// the spelling the developer typed.
+func Named(root srcpath.Root, cwd string, paths []string) []Source {
 	sources := make([]Source, 0, len(paths))
 	for _, path := range paths {
 		abs := path
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(cwd, abs)
 		}
-		sources = append(sources, Source{Abs: abs, Name: path})
+		sources = append(sources, Source{Abs: abs, Name: namedAs(root, abs, path)})
 	}
 	return sources
+}
+
+// namedAs renders a named report the way the document names paths. It
+// resolves symlinks when the report is there to resolve, so a path reached
+// through one relativizes against the resolved root rather than escaping it,
+// and falls back to the join for a path naming nothing on disk, which still
+// has to be named in the failure that says so.
+func namedAs(root srcpath.Root, abs, typed string) string {
+	resolved := abs
+	if evaluated, err := filepath.EvalSymlinks(abs); err == nil {
+		resolved = evaluated
+	}
+	rel, err := filepath.Rel(root.Dir(), resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return typed
+	}
+	return filepath.ToSlash(rel)
 }
 
 // relative renders a walked path the way the document names paths, falling
@@ -145,15 +167,53 @@ func underResultsDir(rel string) bool {
 	return false
 }
 
-// Load reads every source in order and unions them into one set: a line is
+// Load reads every source, drops the ones a later run in the same results
+// directory has superseded, and unions what is left into one set: a line is
 // instrumentable when any report lists it, and covered when any report
-// records a non-zero hit. Before a report merges, it has to read, unmarshal,
-// carry a timestamp, and be no older than newest.At; failing any of those
-// stops the run rather than dropping the report, because a stale report
-// silently dropped is exactly the untested code the rule exists to catch.
-// An empty newest.At (the zero time) can never trip the staleness rule.
+// records a non-zero hit. Every source has to read, unmarshal and carry a
+// timestamp, and every surviving one has to be no older than newest.At;
+// failing any of those stops the run rather than dropping the report, because
+// a stale report silently dropped is exactly the untested code the rule exists
+// to catch. An empty newest.At (the zero time) can never trip the staleness
+// rule.
 func Load(root srcpath.Root, sources []Source, newest Newest) (Set, error) {
+	reports, err := readAll(sources)
+	if err != nil {
+		return nil, err
+	}
 	set := Set{}
+	for _, current := range supersede(reports) {
+		// Staleness is checked before the merge, not after it, so a refused
+		// report never contributes a line even transiently.
+		if current.at.Before(newest.At) {
+			return nil, &report.Failure{
+				Code: report.CodeCoverageStale,
+				Message: "coverage report " + current.source.Name + " was written before " +
+					newest.File.String() + " was last edited",
+			}
+		}
+		if err := current.doc.mergeInto(set, root, current.source.Name); err != nil {
+			return nil, err
+		}
+	}
+	return set, nil
+}
+
+// loaded is one source read off disk beside the clock it carries, which is
+// what decides both which report in a results directory is current and
+// whether that one is stale.
+type loaded struct {
+	source Source
+	doc    coberturaReport
+	at     time.Time
+}
+
+// readAll reads every source in order. A report that cannot be parsed, or
+// that carries no timestamp to judge it by, fails the whole run naming
+// itself, superseded or not: nothing can rank a report whose clock cannot be
+// read, and a corrupt file under TestResults is worth saying out loud.
+func readAll(sources []Source) ([]loaded, error) {
+	reports := make([]loaded, 0, len(sources))
 	for _, source := range sources {
 		parsed, err := parseReport(source.Abs)
 		if err != nil {
@@ -170,20 +230,52 @@ func Load(root srcpath.Root, sources []Source, newest Newest) (Set, error) {
 					" carries no timestamp, so it cannot be judged against the code it describes",
 			}
 		}
-		// Staleness is checked before the merge, not after it, so a refused
-		// report never contributes a line even transiently.
-		if at.Before(newest.At) {
-			return nil, &report.Failure{
-				Code: report.CodeCoverageStale,
-				Message: "coverage report " + source.Name + " was written before " +
-					newest.File.String() + " was last edited",
-			}
-		}
-		if err := parsed.mergeInto(set, root, source.Name); err != nil {
-			return nil, err
+		reports = append(reports, loaded{source: source, doc: parsed, at: at})
+	}
+	return reports, nil
+}
+
+// supersede keeps one report per results directory, the newest by the clock
+// each carries, in the order the sources arrived. `dotnet test` writes a
+// fresh TestResults/<guid>/ on every run and never removes the previous
+// run's directory, so without this the ordinary second edit-and-test
+// iteration is refused for a report a fresh one has already replaced. Only
+// reports sharing a results directory compete: two test projects each have a
+// TestResults directory of their own, so the union across projects is
+// untouched, and a report failing resolution or staleness in one group still
+// fails the whole run and names itself. A tie on equal clocks keeps the
+// first, which for discovered reports is the Name-sorted first.
+func supersede(reports []loaded) []loaded {
+	winner := map[string]int{}
+	for i, candidate := range reports {
+		group := resultsGroup(candidate.source.Abs)
+		held, ok := winner[group]
+		if !ok || candidate.at.After(reports[held].at) {
+			winner[group] = i
 		}
 	}
-	return set, nil
+	current := make([]loaded, 0, len(winner))
+	for _, i := range slices.Sorted(maps.Values(winner)) {
+		current = append(current, reports[i])
+	}
+	return current
+}
+
+// resultsGroup is the results directory a report competes inside: the
+// innermost TestResults ancestor of its path. A report with no such ancestor,
+// which is every report a developer named by hand, is its own group and is
+// never superseded by anything.
+func resultsGroup(abs string) string {
+	for dir := filepath.Dir(abs); ; {
+		if filepath.Base(dir) == resultsDir {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return abs
+		}
+		dir = parent
+	}
 }
 
 // coberturaReport is the subset of the Cobertura schema the gate reads. Only
