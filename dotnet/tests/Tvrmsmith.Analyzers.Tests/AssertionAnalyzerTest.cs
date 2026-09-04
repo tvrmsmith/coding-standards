@@ -1,3 +1,5 @@
+using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
@@ -17,8 +19,8 @@ internal static class Expect
 }
 
 /// <summary>
-/// Runs one analyzer over a snippet compiled against the real FluentAssertions 6.12.2 — the
-/// version a consuming repo is expected to pin.
+/// Runs one analyzer over a snippet compiled against the real AwesomeAssertions, the package a
+/// consuming repo is expected to pin.
 /// </summary>
 /// <remarks>
 /// Binding against the real package rather than a stub is the point. All three analyzers gate on
@@ -111,16 +113,26 @@ internal static class AssertionAnalyzerTest<TAnalyzer>
         #nullable enable
         using System;
         using System.Collections.Generic;
-        using FluentAssertions;
-        using FluentAssertions.Execution;
+        using AwesomeAssertions;
+        using AwesomeAssertions.Execution;
         using Fixtures;
 
         """;
+
+    /// <summary>
+    /// The pinned AwesomeAssertions version, read from assembly metadata the build writes out of
+    /// <c>$(AwesomeAssertionsVersion)</c>. Restating the number here would let the version the
+    /// snippets bind against drift away from the one the rest of the build resolves.
+    /// </summary>
+    private static readonly string AssertionsVersion = Assembly.GetExecutingAssembly()
+        .GetCustomAttributes<AssemblyMetadataAttribute>()
+        .Single(attribute => attribute.Key == "AwesomeAssertionsVersion")
+        .Value!;
 
     private sealed class Test : CSharpAnalyzerTest<TAnalyzer, DefaultVerifier>
     {
         public Test() =>
             ReferenceAssemblies = ReferenceAssemblies.Net.Net80
-                .AddPackages([new PackageIdentity("FluentAssertions", "6.12.2")]);
+                .AddPackages([new PackageIdentity("AwesomeAssertions", AssertionsVersion)]);
     }
 }

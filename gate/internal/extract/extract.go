@@ -49,11 +49,11 @@ type language struct {
 
 // Span is one method's identity and complexity, as the extractor reports it.
 //
-// Signature is the parameter spelling the extractor gives the method, and it
-// exists for one question: whether two spans over the same lines are two
-// methods or one method reported twice. Two overloads declared on one line
-// share a name and a line range and differ only here. It never reaches the
-// document, where Name is the whole of a method's printed identity.
+// Signature answers one question: whether two spans over the same lines are two
+// methods or one method reported twice. The gate compares it and never parses or
+// prints it, so the spelling is the extractor's to define, not the gate's, and
+// the C# extractor's MethodSpanResult doc comment owns that format. It never
+// reaches the document, where Name is the whole of a method's printed identity.
 type Span struct {
 	File       srcpath.Path
 	Name       string
