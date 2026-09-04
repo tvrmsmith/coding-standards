@@ -1,7 +1,9 @@
 // Package coverage discovers Cobertura reports, parses them, and answers
 // which lines of a source file are instrumentable and which of those were
-// hit. It resolves report paths by ADR 0004's one rule and ignores, rather
-// than fails on, a path it cannot place inside the repo.
+// hit. It resolves report paths by ADR 0004's one rule, and the rule cuts two
+// ways: one path it cannot place inside the repo is a silent ignore, while a
+// report with an erased source root, a class contradicting itself, or no class
+// inside the root at all fails the run with a typed code.
 package coverage
 
 import (
@@ -165,18 +167,23 @@ var sourceLinkScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
 // 0004's 2026-09-03 amendment (issue 16) adds three checks ahead of the join,
 // in precedence order: an erased source root voids the whole report before
 // any candidate is built, a class resolving to more than one path inside the
-// root contradicts itself, and a report contributing no class inside the root
-// at all is the git-worktree case. Any one candidate resolving nowhere, or
-// resolving outside the root, stays the silent ignore ADR 0004 already
-// decided.
+// root contradicts itself, and a report whose classes resolved outside the
+// root and none inside it is the git-worktree case. Any one candidate
+// resolving nowhere, or resolving outside the root, stays the silent ignore
+// ADR 0004 already decided, and a report whose every class merely no longer
+// exists on disk resolves nothing and fails nothing here.
 func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath srcpath.Path) *report.Failure {
 	if failure := r.erasedSourceRoot(reportPath); failure != nil {
 		return failure
 	}
 
 	resolvedAnyClass := false
+	outsideExample := ""
 	for _, class := range r.Classes {
-		distinct := distinctResolved(r.candidates(class.Filename), root)
+		distinct, outside := placeCandidates(r.candidates(class.Filename), root)
+		if outsideExample == "" {
+			outsideExample = outside
+		}
 		if len(distinct) > 1 {
 			sorted := append([]srcpath.Path{}, distinct...)
 			slices.Sort(sorted)
@@ -202,8 +209,8 @@ func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath srcpat
 		}
 	}
 
-	if !resolvedAnyClass && len(r.Classes) > 0 {
-		return outsideRepoFailure(r, reportPath, root)
+	if !resolvedAnyClass && outsideExample != "" {
+		return outsideRepoFailure(outsideExample, reportPath, root)
 	}
 	return nil
 }
@@ -211,7 +218,10 @@ func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath srcpat
 // erasedSourceRoot checks the two shapes MSBuild produces when the source
 // root that would otherwise anchor every class filename has been rewritten
 // away, ahead of any resolution attempt: cheaper, and the candidates built
-// from either shape would only mislead.
+// from either shape would only mislead. The two passes are separate on
+// purpose. That is what makes DeterministicReport win over UseSourceLink in a
+// report carrying both shapes, whatever order the classes appear in; one loop
+// testing both conditions would report whichever class came first instead.
 func (r coberturaReport) erasedSourceRoot(reportPath srcpath.Path) *report.Failure {
 	for _, class := range r.Classes {
 		if strings.HasPrefix(class.Filename, erasedSourceRootPrefix) {
@@ -250,34 +260,37 @@ func (r coberturaReport) candidates(filename string) []string {
 	return candidates
 }
 
-// distinctResolved resolves every candidate that lands inside the root and
-// dedupes the result. More than one distinct path is what makes a class
+// placeCandidates resolves every candidate, returning the distinct paths that
+// landed inside the root and the first candidate that landed outside it, or
+// "" when none did. More than one distinct path is what makes a class
 // ambiguous; ADR 0004 reasons this can only happen when the reasoning behind
-// "one repo root, one drive letter" is wrong.
-func distinctResolved(candidates []string, root srcpath.Root) []srcpath.Path {
+// "one repo root, one drive letter" is wrong. The outside candidate is
+// returned separately because it, and not a candidate that failed to resolve
+// at all, is the evidence that the report was built in another checkout.
+func placeCandidates(candidates []string, root srcpath.Root) (distinct []srcpath.Path, outside string) {
 	seen := map[srcpath.Path]bool{}
-	var distinct []srcpath.Path
 	for _, candidate := range candidates {
-		path, ok := root.Resolve(candidate)
-		if !ok || seen[path] {
-			continue
+		path, placement := root.Place(candidate)
+		switch placement {
+		case srcpath.OutsideRoot:
+			if outside == "" {
+				outside = candidate
+			}
+		case srcpath.InsideRoot:
+			if !seen[path] {
+				seen[path] = true
+				distinct = append(distinct, path)
+			}
 		}
-		seen[path] = true
-		distinct = append(distinct, path)
 	}
-	return distinct
+	return distinct, outside
 }
 
-// outsideRepoFailure names the git-worktree case: every class in the report
-// resolved outside the root, or not at all. The example is the first
-// candidate of the first class in document order, which is what a reader
-// checks first, resolved through symlinks when that succeeds and left as
-// built when it does not, per srcpath.ResolveOrAsBuilt.
-func outsideRepoFailure(r coberturaReport, reportPath srcpath.Path, root srcpath.Root) *report.Failure {
-	example := filepath.FromSlash(r.Classes[0].Filename)
-	if candidates := r.candidates(r.Classes[0].Filename); len(candidates) > 0 {
-		example = candidates[0]
-	}
+// outsideRepoFailure names the git-worktree case: no class in the report
+// resolved inside the root and at least one resolved outside it. The example
+// is the first such candidate in document order, resolved through symlinks
+// per srcpath.ResolveOrAsBuilt so the reader sees the path the gate compared.
+func outsideRepoFailure(example string, reportPath srcpath.Path, root srcpath.Root) *report.Failure {
 	return &report.Failure{
 		Code: report.CodeCoverageOutsideRepo,
 		Message: fmt.Sprintf(

@@ -1697,8 +1697,10 @@ func TestClassYieldingTwoCandidatesInsideRepoRootFailsNamingBoth(t *testing.T) {
 	f.write("src/b/Order.cs", csharpFile(20))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	f.write("TestResults/coverage.cobertura.xml", coberturaMultiSource(
-		[]string{filepath.Join(f.root, "src", "a"), filepath.Join(f.root, "src", "b")},
+	// The sources are listed b before a, so the message's sorted order is not
+	// the order the candidates arrive in.
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(
+		[]string{filepath.Join(f.root, "src", "b"), filepath.Join(f.root, "src", "a")},
 		coverageClass{filename: "Order.cs", lines: spanCoverage(1, 1, 1)}))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
@@ -1724,7 +1726,7 @@ func TestReportPathOutsideRepoIsIgnoredInSilence(t *testing.T) {
 	// already resolved inside the root from the report's other source.
 	otherCheckout := t.TempDir()
 	writeAbsolute(t, filepath.Join(otherCheckout, "obsolete", "Old.cs"), csharpFile(5))
-	f.write("TestResults/coverage.cobertura.xml", coberturaMultiSource(
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(
 		[]string{f.root, otherCheckout},
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)},
 		coverageClass{filename: "obsolete/Old.cs", lines: spanCoverage(1, 1, 1)}))
@@ -1754,6 +1756,75 @@ func TestReportPathNoLongerOnDiskIsIgnoredRatherThanFatal(t *testing.T) {
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)},
 		coverageClass{filename: deletedFile, lines: spanCoverage(1, 1, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestReportWhoseEveryClassIsGoneFromDiskIsIgnoredRatherThanFatal(t *testing.T) {
+	const deletedFile = "src/Ordering/Deleted.cs"
+
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write(deletedFile, csharpFile(10))
+	f.commitAll("initial")
+	// Every class the report names is gone, which is the shape a report left
+	// behind in a gitignored TestResults/ takes after a branch switch. Nothing
+	// resolved outside the root, so there is no evidence of another checkout
+	// and the run falls through to unknown_changed_method rather than
+	// coverage_outside_repo.
+	f.git("rm", "--quiet", deletedFile)
+	f.commitAll("delete the only file the coverage report names")
+	f.touchLine(orderService, 62)
+
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: deletedFile, lines: spanCoverage(1, 1, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{cancel}),
+	}
+
+	f.run().assertMatches(t, "report_classes_all_deleted", 1, f.baseLabel("main"),
+		"1 changed method could not be attributed to a coverage report\n"+
+			"0 of 1 changed methods over CRAP threshold 30, worst score 0.00\n")
+}
+
+func TestReportListingTheSameSourceTwiceIsNotAmbiguous(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// Both <source> elements yield the same candidate for the one class, so
+	// the class resolves to one path and file_ambiguous must not fire.
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(
+		[]string{f.root, f.root},
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestAbsoluteClassFilenameWithNoSourcesScores(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// Coverlet emits an absolute filename and no source root when no computed
+	// source root prefixes the document (ADR 0004). The filename alone is the
+	// candidate, and it lands inside the root.
+	f.write("TestResults/coverage.cobertura.xml", coberturaNoSources(
+		coverageClass{
+			filename: filepath.Join(f.root, filepath.FromSlash(orderService)),
+			lines:    spanCoverage(61, 3, 2),
+		}))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),

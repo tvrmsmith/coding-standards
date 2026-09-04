@@ -183,25 +183,20 @@ func spanCoverage(start, count, covered int) []coverageLine {
 // root in <sources> and each class's filename relative to it, which is the
 // pairing ADR 0004 resolves paths from.
 func cobertura(sourceRoot string, classes ...coverageClass) string {
-	return coberturaMultiSource([]string{sourceRoot}, classes...)
+	return renderCobertura([]string{sourceRoot}, classes...)
 }
 
-// coberturaMultiSource is cobertura for a report naming more than one
-// <source>, which is what a class yielding two in-root candidates (issue 16,
-// file_ambiguous) and a report split across two checkouts both need.
-func coberturaMultiSource(sources []string, classes ...coverageClass) string {
-	return renderCobertura(sources, classes...)
-}
-
-// coberturaNoSources is cobertura with <sources/> empty, the shape
-// DeterministicReport=true and UseSourceLink=true both emit (issue 16,
-// coverage_source_root_erased).
+// coberturaNoSources is cobertura with <sources/> empty, which is what
+// DeterministicReport=true emits (issue 16, coverage_source_root_erased).
+// UseSourceLink=true is the other erased shape but a different document: it
+// keeps one <source> that is empty, so a case for it calls cobertura("").
 func coberturaNoSources(classes ...coverageClass) string {
 	return renderCobertura(nil, classes...)
 }
 
-// renderCobertura is the shared document builder every cobertura variant
-// above calls, differing only in how many <source> elements they pass.
+// renderCobertura is the document builder, taking the <source> list directly.
+// A case naming more than one source is a class with two in-root candidates
+// (issue 16, file_ambiguous) or a report split across two checkouts.
 func renderCobertura(sources []string, classes ...coverageClass) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>` + "\n")
