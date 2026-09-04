@@ -28,8 +28,8 @@ tags. An agent that follows the guidance needs none of it, and an agent that ign
 gets told by the linter. Keeping the mapping out of the skill also keeps it in one place instead of
 two that drift.
 
-48 guidelines in total: 27 enforced by an off-the-shelf rule, 1 by configuration alone, 3 by a
-custom rule, and 17 review-only. Each guideline has an id (`A1`, `D11`, `F10`) carried by the
+Most guidelines need judgement to spot, so the skills are their only enforcement. The rest have a
+deterministic shape a linter can catch. Each of those has an id (`A1`, `D11`, `F10`) carried by the
 enforcement mapping and repeated on the rule that enforces it — see the rule tables in
 `packages/eslint-config-tvrmsmith/README.md` and `dotnet/README.md`.
 
@@ -48,7 +48,8 @@ worse than an unmapped rule.
 plugins/coding-standards/            # the plugin
   .claude-plugin/plugin.json
   skills/
-    coding-standards/                # domain & DTO design, React effects
+    coding-standards/                # domain & DTO design, code smells, type design,
+                                     # errors, comments, React effects
       SKILL.md
       react.md
     test-best-practices/             # assertion style, test structure, isolation

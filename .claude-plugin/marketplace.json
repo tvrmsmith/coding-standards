@@ -10,9 +10,17 @@
     {
       "name": "coding-standards",
       "source": "./plugins/coding-standards",
-      "description": "Domain/DTO design, React effects, and test/assertion standards — with each guideline marked as lint-enforced or review-only.",
+      "description": "Domain and DTO design, code smells, type design, errors, comments, and React. The guidance skills plus the lint rules and metric gate that enforce what tooling can.",
       "category": "development",
-      "keywords": ["coding-standards", "code-review", "testing", "react", "dotnet", "eslint", "roslyn"]
+      "keywords": [
+        "coding-standards",
+        "code-review",
+        "testing",
+        "react",
+        "dotnet",
+        "eslint",
+        "roslyn"
+      ]
     }
   ]
 }

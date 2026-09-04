@@ -1,7 +1,7 @@
 {
   "name": "coding-standards",
-  "version": "0.1.0",
-  "description": "Domain/DTO design, React effects, and test/assertion standards — with each guideline marked as lint-enforced or review-only.",
+  "version": "0.2.0",
+  "description": "Domain and DTO design, code smells, type design, errors, comments, and React. The guidance skills plus the lint rules and metric gate that enforce what tooling can.",
   "author": {
     "name": "Trevor Smith",
     "url": "https://github.com/tvrmsmith"
@@ -9,5 +9,11 @@
   "homepage": "https://github.com/tvrmsmith/coding-standards",
   "repository": "https://github.com/tvrmsmith/coding-standards",
   "license": "MIT",
-  "keywords": ["coding-standards", "code-review", "testing", "react", "dotnet"]
+  "keywords": [
+    "coding-standards",
+    "code-review",
+    "testing",
+    "react",
+    "dotnet"
+  ]
 }
