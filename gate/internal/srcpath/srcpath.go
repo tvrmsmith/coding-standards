@@ -46,11 +46,13 @@ func (r Root) Abs(p Path) string {
 	return filepath.Join(r.resolved, filepath.FromSlash(string(p)))
 }
 
-// Placement is what became of one candidate path. ADR 0004 ignores both
-// NotOnDisk and OutsideRoot rather than failing on either, but they are
-// different evidence: a candidate that resolved somewhere outside the root
-// says the report was built against another working tree, while one that did
-// not resolve at all says only that the file has moved on since the test run.
+// Placement is what became of one candidate path. Neither NotOnDisk nor
+// OutsideRoot is fatal here, per ADR 0004, but they are different evidence and
+// a caller may escalate on one and not the other: a candidate that resolved
+// somewhere outside the root says the report was built against another working
+// tree, while one that did not resolve at all says only that the file has
+// moved on since the test run. coverage.mergeInto fails a report whose classes
+// were all OutsideRoot on the strength of that difference.
 type Placement int
 
 const (
@@ -59,53 +61,42 @@ const (
 	NotOnDisk Placement = iota
 	// OutsideRoot is a candidate that resolved to a real file, elsewhere.
 	OutsideRoot
-	// InsideRoot is a candidate that resolved under the root, and is the only
-	// placement carrying a Path.
+	// InsideRoot is a candidate that resolved under the root.
 	InsideRoot
 )
 
-// Place resolves an absolute candidate path and says where it landed. The
-// Path is meaningful only for InsideRoot, since a path outside the root has
-// no repo-relative spelling.
-func (r Root) Place(candidate string) (Path, Placement) {
+// Placed is one candidate's resolution, kept whole so a caller that needs the
+// absolute path a candidate landed on does not resolve symlinks a second time.
+type Placed struct {
+	Placement Placement
+	// Path is the repo-relative path, set only for InsideRoot.
+	Path Path
+	// Resolved is the absolute slash-separated path the candidate landed on,
+	// set for InsideRoot and OutsideRoot and empty for NotOnDisk. It is what a
+	// diagnostic quotes, so it is the path the gate actually compared.
+	Resolved string
+}
+
+// Place resolves an absolute candidate path and says where it landed.
+func (r Root) Place(candidate string) Placed {
 	if !filepath.IsAbs(candidate) {
-		return "", NotOnDisk
+		return Placed{Placement: NotOnDisk}
 	}
 	resolved, err := filepath.EvalSymlinks(candidate)
 	if err != nil {
-		return "", NotOnDisk
+		return Placed{Placement: NotOnDisk}
 	}
+	outside := Placed{Placement: OutsideRoot, Resolved: filepath.ToSlash(resolved)}
 	rel, err := filepath.Rel(r.resolved, resolved)
 	if err != nil {
-		return "", OutsideRoot
+		return outside
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", OutsideRoot
+		return outside
 	}
-	return Path(filepath.ToSlash(rel)), InsideRoot
-}
-
-// Resolve turns an absolute candidate path into a source path. It reports
-// false when the candidate does not resolve or resolves outside the root;
-// ADR 0004 makes both of those "not the gate's business" rather than fatal,
-// because a report describes a moment in the past.
-func (r Root) Resolve(candidate string) (Path, bool) {
-	path, placement := r.Place(candidate)
-	return path, placement == InsideRoot
+	return Placed{Placement: InsideRoot, Path: Path(filepath.ToSlash(rel)), Resolved: filepath.ToSlash(resolved)}
 }
 
 // FromSlash adopts an already repo-relative, slash-separated path, which is
 // the form `git diff` emits.
 func FromSlash(rel string) Path { return Path(rel) }
-
-// ResolveOrAsBuilt resolves candidate's symlinks when it can, and returns it
-// as built otherwise, slash-separated either way so a diagnostic reads the
-// same on every platform. It exists for a diagnostic that wants "the best
-// available reading of this path" without reaching for filepath.EvalSymlinks
-// itself; issue 16's coverage_outside_repo message is the one caller.
-func ResolveOrAsBuilt(candidate string) string {
-	if resolved, err := filepath.EvalSymlinks(candidate); err == nil {
-		return filepath.ToSlash(resolved)
-	}
-	return filepath.ToSlash(candidate)
-}

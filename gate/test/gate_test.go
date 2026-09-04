@@ -1564,7 +1564,7 @@ func TestMissingCoverageFailureStillReportsThePathsTheWalkCouldNotRead(t *testin
 		"CRAP requires a coverage report, none found\n")
 }
 
-// The eight cases below are issue 16: the three exit-1 diagnostics ADR 0004's
+// The cases below are issue 16: the three exit-1 diagnostics ADR 0004's
 // 2026-09-03 amendment defers there, plus regression coverage for the
 // resolution rules the tracer already satisfied before this issue landed.
 
@@ -1619,6 +1619,38 @@ func TestReportBuiltInAnotherCheckoutFailsNamingTheMismatch(t *testing.T) {
 		map[string]string{"EXAMPLE": example, "ROOT": root})
 }
 
+func TestClassWithNoFilenameDoesNotSuppressTheOutsideRepoDiagnostic(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+
+	// The same other-checkout report, plus a malformed class carrying no
+	// filename and a second <source> inside the repo root. Joining nothing
+	// onto that source names src/ itself, a directory that resolves inside the
+	// root, so an empty filename has to contribute no evidence rather than
+	// stand in for a class that resolved. The real class resolves under
+	// neither src/ nor anything else in this repo.
+	otherCheckout := t.TempDir()
+	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
+	writeAbsolute(t, classPath, csharpFile(80))
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(
+		[]string{otherCheckout, filepath.Join(f.root, "src")},
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)},
+		coverageClass{filename: "", lines: spanCoverage(1, 1, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	example := resolvedPath(t, classPath)
+	root := resolvedPath(t, f.root)
+	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
+		fmt.Sprintf("coverage report TestResults/coverage.cobertura.xml resolved no class inside the repo root; "+
+			"example resolved path %s, repo root %s\n", example, root),
+		map[string]string{"EXAMPLE": example, "ROOT": root})
+}
+
 func TestDeterministicReportEmptyingSourcesFailsNamingTheProperty(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
@@ -1659,6 +1691,30 @@ func TestUseSourceLinkFailsNamingTheProperty(t *testing.T) {
 	f.run().assertMatches(t, "coverage_source_root_erased_sourcelink", 1, f.baseLabel("main"),
 		"coverage report TestResults/coverage.cobertura.xml carries a source link document key rather than a "+
 			"path, erased by UseSourceLink=true; collect coverage with UseSourceLink=false\n")
+}
+
+func TestReportCarryingBothErasedShapesNamesDeterministicReport(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// Both erased shapes in one report, the source-link key first. The
+	// property named is DeterministicReport whatever order the classes are in,
+	// because it is the one that erased <sources> for the whole document.
+	f.write("TestResults/coverage.cobertura.xml", coberturaNoSources(
+		coverageClass{
+			filename: "https://raw.githubusercontent.com/org/repo/deadbeef/src/Ordering/OrderService.cs",
+			lines:    spanCoverage(61, 3, 2),
+		},
+		coverageClass{filename: "/_/src/Ordering/Other.cs", lines: spanCoverage(1, 1, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_source_root_erased_deterministic", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml carries no source root, erased by "+
+			"DeterministicReport=true; collect coverage with DeterministicReport=false\n")
 }
 
 func TestCaseOnlyPathDifferenceIsRefusedRatherThanGuessed(t *testing.T) {
