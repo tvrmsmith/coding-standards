@@ -60,7 +60,7 @@ public static class Extractor
             // place of the one failed row this loop is here to build.
             catch (Exception e)
             {
-                Console.Error.WriteLine($"metric-gate-csharp: {path}: {e.Message}");
+                Console.Error.WriteLine($"metric-gate-csharp: {path}: {e}");
                 files.Add(new FileStatusResult(path, "failed"));
                 continue;
             }

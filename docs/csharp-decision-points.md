@@ -76,6 +76,7 @@ covers `while`, `do`, `for`, and `foreach` alike.
 | a switch expression arm | not counted. `hasConditionalLogic` has no case for a switch expression arm or for any pattern operation kind | +1 per arm, since [ADR 0006's 2026-09-03 amendment](adr/0006-the-csharp-extractor-is-written-in-house.md) | a twenty-arm switch expression scored complexity 1 under the walker before that amendment, while the same logic written as a `switch` statement scored 20; the amendment closed that blind spot |
 | a pattern combinator (`and`, `or`) | not counted. A pattern combinator lowers to a pattern operation, never to `OperationKind.BinaryOperator`, so it never reaches the operator-kind check `hasConditionalLogic` runs | +1 per combinator, same amendment | a recursive pattern's `and`/`or` does the same job `&&`/`||` does in a boolean expression, which the extractor already scores |
 | `?.` (conditional access) | counts every `ConditionalAccess` operation | not scored | a real fork this extractor does not yet score, deferred rather than excluded. Issue 18 pinned the scored set rather than widening it, and adding `?.` moves the score of most methods in a real codebase, so it belongs to whichever change also moves the threshold |
+| a decision point in a field or property initializer | counts, folded into every constructor of the declaring type, since the compiler emits initializer code into each one | scored nowhere. An initializer is not a declaration with a body, so it gets no span, and no span contains it | a real gap, deferred rather than excluded. Folding an initializer into each constructor needs the extractor to synthesize a body it can see no syntax for, and a type with no declared constructor has nowhere to fold into at all, so the fix belongs to whichever change is willing to invent spans |
 | boolean `&` / `\|` | counts identically to `&&`/`\|\|` when the operand type is `bool`, per the same `BinaryOperator` check | not scored | neither operator short-circuits, so both sides always evaluate and there is no fork to count. Roslyn scores them because it keys on the operator's kind rather than on whether control can skip an operand |
 
 ## Spans
@@ -84,17 +85,26 @@ Owning the walker means owning which declarations get a row, not only which cons
 
 A declaration gets a span when it carries a body or an expression body. It gets none when it carries
 neither. So an interface member with no default implementation, an `abstract` or `extern` member, a
-field-like event, a bodyless partial method or partial property, and a `record` or `class` primary
-constructor all produce no row, while an auto-property accessor does, because the compiler synthesizes
-a body for it.
+field-like event, a bodyless partial method or partial property, an `extern` local function, and a
+`record` or `class` primary constructor all produce no row, while an auto-property accessor does,
+because the compiler synthesizes a body for it.
 
-That carve-out is keyed on synthesis, not on the `get;` spelling. A partial property is declared twice,
-once as a promise and once as an implementation, and only the implementing half is measured, so one
-member never yields four rows. A `static` auto-property on an interface has been legal since C# 11 and
-is synthesized like any other, so the interface exclusion does not reach it.
+That carve-out is keyed on synthesis, not on the `get;` spelling. A `static` auto-property on an
+interface has been legal since C# 11 and is synthesized like any other, so the interface exclusion does
+not reach it.
 
-A lambda's body counts inside the span of the method, accessor, or other declaration holding it. A
-local function is its own span, and two separate mechanisms keep that from double counting.
+A partial property is declared twice, once as a promise and once as an implementation, and only the
+implementing half is measured, so one member yields exactly one pair of accessor rows rather than two.
+Which half a declaration is gets read off the declaration itself, never off the order the two halves
+appear in, following the language's own rule: the defining half is the one whose accessors are all
+semicolons and which carries no initializer, so any accessor body or an initializer marks the
+implementing half. An implementing half written as a plain auto-property carries an initializer, since
+that is the only spelling C# accepts for one.
+
+A lambda gets no span of its own. Its decision points count inside whichever span holds it, and when
+no span holds it, in a field or property initializer, they are counted nowhere; the Roslyn deltas table
+above records that gap. A local function is its own span wherever it is written, including inside an
+initializer lambda, and two separate mechanisms keep that from double counting.
 Complexity is excluded in the walker, which stops at a nested local function so its decision points
 score against itself alone. Line ranges are not excluded: an emitted local-function span sits fully
 inside its container's span, and the gate resolves the overlap downstream with the
@@ -117,11 +127,16 @@ A span's printed name follows the CLR's own naming for the member kind:
 | Event add accessor | `Order.add_Changed` |
 | Event remove accessor | `Order.remove_Changed` |
 | Operator overload | `Order.op_Addition` |
-| Conversion operator | `Order.op_Implicit` |
+| Conversion operator | `Order.op_Implicit` (the target type lives in the signature, not the name) |
 | Local function | `Order.Total.Running` (container name, dot, local name) |
 | Generic local function | `Order.Total.Map<T>` (type parameters are part of a name here too) |
 | Local function with no container | `Helper` (top-level statements, or an initializer lambda) |
 | Explicit interface implementation | `Order.IComparable.CompareTo`, and `Order.IShifted.get_Described` for an accessor |
+
+Every conversion operator on a type shares the name `op_Implicit` or `op_Explicit`, so the name alone
+cannot tell two of them apart. The signature carries the target type after a colon to close that,
+`(Widened):long` for `explicit operator long(Widened v)`, which is the only place a return type appears
+in a signature. `MethodSpanResult`'s doc comment spells the rest of the signature format.
 
 A generic name's printed form carries a comma, and this document's own tables carry it unquoted because
 the delimiter is a pipe. That is the reason [ADR 0005](adr/0005-the-machine-document-is-the-only-output.md)

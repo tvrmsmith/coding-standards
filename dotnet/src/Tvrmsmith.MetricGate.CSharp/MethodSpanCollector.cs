@@ -41,7 +41,7 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
 
     public override void VisitMethodDeclaration(MethodDeclarationSyntax node)
     {
-        if (node.Body is null && node.ExpressionBody is null)
+        if (!CarriesLines(node))
         {
             return;
         }
@@ -56,7 +56,7 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
 
     public override void VisitConstructorDeclaration(ConstructorDeclarationSyntax node)
     {
-        if (node.Body is null && node.ExpressionBody is null)
+        if (!CarriesLines(node))
         {
             return;
         }
@@ -69,7 +69,7 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
 
     public override void VisitDestructorDeclaration(DestructorDeclarationSyntax node)
     {
-        if (node.Body is null && node.ExpressionBody is null)
+        if (!CarriesLines(node))
         {
             return;
         }
@@ -81,7 +81,7 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
 
     public override void VisitOperatorDeclaration(OperatorDeclarationSyntax node)
     {
-        if (node.Body is null && node.ExpressionBody is null)
+        if (!CarriesLines(node))
         {
             return;
         }
@@ -93,13 +93,13 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
 
     public override void VisitConversionOperatorDeclaration(ConversionOperatorDeclarationSyntax node)
     {
-        if (node.Body is null && node.ExpressionBody is null)
+        if (!CarriesLines(node))
         {
             return;
         }
 
         var name = QualifiedName(node, ConversionOperatorName(node));
-        RecordSpan(node, name, Signature(node.ParameterList));
+        RecordSpan(node, name, Signature(node.ParameterList) + ":" + TypeName(node.Type));
         Descend(name, () => base.VisitConversionOperatorDeclaration(node));
     }
 
@@ -131,7 +131,7 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
 
     public override void VisitAccessorDeclaration(AccessorDeclarationSyntax node)
     {
-        if (node.Parent?.Parent is not MemberDeclarationSyntax member)
+        if (node.Parent?.Parent is not BasePropertyDeclarationSyntax member)
         {
             return;
         }
@@ -153,11 +153,28 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
 
     public override void VisitLocalFunctionStatement(LocalFunctionStatementSyntax node)
     {
+        if (!CarriesLines(node))
+        {
+            return;
+        }
+
         var localName = WithTypeParameters(node.Identifier.Text, node.TypeParameterList);
         var name = _nameStack.Count == 0 ? localName : _nameStack.Peek() + "." + localName;
         RecordSpan(node, name, Signature(node.ParameterList, node.TypeParameterList));
         Descend(name, () => base.VisitLocalFunctionStatement(node));
     }
+
+    /// <summary>
+    /// The span rule, in the one place every declaration visitor asks it: the compiler gives a
+    /// declaration lines to measure when it carries a body or an expression body. The single
+    /// carve-out is <see cref="IsConcreteAutoAccessor"/>.
+    /// </summary>
+    private static bool CarriesLines(BaseMethodDeclarationSyntax node) =>
+        node.Body is not null || node.ExpressionBody is not null;
+
+    /// <inheritdoc cref="CarriesLines(BaseMethodDeclarationSyntax)"/>
+    private static bool CarriesLines(LocalFunctionStatementSyntax node) =>
+        node.Body is not null || node.ExpressionBody is not null;
 
     private void Descend(string name, Action visitChildren)
     {
@@ -183,17 +200,22 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
 
     /// <summary>
     /// Whether a bodyless <c>get;</c>/<c>set;</c> is one the compiler synthesizes a body for, which
-    /// is the single carve-out to the body-or-expression-body span rule. An <c>abstract</c>,
-    /// <c>extern</c> or <c>partial</c> member declares an accessor the compiler does not fill in, so
-    /// none of them earns a span; a partial property's two declarations would otherwise earn four.
-    /// An interface member is the same case, except when it is <c>static</c>, since a static
-    /// auto-property on an interface has been legal and compiler-synthesized since C# 11.
+    /// is the single carve-out to the body-or-expression-body span rule. An <c>abstract</c> or
+    /// <c>extern</c> member declares an accessor the compiler does not fill in, so neither earns a
+    /// span. An interface member is the same case, except when it is <c>static</c>, since a static
+    /// auto-property on an interface has been legal and compiler-synthesized since C# 11. A partial
+    /// property is declared twice and only its implementing half is measured, so
+    /// <see cref="IsPartialImplementation"/> keeps one member from earning two pairs of rows.
     /// </summary>
-    private static bool IsConcreteAutoAccessor(MemberDeclarationSyntax member)
+    private static bool IsConcreteAutoAccessor(BasePropertyDeclarationSyntax member)
     {
         if (member.Modifiers.Any(SyntaxKind.AbstractKeyword)
-            || member.Modifiers.Any(SyntaxKind.ExternKeyword)
-            || member.Modifiers.Any(SyntaxKind.PartialKeyword))
+            || member.Modifiers.Any(SyntaxKind.ExternKeyword))
+        {
+            return false;
+        }
+
+        if (member.Modifiers.Any(SyntaxKind.PartialKeyword) && !IsPartialImplementation(member))
         {
             return false;
         }
@@ -206,24 +228,37 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
         return member.Ancestors().OfType<TypeDeclarationSyntax>().FirstOrDefault() is not InterfaceDeclarationSyntax;
     }
 
+    /// <summary>
+    /// Which half of a partial property a declaration is, read off the declaration itself rather
+    /// than off the order the two halves appear in. The language says the defining half is the one
+    /// whose accessors are all semicolons and which carries no initializer, so any accessor body or
+    /// an initializer marks the implementing half. An implementing half written as a plain
+    /// auto-property carries an initializer, since that is the only spelling C# accepts for one.
+    /// </summary>
+    private static bool IsPartialImplementation(BasePropertyDeclarationSyntax member)
+    {
+        var anyAccessorHasBody = member.AccessorList?.Accessors
+            .Any(accessor => accessor.Body is not null || accessor.ExpressionBody is not null) ?? false;
+
+        return anyAccessorHasBody
+            || (member as PropertyDeclarationSyntax)?.Initializer is not null;
+    }
+
     private static (string Name, string Signature) AccessorIdentity(
         AccessorDeclarationSyntax node,
-        MemberDeclarationSyntax member)
+        BasePropertyDeclarationSyntax member)
     {
         var prefix = AccessorPrefix(node.Kind());
 
-        return member switch
+        var (suffix, signature) = member switch
         {
-            IndexerDeclarationSyntax indexer =>
-                (QualifiedName(indexer, prefix + "Item", indexer.ExplicitInterfaceSpecifier),
-                    Signature(indexer.ParameterList)),
-            PropertyDeclarationSyntax property =>
-                (QualifiedName(property, prefix + property.Identifier.Text, property.ExplicitInterfaceSpecifier),
-                    "()"),
-            EventDeclarationSyntax evt =>
-                (QualifiedName(evt, prefix + evt.Identifier.Text, evt.ExplicitInterfaceSpecifier), "()"),
+            IndexerDeclarationSyntax indexer => ("Item", Signature(indexer.ParameterList)),
+            PropertyDeclarationSyntax property => (property.Identifier.Text, "()"),
+            EventDeclarationSyntax evt => (evt.Identifier.Text, "()"),
             _ => throw new InvalidOperationException($"Unexpected accessor container: {member.GetType()}"),
         };
+
+        return (QualifiedName(member, prefix + suffix, member.ExplicitInterfaceSpecifier), signature);
     }
 
     private static string AccessorPrefix(SyntaxKind kind) => kind switch
@@ -342,10 +377,10 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
     private static string Parameter(ParameterSyntax parameter)
     {
         var modifiers = parameter.Modifiers.Select(modifier => modifier.Text + " ");
-        var type = parameter.Type is null
-            ? string.Empty
-            : parameter.Type.NormalizeWhitespace().ToFullString();
+        var type = parameter.Type is null ? string.Empty : TypeName(parameter.Type);
 
         return string.Concat(modifiers) + type;
     }
+
+    private static string TypeName(TypeSyntax type) => type.NormalizeWhitespace().ToFullString();
 }
