@@ -51,40 +51,49 @@ func (r Root) Abs(p Path) string {
 // Only landing inside the root is a distinction the gate acts on: ADR 0004
 // ignores one candidate that does not, whatever the reason, and fails a whole
 // report that never lands.
+// The fields are unexported because a repo-relative path only means anything
+// when the candidate landed, and Inside hands the caller both at once so the
+// compiler holds that pairing rather than a doc comment.
 type Placed struct {
-	// Inside reports whether the candidate landed under the root.
-	Inside bool
-	// Path is the repo-relative path, set only when Inside.
-	Path Path
-	// Resolved is the absolute slash-separated path the candidate landed on,
-	// symlink-resolved when it resolves and as built when it does not. It is
-	// what a diagnostic quotes, so it is the best available reading of the path
-	// the gate compared.
-	Resolved string
+	inside   bool
+	path     Path
+	resolved string
 }
+
+// Inside is the repo-relative path the candidate landed on, and whether it
+// landed under the root at all. The path is empty when it did not.
+func (p Placed) Inside() (Path, bool) { return p.path, p.inside }
+
+// Resolved is the absolute slash-separated path the candidate landed on,
+// symlink-resolved when it resolves and as built when it does not. It is what a
+// diagnostic quotes, so it is the best available reading of the path the gate
+// compared.
+func (p Placed) Resolved() string { return p.resolved }
 
 // Place resolves an absolute candidate path and says where it landed. A
 // candidate that is not absolute names nothing to read, and resolving it
 // against the process working directory would place a report's own relative
 // filename inside the root by accident.
 func (r Root) Place(candidate string) Placed {
-	asBuilt := Placed{Resolved: filepath.ToSlash(candidate)}
+	placed := Placed{resolved: filepath.ToSlash(candidate)}
 	if !filepath.IsAbs(candidate) {
-		return asBuilt
+		return placed
 	}
 	resolved, err := filepath.EvalSymlinks(candidate)
 	if err != nil {
-		return asBuilt
+		return placed
 	}
-	outside := Placed{Resolved: filepath.ToSlash(resolved)}
+	placed.resolved = filepath.ToSlash(resolved)
 	rel, err := filepath.Rel(r.resolved, resolved)
 	if err != nil {
-		return outside
+		return placed
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return outside
+		return placed
 	}
-	return Placed{Inside: true, Path: Path(filepath.ToSlash(rel)), Resolved: filepath.ToSlash(resolved)}
+	placed.inside = true
+	placed.path = Path(filepath.ToSlash(rel))
+	return placed
 }
 
 // FromSlash adopts an already repo-relative, slash-separated path, which is

@@ -8,4 +8,4 @@ touched_lines_outside_spans: 0
 skipped_paths: []
 error:
   code: coverage_unparseable
-  message: could not parse coverage report TestResults/fixed/coverage.cobertura.xml
+  message: "could not parse coverage report TestResults/fixed/coverage.cobertura.xml; XML syntax error on line 2: unexpected EOF"
