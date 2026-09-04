@@ -37,13 +37,12 @@ namespace Tvrmsmith.MetricGate.CSharp;
 /// same way a method does. A local function then appends <c>@</c> and its 1-based start column,
 /// because two sibling scopes can declare the same local name with the same parameters on one
 /// line and nothing else in the identity would differ. A conversion operator spells its parameter
-/// list that way and then
-/// appends a colon and its target type, so <c>explicit operator long(Widened v)</c> is
-/// <c>(Widened):long</c>. Two conversions on one type differ only in that target type, and
-/// <c>op_Explicit</c> gives them the same <c>Name</c>, so without it two conversions written on one
-/// line would be indistinguishable. A property or event accessor takes <c>()</c>, since
-/// the declaration itself carries no parameter list and the implicit <c>value</c> parameter is
-/// never spelled. An indexer accessor takes the indexer's own parameter list instead, so
+/// list that way and then appends a colon and its target type, so
+/// <c>explicit operator long(Widened v)</c> is <c>(Widened):long</c>. Two conversions on one type
+/// differ only in that target type, and <c>op_Explicit</c> gives them the same <c>Name</c>, so
+/// without it two conversions written on one line would be indistinguishable. A property or event
+/// accessor takes <c>()</c>, since the declaration itself carries no parameter list and the
+/// implicit <c>value</c> parameter is never spelled. An indexer accessor takes the indexer's own parameter list instead, so
 /// <c>get_Item</c> on <c>this[int index]</c> is <c>(int)</c>.</para>
 ///
 /// <para>It is syntactic, never resolved, so <c>List&lt;int&gt;</c> and an alias for it read as
