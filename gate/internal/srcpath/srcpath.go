@@ -6,6 +6,7 @@ package srcpath
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -74,7 +75,12 @@ func (p Placed) Resolved() string { return p.resolved }
 // Place resolves an absolute candidate path and says where it landed. A
 // candidate that is not absolute names nothing to read, and resolving it
 // against the process working directory would place a report's own relative
-// filename inside the root by accident.
+// filename inside the root by accident. A candidate that resolves to anything
+// other than a regular file lands nowhere either: a class filename of "../.."
+// or of a bare directory name joins onto an in-root source root to name a
+// directory, which is inside the root without naming any source the report
+// measured, and one such class would otherwise stand in for a whole report's
+// worth of classes that placed nothing.
 func (r Root) Place(candidate string) Placed {
 	placed := Placed{resolved: filepath.ToSlash(candidate)}
 	if !filepath.IsAbs(candidate) {
@@ -85,6 +91,10 @@ func (r Root) Place(candidate string) Placed {
 		return placed
 	}
 	placed.resolved = filepath.ToSlash(resolved)
+	info, err := os.Lstat(resolved)
+	if err != nil || !info.Mode().IsRegular() {
+		return placed
+	}
 	rel, err := filepath.Rel(r.resolved, resolved)
 	if err != nil {
 		return placed
