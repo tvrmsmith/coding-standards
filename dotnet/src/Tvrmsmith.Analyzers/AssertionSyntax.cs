@@ -7,13 +7,13 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace Tvrmsmith.Analyzers;
 
 /// <summary>
-/// Shared recognition of the FluentAssertions shape all three analyzers key off: a
+/// Shared recognition of the assertion shape all three analyzers key off: a
 /// <c>.Should()</c> entry point and the receiver chain feeding it.
 /// </summary>
 /// <remarks>
-/// Deliberately library-neutral. FluentAssertions 6.x is the assumed baseline, but the shape
+/// Deliberately library-neutral. AwesomeAssertions is the assumed baseline, but the shape
 /// — a zero-argument <c>Should</c> extension returning a type whose name ends in
-/// <c>Assertions</c> — is identical in AwesomeAssertions and in the bespoke <c>Should()</c>
+/// <c>Assertions</c> — is identical in FluentAssertions and in the bespoke <c>Should()</c>
 /// extensions frameworks ship for their own wrapper types. Matching on the shape rather than on
 /// a namespace is what lets <c>TVRM0003</c> see both sides of an escape cast.
 /// </remarks>

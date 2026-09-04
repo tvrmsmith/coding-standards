@@ -336,6 +336,13 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
     /// it, so <c>int IA.M()</c> on <c>C</c> reads <c>C.IA.M</c> rather than colliding with the
     /// <c>IB.M</c> declared beside it.
     /// </summary>
+    /// <remarks>
+    /// A C# 14 <c>extension(T receiver)</c> block is a <see cref="TypeDeclarationSyntax"/> with an
+    /// empty identifier, so it is dropped rather than contributing a segment. Keeping it would
+    /// spell <c>Beyond..get_IsLong</c>, whose doubled dot reads as the <c>..ctor</c> convention.
+    /// Two extension blocks in one type can then declare the same member name, but their spans
+    /// still differ by line, which is what span identity turns on.
+    /// </remarks>
     private static string QualifiedName(
         SyntaxNode node,
         string memberName,
@@ -344,6 +351,7 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
         var typeNames = node.Ancestors()
             .OfType<TypeDeclarationSyntax>()
             .Reverse()
+            .Where(type => !string.IsNullOrEmpty(type.Identifier.Text))
             .Select(type => WithTypeParameters(type.Identifier.Text, type.TypeParameterList));
 
         var qualified = explicitInterface is null

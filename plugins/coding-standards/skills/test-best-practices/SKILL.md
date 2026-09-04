@@ -13,7 +13,7 @@ After reading these principles, read the relevant technology-specific reference 
 
 ```
 references/
-  dotnet-awesome-assertions.md   — .NET (FluentAssertions / AwesomeAssertions + NUnit)
+  dotnet-awesome-assertions.md   — .NET (AwesomeAssertions / FluentAssertions + NUnit)
   dotnet-atlas.md                — escaping a framework's custom assertions type
   react-rtl.md                   — React (Testing Library + jest-dom + user-event)
 ```

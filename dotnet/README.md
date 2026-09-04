@@ -81,7 +81,7 @@ on instead is judgement, and stays **[review-only]** in the skill text.
 
 ## Curated severities
 
-Two layers. **FluentAssertions.Analyzers `FAA0001`–`FAA0004`** is the assertion half, selected by
+Two layers. **AwesomeAssertions.Analyzers `FAA0001`–`FAA0004`** is the assertion half, selected by
 the enforcement mapping. All four ship as `Info`, which never surfaces in a build, so they are
 elevated to `warning` — not `error`, because adoption is machine-local with no CI gate.
 
@@ -104,12 +104,13 @@ rather than a pinned list, so an SDK upgrade that adds `CA` rules picks them up 
 leaving them off, and it emits the two other places the same ids must appear — see
 "Three files, one list" below. The exclusions and the reason for each are in the generator.
 
-`FluentAssertions.Analyzers` is the right pairing for FluentAssertions 6.x. Against
-AwesomeAssertions 9.x it emits **zero diagnostics, silently**: the analyzer gates on
-`Compilation.GetTypeByMetadataName("FluentAssertions.AssertionExtensions")`, and AwesomeAssertions
-v9 renamed that namespace, so the gate never opens and the run looks clean. That pairing needs
-`AwesomeAssertions.Analyzers` instead. Diagnostic IDs and editorconfig keys are identical across
-both, so the severity block itself is portable.
+The pairing is version-sensitive and gets this wrong **silently**. Each analyzer gates on
+`Compilation.GetTypeByMetadataName("<Namespace>.AssertionExtensions")`, and AwesomeAssertions v9
+renamed that namespace, so a mismatched pair never opens the gate and the run looks clean while
+emitting zero diagnostics. `AwesomeAssertions.Analyzers` pairs with AwesomeAssertions 9.x, which is
+this repo's baseline; `FluentAssertions.Analyzers` pairs with FluentAssertions 6.x. The fork kept
+the `FAA` prefix, so diagnostic IDs and editorconfig keys are identical across both and the
+severity block itself is portable.
 
 ## Where the severities have to live, and why it is not obvious
 
@@ -121,7 +122,7 @@ consumer — and local adoption *is* the bare-DLL path. So one config file is wi
 | 1 | bare `<Analyzer Include>` via `CustomAfterMicrosoftCommonProps` | `local/…Local.props` | `local/…Local.props` |
 | 2 | `PackageReference` | NuGet | `build/…props` (auto-imported) |
 
-The build stages the analyzer DLL, `FluentAssertions.Analyzers.dll`, the `.globalconfig` and the
+The build stages the analyzer DLL, `AwesomeAssertions.Analyzers.dll`, the `.globalconfig` and the
 phase-1 props file side by side into `artifacts/local/`, so every path inside that props file is
 relative to itself and the directory can be moved or symlinked anywhere.
 
@@ -135,7 +136,7 @@ dotnet build src/Tvrmsmith.Analyzers/Tvrmsmith.Analyzers.csproj -c Release
 ```
 
 `Tvrmsmith.Analyzers.Tests` runs each analyzer over snippets compiled against the real
-FluentAssertions 6.12.2, with a fixture type that carries its own `Should()` returning a bespoke
+AwesomeAssertions 9.6.0, with a fixture type that carries its own `Should()` returning a bespoke
 assertions type — the shape `TVRM0003` exists for. Every rule has both halves: the violating
 shape it must flag, and the compliant rewrite plus the near-misses it must stay silent on.
 

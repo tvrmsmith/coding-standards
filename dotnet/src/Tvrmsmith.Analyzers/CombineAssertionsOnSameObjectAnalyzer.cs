@@ -187,7 +187,7 @@ public sealed class CombineAssertionsOnSameObjectAnalyzer : DiagnosticAnalyzer
     }
 
     /// <summary>
-    /// Matched on the type name alone, so the rule reads FluentAssertions and AwesomeAssertions
+    /// Matched on the type name alone, so the rule reads AwesomeAssertions and FluentAssertions
     /// the same way — the namespaces differ, the type does not.
     /// </summary>
     private static bool CreatesAssertionScope(

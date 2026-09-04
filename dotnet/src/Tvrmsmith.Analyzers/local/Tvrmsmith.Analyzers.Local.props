@@ -25,7 +25,7 @@
     Management entirely — no NU1008/NU1010, and no dependency on the env var being set at
     restore time. Verified against both CPM-on and CPM-off build trees.
 
-    FluentAssertions.Analyzers is staged here too rather than referenced from the NuGet cache:
+    AwesomeAssertions.Analyzers is staged here too rather than referenced from the NuGet cache:
     a consuming repo has no reason to reference it already, so bundling it is what makes the
     injection work with zero repo edits, and it pins the version these severities were curated
     against.
@@ -66,7 +66,7 @@
 
   <ItemGroup Condition="'$(TvrmsmithAnalyzersEnabled)' == 'true' And '$(Language)' != 'VB'">
     <Analyzer Include="$(TvrmsmithAnalyzersDir)Tvrmsmith.Analyzers.dll" />
-    <Analyzer Include="$(TvrmsmithAnalyzersDir)FluentAssertions.Analyzers.dll" />
+    <Analyzer Include="$(TvrmsmithAnalyzersDir)AwesomeAssertions.Analyzers.dll" />
 
     <!--
       The severities. Without this the analyzers load but stay at their shipped Info level,

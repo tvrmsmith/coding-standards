@@ -1,6 +1,6 @@
-# .NET Assertions: FluentAssertions / AwesomeAssertions + NUnit
+# .NET Assertions: AwesomeAssertions / FluentAssertions + NUnit
 
-AwesomeAssertions is a fork of FluentAssertions — the API is identical. Everything in this reference applies to both libraries. **Every example here is written in FluentAssertions**, the assumed baseline; translate the namespace if you are on AwesomeAssertions.
+AwesomeAssertions is a fork of FluentAssertions and the assertion API is identical, so everything in this reference applies to both. **AwesomeAssertions is the assumed baseline.** The one difference is the namespace: `using AwesomeAssertions;` here, `using FluentAssertions;` on the original.
 
 Technology-specific patterns implementing the principles from the parent skill.
 
@@ -78,7 +78,7 @@ actual.Should().BeOfType<ExpectedType>()
 The `BeOfType<T>().Which` chain is a single fluent expression, not back-to-back assertions.
 
 > **Strict typing note**: `WithStrictTyping()` / `WithStrictTypingFor()` are not available in
-> FluentAssertions 6.x (nor in AwesomeAssertions 9.4). Use `BeOfType<T>().Which` for type enforcement.
+> AwesomeAssertions 9.6 (nor in FluentAssertions 6.x). Use `BeOfType<T>().Which` for type enforcement.
 
 ### Why Anonymous Objects for `BeEquivalentTo`?
 

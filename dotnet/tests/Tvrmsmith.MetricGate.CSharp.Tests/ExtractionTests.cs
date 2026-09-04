@@ -1,5 +1,5 @@
 using System.Linq;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Tvrmsmith.MetricGate.CSharp.Tests;
@@ -440,19 +440,21 @@ public class ExtractionTests
     }
 
     /// <summary>
-    /// The C# 13 ceiling that <c>docs/csharp-decision-points.md</c> names, pinned from both sides
-    /// so it cannot move without a test saying so. <c>Recent.cs</c> holds C# 13 syntax, an
-    /// <c>allows ref struct</c> constraint and an <c>\e</c> escape, both of which need the
-    /// <c>Microsoft.CodeAnalysis.CSharp</c> reference at 4.12.0 or later and the parse pinned to
-    /// the highest language version that reference exposes; a downgrade of either turns it into a
-    /// failed row with no spans. <c>Beyond.cs</c> holds C# 14 extension members, which the current
-    /// reference cannot parse, so it comes back failed even though a consumer's own compiler
-    /// accepts it, which is the gap the ceiling section records. Raising the reference past C# 14
-    /// flips that row to parsed and reddens this test, which is the signal to move the ceiling in
-    /// the doc rather than a regression.
+    /// The C# 14 ceiling that <c>docs/csharp-decision-points.md</c> names, pinned from below so it
+    /// cannot drop without a test saying so. <c>Recent.cs</c> holds C# 13 syntax, an
+    /// <c>allows ref struct</c> constraint and an <c>\e</c> escape; <c>Beyond.cs</c> holds a C# 14
+    /// <c>extension</c> block. Both need the <c>Microsoft.CodeAnalysis.CSharp</c> reference at
+    /// 5.x and the parse pinned to the highest language version that reference exposes, so a
+    /// downgrade of either turns the affected file into a failed row with no spans rather than
+    /// passing quietly.
     /// </summary>
+    /// <remarks>
+    /// The extension block contributes no name segment of its own, so its accessor reads
+    /// <c>Beyond.get_IsLong</c> under the declaring static class. A doubled dot there would collide
+    /// with the <c>..ctor</c> spelling; <c>QualifiedName</c> drops the empty identifier to avoid it.
+    /// </remarks>
     [Fact]
-    public void TheParserAcceptsCSharp13AndNothingPastTheDocumentedCeiling()
+    public void TheParserAcceptsEverythingUpToTheDocumentedCSharp14Ceiling()
     {
         var (exitCode, result) = ExtractorRun.Run("fixtures/Recent.cs", "fixtures/Beyond.cs");
 
@@ -460,12 +462,32 @@ public class ExtractionTests
         result.Files.Should().BeEquivalentTo(new[]
         {
             new { File = "fixtures/Recent.cs", Status = "parsed" },
-            new { File = "fixtures/Beyond.cs", Status = "failed" },
+            new { File = "fixtures/Beyond.cs", Status = "parsed" },
         }, o => o.WithStrictOrdering());
         result.Spans.Should().BeEquivalentTo(new[]
         {
             new { Name = "Recent.Pick<T>", Signature = "`1(T, bool)", StartLine = 9, EndLine = 9, Complexity = 2 },
             new { Name = "Recent.Reset", Signature = "()", StartLine = 11, EndLine = 11, Complexity = 1 },
+            new { Name = "Beyond.get_IsLong", Signature = "()", StartLine = 11, EndLine = 11, Complexity = 1 },
+        }, o => o.WithStrictOrdering());
+    }
+
+    /// <summary>
+    /// Two <c>extension</c> blocks in one static class can declare the same member name, and
+    /// neither contributes a name segment, so both accessors qualify to the same string. They are
+    /// still two spans, told apart by line, which is what keeps the gate from aborting the run on
+    /// valid C# the way a genuine duplicate span would.
+    /// </summary>
+    [Fact]
+    public void TwoExtensionBlocksDeclaringTheSameMemberAreTwoSpansToldApartByTheirLines()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/TwoExtensions.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Multi.get_IsLong", Signature = "()", StartLine = 10, EndLine = 10, Complexity = 1 },
+            new { Name = "Multi.get_IsLong", Signature = "()", StartLine = 15, EndLine = 15, Complexity = 1 },
         }, o => o.WithStrictOrdering());
     }
 
