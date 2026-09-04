@@ -1713,14 +1713,16 @@ func TestClassFilenameNamingNoFileDoesNotSuppressTheOutsideRepoDiagnostic(t *tes
 	// directory itself, which resolves inside the root. It names no file, so
 	// it has to contribute no evidence, exactly as an empty filename does;
 	// otherwise one malformed class stands in for the real class, which
-	// resolved in another checkout entirely.
+	// resolved in another checkout entirely. ".." is the same case one level
+	// up, resolving to the repo root itself from a <source> inside it.
 	otherCheckout := t.TempDir()
 	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
 	writeAbsolute(t, classPath, csharpFile(80))
 	f.write("TestResults/coverage.cobertura.xml", renderCobertura(
 		[]string{otherCheckout, filepath.Join(f.root, "src")},
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)},
-		coverageClass{filename: ".", lines: spanCoverage(1, 1, 1)}))
+		coverageClass{filename: ".", lines: spanCoverage(1, 1, 1)},
+		coverageClass{filename: "..", lines: spanCoverage(1, 1, 1)}))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
