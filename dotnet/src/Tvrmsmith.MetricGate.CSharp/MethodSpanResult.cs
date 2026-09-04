@@ -8,7 +8,10 @@ namespace Tvrmsmith.MetricGate.CSharp;
 /// <c>Cache&lt;TKey, TValue&gt;.Get</c>. No namespace and no parameter list. The full table, and
 /// which declarations get a span at all, live in <c>docs/csharp-decision-points.md</c>.
 ///
-/// <para>Lines are 1-based and cover the whole declaration, signature through closing brace.</para>
+/// <para>Lines are 1-based and cover the declaration's full syntax, first token to last. For a
+/// method with a block that is the signature through the closing brace, for an expression-bodied
+/// member it ends at the semicolon, and for an auto-property accessor it is the single line
+/// <c>get;</c> sits on.</para>
 ///
 /// <para><c>Signature</c> is what tells two overloads declared on the same line apart, since they
 /// share <c>Name</c>, <c>StartLine</c> and <c>EndLine</c>. The gate never prints it; it uses it
@@ -30,8 +33,12 @@ namespace Tvrmsmith.MetricGate.CSharp;
 /// <item>parameter names, attributes and default values never appear.</item>
 /// </list>
 ///
-/// <para>A constructor, finalizer, operator, conversion operator or local function spells its own
-/// parameter list the same way a method does. A property or event accessor takes <c>()</c>, since
+/// <para>A constructor, finalizer, operator or local function spells its own parameter list the
+/// same way a method does. A conversion operator spells its parameter list that way and then
+/// appends a colon and its target type, so <c>explicit operator long(Widened v)</c> is
+/// <c>(Widened):long</c>. Two conversions on one type differ only in that target type, and
+/// <c>op_Explicit</c> gives them the same <c>Name</c>, so without it two conversions written on one
+/// line would be indistinguishable. A property or event accessor takes <c>()</c>, since
 /// the declaration itself carries no parameter list and the implicit <c>value</c> parameter is
 /// never spelled. An indexer accessor takes the indexer's own parameter list instead, so
 /// <c>get_Item</c> on <c>this[int index]</c> is <c>(int)</c>.</para>

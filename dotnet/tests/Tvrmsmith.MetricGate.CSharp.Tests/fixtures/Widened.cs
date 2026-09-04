@@ -101,4 +101,7 @@ public class Widened : IShifted
     public static explicit operator long(Widened w) => w._count;
 
     public static explicit operator checked short(Widened w) => checked((short)w._count);
+
+    // Two conversions sharing one line and one metadata name, told apart only by target type.
+    public static explicit operator byte(Widened w) => (byte)w._count; public static explicit operator sbyte(Widened w) => (sbyte)w._count;
 }

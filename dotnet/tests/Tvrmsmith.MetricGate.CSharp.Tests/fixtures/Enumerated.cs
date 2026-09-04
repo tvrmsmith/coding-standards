@@ -1,9 +1,10 @@
 namespace Fixtures;
 
-// One method per construct ComplexityWalker's contract enumerates, each holding that
-// construct and nothing else, so a construct that stops scoring fails on its own name rather
-// than moving an aggregate somebody has to decompose. The three at the bottom are the
-// contract's stated non-points.
+// One method per construct docs/csharp-decision-points.md enumerates, each holding that construct
+// and nothing else, so a construct that stops scoring fails on its own name rather than moving an
+// aggregate somebody has to decompose. DefaultLabel through BitwiseOrOperator are the constructs
+// that document says score nothing, the last four of them being deltas where Roslyn does score.
+// Folded at the end pins a nested local function's points to the local function alone.
 public class Enumerated
 {
     public int If(int a)
@@ -159,6 +160,20 @@ public class Enumerated
         s ??= "d";
         return s;
     }
+
+    public int Goto(int a)
+    {
+        goto done;
+
+    done:
+        return a;
+    }
+
+    public int? ConditionalAccess(string? s) => s?.Length;
+
+    public bool BitwiseAndOperator(bool a, bool b) => a & b;
+
+    public bool BitwiseOrOperator(bool a, bool b) => a | b;
 
     public int Folded(int a)
     {

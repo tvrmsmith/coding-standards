@@ -229,11 +229,13 @@ public class ExtractionTests
     }
 
     /// <summary>
-    /// Every construct <c>ComplexityWalker</c>'s contract enumerates, one per method, so a
+    /// Every construct <c>docs/csharp-decision-points.md</c> enumerates, one per method, so a
     /// construct that stops scoring fails under its own name. A construct dropped from the walker
     /// while it stays in the doc, or added to the walker while the doc says it is out of scope,
-    /// has to move a number here. The last three are the contract's stated non-points, and a
-    /// guard rides its case label, so <c>CaseGuard</c> is the only one carrying two points.
+    /// has to move a number here. <c>DefaultLabel</c> through <c>BitwiseOrOperator</c> are the
+    /// constructs that document says score nothing, the last four of them being deltas where
+    /// Roslyn does score. A guard rides its case label, which is why <c>CaseGuard</c> and
+    /// <c>CatchFilter</c> carry two points on top of the base.
     /// </summary>
     [Fact]
     public void EveryEnumeratedConstructScoresExactlyThePointsTheContractGivesIt()
@@ -264,6 +266,10 @@ public class ExtractionTests
             new { Name = "Enumerated.DefaultLabel", Complexity = 1 },
             new { Name = "Enumerated.NotPattern", Complexity = 1 },
             new { Name = "Enumerated.CoalesceAssign", Complexity = 1 },
+            new { Name = "Enumerated.Goto", Complexity = 1 },
+            new { Name = "Enumerated.ConditionalAccess", Complexity = 1 },
+            new { Name = "Enumerated.BitwiseAndOperator", Complexity = 1 },
+            new { Name = "Enumerated.BitwiseOrOperator", Complexity = 1 },
             new { Name = "Enumerated.Folded", Complexity = 1 },
             new { Name = "Enumerated.Folded.Inner", Complexity = 2 },
         }, o => o.WithStrictOrdering());
@@ -309,7 +315,9 @@ public class ExtractionTests
     /// the declaration is <c>checked</c>. An explicit interface implementation carries the
     /// interface it implements between the type and the member, so two of them cannot collide.
     /// An auto-property accessor gets a span too, spanning its own line, even though it carries
-    /// neither a body nor an expression body.
+    /// neither a body nor an expression body. Every conversion operator on a type shares one
+    /// metadata name, so its signature carries the target type and the last two, written on one
+    /// line, stay distinguishable.
     /// </summary>
     [Fact]
     public void EveryMemberKindThatCarriesLinesGetsASpanNamedMetadataStyle()
@@ -341,17 +349,21 @@ public class ExtractionTests
             new { Name = "Widened.op_UnaryPlus", Signature = "(Widened)", StartLine = 93, EndLine = 93, Complexity = 1 },
             new { Name = "Widened.op_UnaryNegation", Signature = "(Widened)", StartLine = 95, EndLine = 95, Complexity = 1 },
             new { Name = "Widened.op_Subtraction", Signature = "(Widened, Widened)", StartLine = 97, EndLine = 97, Complexity = 1 },
-            new { Name = "Widened.op_Implicit", Signature = "(Widened)", StartLine = 99, EndLine = 99, Complexity = 1 },
-            new { Name = "Widened.op_Explicit", Signature = "(Widened)", StartLine = 101, EndLine = 101, Complexity = 1 },
-            new { Name = "Widened.op_CheckedExplicit", Signature = "(Widened)", StartLine = 103, EndLine = 103, Complexity = 1 },
+            new { Name = "Widened.op_Implicit", Signature = "(Widened):int", StartLine = 99, EndLine = 99, Complexity = 1 },
+            new { Name = "Widened.op_Explicit", Signature = "(Widened):long", StartLine = 101, EndLine = 101, Complexity = 1 },
+            new { Name = "Widened.op_CheckedExplicit", Signature = "(Widened):short", StartLine = 103, EndLine = 103, Complexity = 1 },
+            new { Name = "Widened.op_Explicit", Signature = "(Widened):byte", StartLine = 106, EndLine = 106, Complexity = 1 },
+            new { Name = "Widened.op_Explicit", Signature = "(Widened):sbyte", StartLine = 106, EndLine = 106, Complexity = 1 },
         }, o => o.WithStrictOrdering());
     }
 
     /// <summary>
     /// The compiler synthesizes a body for an auto-property accessor, and that is the whole reason
     /// one gets a span. So a partial property's defining half, which promises an accessor rather
-    /// than declaring one, gets none while its implementing half gets both, and a <c>static</c>
-    /// auto-property on an interface gets both even though its bodyless neighbour gets neither.
+    /// than declaring one, gets none while its implementing half gets exactly one pair, whether it
+    /// writes accessor bodies (<c>Half</c>) or stays an auto-property with an initializer
+    /// (<c>Whole</c>). A <c>static</c> auto-property on an interface gets a pair too, even though
+    /// its bodyless neighbour gets neither.
     /// </summary>
     [Fact]
     public void OnlyAnAutoAccessorTheCompilerFillsInGetsASpan()
@@ -361,10 +373,12 @@ public class ExtractionTests
         exitCode.Should().Be(0);
         result.Spans.Should().BeEquivalentTo(new[]
         {
-            new { Name = "Held.get_Half", Signature = "()", StartLine = 18, EndLine = 18, Complexity = 1 },
-            new { Name = "Held.set_Half", Signature = "()", StartLine = 19, EndLine = 19, Complexity = 1 },
-            new { Name = "ICounted.get_Counter", Signature = "()", StartLine = 25, EndLine = 25, Complexity = 1 },
-            new { Name = "ICounted.set_Counter", Signature = "()", StartLine = 25, EndLine = 25, Complexity = 1 },
+            new { Name = "Held.get_Half", Signature = "()", StartLine = 21, EndLine = 21, Complexity = 1 },
+            new { Name = "Held.set_Half", Signature = "()", StartLine = 22, EndLine = 22, Complexity = 1 },
+            new { Name = "Held.get_Whole", Signature = "()", StartLine = 25, EndLine = 25, Complexity = 1 },
+            new { Name = "Held.set_Whole", Signature = "()", StartLine = 25, EndLine = 25, Complexity = 1 },
+            new { Name = "ICounted.get_Counter", Signature = "()", StartLine = 30, EndLine = 30, Complexity = 1 },
+            new { Name = "ICounted.set_Counter", Signature = "()", StartLine = 30, EndLine = 30, Complexity = 1 },
         }, o => o.WithStrictOrdering());
     }
 
@@ -393,7 +407,8 @@ public class ExtractionTests
     /// An interface member with no default implementation, an abstract member or auto-property, an
     /// extern member or auto-property, a field-like event, a bodyless partial method and a primary
     /// constructor on a record or a class carry no lines a developer can branch in, so none of them
-    /// gets a span, and the file still parses.
+    /// gets a span, and the file still parses. An <c>extern</c> local function is the same case, so
+    /// the only span the whole file yields is the ordinary method declaring it.
     /// </summary>
     [Fact]
     public void ADeclarationCarryingNoBodyGetsNoSpanAndTheFileStillParses()
@@ -405,7 +420,10 @@ public class ExtractionTests
         {
             new { File = "fixtures/Bodyless.cs", Status = "parsed" },
         });
-        result.Spans.Should().BeEmpty();
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Holder.Hold", Signature = "()", StartLine = 43, EndLine = 46, Complexity = 1 },
+        });
     }
 
     /// <summary>
