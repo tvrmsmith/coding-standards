@@ -641,31 +641,38 @@ func TestMethodMovedWithinOneFileIsMeasuredAtItsNewLocation(t *testing.T) {
 		"0 of 1 changed methods over CRAP threshold 30, worst score 10.75\n")
 }
 
-func TestDeletedMethodIsNotMeasuredAndItsDeletionChangesTheCodeAroundIt(t *testing.T) {
+// TestDeletingAMethodAttributesTheZeroLengthHunkToTheLineBeforeIt pins which
+// line a pure deletion touches. Before and Boundary sit either side of the
+// insertion point, so the two candidate answers produce different documents.
+// Move the touch to line 8 and the table names Legacy.Before over 5-8 at
+// coverage 1 and score 3 instead, and the golden stops matching.
+func TestDeletingAMethodAttributesTheZeroLengthHunkToTheLineBeforeIt(t *testing.T) {
 	const legacy = "src/Ordering/Legacy.cs"
-	neighbour := span{File: legacy, Name: "Legacy.Neighbour", StartLine: 5, EndLine: 9, Complexity: 3}
+	before := span{File: legacy, Name: "Legacy.Before", StartLine: 5, EndLine: 8, Complexity: 3}
+	boundary := span{File: legacy, Name: "Legacy.Boundary", StartLine: 9, EndLine: 9, Complexity: 3}
 	// Well over the threshold and holding no touched line, so the gate never
-	// measures it and it never reaches the table.
+	// measures it and it never reaches the table. Survivor is not the deleted
+	// method and cannot stand in for it. The gate takes spans from the working
+	// tree alone, so a deleted method has no span at all and the clause that
+	// it is never measured has nothing that could falsify it.
 	survivor := span{File: legacy, Name: "Legacy.Survivor", StartLine: 15, EndLine: 25, Complexity: 34}
 
 	f := newFixture(t, "main")
 	f.write(legacy, csharpFile(60))
 	f.commitAll("initial")
 	// Deleting lines 10-40 produces a zero-length hunk whose insertion point
-	// is line 9, so line 9 is the only touched line. Neighbour ends at 9 and
-	// Survivor starts at 15, which makes Neighbour the only span the gate can
-	// attribute the deletion to. The deleted lines carry no working-tree span
-	// of their own, so nothing stands in for the method that lived there.
+	// is line 9, so line 9 is the only touched line. It falls inside Boundary
+	// and outside Before, which makes Boundary the one changed method.
 	f.deleteLines(legacy, 10, 40)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
-		coverageClass{filename: legacy, lines: spanCoverage(6, 3, 2)}))
+		coverageClass{filename: legacy, lines: append(spanCoverage(5, 4, 4), spanCoverage(9, 1, 0)...)}))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(legacy), []span{neighbour, survivor}),
+		Stdout:     extractorOutput(t, parsed(legacy), []span{before, boundary, survivor}),
 	}
 
 	f.run().assertMatches(t, "deleted_method", 0, f.baseLabel("main"),
-		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+		"0 of 1 changed methods over CRAP threshold 30, worst score 12.00\n")
 }
 
 func TestEveryMethodInANewlyAddedFileIsMeasured(t *testing.T) {
@@ -708,8 +715,10 @@ func TestEveryMethodInANewlyAddedFileIsMeasured(t *testing.T) {
 //   - Origin.cs and Destination.cs repeat the moved-method case: the method
 //     is measured at its new home in Destination, and Origin's own touch is
 //     a diagnostic only.
-//   - Doomed.cs is deleted outright, which is status D and --diff-filter=ACM
-//     drops it before it can be measured or even named.
+//   - Doomed.cs is deleted outright and contributes nothing to the table.
+//     This case does not pin --diff-filter=ACM, because git renders a deleted
+//     file's new side as /dev/null, a path no extractor claims, so an
+//     unfiltered deletion would be discarded downstream anyway.
 //   - Stable.cs is renamed to Renamed.cs with no content change. --no-renames
 //     turns that into a D/A pair, and the pure-move drop, driven by the raw
 //     listing pairing them on one content digest, removes it again.
