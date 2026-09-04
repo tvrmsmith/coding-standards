@@ -41,6 +41,28 @@ unknown methods that the zero-classes diagnostic exists to replace. Every `unkno
 [ADR 0001](0001-crap-gate-topology.md), so nothing silently passes; only the diagnosis is deferred. The rules stand
 as decided, and this notes their arrival date rather than reopening them.
 
+**Amended 2026-09-04.** Those three rules landed with
+[issue 16](https://github.com/tvrmsmith/coding-standards/issues/16), so the deferral the paragraph above records is
+closed and the worktree case now exits 1 naming the mismatch rather than presenting as a wall of unknown methods.
+Their typed codes are `coverage_source_root_erased`, `file_ambiguous`, and `coverage_outside_repo`, enumerated in
+[ADR 0005](0005-the-machine-document-is-the-only-output.md). Two points of detail the Consequences section does not
+settle, decided while implementing and recorded here:
+
+- The three are checked per report, in discovery order, and within one report in this precedence: erased source
+  root first, over the whole class list and before any candidate is built, then a class resolving to two paths
+  inside the root, then the report placing no class inside it. `DeterministicReport` is tested over every class
+  ahead of `UseSourceLink`, so a report carrying both shapes names the first, whatever order its classes appear in.
+- "A report contributing zero classes inside the repo root fails" is unconditional, as written. Whether a candidate
+  failed because it landed outside the root or because the file is gone from disk makes no difference to the
+  report-level rule, and the two were tried as separate signals and reverted: a real coverlet report on Unix
+  carries `<source>/</source>`, which resolves, so no on-disk signal tells "built in another checkout" apart from
+  "deleted since the test run", and splitting them left the container case undiagnosed. A single unplaceable path
+  is still ignored in silence, per the last Consequences paragraph. It is only a report with nothing left that
+  fails.
+
+A report carrying no `<class>` element at all raises nothing, since it placed nothing to be outside; a changed
+method it fails to cover still fails the run as `unknown_changed_method`.
+
 ## Considered options
 
 **Longest-suffix matching.** The standard fallback, and the one every prior implementation reaches for.
