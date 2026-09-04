@@ -177,6 +177,7 @@ describe('slice scoping', () => {
     ].sort()
     assert.deepEqual(plugins, [
       'jest-dom',
+      'jsx-a11y',
       'react',
       'react-hooks',
       'react-you-might-not-need-an-effect',

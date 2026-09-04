@@ -5,7 +5,7 @@ npm packages.
 - `eslint-config-tvrmsmith` — the curated preset, off the shelf apart from the
   one custom rule it registers. Most rules trace to a named guideline; the mapping
   runs one way, so a rule need not trace back to one, which is what the TypeScript,
-  regex, Sonar and React correctness layers rest on. Every rule in the default export works
+  regex, Sonar, React and accessibility layers rest on. Every rule in the default export works
   without type information; the type-aware ones live behind the `/typed` entry point, and a
   test keeps each set on its own side.
   Assumes no test runner: vitest and jest are both in scope, so neither is baked in.
