@@ -2,8 +2,9 @@
 // which lines of a source file are instrumentable and which of those were
 // hit. It resolves report paths by ADR 0004's one rule, and the rule cuts two
 // ways: one path it cannot place inside the repo is a silent ignore, while a
-// report with an erased source root, a class contradicting itself, or no class
-// inside the root at all fails the run with a typed code.
+// report with an erased source root, a class contradicting itself, or classes
+// that resolved outside the root and none inside it fails the run with a typed
+// code.
 package coverage
 
 import (
@@ -158,8 +159,9 @@ func parseReport(path string) (coberturaReport, error) {
 const erasedSourceRootPrefix = "/_/"
 
 // sourceLinkScheme matches a filename UseSourceLink=true emits in place of a
-// path: the raw source-link document key, which SourceLink always spells as a
-// URI.
+// path: the raw source-link document key, which ADR 0004 records as one that
+// can be a URL. A key carrying no scheme is not detected here and falls
+// through to the ordinary resolution path, where it is a silent ignore.
 var sourceLinkScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
 
 // mergeInto resolves each class to a source path and folds its lines into the
@@ -248,8 +250,14 @@ func (r coberturaReport) erasedSourceRoot(reportPath srcpath.Path) *report.Failu
 
 // candidates lists every absolute path ADR 0004 derives from one class
 // filename: each <source> joined to it, plus the filename itself when it is
-// already absolute.
+// already absolute. A class carrying no filename yields nothing, because
+// joining "" onto a <source> names the source directory itself, which resolves
+// inside the root and would let one malformed class stand in for a whole
+// report's worth of classes that did not.
 func (r coberturaReport) candidates(filename string) []string {
+	if filename == "" {
+		return nil
+	}
 	candidates := make([]string, 0, len(r.Sources)+1)
 	for _, source := range r.Sources {
 		candidates = append(candidates, filepath.Join(source, filepath.FromSlash(filename)))
@@ -270,16 +278,16 @@ func (r coberturaReport) candidates(filename string) []string {
 func placeCandidates(candidates []string, root srcpath.Root) (distinct []srcpath.Path, outside string) {
 	seen := map[srcpath.Path]bool{}
 	for _, candidate := range candidates {
-		path, placement := root.Place(candidate)
-		switch placement {
+		placed := root.Place(candidate)
+		switch placed.Placement {
 		case srcpath.OutsideRoot:
 			if outside == "" {
-				outside = candidate
+				outside = placed.Resolved
 			}
 		case srcpath.InsideRoot:
-			if !seen[path] {
-				seen[path] = true
-				distinct = append(distinct, path)
+			if !seen[placed.Path] {
+				seen[placed.Path] = true
+				distinct = append(distinct, placed.Path)
 			}
 		}
 	}
@@ -288,13 +296,14 @@ func placeCandidates(candidates []string, root srcpath.Root) (distinct []srcpath
 
 // outsideRepoFailure names the git-worktree case: no class in the report
 // resolved inside the root and at least one resolved outside it. The example
-// is the first such candidate in document order, resolved through symlinks
-// per srcpath.ResolveOrAsBuilt so the reader sees the path the gate compared.
+// is the resolved path of the first such candidate in document order, so the
+// reader sees the path the gate compared, spelled the same way as the root
+// beside it.
 func outsideRepoFailure(example string, reportPath srcpath.Path, root srcpath.Root) *report.Failure {
 	return &report.Failure{
 		Code: report.CodeCoverageOutsideRepo,
 		Message: fmt.Sprintf(
 			"coverage report %s resolved no class inside the repo root; example resolved path %s, repo root %s",
-			reportPath, srcpath.ResolveOrAsBuilt(example), root.Dir()),
+			reportPath, example, filepath.ToSlash(root.Dir())),
 	}
 }
