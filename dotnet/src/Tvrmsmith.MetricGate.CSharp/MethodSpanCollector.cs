@@ -16,8 +16,7 @@ namespace Tvrmsmith.MetricGate.CSharp;
 /// declaration with neither gets none, so an interface member with no default implementation, an
 /// abstract or extern member, a field-like event, a partial method with no implementation and a
 /// primary constructor never contribute one. A lambda or anonymous method gets no span of its own;
-/// its
-/// decision points are scored by whichever span holds it, per <see cref="ComplexityWalker"/>.
+/// its decision points are scored by whichever span holds it, per <see cref="ComplexityWalker"/>.
 ///
 /// A local function's name is its containing span's name, then <c>.</c>, then the local name. A
 /// local function declared inside a lambda takes the name of the span holding the lambda, and
