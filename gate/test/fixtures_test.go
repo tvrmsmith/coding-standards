@@ -258,6 +258,29 @@ func outsideRepoStderr(example, root string) string {
 		"example path %s, repo root %s\n", example, root)
 }
 
+// outsideRepoUnanchoredStderr is the same diagnostic for a report whose first
+// candidate no <source> anchored, where the quoted path is relative and the
+// message has to say so rather than leaving it to read as a path inside the
+// repo.
+func outsideRepoUnanchoredStderr(example, root string) string {
+	return fmt.Sprintf("coverage report TestResults/coverage.cobertura.xml placed no class inside the repo root; "+
+		"example path %s, which no <source> anchored to an absolute path, repo root %s\n", example, root)
+}
+
+// symlinkedDir creates link as a symlink to target, both absolute, and returns
+// link. A case uses it to put a resolving indirection in a candidate's path,
+// which is how the resolved reading of a path is told from the as-built one.
+func symlinkedDir(t *testing.T, target, link string) string {
+	t.Helper()
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("the filesystem does not allow symlinks: %v", err)
+	}
+	return link
+}
+
 // caseInsensitiveFilesystem reports whether dir's filesystem matches names
 // case insensitively, which decides whether a case-only path difference is a
 // difference the resolver can be asked about at all.
@@ -301,6 +324,21 @@ func (f *fixture) denyRead(rel string) {
 		f.t.Fatal(err)
 	}
 	f.t.Cleanup(func() { os.Chmod(full, 0o755) })
+}
+
+// denyReadFile makes the file at rel unreadable, so reading the report fails
+// on the file itself rather than on its contents. Root ignores the mode, so a
+// case relying on this skips there.
+func (f *fixture) denyReadFile(rel string) {
+	f.t.Helper()
+	if os.Geteuid() == 0 {
+		f.t.Skip("running as root, which reads a mode 0 file anyway")
+	}
+	full := filepath.Join(f.root, filepath.FromSlash(rel))
+	if err := os.Chmod(full, 0o000); err != nil {
+		f.t.Fatal(err)
+	}
+	f.t.Cleanup(func() { os.Chmod(full, 0o644) })
 }
 
 // failedToParse marks the named file as one the extractor could not parse.
