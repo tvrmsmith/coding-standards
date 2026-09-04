@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -83,18 +84,20 @@ func (f *fixture) deleteLines(rel string, from, to int) {
 }
 
 // moveLines cuts the one-based lines from..to (inclusive) out of the file at
-// src and inserts them into dst immediately after dst's line after. Both
-// files are left at status M, so the pure-move drop never fires and the
-// moved lines are byte-identical at their new home.
+// src and inserts them into dst immediately after dst's line after. It copies
+// the lines verbatim, so they are byte-identical at their new home. Callers
+// must have committed both src and dst already and must leave src non-empty,
+// which is what keeps both files at status M and the pure-move drop quiet.
+// The helper rewrites src before it re-reads dst, so when src and dst name the
+// same file, after counts lines in the shortened file.
 func (f *fixture) moveLines(src string, from, to int, dst string, after int) {
 	f.t.Helper()
 	srcLines := strings.Split(f.read(src), "\n")
-	cut := append([]string{}, srcLines[from-1:to]...)
-	f.write(src, strings.Join(append(append([]string{}, srcLines[:from-1]...), srcLines[to:]...), "\n"))
+	cut := slices.Clone(srcLines[from-1 : to])
+	f.write(src, strings.Join(slices.Delete(srcLines, from-1, to), "\n"))
 
 	dstLines := strings.Split(f.read(dst), "\n")
-	inserted := append(append([]string{}, dstLines[:after]...), append(cut, dstLines[after:]...)...)
-	f.write(dst, strings.Join(inserted, "\n"))
+	f.write(dst, strings.Join(slices.Insert(dstLines, after, cut...), "\n"))
 }
 
 // read returns the current content of the file at rel.
