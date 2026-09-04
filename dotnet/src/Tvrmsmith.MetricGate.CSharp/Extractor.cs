@@ -17,11 +17,14 @@ namespace Tvrmsmith.MetricGate.CSharp;
 public static class Extractor
 {
     /// <summary>
-    /// The parser reads whatever the consumer's compiler accepts, so the language version is pinned
-    /// to <see cref="LanguageVersion.Preview"/> rather than left to the default, which is the
-    /// newest stable version the referenced parser knows. A file the consumer compiles but this
-    /// tool cannot parse comes back <c>failed</c> and fails the whole run, which is the wrong answer
-    /// for source that is merely newer than the parser's default.
+    /// <see cref="LanguageVersion.Preview"/> is the highest setting the referenced parser exposes,
+    /// so this opens every feature that parser implements rather than leaving the default, which is
+    /// the newest stable version it knows. It cannot reach past the reference: the
+    /// <c>Microsoft.CodeAnalysis.CSharp</c> version in the project file is a hard ceiling on the C#
+    /// this tool can read, and a construct newer than that ceiling comes back <c>failed</c> for its
+    /// file even though the consumer's own compiler accepts it. That is a failed row rather than a
+    /// wrong score, which is the safe direction to be wrong in.
+    /// <c>docs/csharp-decision-points.md</c> records where the ceiling currently sits.
     /// </summary>
     private static readonly CSharpParseOptions ParseOptions =
         new CSharpParseOptions(LanguageVersion.Preview);

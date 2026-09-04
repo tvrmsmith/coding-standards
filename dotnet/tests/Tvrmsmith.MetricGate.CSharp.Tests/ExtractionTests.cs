@@ -366,6 +366,11 @@ public class ExtractionTests
     /// older parser would call the whole file unparseable and emit nothing.
     /// A <c>static</c> auto-property on an interface gets a pair too, even though
     /// its bodyless neighbour gets neither.
+    ///
+    /// <para>Which half is which is read off the declaration, never off the order the two halves
+    /// appear in. <c>Half</c> and <c>Whole</c> declare the promise first, <c>Early</c> declares its
+    /// implementing half first, and its rows land on line 15 rather than line 30, so a rule keyed
+    /// on declaration order fails here.</para>
     /// </summary>
     [Fact]
     public void OnlyAnAutoAccessorTheCompilerFillsInGetsASpan()
@@ -379,12 +384,14 @@ public class ExtractionTests
         });
         result.Spans.Should().BeEquivalentTo(new[]
         {
-            new { Name = "Held.get_Half", Signature = "()", StartLine = 21, EndLine = 21, Complexity = 1 },
-            new { Name = "Held.set_Half", Signature = "()", StartLine = 22, EndLine = 22, Complexity = 1 },
-            new { Name = "Held.get_Whole", Signature = "()", StartLine = 25, EndLine = 25, Complexity = 1 },
-            new { Name = "Held.set_Whole", Signature = "()", StartLine = 25, EndLine = 25, Complexity = 1 },
-            new { Name = "ICounted.get_Counter", Signature = "()", StartLine = 30, EndLine = 30, Complexity = 1 },
-            new { Name = "ICounted.set_Counter", Signature = "()", StartLine = 30, EndLine = 30, Complexity = 1 },
+            new { Name = "Held.get_Early", Signature = "()", StartLine = 15, EndLine = 15, Complexity = 1 },
+            new { Name = "Held.set_Early", Signature = "()", StartLine = 15, EndLine = 15, Complexity = 1 },
+            new { Name = "Held.get_Half", Signature = "()", StartLine = 24, EndLine = 24, Complexity = 1 },
+            new { Name = "Held.set_Half", Signature = "()", StartLine = 25, EndLine = 25, Complexity = 1 },
+            new { Name = "Held.get_Whole", Signature = "()", StartLine = 28, EndLine = 28, Complexity = 1 },
+            new { Name = "Held.set_Whole", Signature = "()", StartLine = 28, EndLine = 28, Complexity = 1 },
+            new { Name = "ICounted.get_Counter", Signature = "()", StartLine = 35, EndLine = 35, Complexity = 1 },
+            new { Name = "ICounted.set_Counter", Signature = "()", StartLine = 35, EndLine = 35, Complexity = 1 },
         }, o => o.WithStrictOrdering());
     }
 
@@ -433,22 +440,28 @@ public class ExtractionTests
     }
 
     /// <summary>
-    /// The parser reads C# newer than the version the extractor's own build targets. An
-    /// <c>allows ref struct</c> constraint and an <c>\e</c> escape are both parse errors under the
-    /// Roslyn version this project first referenced, so a downgrade of
-    /// <c>Microsoft.CodeAnalysis.CSharp</c>, or a parse left on an older language version, turns
-    /// this file into a failed row with no spans instead of the two below.
+    /// The C# 13 ceiling that <c>docs/csharp-decision-points.md</c> names, pinned from both sides
+    /// so it cannot move without a test saying so. <c>Recent.cs</c> holds C# 13 syntax, an
+    /// <c>allows ref struct</c> constraint and an <c>\e</c> escape, both of which need the
+    /// <c>Microsoft.CodeAnalysis.CSharp</c> reference at 4.12.0 or later and the parse pinned to
+    /// the highest language version that reference exposes; a downgrade of either turns it into a
+    /// failed row with no spans. <c>Beyond.cs</c> holds C# 14 extension members, which the current
+    /// reference cannot parse, so it comes back failed even though a consumer's own compiler
+    /// accepts it, which is the gap the ceiling section records. Raising the reference past C# 14
+    /// flips that row to parsed and reddens this test, which is the signal to move the ceiling in
+    /// the doc rather than a regression.
     /// </summary>
     [Fact]
-    public void SyntaxNewerThanTheBuildsOwnLanguageVersionStillParses()
+    public void TheParserAcceptsCSharp13AndNothingPastTheDocumentedCeiling()
     {
-        var (exitCode, result) = ExtractorRun.Run("fixtures/Recent.cs");
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Recent.cs", "fixtures/Beyond.cs");
 
         exitCode.Should().Be(0);
         result.Files.Should().BeEquivalentTo(new[]
         {
             new { File = "fixtures/Recent.cs", Status = "parsed" },
-        });
+            new { File = "fixtures/Beyond.cs", Status = "failed" },
+        }, o => o.WithStrictOrdering());
         result.Spans.Should().BeEquivalentTo(new[]
         {
             new { Name = "Recent.Pick<T>", Signature = "`1(T, bool)", StartLine = 9, EndLine = 9, Complexity = 2 },

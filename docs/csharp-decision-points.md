@@ -106,20 +106,21 @@ no span holds it, in a field or property initializer, they are counted nowhere; 
 above records that gap. A local function is its own span wherever it is written, including inside an
 initializer lambda, and two separate mechanisms keep that from double counting.
 
-Top-level statements are the second deferral, alongside the initializer one. The compiler wraps a
-file's global statements in a synthesized `<Main>$`, which has no declaration syntax for the collector
-to key on, so however many branches those statements carry they produce no span and score nowhere. The
-gate then files every changed line among them as `outsideSpans` in the join, which never gates, so
-branchy top-level code passes unmeasured. This is deferred rather than excluded, for the reason the
-initializer row gives: issue 18 pinned the scored set rather than widening it, and synthesizing a span
-for a construct with no declaration syntax moves real numbers, so it belongs with whichever change also
-moves the threshold. A local function declared in such a file is unaffected, since it does have a
-declaration and does get a span, under its bare name.
 Complexity is excluded in the walker, which stops at a nested local function so its decision points
 score against itself alone. Line ranges are not excluded: an emitted local-function span sits fully
 inside its container's span, and the gate resolves the overlap downstream with the
 smallest-containing-span rule from [ADR 0001](adr/0001-crap-gate-topology.md). A consumer reading this
 document must not assume the emitted ranges are disjoint.
+
+Top-level statements are the second deferral, alongside the initializer one the Roslyn deltas table
+records. The compiler wraps a file's global statements in a synthesized `<Main>$`, which has no
+declaration syntax for the collector to key on, so however many branches those statements carry they
+produce no span and score nowhere. The gate then files every changed line among them as `outsideSpans`
+in the join, which never gates, so branchy top-level code passes unmeasured. This is deferred rather
+than excluded, for the reason the initializer row gives: issue 18 pinned the scored set rather than
+widening it, and synthesizing a span for a construct with no declaration syntax moves real numbers, so
+it belongs with whichever change also moves the threshold. A local function declared in such a file is
+unaffected, since it does have a declaration and does get a span, under its bare name.
 
 A span's printed name follows the CLR's own naming for the member kind:
 
@@ -160,3 +161,23 @@ A generic name's printed form carries a comma, and this document's own tables ca
 the delimiter is a pipe. That is the reason [ADR 0005](adr/0005-the-machine-document-is-the-only-output.md)
 chose the pipe over TOON's comma default: a comma delimiter would force `Order.Map<TKey, TValue>` to be
 quoted, while pipe never needs to quote it.
+
+## The language ceiling
+
+**The ceiling is C# 13**, set by the `Microsoft.CodeAnalysis.CSharp` 4.13.0 reference in
+`dotnet/src/Tvrmsmith.MetricGate.CSharp/Tvrmsmith.MetricGate.CSharp.csproj`. The extractor asks that
+parser for `LanguageVersion.Preview`, which is the highest setting it exposes, so every feature the
+referenced parser implements is open. The setting cannot reach past the reference, though. The package
+version is the real limit, and raising it is the only way to raise the ceiling.
+
+A construct newer than the ceiling makes its file a `failed` row, even though the consumer's own
+compiler accepts it, and a `failed` row stops the run naming that file. So the ceiling is a real
+constraint on which repositories the gate can score, not just a note. C# 14 extension members,
+`public static class E { extension(string s) { ... } }`, are the first construct past it. Getting them
+needs `Microsoft.CodeAnalysis.CSharp` 4.14.0 or later, and that bump also forces two decisions this
+extractor has not made: how a member declared inside an `extension` block is qualified, and what to do
+about the arity check in `OperatorName`, which reads a binary operator inside an extension block as
+unary because the receiver is not in the parameter list.
+
+`fixtures/Recent.cs` and `fixtures/Beyond.cs` pin the ceiling from both sides, so a silent downgrade of
+the reference reddens the suite and a bump reddens it too, which is the signal to update this section.
