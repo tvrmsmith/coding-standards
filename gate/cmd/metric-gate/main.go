@@ -16,6 +16,8 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strings"
+	"time"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/coverage"
 	"github.com/tvrmsmith/coding-standards/gate/internal/crap"
@@ -27,7 +29,7 @@ import (
 )
 
 func main() {
-	doc, err := measure()
+	doc, err := measure(os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -42,12 +44,49 @@ func main() {
 	os.Exit(doc.ExitCode())
 }
 
+// usageLine is the second line of every usage error this gate can print.
+const usageLine = "usage: metric-gate [--coverage <path>]..."
+
+// parseArgs reads the command line for the one flag this issue owns,
+// --coverage, repeatable and accepted as either "--coverage <path>" or
+// "--coverage=<path>". Anything else is a usage error, returned as a plain
+// error so main prints it to stderr and writes no document (ADR 0005: a
+// failure upstream of the document has no document).
+func parseArgs(args []string) ([]string, error) {
+	var coveragePaths []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--coverage":
+			i++
+			if i >= len(args) {
+				return nil, fmt.Errorf("--coverage needs a path\n%s", usageLine)
+			}
+			coveragePaths = append(coveragePaths, args[i])
+		case strings.HasPrefix(arg, "--coverage="):
+			value := strings.TrimPrefix(arg, "--coverage=")
+			if value == "" {
+				return nil, fmt.Errorf("--coverage needs a path\n%s", usageLine)
+			}
+			coveragePaths = append(coveragePaths, value)
+		default:
+			return nil, fmt.Errorf("unknown argument: %s\n%s", arg, usageLine)
+		}
+	}
+	return coveragePaths, nil
+}
+
 // measure runs the gate over the repo containing the working directory. A
 // typed exit-1 cause becomes the document's error block; only a problem the
 // document cannot describe, such as not being in a repo at all, comes back as
 // an error.
-func measure() (report.Document, error) {
+func measure(args []string) (report.Document, error) {
 	var doc report.Document
+	coveragePaths, err := parseArgs(args)
+	if err != nil {
+		return doc, err
+	}
+
 	repo, err := gitscope.Open()
 	if err != nil {
 		return doc, err
@@ -92,7 +131,12 @@ func measure() (report.Document, error) {
 		return doc, nil
 	}
 
-	lines, skipped, err := loadCoverage(repo.Root())
+	newest, err := newestEdit(repo.Root(), changed)
+	if err != nil {
+		return doc, err
+	}
+
+	lines, skipped, err := loadCoverage(repo.Root(), coveragePaths, newest)
 	doc.SkippedPaths = skipped
 	if failure, ok := asFailure(err); ok {
 		doc.Failure = failure
@@ -120,23 +164,62 @@ func measure() (report.Document, error) {
 // crap.DeclaredInputs names it. The failure names the metric that is stuck
 // rather than the file that is absent (ADR 0002). The paths discovery could
 // not read come back alongside, including on the missing-report failure,
-// where they are the likeliest explanation for it.
-func loadCoverage(root srcpath.Root) (coverage.Set, []string, error) {
+// where they are the likeliest explanation for it. When the developer named
+// any report, discovery does not run at all: skipped_paths stays empty, and
+// the named sources go straight to Load.
+func loadCoverage(root srcpath.Root, named []string, newest coverage.Newest) (coverage.Set, []string, error) {
 	if !slices.Contains(crap.DeclaredInputs, inputCoverage) {
 		return nil, nil, nil
 	}
-	reports, skipped, err := coverage.Discover(root)
+	if len(named) > 0 {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, nil, err
+		}
+		set, err := coverage.Load(root, coverage.Named(cwd, named), newest)
+		return set, nil, err
+	}
+	sources, skipped, err := coverage.Discover(root)
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(reports) == 0 {
+	if len(sources) == 0 {
 		return nil, skipped, &report.Failure{
-			Code:    report.CodeCoverageMissing,
-			Message: crap.DisplayName + " requires a coverage report, none found",
+			Code: report.CodeCoverageMissing,
+			Message: crap.DisplayName + " requires a coverage report, none found matching " +
+				coverage.Glob + " under the repo root",
 		}
 	}
-	set, err := coverage.Load(root, reports)
+	set, err := coverage.Load(root, sources, newest)
 	return set, skipped, err
+}
+
+// newestEdit stats the working-tree file of every distinct span file among
+// the changed methods, and returns the greatest modification time, truncated
+// to whole seconds, along with the file that holds it. A tie on equal times
+// is broken on the lexicographically smallest path, so the message a stale
+// report gets is deterministic.
+func newestEdit(root srcpath.Root, changed []extract.Span) (coverage.Newest, error) {
+	var newest coverage.Newest
+	seen := map[srcpath.Path]bool{}
+	for _, span := range changed {
+		if seen[span.File] {
+			continue
+		}
+		seen[span.File] = true
+		info, err := os.Stat(root.Abs(span.File))
+		if err != nil {
+			return coverage.Newest{}, fmt.Errorf("stat %s: %w", span.File, err)
+		}
+		at := info.ModTime().Truncate(time.Second)
+		switch {
+		case newest.File == "", at.After(newest.At):
+			newest = coverage.Newest{File: span.File, At: at}
+		case at.Equal(newest.At) && span.File < newest.File:
+			newest = coverage.Newest{File: span.File, At: at}
+		}
+	}
+	return newest, nil
 }
 
 // inputCoverage is the declared input name a coverage report answers.

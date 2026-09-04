@@ -177,7 +177,7 @@ func (f *fixture) run() runResult {
 // which is how a case puts the gate in a hostile environment.
 func (f *fixture) runWithEnv(extra ...string) runResult {
 	f.t.Helper()
-	return f.exec(binDir, append([]string{"METRIC_GATE_STUB=" + f.stubConfigPath()}, extra...)...)
+	return f.exec(binDir, nil, append([]string{"METRIC_GATE_STUB=" + f.stubConfigPath()}, extra...)...)
 }
 
 // runIn executes the gate against the binary and extractor sitting in dir
@@ -185,7 +185,14 @@ func (f *fixture) runWithEnv(extra ...string) runResult {
 // installation cannot disturb the rest of the suite.
 func (f *fixture) runIn(dir string) runResult {
 	f.t.Helper()
-	return f.exec(dir)
+	return f.exec(dir, nil)
+}
+
+// runWithArgs is run with command-line arguments, which is how a case drives
+// a flag.
+func (f *fixture) runWithArgs(args ...string) runResult {
+	f.t.Helper()
+	return f.exec(binDir, args, "METRIC_GATE_STUB="+f.stubConfigPath())
 }
 
 // stubConfigPath writes the case's stub config out and returns its path.
@@ -202,10 +209,11 @@ func (f *fixture) stubConfigPath() string {
 	return path
 }
 
-// exec runs the metric-gate binary in dir against the fixture repo.
-func (f *fixture) exec(dir string, extraEnv ...string) runResult {
+// exec runs the metric-gate binary in dir against the fixture repo, with the
+// given command-line arguments.
+func (f *fixture) exec(dir string, args []string, extraEnv ...string) runResult {
 	f.t.Helper()
-	cmd := exec.Command(filepath.Join(dir, "metric-gate"))
+	cmd := exec.Command(filepath.Join(dir, "metric-gate"), args...)
 	cmd.Dir = f.root
 	cmd.Env = append(os.Environ(), append(append([]string{}, gitEnv...), extraEnv...)...)
 	var stdout, stderr strings.Builder

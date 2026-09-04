@@ -9,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf16"
 )
 
@@ -183,9 +185,25 @@ func spanCoverage(start, count, covered int) []coverageLine {
 
 // cobertura renders a coverage report in coverlet's shape, with the source
 // root in <sources> and each class's filename relative to it, which is the
-// pairing ADR 0004 resolves paths from.
+// pairing ADR 0004 resolves paths from. It stamps the report now, which is
+// newer than any source the fixture wrote before it, so a case that is not
+// about staleness is never refused for it.
 func cobertura(sourceRoot string, classes ...coverageClass) string {
-	return renderCobertura([]string{sourceRoot}, classes...)
+	return renderCobertura(nowStamp(), []string{sourceRoot}, classes...)
+}
+
+// coberturaStamped is cobertura carrying the given root timestamp attribute,
+// which is the producer's own clock and the value the staleness rule reads.
+// An empty stamp omits the attribute, which is the report the rule cannot
+// judge.
+func coberturaStamped(stamp, sourceRoot string, classes ...coverageClass) string {
+	return renderCobertura(stamp, []string{sourceRoot}, classes...)
+}
+
+// nowStamp is the current second, as a Cobertura timestamp attribute spells
+// it.
+func nowStamp() string {
+	return strconv.FormatInt(time.Now().Unix(), 10)
 }
 
 // coberturaNoSources is cobertura with <sources/> empty, so every class
@@ -200,16 +218,24 @@ func cobertura(sourceRoot string, classes ...coverageClass) string {
 // UseSourceLink=true is a different document again, keeping one <source> that
 // is empty, so a case for it calls cobertura("").
 func coberturaNoSources(classes ...coverageClass) string {
-	return renderCobertura(nil, classes...)
+	return renderCobertura(nowStamp(), nil, classes...)
 }
 
-// renderCobertura is the document builder, taking the <source> list directly.
-// A case naming more than one source is a class with two in-root candidates
-// (issue 16, file_ambiguous) or a report split across two checkouts.
-func renderCobertura(sources []string, classes ...coverageClass) string {
+// renderCobertura is the document builder, taking the timestamp attribute and
+// the <source> list directly. A case naming more than one source is a class
+// with two in-root candidates (issue 16, file_ambiguous) or a report split
+// across two checkouts. An empty stamp omits the timestamp attribute; every
+// case that is not about staleness passes nowStamp(), since issue 15 refuses
+// a report older than the source it describes and a fixed stamp would make
+// every fixture stale.
+func renderCobertura(stamp string, sources []string, classes ...coverageClass) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>` + "\n")
-	b.WriteString(`<coverage line-rate="0" version="1.9" timestamp="1767225600">` + "\n")
+	timestampAttr := ""
+	if stamp != "" {
+		timestampAttr = fmt.Sprintf(` timestamp="%s"`, xmlAttribute(stamp))
+	}
+	fmt.Fprintf(&b, `<coverage line-rate="0" version="1.9"%s>`+"\n", timestampAttr)
 	if len(sources) == 0 {
 		b.WriteString("  <sources/>\n")
 	} else {

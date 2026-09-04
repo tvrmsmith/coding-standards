@@ -16,7 +16,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/report"
 	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
@@ -29,6 +31,30 @@ const ReportName = "coverage.cobertura.xml"
 // discovered, matching the glob **/TestResults/**/coverage.cobertura.xml.
 const resultsDir = "TestResults"
 
+// Glob is the pattern discovery matches, relative to the repo root. The
+// missing-report failure names it, so a developer who ran the tests
+// somewhere else can see where the gate looked.
+const Glob = "TestResults/**/coverage.cobertura.xml"
+
+// Source is one coverage report the gate will read, and the name the
+// document gives it.
+type Source struct {
+	// Abs is where the report sits on disk.
+	Abs string
+	// Name is how a failure names the report: repo-relative for a
+	// discovered one, exactly as typed for one the developer named.
+	Name string
+}
+
+// Newest is the freshest edit among the files that contributed a changed
+// method, which is what a report has to be at least as new as.
+type Newest struct {
+	File srcpath.Path
+	// At is truncated to whole seconds, since a Cobertura timestamp has
+	// second resolution and cannot express anything finer.
+	At time.Time
+}
+
 // Lines is one source file's instrumentable lines, each mapped to whether any
 // report recorded a hit on it.
 type Lines map[int]bool
@@ -38,11 +64,11 @@ type Lines map[int]bool
 // changed method in it unknown rather than untested.
 type Set map[srcpath.Path]Lines
 
-// Discover lists the Cobertura reports under the repo root, in a fixed order,
-// beside the paths the walk could not read. A skipped path is a report the
-// walk may not have seen, so the document carries it under `skipped_paths`
-// rather than leaving understated coverage unexplained.
-func Discover(root srcpath.Root) (reports []srcpath.Path, skipped []string, err error) {
+// Discover lists the Cobertura reports under the repo root, in a fixed order
+// by Name, beside the paths the walk could not read. A skipped path is a
+// report the walk may not have seen, so the document carries it under
+// `skipped_paths` rather than leaving understated coverage unexplained.
+func Discover(root srcpath.Root) (sources []Source, skipped []string, err error) {
 	err = filepath.WalkDir(root.Dir(), func(path string, entry fs.DirEntry, err error) error {
 		// One unreadable directory somewhere under the repo root must not
 		// abort discovery: that would exit 1 with no document at all, where
@@ -71,15 +97,30 @@ func Discover(root srcpath.Root) (reports []srcpath.Path, skipped []string, err 
 		if !underResultsDir(rel) {
 			return nil
 		}
-		reports = append(reports, srcpath.FromSlash(filepath.ToSlash(rel)))
+		sources = append(sources, Source{Abs: path, Name: filepath.ToSlash(rel)})
 		return nil
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("discovering coverage reports: %w", err)
 	}
-	slices.Sort(reports)
+	slices.SortFunc(sources, func(a, b Source) int { return strings.Compare(a.Name, b.Name) })
 	slices.Sort(skipped)
-	return reports, skipped, nil
+	return sources, skipped, nil
+}
+
+// Named resolves each developer-typed path against cwd with filepath.Abs when
+// it is relative, and keeps Name exactly as the developer typed it. A named
+// path may live anywhere, inside the repo or outside it (ADR 0004).
+func Named(cwd string, paths []string) []Source {
+	sources := make([]Source, 0, len(paths))
+	for _, path := range paths {
+		abs := path
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(cwd, abs)
+		}
+		sources = append(sources, Source{Abs: abs, Name: path})
+	}
+	return sources
 }
 
 // relative renders a walked path the way the document names paths, falling
@@ -104,19 +145,41 @@ func underResultsDir(rel string) bool {
 	return false
 }
 
-// Load reads every report and unions them: a line is instrumentable when any
-// report lists it, and covered when any report records a non-zero hit.
-func Load(root srcpath.Root, reports []srcpath.Path) (Set, error) {
+// Load reads every source in order and unions them into one set: a line is
+// instrumentable when any report lists it, and covered when any report
+// records a non-zero hit. Before a report merges, it has to read, unmarshal,
+// carry a timestamp, and be no older than newest.At; failing any of those
+// stops the run rather than dropping the report, because a stale report
+// silently dropped is exactly the untested code the rule exists to catch.
+// An empty newest.At (the zero time) can never trip the staleness rule.
+func Load(root srcpath.Root, sources []Source, newest Newest) (Set, error) {
 	set := Set{}
-	for _, path := range reports {
-		parsed, err := parseReport(root.Abs(path))
+	for _, source := range sources {
+		parsed, err := parseReport(source.Abs)
 		if err != nil {
 			return nil, &report.Failure{
 				Code:    report.CodeCoverageUnparseable,
-				Message: fmt.Sprintf("could not parse coverage report %s; %s", path, parseCause(err)),
+				Message: fmt.Sprintf("could not parse coverage report %s; %s", source.Name, parseCause(err)),
 			}
 		}
-		if err := parsed.mergeInto(set, root, path); err != nil {
+		at, ok := parsed.timestamp()
+		if !ok {
+			return nil, &report.Failure{
+				Code: report.CodeCoverageUnparseable,
+				Message: "coverage report " + source.Name +
+					" carries no timestamp, so it cannot be judged against the code it describes",
+			}
+		}
+		// Staleness is checked before the merge, not after it, so a refused
+		// report never contributes a line even transiently.
+		if at.Before(newest.At) {
+			return nil, &report.Failure{
+				Code: report.CodeCoverageStale,
+				Message: "coverage report " + source.Name + " was written before " +
+					newest.File.String() + " was last edited",
+			}
+		}
+		if err := parsed.mergeInto(set, root, source.Name); err != nil {
 			return nil, err
 		}
 	}
@@ -124,12 +187,28 @@ func Load(root srcpath.Root, reports []srcpath.Path) (Set, error) {
 }
 
 // coberturaReport is the subset of the Cobertura schema the gate reads. Only
-// <sources>, each class's filename, and each line's number and hits matter;
-// ADR 0001 rejects taking complexity from the report.
+// <timestamp>, <sources>, each class's filename, and each line's number and
+// hits matter; ADR 0001 rejects taking complexity from the report.
 type coberturaReport struct {
-	XMLName xml.Name         `xml:"coverage"`
-	Sources []string         `xml:"sources>source"`
-	Classes []coberturaClass `xml:"packages>package>classes>class"`
+	XMLName   xml.Name         `xml:"coverage"`
+	Timestamp string           `xml:"timestamp,attr"`
+	Sources   []string         `xml:"sources>source"`
+	Classes   []coberturaClass `xml:"packages>package>classes>class"`
+}
+
+// timestamp reads the report's own clock, which is what the staleness rule
+// judges rather than any timestamp of the file on disk. It reports false when
+// the attribute is absent, empty, or not a base-10 integer, none of which the
+// rule can run without.
+func (r coberturaReport) timestamp() (time.Time, bool) {
+	if r.Timestamp == "" {
+		return time.Time{}, false
+	}
+	seconds, err := strconv.ParseInt(r.Timestamp, 10, 64)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return time.Unix(seconds, 0), true
 }
 
 type coberturaClass struct {
@@ -202,7 +281,7 @@ var sourceLinkScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
 // The classes fold into a set of this report's own, unioned into the caller's
 // only once every check has passed, so a report that fails leaves nothing of
 // itself behind.
-func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath srcpath.Path) error {
+func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath string) error {
 	if failure := r.erasedSourceRoot(reportPath); failure != nil {
 		return failure
 	}
@@ -276,7 +355,7 @@ func joinPaths(paths []srcpath.Path) string {
 // from either shape would only mislead. DeterministicReport is tested over
 // every class first, so it wins over UseSourceLink in a report carrying both
 // shapes whatever order the classes appear in.
-func (r coberturaReport) erasedSourceRoot(reportPath srcpath.Path) *report.Failure {
+func (r coberturaReport) erasedSourceRoot(reportPath string) *report.Failure {
 	for _, class := range r.Classes {
 		if erasedSourceRootPlaceholder.MatchString(class.Filename) {
 			return &report.Failure{
@@ -386,7 +465,7 @@ func placeCandidates(candidates []string, root srcpath.Root) (distinct []srcpath
 // says so rather than quoting a relative string the reader would read as a path
 // inside the repo. A report whose classes carry no filename to join builds no
 // candidate at all, and says that instead.
-func outsideRepoFailure(example string, reportPath srcpath.Path, root srcpath.Root) *report.Failure {
+func outsideRepoFailure(example string, reportPath string, root srcpath.Root) *report.Failure {
 	compared := "example path " + example
 	switch {
 	case example == "":

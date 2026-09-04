@@ -814,7 +814,7 @@ func TestChangedMethodWithNoCoverageReportAnywhereFails(t *testing.T) {
 	}
 
 	f.run().assertMatches(t, "coverage_missing", 1, f.baseLabel("main"),
-		"CRAP requires a coverage report, none found\n")
+		"CRAP requires a coverage report, none found matching TestResults/**/coverage.cobertura.xml under the repo root\n")
 }
 
 func TestRepoWithNoResolvableDiffBaseNamesEveryRefAndPointsAtTheFlag(t *testing.T) {
@@ -1394,7 +1394,7 @@ func TestCoverageReportOutsideAResultsDirectoryIsNotFound(t *testing.T) {
 	}
 
 	f.run().assertMatches(t, "coverage_missing", 1, f.baseLabel("main"),
-		"CRAP requires a coverage report, none found\n")
+		"CRAP requires a coverage report, none found matching TestResults/**/coverage.cobertura.xml under the repo root\n")
 }
 
 func TestTwoOverloadsDeclaredOnOneLineAreBothScored(t *testing.T) {
@@ -1592,7 +1592,113 @@ func TestMissingCoverageFailureStillReportsThePathsTheWalkCouldNotRead(t *testin
 	}
 
 	f.run().assertMatches(t, "coverage_missing_with_skipped_path", 1, f.baseLabel("main"),
-		"CRAP requires a coverage report, none found\n")
+		"CRAP requires a coverage report, none found matching TestResults/**/coverage.cobertura.xml under the repo root\n")
+}
+
+func TestLibraryCoveredByTwoTestProjectsIsScoredOnTheUnion(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// spanCoverage cannot express two reports that each hit a different one of
+	// Cancel's three lines, so the coverage lines are written out inline.
+	// Either report alone leaves Cancel at one line of three, scoring 5.67, so
+	// the golden's 3.00 is the union and nothing else.
+	f.write("TestResults/unit/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 1}, {number: 62, hits: 0}, {number: 63, hits: 0}}}))
+	f.write("TestResults/integration/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 0}, {number: 62, hits: 1}, {number: 63, hits: 1}}}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "two_projects_union", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.00\n")
+}
+
+func TestCoverageReportOlderThanTheCodeItDescribesIsRefused(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// 1767225600 is 2026-01-01, years behind the mtime of a file the fixture
+	// just wrote.
+	f.write("TestResults/coverage.cobertura.xml", coberturaStamped("1767225600", f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// No crap table appears: no method is scored against a report the run
+	// refused.
+	f.run().assertMatches(t, "coverage_stale", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml was written before src/Ordering/OrderService.cs was last edited\n")
+}
+
+func TestNamedCoverageReportIsUsedAndDiscoveryIsIgnored(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// Discoverable, and it holds a fourth instrumentable line the named report
+	// has never heard of. Consulting discovery instead of the named report
+	// scores Cancel 12.00, and consulting both unions to three lines of four
+	// and scores it 3.14. Only replacement scores it 3. Covering the same three
+	// lines here would leave the two indistinguishable, since the union of a
+	// covered line and an uncovered one is covered either way.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 4, 0)}))
+	// Named, outside any TestResults directory so discovery cannot reach it.
+	f.write("artifacts/coverage.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.runWithArgs("--coverage", "artifacts/coverage.xml").assertMatches(t, "named_coverage_report", 0,
+		f.baseLabel("main"), "0 of 1 changed methods over CRAP threshold 30, worst score 3.00\n")
+}
+
+func TestCoverageReportWithNoTimestampIsRefused(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", coberturaStamped("", f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_untimestamped", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml carries no timestamp, so it cannot be judged against the code it describes\n")
+}
+
+func TestUnknownArgumentIsAUsageError(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	result := f.runWithArgs("--nope")
+
+	// A usage error is upstream of the document (ADR 0005): no table, no base,
+	// nothing on stdout.
+	if result.exitCode != 1 || result.stdout != "" ||
+		result.stderr != "unknown argument: --nope\nusage: metric-gate [--coverage <path>]...\n" {
+		t.Errorf("got exit code %d, stdout %q, stderr %q",
+			result.exitCode, result.stdout, result.stderr)
+	}
 }
 
 // The cases below are issue 16: the three exit-1 diagnostics ADR 0004's
@@ -1666,7 +1772,7 @@ func TestClassWithNoFilenameDoesNotSuppressTheOutsideRepoDiagnostic(t *testing.T
 	otherCheckout := resolvedPath(t, t.TempDir())
 	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
 	writeAbsolute(t, classPath, csharpFile(80))
-	f.write("TestResults/coverage.cobertura.xml", renderCobertura(
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(nowStamp(),
 		[]string{otherCheckout, filepath.Join(f.root, "src")},
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)},
 		coverageClass{filename: "", lines: spanCoverage(1, 1, 1)}))
@@ -1731,7 +1837,7 @@ func TestClassFilenameNamingNoFileDoesNotSuppressTheOutsideRepoDiagnostic(t *tes
 	otherCheckout := resolvedPath(t, t.TempDir())
 	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
 	writeAbsolute(t, classPath, csharpFile(80))
-	f.write("TestResults/coverage.cobertura.xml", renderCobertura(
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(nowStamp(),
 		[]string{otherCheckout, filepath.Join(f.root, "src"), filepath.Join(f.root, "src", "Ordering")},
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)},
 		coverageClass{filename: ".", lines: spanCoverage(1, 1, 1)},
@@ -2105,7 +2211,7 @@ func TestErasedSourceRootIsNamedAheadOfAnAmbiguousClass(t *testing.T) {
 	// the whole document before any candidate is built, so the reader is told
 	// which property to turn off rather than shown a contradiction that is a
 	// consequence of it.
-	f.write("TestResults/coverage.cobertura.xml", renderCobertura(
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(nowStamp(),
 		[]string{filepath.Join(f.root, "src", "a"), filepath.Join(f.root, "src", "b")},
 		coverageClass{filename: "Order.cs", lines: spanCoverage(1, 1, 1)},
 		coverageClass{filename: "/_/src/Ordering/OrderService.cs", lines: spanCoverage(61, 3, 2)}))
@@ -2131,7 +2237,7 @@ func TestAmbiguousClassIsNamedAheadOfTheReportPlacingNothingInside(t *testing.T)
 	// as each class is read, so the contradiction is named rather than the
 	// report-level verdict that is decided only after the last class.
 	otherCheckout := t.TempDir()
-	f.write("TestResults/coverage.cobertura.xml", renderCobertura(
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(nowStamp(),
 		[]string{otherCheckout, filepath.Join(f.root, "src", "a"), filepath.Join(f.root, "src", "b")},
 		coverageClass{filename: "obsolete/Old.cs", lines: spanCoverage(1, 1, 1)},
 		coverageClass{filename: "Order.cs", lines: spanCoverage(1, 1, 1)}))
@@ -2186,7 +2292,7 @@ func TestClassYieldingTwoCandidatesInsideRepoRootFailsNamingBoth(t *testing.T) {
 	f.touchLine(orderService, 62)
 	// The sources are listed b before a, so the message's sorted order is not
 	// the order the candidates arrive in.
-	f.write("TestResults/coverage.cobertura.xml", renderCobertura(
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(nowStamp(),
 		[]string{filepath.Join(f.root, "src", "b"), filepath.Join(f.root, "src", "a")},
 		coverageClass{filename: "Order.cs", lines: spanCoverage(1, 1, 1)}))
 	f.stub = stubConfig{
@@ -2213,7 +2319,7 @@ func TestClassYieldingThreeCandidatesInsideRepoRootFailsNamingAllOfThem(t *testi
 	// A contradiction the reader has to resolve by hand, so the message names
 	// every path the class resolved to. Quoting the first two would leave the
 	// reader deleting one copy and hitting the same failure again.
-	f.write("TestResults/coverage.cobertura.xml", renderCobertura(
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(nowStamp(),
 		[]string{
 			filepath.Join(f.root, "src", "c"),
 			filepath.Join(f.root, "src", "a"),
@@ -2242,7 +2348,7 @@ func TestReportPathOutsideRepoIsIgnoredInSilence(t *testing.T) {
 	// already resolved inside the root from the report's other source.
 	otherCheckout := t.TempDir()
 	writeAbsolute(t, filepath.Join(otherCheckout, "obsolete", "Old.cs"), csharpFile(5))
-	f.write("TestResults/coverage.cobertura.xml", renderCobertura(
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(nowStamp(),
 		[]string{f.root, otherCheckout},
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)},
 		coverageClass{filename: "obsolete/Old.cs", lines: spanCoverage(1, 1, 1)}))
@@ -2341,7 +2447,7 @@ func TestReportListingTheSameSourceTwiceIsNotAmbiguous(t *testing.T) {
 	f.touchLine(orderService, 62)
 	// Both <source> elements yield the same candidate for the one class, so
 	// the class resolves to one path and file_ambiguous must not fire.
-	f.write("TestResults/coverage.cobertura.xml", renderCobertura(
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(nowStamp(),
 		[]string{f.root, f.root},
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
