@@ -273,6 +273,14 @@ func outsideRepoUnanchoredStderr(example, root string) string {
 		"example path %s, which no <source> anchored to an absolute path, repo root %s\n", example, root)
 }
 
+// namedOutsideRepoStderr is the coverage_outside_repo diagnostic for a case
+// carrying more than one report, where outsideRepoStderr's hardcoded single
+// path is no longer enough: the message has to say which report failed, not
+// just that one did.
+func namedOutsideRepoStderr(report, example, root string) string {
+	return fmt.Sprintf("coverage report %s placed no class inside the repo root; example path %s, repo root %s\n", report, example, root)
+}
+
 // symlinkedDir creates link as a symlink to target, both absolute, and returns
 // link. A case uses it to put a resolving indirection in a candidate's path,
 // which is how the resolved reading of a path is told from the as-built one.
@@ -620,4 +628,27 @@ func externalDiffScript(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// addOrigin creates a second, bare repository under a temp dir of its own and
+// wires it in as the fixture's `origin`, pushing branch to it so
+// refs/remotes/origin/<branch> exists afterward. The remote is initialised
+// with the same default branch name so its own HEAD, which setOriginHead
+// reads, names something real. Pushing alone leaves
+// refs/remotes/origin/HEAD unset, which is what makes the no-set-head case
+// distinct from this one.
+func (f *fixture) addOrigin(branch string) {
+	f.t.Helper()
+	remote := filepath.Join(f.t.TempDir(), "origin.git")
+	f.git("init", "--bare", "--quiet", "-b", branch, remote)
+	f.git("remote", "add", "origin", remote)
+	f.git("push", "--quiet", "origin", branch)
+}
+
+// setOriginHead points refs/remotes/origin/HEAD at the remote's own default
+// branch, asking the remote rather than guessing, which is what a real clone
+// leaves behind and a bare push on its own does not.
+func (f *fixture) setOriginHead() {
+	f.t.Helper()
+	f.git("remote", "set-head", "origin", "--auto")
 }

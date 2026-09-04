@@ -1651,6 +1651,43 @@ func TestReportBuiltInAnotherCheckoutFailsNamingTheMismatch(t *testing.T) {
 		map[string]string{"EXAMPLE": example, "ROOT": root})
 }
 
+// TestForeignReportBesideAHealthyOneFailsNamingTheForeignOne pins issue 16's
+// per-report failure against the multi-report shape none of the existing
+// fixtures exercise: discovery sorts reports, so "good" loads before "stale"
+// and the foreign one is the second report reached, which is what makes
+// naming it in the message a real assertion and not an accident of there
+// being only one report to name. Good alone covers two of Cancel's three
+// lines, which scores 3.33 and passes on its own, so the failure document
+// also pins that the healthy coverage is discarded rather than merged in
+// alongside the report that failed.
+func TestForeignReportBesideAHealthyOneFailsNamingTheForeignOne(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+
+	f.write("TestResults/good/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+
+	otherCheckout := resolvedPath(t, t.TempDir())
+	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
+	writeAbsolute(t, classPath, csharpFile(80))
+	f.write("TestResults/stale/coverage.cobertura.xml", cobertura(otherCheckout,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	example := filepath.ToSlash(classPath)
+	root := resolvedPath(t, f.root)
+	const foreign = "TestResults/stale/coverage.cobertura.xml"
+	f.run().assertMatchesWith(t, "coverage_outside_repo_beside_healthy", 1, f.baseLabel("main"),
+		namedOutsideRepoStderr(foreign, example, root),
+		map[string]string{"EXAMPLE": example, "ROOT": root})
+}
+
 func TestClassWithNoFilenameDoesNotSuppressTheOutsideRepoDiagnostic(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
@@ -2404,4 +2441,50 @@ func inRepo(t *testing.T, dir string) bool {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), gitEnv...)
 	return cmd.Run() == nil
+}
+
+func TestOriginHeadOutranksLocalMainAsTheDiffBase(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.addOrigin("main")
+	f.setOriginHead()
+	f.touchLine(orderService, 42)
+	f.commitAll("second")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: append(spanCoverage(42, 10, 1), spanCoverage(61, 3, 2)...)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// origin/HEAD sits at "initial", local main has moved on to "second", and
+	// ResolveBase must stop at the first candidate that resolves rather than
+	// the last. Diffing from origin/HEAD carries both the committed edit to
+	// line 42 and the working-tree edit to line 62, two changed methods; from
+	// local main only the second survives.
+	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/HEAD"),
+		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
+}
+
+func TestOriginMainOutranksLocalMainWhenNoOriginHeadExists(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.addOrigin("main")
+	// No setOriginHead: a push alone never creates refs/remotes/origin/HEAD,
+	// which is the shape of a fetch that never ran `remote set-head`.
+	f.touchLine(orderService, 42)
+	f.commitAll("second")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: append(spanCoverage(42, 10, 1), spanCoverage(61, 3, 2)...)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/main"),
+		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
