@@ -69,7 +69,8 @@ path the gate handles is either already a source path or is resolved to one, and
 be resolved fails the run rather than being matched approximately.
 
 That rule is about the paths the gate scores. The rest of this section is about a report's own paths,
-where the granularity is the report rather than the path.
+which answer at two granularities: a single path is ignored when it will not resolve, and it is the
+whole report that fails.
 
 The gate resolves the changed set and looks coverage up against it, rather than canonicalizing every
 path a report mentions. One report path the gate cannot place inside the repo, or places inside it

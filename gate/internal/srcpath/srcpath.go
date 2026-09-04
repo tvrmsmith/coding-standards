@@ -91,7 +91,7 @@ func (r Root) Place(candidate string) Placed {
 		return placed
 	}
 	placed.resolved = filepath.ToSlash(resolved)
-	info, err := os.Lstat(resolved)
+	info, err := os.Stat(resolved)
 	if err != nil || !info.Mode().IsRegular() {
 		return placed
 	}

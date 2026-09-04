@@ -193,9 +193,10 @@ func cobertura(sourceRoot string, classes ...coverageClass) string {
 // when the filenames carry the /_/ placeholder DeterministicReport=true writes
 // (issue 16, coverage_source_root_erased). Relative filenames with no <source>
 // beside them are a different failure: nothing anchors them, so they build no
-// candidate and the report is named as placing no class inside the root (issue
-// 16, coverage_outside_repo). Absolute filenames carry their own root and are
-// the legitimate coverlet shape.
+// candidate and the report is named as placing no class inside the root, code
+// coverage_outside_repo in the shape the coverage_outside_repo_unanchored
+// golden holds (issue 16). Absolute filenames carry their own root and are the
+// legitimate coverlet shape.
 // UseSourceLink=true is a different document again, keeping one <source> that
 // is empty, so a case for it calls cobertura("").
 func coberturaNoSources(classes ...coverageClass) string {
@@ -297,13 +298,21 @@ func caseInsensitiveFilesystem(t *testing.T, dir string) bool {
 	}
 	defer os.Remove(probe)
 	_, err := os.Stat(filepath.Join(dir, "CASE-PROBE"))
-	return err == nil
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, fs.ErrNotExist):
+		return false
+	}
+	t.Fatalf("probing %s for case sensitivity returned %v, which answers neither way", dir, err)
+	return false
 }
 
-// resolvedPath is filepath.EvalSymlinks for a path a case knows exists,
-// mirroring srcpath.Root.Place's resolving branch so a golden's
-// {{EXAMPLE}}/{{ROOT}} hole can be filled with the value the gate itself
-// would compute.
+// resolvedPath is filepath.EvalSymlinks for a directory a case knows exists,
+// used to take the indirection out of a temp root once, up front, so the paths
+// a case builds under it are already the ones the gate will compare and a
+// golden's {{EXAMPLE}}/{{ROOT}} hole is filled by joining rather than by
+// running the gate's own resolver over the answer.
 func resolvedPath(t *testing.T, path string) string {
 	t.Helper()
 	resolved, err := filepath.EvalSymlinks(path)
@@ -347,10 +356,11 @@ func (f *fixture) denyReadFile(rel string) {
 }
 
 // readCause is the cause the gate renders when it cannot read the file at rel:
-// the operating system's own wording for the same failed read, stripped of the
-// absolute path the way parseCause strips it. The wording belongs to the OS,
-// "Access is denied." rather than "permission denied" on Windows, so a case
-// pins the sentence the gate owns around the hole and asks the OS for the rest.
+// the failing operation, then the operating system's own wording for the same
+// failed read, stripped of the absolute path the way parseCause strips it. The
+// wording belongs to the OS, "Access is denied." rather than "permission
+// denied" on Windows, so a case pins the sentence the gate owns around the hole
+// and asks the OS for the rest.
 func (f *fixture) readCause(rel string) string {
 	f.t.Helper()
 	_, err := os.ReadFile(filepath.Join(f.root, filepath.FromSlash(rel)))
@@ -358,12 +368,16 @@ func (f *fixture) readCause(rel string) string {
 	if !errors.As(err, &pathErr) {
 		f.t.Fatalf("reading %s returned %v, which the case needs to be a path error", rel, err)
 	}
-	return pathErr.Err.Error()
+	return pathErr.Op + ": " + pathErr.Err.Error()
 }
 
 // xmlUnmarshalCause is the cause the gate renders for a report that is not
 // valid XML: encoding/xml's own error for the same bytes, which the gate only
-// passes through and this repo does not own the wording of.
+// passes through and this repo does not own the wording of. It unmarshals into
+// an empty struct rather than the gate's own report type, which is unexported,
+// so it holds only for an error the decoder raises before it looks at the
+// target at all, a syntax error. A well-formed document whose types do not fit
+// would need the real target and is not what any case here feeds it.
 func xmlUnmarshalCause(t *testing.T, body string) string {
 	t.Helper()
 	err := xml.Unmarshal([]byte(body), &struct{}{})
