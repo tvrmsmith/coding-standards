@@ -105,6 +105,16 @@ A lambda gets no span of its own. Its decision points count inside whichever spa
 no span holds it, in a field or property initializer, they are counted nowhere; the Roslyn deltas table
 above records that gap. A local function is its own span wherever it is written, including inside an
 initializer lambda, and two separate mechanisms keep that from double counting.
+
+Top-level statements are the second deferral, alongside the initializer one. The compiler wraps a
+file's global statements in a synthesized `<Main>$`, which has no declaration syntax for the collector
+to key on, so however many branches those statements carry they produce no span and score nowhere. The
+gate then files every changed line among them as `outsideSpans` in the join, which never gates, so
+branchy top-level code passes unmeasured. This is deferred rather than excluded, for the reason the
+initializer row gives: issue 18 pinned the scored set rather than widening it, and synthesizing a span
+for a construct with no declaration syntax moves real numbers, so it belongs with whichever change also
+moves the threshold. A local function declared in such a file is unaffected, since it does have a
+declaration and does get a span, under its bare name.
 Complexity is excluded in the walker, which stops at a nested local function so its decision points
 score against itself alone. Line ranges are not excluded: an emitted local-function span sits fully
 inside its container's span, and the gate resolves the overlap downstream with the
@@ -137,6 +147,14 @@ Every conversion operator on a type shares the name `op_Implicit` or `op_Explici
 cannot tell two of them apart. The signature carries the target type after a colon to close that,
 `(Widened):long` for `explicit operator long(Widened v)`, which is the only place a return type appears
 in a signature. `MethodSpanResult`'s doc comment spells the rest of the signature format.
+
+A local function has the same problem for a different reason. Two sibling scopes in one method can
+declare the same local name with the same parameters, and if they are written on one line, as in
+`{ int L() => 1; } { int L() => 2; }`, then name, signature and line range all match and the gate
+rejects the pair as one span reported twice. So a local function's signature appends `@` and its
+1-based start column, `(int)@9`. Column is the coordinate the identity was missing, and it moves only
+when the declaration's own line is rewritten, unlike a count of how many local functions came before,
+which an unrelated edit earlier in the method would churn.
 
 A generic name's printed form carries a comma, and this document's own tables carry it unquoted because
 the delimiter is a pipe. That is the reason [ADR 0005](adr/0005-the-machine-document-is-the-only-output.md)

@@ -361,8 +361,10 @@ public class ExtractionTests
     /// The compiler synthesizes a body for an auto-property accessor, and that is the whole reason
     /// one gets a span. So a partial property's defining half, which promises an accessor rather
     /// than declaring one, gets none while its implementing half gets exactly one pair, whether it
-    /// writes accessor bodies (<c>Half</c>) or stays an auto-property with an initializer
-    /// (<c>Whole</c>). A <c>static</c> auto-property on an interface gets a pair too, even though
+    /// writes accessor bodies or stays an auto-property with an initializer. The file has to report
+    /// <c>parsed</c> for any of that to be reachable, since a partial property is C# 13 and an
+    /// older parser would call the whole file unparseable and emit nothing.
+    /// A <c>static</c> auto-property on an interface gets a pair too, even though
     /// its bodyless neighbour gets neither.
     /// </summary>
     [Fact]
@@ -371,6 +373,10 @@ public class ExtractionTests
         var (exitCode, result) = ExtractorRun.Run("fixtures/Synthesized.cs");
 
         exitCode.Should().Be(0);
+        result.Files.Should().BeEquivalentTo(new[]
+        {
+            new { File = "fixtures/Synthesized.cs", Status = "parsed" },
+        });
         result.Spans.Should().BeEquivalentTo(new[]
         {
             new { Name = "Held.get_Half", Signature = "()", StartLine = 21, EndLine = 21, Complexity = 1 },
@@ -385,10 +391,13 @@ public class ExtractionTests
     /// <summary>
     /// A local function declared where no member encloses it, which is what top-level statements
     /// produce, is still a span. It takes its bare local name, and the run reports the file the
-    /// same way it reports any other, rather than dying with no JSON at all.
+    /// same way it reports any other, rather than dying with no JSON at all. The global statements
+    /// around it are the documented deferral: they belong to a synthesized <c>&lt;Main&gt;$</c>
+    /// with no declaration syntax, so the branch on the file's last <c>if</c> is scored nowhere and
+    /// the file yields that one span and no other.
     /// </summary>
     [Fact]
-    public void ALocalFunctionWithNoEnclosingSpanTakesItsBareName()
+    public void ALocalFunctionWithNoEnclosingSpanTakesItsBareNameAndGlobalStatementsGetNone()
     {
         var (exitCode, result) = ExtractorRun.Run("fixtures/TopLevel.cs");
 
@@ -399,8 +408,52 @@ public class ExtractionTests
         });
         result.Spans.Should().BeEquivalentTo(new[]
         {
-            new { Name = "Helper", Signature = "(int)", StartLine = 3, EndLine = 9, Complexity = 2 },
+            new { Name = "Helper", Signature = "(int)@1", StartLine = 5, EndLine = 11, Complexity = 2 },
         });
+    }
+
+    /// <summary>
+    /// Two sibling scopes declaring the same local name with the same parameters on one line agree
+    /// on name, parameter list and line range, so without the start column in the signature they
+    /// would be one span reported twice and the gate would abort the run on valid C#. Each is still
+    /// scored on its own, which is why the two complexities differ.
+    /// </summary>
+    [Fact]
+    public void TwoSameNamedLocalFunctionsOnOneLineAreTwoSpansToldApartByTheirColumns()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Siblings.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Siblings.Twice", Signature = "(int)", StartLine = 8, EndLine = 13, Complexity = 1 },
+            new { Name = "Siblings.Twice.L", Signature = "(int)@11", StartLine = 10, EndLine = 10, Complexity = 2 },
+            new { Name = "Siblings.Twice.L", Signature = "(int)@57", StartLine = 10, EndLine = 10, Complexity = 1 },
+        }, o => o.WithStrictOrdering());
+    }
+
+    /// <summary>
+    /// The parser reads C# newer than the version the extractor's own build targets. An
+    /// <c>allows ref struct</c> constraint and an <c>\e</c> escape are both parse errors under the
+    /// Roslyn version this project first referenced, so a downgrade of
+    /// <c>Microsoft.CodeAnalysis.CSharp</c>, or a parse left on an older language version, turns
+    /// this file into a failed row with no spans instead of the two below.
+    /// </summary>
+    [Fact]
+    public void SyntaxNewerThanTheBuildsOwnLanguageVersionStillParses()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Recent.cs");
+
+        exitCode.Should().Be(0);
+        result.Files.Should().BeEquivalentTo(new[]
+        {
+            new { File = "fixtures/Recent.cs", Status = "parsed" },
+        });
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Recent.Pick<T>", Signature = "`1(T, bool)", StartLine = 9, EndLine = 9, Complexity = 2 },
+            new { Name = "Recent.Reset", Signature = "()", StartLine = 11, EndLine = 11, Complexity = 1 },
+        }, o => o.WithStrictOrdering());
     }
 
     /// <summary>
@@ -445,16 +498,16 @@ public class ExtractionTests
         {
             new { Name = "Nesting.WithLambda", Signature = "(int[])", StartLine = 9, EndLine = 13, Complexity = 2 },
             new { Name = "Nesting.WithLocal", Signature = "(int[])", StartLine = 15, EndLine = 34, Complexity = 2 },
-            new { Name = "Nesting.WithLocal.Running", Signature = "(int)", StartLine = 17, EndLine = 25, Complexity = 2 },
+            new { Name = "Nesting.WithLocal.Running", Signature = "(int)@9", StartLine = 17, EndLine = 25, Complexity = 2 },
             new { Name = "Nesting.LocalInsideLambda", Signature = "(int[])", StartLine = 36, EndLine = 43, Complexity = 1 },
-            new { Name = "Nesting.LocalInsideLambda.Twice", Signature = "(int)", StartLine = 40, EndLine = 40, Complexity = 2 },
+            new { Name = "Nesting.LocalInsideLambda.Twice", Signature = "(int)@13", StartLine = 40, EndLine = 40, Complexity = 2 },
             new { Name = "Nesting.get_Accessed", Signature = "()", StartLine = 47, EndLine = 60, Complexity = 1 },
-            new { Name = "Nesting.get_Accessed.Sign", Signature = "(int)", StartLine = 49, EndLine = 57, Complexity = 2 },
+            new { Name = "Nesting.get_Accessed.Sign", Signature = "(int)@13", StartLine = 49, EndLine = 57, Complexity = 2 },
             new { Name = "Nesting.ThreeDeep", Signature = "(int)", StartLine = 63, EndLine = 96, Complexity = 1 },
-            new { Name = "Nesting.ThreeDeep.Outer", Signature = "(int)", StartLine = 65, EndLine = 93, Complexity = 2 },
-            new { Name = "Nesting.ThreeDeep.Outer.Middle", Signature = "(int)", StartLine = 67, EndLine = 85, Complexity = 2 },
-            new { Name = "Nesting.ThreeDeep.Outer.Middle.Innermost", Signature = "(int)", StartLine = 69, EndLine = 77, Complexity = 2 },
-            new { Name = "Detached", Signature = "(int)", StartLine = 102, EndLine = 108, Complexity = 2 },
+            new { Name = "Nesting.ThreeDeep.Outer", Signature = "(int)@9", StartLine = 65, EndLine = 93, Complexity = 2 },
+            new { Name = "Nesting.ThreeDeep.Outer.Middle", Signature = "(int)@13", StartLine = 67, EndLine = 85, Complexity = 2 },
+            new { Name = "Nesting.ThreeDeep.Outer.Middle.Innermost", Signature = "(int)@17", StartLine = 69, EndLine = 77, Complexity = 2 },
+            new { Name = "Detached", Signature = "(int)@9", StartLine = 102, EndLine = 108, Complexity = 2 },
         }, o => o.WithStrictOrdering());
     }
 
@@ -474,7 +527,7 @@ public class ExtractionTests
             new { Name = "Asynchrony.Evens", Signature = "(int[])", StartLine = 21, EndLine = 30, Complexity = 3 },
             new { Name = "Asynchrony.StreamAsync", Signature = "(int[])", StartLine = 32, EndLine = 39, Complexity = 2 },
             new { Name = "Asynchrony.RunAsync", Signature = "()", StartLine = 41, EndLine = 52, Complexity = 1 },
-            new { Name = "Asynchrony.RunAsync.InnerAsync", Signature = "(int)", StartLine = 43, EndLine = 49, Complexity = 2 },
+            new { Name = "Asynchrony.RunAsync.InnerAsync", Signature = "(int)@9", StartLine = 43, EndLine = 49, Complexity = 2 },
         }, o => o.WithStrictOrdering());
     }
 

@@ -34,7 +34,10 @@ namespace Tvrmsmith.MetricGate.CSharp;
 /// </list>
 ///
 /// <para>A constructor, finalizer, operator or local function spells its own parameter list the
-/// same way a method does. A conversion operator spells its parameter list that way and then
+/// same way a method does. A local function then appends <c>@</c> and its 1-based start column,
+/// because two sibling scopes can declare the same local name with the same parameters on one
+/// line and nothing else in the identity would differ. A conversion operator spells its parameter
+/// list that way and then
 /// appends a colon and its target type, so <c>explicit operator long(Widened v)</c> is
 /// <c>(Widened):long</c>. Two conversions on one type differ only in that target type, and
 /// <c>op_Explicit</c> gives them the same <c>Name</c>, so without it two conversions written on one

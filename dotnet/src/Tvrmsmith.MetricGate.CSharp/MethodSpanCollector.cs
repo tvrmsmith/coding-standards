@@ -160,7 +160,8 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
 
         var localName = WithTypeParameters(node.Identifier.Text, node.TypeParameterList);
         var name = _nameStack.Count == 0 ? localName : _nameStack.Peek() + "." + localName;
-        RecordSpan(node, name, Signature(node.ParameterList, node.TypeParameterList));
+        var signature = Signature(node.ParameterList, node.TypeParameterList) + StartColumnSuffix(node);
+        RecordSpan(node, name, signature);
         Descend(name, () => base.VisitLocalFunctionStatement(node));
     }
 
@@ -383,4 +384,18 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
     }
 
     private static string TypeName(TypeSyntax type) => type.NormalizeWhitespace().ToFullString();
+
+    /// <summary>
+    /// The start column, 1-based, which is what tells two local functions apart when nothing else
+    /// does. Sibling scopes can declare the same local name with the same parameters on one line,
+    /// as in <c>{ int L() =&gt; 1; } { int L() =&gt; 2; }</c>, and every other part of a span's
+    /// identity then matches. Column is the coordinate the identity is missing, and it moves only
+    /// when the declaration's own line is rewritten, unlike a count of how many spans came before.
+    /// </summary>
+    private static string StartColumnSuffix(SyntaxNode node)
+    {
+        var column = node.GetLocation().GetLineSpan().StartLinePosition.Character + 1;
+
+        return "@" + column;
+    }
 }
