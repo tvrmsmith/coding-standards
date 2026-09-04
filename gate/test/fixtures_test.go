@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -80,6 +81,23 @@ func (f *fixture) deleteLines(rel string, from, to int) {
 	f.t.Helper()
 	lines := strings.Split(f.read(rel), "\n")
 	f.write(rel, strings.Join(append(append([]string{}, lines[:from-1]...), lines[to:]...), "\n"))
+}
+
+// moveLines cuts the one-based lines from..to (inclusive) out of the file at
+// src and inserts them into dst immediately after dst's line after. It copies
+// the lines verbatim, so they are byte-identical at their new home. Both src
+// and dst must already exist on disk, since the helper reads each one before
+// it rewrites it.
+// The helper rewrites src before it re-reads dst, so when src and dst name the
+// same file, after counts lines in the shortened file.
+func (f *fixture) moveLines(src string, from, to int, dst string, after int) {
+	f.t.Helper()
+	srcLines := strings.Split(f.read(src), "\n")
+	cut := slices.Clone(srcLines[from-1 : to])
+	f.write(src, strings.Join(slices.Delete(srcLines, from-1, to), "\n"))
+
+	dstLines := strings.Split(f.read(dst), "\n")
+	f.write(dst, strings.Join(slices.Insert(dstLines, after, cut...), "\n"))
 }
 
 // read returns the current content of the file at rel.

@@ -8,4 +8,4 @@ touched_lines_outside_spans: 0
 skipped_paths: []
 error:
   code: no_diff_base
-  message: "no diff base: tried origin/HEAD, origin/main, origin/master, main, master"
+  message: "no diff base: tried origin/HEAD, origin/main, origin/master, main, master; name one with --since <ref>"
