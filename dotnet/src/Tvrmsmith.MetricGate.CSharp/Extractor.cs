@@ -16,6 +16,16 @@ namespace Tvrmsmith.MetricGate.CSharp;
 /// </summary>
 public static class Extractor
 {
+    /// <summary>
+    /// The parser reads whatever the consumer's compiler accepts, so the language version is pinned
+    /// to <see cref="LanguageVersion.Preview"/> rather than left to the default, which is the
+    /// newest stable version the referenced parser knows. A file the consumer compiles but this
+    /// tool cannot parse comes back <c>failed</c> and fails the whole run, which is the wrong answer
+    /// for source that is merely newer than the parser's default.
+    /// </summary>
+    private static readonly CSharpParseOptions ParseOptions =
+        new CSharpParseOptions(LanguageVersion.Preview);
+
     public static ExtractionResult Extract(IEnumerable<string> paths)
     {
         var files = new List<FileStatusResult>();
@@ -43,7 +53,7 @@ public static class Extractor
             MethodSpanCollector collector;
             try
             {
-                var tree = CSharpSyntaxTree.ParseText(source);
+                var tree = CSharpSyntaxTree.ParseText(source, ParseOptions);
                 var hasParseError = tree.GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
                 if (hasParseError)
                 {
