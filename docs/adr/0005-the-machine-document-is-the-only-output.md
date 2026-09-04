@@ -89,6 +89,20 @@ belongs in this list on the same commit.
 reads no report timestamp today, so a stale report scores silently rather than failing. Recorded so the gap reads
 as a deferral rather than an omission.
 
+**Amended 2026-09-04.** The enumeration is **fourteen** codes, and this list supersedes every count above.
+Three joined with [issue 16](https://github.com/tvrmsmith/coding-standards/issues/16), all three on the
+coverage-path side and all three upstream of the join, so each emits `status: error` with an `error` block and no
+table. `coverage_source_root_erased` is a report MSBuild wrote without a usable source root, naming the property
+responsible, `DeterministicReport` or `UseSourceLink`. `file_ambiguous` is one class resolving to more than one
+path inside the repo root, which [ADR 0004](0004-source-paths-are-repo-relative-and-resolved-deterministically.md)
+narrows to "the report contradicted itself". `coverage_outside_repo` is a report carrying classes of which none
+land inside the repo root, the git-worktree and container cases. The full list is `no_diff_base`,
+`diff_unparseable`, `extractor_failed`, `extractor_path_mismatch`, `extractor_capabilities_mismatch`,
+`extractor_duplicate_span`, `extractor_invalid_span`, `parse_failed`, `coverage_missing`, `coverage_unparseable`,
+`coverage_source_root_erased`, `file_ambiguous`, `coverage_outside_repo`, and `unknown_changed_method`. Adding a
+code is a contract change and belongs in this list on the same commit, which is the 2026-09-03 rule restated
+against the list that now governs.
+
 Three parts of that shape are decisions in their own right.
 
 **The fix instruction is two typed cells, never prose.** `action` is one of `raise_coverage`, `split_method`, or
@@ -127,7 +141,7 @@ still implemented for the cells that do.
 ## Consequences
 
 An agent is the expected reader, and this is the surface it acts on. It branches on `status`, then on `error.code`
-or on the `action` column, and never parses English. The eleven exit-1 causes each carry a typed `code`, so
+or on the `action` column, and never parses English. The fourteen exit-1 causes each carry a typed `code`, so
 "your report is stale" and "your method is too complex" are distinguishable without inspecting prose, which the
 exit code alone cannot do.
 

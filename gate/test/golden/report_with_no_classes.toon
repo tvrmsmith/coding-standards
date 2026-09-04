@@ -1,0 +1,15 @@
+status: error
+tool: metric-gate/0.1.0
+spec: toon/4.1.1
+scope: merge-base
+base: {{BASE}}
+changed_methods: 1
+touched_lines_outside_spans: 0
+skipped_paths: []
+error:
+  code: unknown_changed_method
+  message: 1 changed method could not be attributed to a coverage report
+metrics[1|]{name|threshold|measured|failed}:
+  crap|30|0|0
+crap[1|]{file|start|end|name|complexity|coverage|score|state|action|target_coverage|reason}:
+  src/Ordering/OrderService.cs|60|64|OrderService.Cancel|3|null|null|unknown|none|null|file_unmatched

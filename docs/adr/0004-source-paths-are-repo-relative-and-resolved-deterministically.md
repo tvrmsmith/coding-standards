@@ -41,6 +41,54 @@ unknown methods that the zero-classes diagnostic exists to replace. Every `unkno
 [ADR 0001](0001-crap-gate-topology.md), so nothing silently passes; only the diagnosis is deferred. The rules stand
 as decided, and this notes their arrival date rather than reopening them.
 
+**Amended 2026-09-04.** Those three rules landed with
+[issue 16](https://github.com/tvrmsmith/coding-standards/issues/16), so the deferral the paragraph above records is
+closed and the worktree case now exits 1 naming the mismatch rather than presenting as a wall of unknown methods.
+Their typed codes are `coverage_source_root_erased`, `file_ambiguous`, and `coverage_outside_repo`, enumerated in
+[ADR 0005](0005-the-machine-document-is-the-only-output.md). Two points of detail the Consequences section does not
+settle, decided while implementing and recorded here:
+
+- The three are checked per report, in discovery order, and within one report in this precedence: erased source
+  root first, over the whole class list and before any candidate is built, then a class resolving to two paths
+  inside the root, then the report placing no class inside it. `DeterministicReport` is tested over every class
+  ahead of `UseSourceLink`, so a report carrying both shapes names the first, whatever order its classes appear in.
+- "A report contributing zero classes inside the repo root fails" is unconditional, as written. Whether a candidate
+  failed because it landed outside the root or because the file is gone from disk makes no difference to the
+  report-level rule, and the two were tried as separate signals and reverted: a real coverlet report on Unix
+  carries `<source>/</source>`, which resolves, so no on-disk signal tells "built in another checkout" apart from
+  "deleted since the test run", and splitting them left the container case undiagnosed. A single unplaceable path
+  is still ignored in silence, per the last Consequences paragraph. It is only a report with nothing left that
+  fails.
+
+A report carrying no `<class>` element at all raises nothing, since it placed nothing to be outside; a changed
+method it fails to cover still fails the run as `unknown_changed_method`.
+
+Two more details of the shipped diagnostics, where the Consequences section below promises something narrower than
+what the gate emits:
+
+- Consequences says the zero-in-root failure names "one example resolved path". The message names an **example
+  path**, the first candidate of the first class carrying a filename, symlink-resolved when it resolved and as the
+  join built it when it did not. It is the best available reading of a path the gate compared, not a
+  guaranteed-resolved one, and quoting the as-built form is what tells a container mount apart from a test run
+  whose files are gone. It degrades to two further shapes the section does not describe: a candidate no `<source>`
+  anchored to an absolute path is quoted and named as such, since a bare relative string would read as a path
+  inside the repo, and a report whose classes carry no filename to join says so instead of quoting nothing.
+- Consequences describes the erased shape as filenames rooted at the `/_/` placeholder. MSBuild numbers the
+  placeholder per source root past the first, `/_1/`, `/_2/` and so on, and the shipped detector matches
+  `^/_[0-9]*/` to cover them.
+
+Two further resolution rules the implementation settled, both narrowing what counts as landing inside the root:
+
+- A candidate resolving to anything other than a **regular file** lands nowhere, the same as one that resolves
+  nowhere at all. A class filename of `..`, `../..`, or a bare directory name joins onto an in-root `<source>` to
+  name a directory, which sits inside the root without naming any source the report measured, and one such class
+  would otherwise stand in for a whole report's worth of classes that placed nothing, suppressing the zero-in-root
+  diagnostic. This is the same reasoning as the rule above, applied to what the path turns out to be rather than to
+  where it landed.
+- An **already absolute** filename is its own only candidate, and no `<source>` is joined onto it. Joining would
+  name a path no report ever carried, `/src/src/app/Order.cs` off `<source>` `/src`, and the outside-repo
+  diagnostic quotes the first candidate, so the reader would be shown a path the gate invented.
+
 ## Considered options
 
 **Longest-suffix matching.** The standard fallback, and the one every prior implementation reaches for.
