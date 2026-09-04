@@ -5,45 +5,29 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace Tvrmsmith.MetricGate.CSharp;
 
 /// <summary>
-/// McCabe cyclomatic complexity for a single method's full syntax, base 1 plus one point per
-/// decision point. The scored set, spelled out here so a future widening (issue 18) amends this
-/// list deliberately rather than by omission:
+/// McCabe cyclomatic complexity for a single span's full syntax, base 1 plus one point per decision
+/// point. Which constructs score, which do not, and why each is on the side it is on live in
+/// <c>docs/csharp-decision-points.md</c>, along with every point where this list departs from
+/// Roslyn's own; the overrides below are that document in code.
 ///
-///   if, while, do, for, foreach, a case label (default scores nothing), a switch expression arm,
-///   catch, a when filter clause, a pattern combinator (and, or), &amp;&amp;, ||, ?:, ??
-///
-/// A pattern combinator scores for the reason &amp;&amp; and || do: each side is a test the method
-/// can branch on, and `o is int or string` is the same control flow as `o is int || o is string`.
-/// Both combinators count, so the pattern spelling of a condition never scores under the operator
-/// spelling of it. A `not` pattern adds no branch and does not count.
-///
-/// An arm counts even when its pattern is the discard `_`, which is where this list parts company
-/// with `default:`. An arm is always a pattern matched in turn, and the catch-all arm is written
-/// as one; a `default:` label is not a pattern and scores nothing.
-///
-/// Nothing else scores. In particular ??= is not on this list and does not count. Walks the whole
-/// node it is handed, but stops at a nested declaration that carries a span of its own: a local
-/// function's decision points score against the local function alone, never against whatever
-/// declares it. A lambda or anonymous method is not such a declaration, so its decision points do
-/// fold into whichever span holds it, which is what keeps a method from hiding its branches in one.
+/// Walks the whole node it is handed, but stops at a nested declaration that carries a span of its
+/// own: a local function's decision points score against the local function alone, never against
+/// whatever declares it. A lambda or anonymous method is not such a declaration, so its decision
+/// points do fold into whichever span holds it, which is what keeps a method from hiding its
+/// branches in one. The root is the node this walker was asked to score, taken up front so that
+/// <see cref="VisitLocalFunctionStatement"/> tells a local function being scored in its own right
+/// from one nested inside the span under measure.
 /// </summary>
 internal sealed class ComplexityWalker : CSharpSyntaxWalker
 {
-    private SyntaxNode? _root;
+    private readonly SyntaxNode _root;
+
+    public ComplexityWalker(SyntaxNode root)
+    {
+        _root = root;
+    }
 
     public int Complexity { get; private set; } = 1;
-
-    /// <summary>
-    /// Records the node the walk started from, so <see cref="VisitLocalFunctionStatement"/> can
-    /// tell "the local function this walker was asked to score" (the root, when a caller scores a
-    /// local function's own span) from "a local function nested inside whatever this walker was
-    /// asked to score" (never the root, always skipped).
-    /// </summary>
-    public override void Visit(SyntaxNode? node)
-    {
-        _root ??= node;
-        base.Visit(node);
-    }
 
     public override void VisitIfStatement(IfStatementSyntax node)
     {
@@ -73,6 +57,16 @@ internal sealed class ComplexityWalker : CSharpSyntaxWalker
     {
         Complexity++;
         base.VisitForEachStatement(node);
+    }
+
+    /// <summary>
+    /// A deconstructing <c>foreach (var (a, b) in pairs)</c> parses to its own node type rather than
+    /// to <see cref="ForEachStatementSyntax"/>, and it is the same loop, so it scores the same point.
+    /// </summary>
+    public override void VisitForEachVariableStatement(ForEachVariableStatementSyntax node)
+    {
+        Complexity++;
+        base.VisitForEachVariableStatement(node);
     }
 
     public override void VisitCaseSwitchLabel(CaseSwitchLabelSyntax node)

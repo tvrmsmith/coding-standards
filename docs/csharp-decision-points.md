@@ -21,7 +21,7 @@ Each of these adds one point.
 | `while` | |
 | `do` | |
 | `for` | |
-| `foreach` | |
+| `foreach` | including the deconstructing form, `foreach (var (a, b) in pairs)` |
 | a `case` label | constant or pattern |
 | a switch expression arm | one point per arm, regardless of its pattern |
 | `catch` | one point per catch clause |
@@ -84,13 +84,22 @@ Owning the walker means owning which declarations get a row, not only which cons
 
 A declaration gets a span when it carries a body or an expression body. It gets none when it carries
 neither. So an interface member with no default implementation, an `abstract` or `extern` member, a
-field-like event, a bodyless partial method, and a `record` or `class` primary constructor all produce
-no row, while an auto-property accessor does, because the compiler synthesizes a body for it.
+field-like event, a bodyless partial method or partial property, and a `record` or `class` primary
+constructor all produce no row, while an auto-property accessor does, because the compiler synthesizes
+a body for it.
+
+That carve-out is keyed on synthesis, not on the `get;` spelling. A partial property is declared twice,
+once as a promise and once as an implementation, and only the implementing half is measured, so one
+member never yields four rows. A `static` auto-property on an interface has been legal since C# 11 and
+is synthesized like any other, so the interface exclusion does not reach it.
 
 A lambda's body counts inside the span of the method, accessor, or other declaration holding it. A
-local function is its own span: its lines are not counted twice against the container. That is the
-absorption [ADR 0001](adr/0001-crap-gate-topology.md) calls out for coverage; the same rule now applies
-to complexity.
+local function is its own span, and two separate mechanisms keep that from double counting.
+Complexity is excluded in the walker, which stops at a nested local function so its decision points
+score against itself alone. Line ranges are not excluded: an emitted local-function span sits fully
+inside its container's span, and the gate resolves the overlap downstream with the
+smallest-containing-span rule from [ADR 0001](adr/0001-crap-gate-topology.md). A consumer reading this
+document must not assume the emitted ranges are disjoint.
 
 A span's printed name follows the CLR's own naming for the member kind:
 
@@ -110,6 +119,9 @@ A span's printed name follows the CLR's own naming for the member kind:
 | Operator overload | `Order.op_Addition` |
 | Conversion operator | `Order.op_Implicit` |
 | Local function | `Order.Total.Running` (container name, dot, local name) |
+| Generic local function | `Order.Total.Map<T>` (type parameters are part of a name here too) |
+| Local function with no container | `Helper` (top-level statements, or an initializer lambda) |
+| Explicit interface implementation | `Order.IComparable.CompareTo`, and `Order.IShifted.get_Described` for an accessor |
 
 A generic name's printed form carries a comma, and this document's own tables carry it unquoted because
 the delimiter is a pipe. That is the reason [ADR 0005](adr/0005-the-machine-document-is-the-only-output.md)

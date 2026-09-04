@@ -60,5 +60,53 @@ public class Nesting
         }
     }
 
+    public int ThreeDeep(int n)
+    {
+        int Outer(int a)
+        {
+            int Middle(int b)
+            {
+                int Innermost(int c)
+                {
+                    if (c > 0)
+                    {
+                        return c;
+                    }
+
+                    return 0;
+                }
+
+                if (b > 0)
+                {
+                    return Innermost(b);
+                }
+
+                return 0;
+            }
+
+            if (a > 0)
+            {
+                return Middle(a);
+            }
+
+            return 0;
+        }
+
+        return Outer(n);
+    }
+
     private int _value;
+
+    private System.Action _initializerLocal = () =>
+    {
+        void Detached(int n)
+        {
+            if (n > 0)
+            {
+                System.Console.WriteLine(n);
+            }
+        }
+
+        Detached(1);
+    };
 }

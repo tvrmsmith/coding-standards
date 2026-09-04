@@ -248,6 +248,7 @@ public class ExtractionTests
             new { Name = "Enumerated.Do", Complexity = 2 },
             new { Name = "Enumerated.For", Complexity = 2 },
             new { Name = "Enumerated.Foreach", Complexity = 2 },
+            new { Name = "Enumerated.DeconstructingForeach", Complexity = 2 },
             new { Name = "Enumerated.CaseLabel", Complexity = 2 },
             new { Name = "Enumerated.CasePatternLabel", Complexity = 2 },
             new { Name = "Enumerated.CaseGuard", Complexity = 3 },
@@ -266,22 +267,6 @@ public class ExtractionTests
             new { Name = "Enumerated.Folded", Complexity = 1 },
             new { Name = "Enumerated.Folded.Inner", Complexity = 2 },
         }, o => o.WithStrictOrdering());
-    }
-
-    /// <summary>
-    /// A local function is a span of its own, so its branches score against itself and not against
-    /// the method that declares it, the opposite of how a lambda's branches fold into the method
-    /// holding it.
-    /// </summary>
-    [Fact]
-    public void ALocalFunctionIsASpanOfItsOwnAndItsBranchesDoNotFoldIntoItsMethod()
-    {
-        var (_, result) = ExtractorRun.Run("fixtures/Enumerated.cs");
-
-        result.Spans.Should().Contain(span => span.Name == "Enumerated.Folded")
-            .Which.Complexity.Should().Be(1);
-        result.Spans.Should().Contain(span => span.Name == "Enumerated.Folded.Inner")
-            .Which.Complexity.Should().Be(2);
     }
 
     [Fact]
@@ -319,7 +304,10 @@ public class ExtractionTests
     /// <summary>
     /// Every declaration kind that carries a body or an expression body gets a span, named
     /// metadata style: constructors as <c>.ctor</c>/<c>.cctor</c>, the finalizer as
-    /// <c>Finalize</c>, accessors prefixed by their kind, and operators by their metadata name.
+    /// <c>Finalize</c>, accessors prefixed by their kind, and operators by their metadata name,
+    /// which is arity-sensitive for <c>+</c> and <c>-</c> and takes a <c>Checked</c> infix when
+    /// the declaration is <c>checked</c>. An explicit interface implementation carries the
+    /// interface it implements between the type and the member, so two of them cannot collide.
     /// An auto-property accessor gets a span too, spanning its own line, even though it carries
     /// neither a body nor an expression body.
     /// </summary>
@@ -331,26 +319,81 @@ public class ExtractionTests
         exitCode.Should().Be(0);
         result.Spans.Should().BeEquivalentTo(new[]
         {
-            new { Name = "Widened..cctor", Signature = "()", StartLine = 13, EndLine = 16, Complexity = 1 },
-            new { Name = "Widened..ctor", Signature = "(int)", StartLine = 18, EndLine = 24, Complexity = 2 },
-            new { Name = "Widened.Finalize", Signature = "()", StartLine = 26, EndLine = 29, Complexity = 1 },
-            new { Name = "Widened.get_Id", Signature = "()", StartLine = 31, EndLine = 31, Complexity = 1 },
-            new { Name = "Widened.set_Id", Signature = "()", StartLine = 31, EndLine = 31, Complexity = 1 },
-            new { Name = "Widened.get_Count", Signature = "()", StartLine = 35, EndLine = 43, Complexity = 2 },
-            new { Name = "Widened.set_Count", Signature = "()", StartLine = 44, EndLine = 44, Complexity = 1 },
-            new { Name = "Widened.get_Total", Signature = "()", StartLine = 47, EndLine = 47, Complexity = 1 },
-            new { Name = "Widened.get_Item", Signature = "(int)", StartLine = 49, EndLine = 49, Complexity = 2 },
-            new { Name = "Widened.add_Changed", Signature = "()", StartLine = 53, EndLine = 59, Complexity = 2 },
-            new { Name = "Widened.remove_Changed", Signature = "()", StartLine = 60, EndLine = 60, Complexity = 1 },
-            new { Name = "Widened.op_Addition", Signature = "(Widened, Widened)", StartLine = 63, EndLine = 63, Complexity = 1 },
-            new { Name = "Widened.op_Implicit", Signature = "(Widened)", StartLine = 65, EndLine = 65, Complexity = 1 },
+            new { Name = "Widened..cctor", Signature = "()", StartLine = 20, EndLine = 23, Complexity = 1 },
+            new { Name = "Widened..ctor", Signature = "(int)", StartLine = 25, EndLine = 31, Complexity = 2 },
+            new { Name = "Widened.Finalize", Signature = "()", StartLine = 33, EndLine = 36, Complexity = 1 },
+            new { Name = "Widened.get_Id", Signature = "()", StartLine = 38, EndLine = 38, Complexity = 1 },
+            new { Name = "Widened.set_Id", Signature = "()", StartLine = 38, EndLine = 38, Complexity = 1 },
+            new { Name = "Widened.get_Started", Signature = "()", StartLine = 40, EndLine = 40, Complexity = 1 },
+            new { Name = "Widened.init_Started", Signature = "()", StartLine = 40, EndLine = 40, Complexity = 1 },
+            new { Name = "Widened.get_Count", Signature = "()", StartLine = 44, EndLine = 52, Complexity = 2 },
+            new { Name = "Widened.set_Count", Signature = "()", StartLine = 53, EndLine = 53, Complexity = 1 },
+            new { Name = "Widened.get_Total", Signature = "()", StartLine = 56, EndLine = 56, Complexity = 1 },
+            new { Name = "Widened.get_Item", Signature = "(int)", StartLine = 58, EndLine = 58, Complexity = 2 },
+            new { Name = "Widened.get_Item", Signature = "(string)", StartLine = 62, EndLine = 65, Complexity = 1 },
+            new { Name = "Widened.set_Item", Signature = "(string)", StartLine = 67, EndLine = 70, Complexity = 1 },
+            new { Name = "Widened.add_Changed", Signature = "()", StartLine = 75, EndLine = 81, Complexity = 2 },
+            new { Name = "Widened.remove_Changed", Signature = "()", StartLine = 82, EndLine = 82, Complexity = 1 },
+            new { Name = "Widened.IShifted.get_Described", Signature = "()", StartLine = 85, EndLine = 85, Complexity = 1 },
+            new { Name = "Widened.IShifted.Describe", Signature = "()", StartLine = 87, EndLine = 87, Complexity = 1 },
+            new { Name = "Widened.op_Addition", Signature = "(Widened, Widened)", StartLine = 89, EndLine = 89, Complexity = 1 },
+            new { Name = "Widened.op_CheckedAddition", Signature = "(Widened, Widened)", StartLine = 91, EndLine = 91, Complexity = 1 },
+            new { Name = "Widened.op_UnaryPlus", Signature = "(Widened)", StartLine = 93, EndLine = 93, Complexity = 1 },
+            new { Name = "Widened.op_UnaryNegation", Signature = "(Widened)", StartLine = 95, EndLine = 95, Complexity = 1 },
+            new { Name = "Widened.op_Subtraction", Signature = "(Widened, Widened)", StartLine = 97, EndLine = 97, Complexity = 1 },
+            new { Name = "Widened.op_Implicit", Signature = "(Widened)", StartLine = 99, EndLine = 99, Complexity = 1 },
+            new { Name = "Widened.op_Explicit", Signature = "(Widened)", StartLine = 101, EndLine = 101, Complexity = 1 },
+            new { Name = "Widened.op_CheckedExplicit", Signature = "(Widened)", StartLine = 103, EndLine = 103, Complexity = 1 },
         }, o => o.WithStrictOrdering());
     }
 
     /// <summary>
-    /// An interface member with no default implementation, an abstract member, an extern member
-    /// and a field-like event carry no lines a developer can branch in, so none of them gets a
-    /// span, and the file still parses.
+    /// The compiler synthesizes a body for an auto-property accessor, and that is the whole reason
+    /// one gets a span. So a partial property's defining half, which promises an accessor rather
+    /// than declaring one, gets none while its implementing half gets both, and a <c>static</c>
+    /// auto-property on an interface gets both even though its bodyless neighbour gets neither.
+    /// </summary>
+    [Fact]
+    public void OnlyAnAutoAccessorTheCompilerFillsInGetsASpan()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Synthesized.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Held.get_Half", Signature = "()", StartLine = 18, EndLine = 18, Complexity = 1 },
+            new { Name = "Held.set_Half", Signature = "()", StartLine = 19, EndLine = 19, Complexity = 1 },
+            new { Name = "ICounted.get_Counter", Signature = "()", StartLine = 25, EndLine = 25, Complexity = 1 },
+            new { Name = "ICounted.set_Counter", Signature = "()", StartLine = 25, EndLine = 25, Complexity = 1 },
+        }, o => o.WithStrictOrdering());
+    }
+
+    /// <summary>
+    /// A local function declared where no member encloses it, which is what top-level statements
+    /// produce, is still a span. It takes its bare local name, and the run reports the file the
+    /// same way it reports any other, rather than dying with no JSON at all.
+    /// </summary>
+    [Fact]
+    public void ALocalFunctionWithNoEnclosingSpanTakesItsBareName()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/TopLevel.cs");
+
+        exitCode.Should().Be(0);
+        result.Files.Should().BeEquivalentTo(new[]
+        {
+            new { File = "fixtures/TopLevel.cs", Status = "parsed" },
+        });
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Helper", Signature = "(int)", StartLine = 3, EndLine = 9, Complexity = 2 },
+        });
+    }
+
+    /// <summary>
+    /// An interface member with no default implementation, an abstract member or auto-property, an
+    /// extern member or auto-property, a field-like event, a bodyless partial method and a primary
+    /// constructor on a record or a class carry no lines a developer can branch in, so none of them
+    /// gets a span, and the file still parses.
     /// </summary>
     [Fact]
     public void ADeclarationCarryingNoBodyGetsNoSpanAndTheFileStillParses()
@@ -369,7 +412,10 @@ public class ExtractionTests
     /// A lambda's branches score against the method holding it, so <c>WithLambda</c>'s <c>&amp;&amp;</c>
     /// counts against the method itself. A local function is its own span, so <c>WithLocal</c> does
     /// not absorb <c>Running</c>'s branches, and a local function declared inside a lambda still
-    /// takes the name of the span holding the lambda, not the lambda itself.
+    /// takes the name of the span holding the lambda, not the lambda itself. Nesting a local
+    /// function inside another appends again and keeps each one's branches to itself, and a local
+    /// function inside a field-initializer lambda has no enclosing span to prefix, so it takes its
+    /// bare local name.
     /// </summary>
     [Fact]
     public void ALambdaFoldsIntoItsMethodWhileALocalFunctionIsItsOwnSpan()
@@ -386,6 +432,11 @@ public class ExtractionTests
             new { Name = "Nesting.LocalInsideLambda.Twice", Signature = "(int)", StartLine = 40, EndLine = 40, Complexity = 2 },
             new { Name = "Nesting.get_Accessed", Signature = "()", StartLine = 47, EndLine = 60, Complexity = 1 },
             new { Name = "Nesting.get_Accessed.Sign", Signature = "(int)", StartLine = 49, EndLine = 57, Complexity = 2 },
+            new { Name = "Nesting.ThreeDeep", Signature = "(int)", StartLine = 63, EndLine = 96, Complexity = 1 },
+            new { Name = "Nesting.ThreeDeep.Outer", Signature = "(int)", StartLine = 65, EndLine = 93, Complexity = 2 },
+            new { Name = "Nesting.ThreeDeep.Outer.Middle", Signature = "(int)", StartLine = 67, EndLine = 85, Complexity = 2 },
+            new { Name = "Nesting.ThreeDeep.Outer.Middle.Innermost", Signature = "(int)", StartLine = 69, EndLine = 77, Complexity = 2 },
+            new { Name = "Detached", Signature = "(int)", StartLine = 102, EndLine = 108, Complexity = 2 },
         }, o => o.WithStrictOrdering());
     }
 

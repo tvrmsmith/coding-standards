@@ -2,8 +2,9 @@ using System;
 
 namespace Fixtures;
 
-// A declaration carrying no body carries no lines to score, so it gets no span. An interface
-// member, an abstract member and a field-like event are the three ways to write one.
+// A declaration carrying no body carries no lines to score, so it gets no span. Every way C# has
+// of writing one is here, methods and auto-properties alike, so a guard that stops excluding one
+// of them fails on its own name.
 public interface IThing
 {
     int Id { get; set; }
@@ -15,7 +16,23 @@ public abstract class Thing
 {
     public abstract int Compute(int a);
 
+    public abstract int Ordinal { get; set; }
+
     public event EventHandler? Changed;
 
     public extern int Extern(int a);
+
+    public extern int Native { get; set; }
+}
+
+public partial class Halves
+{
+    partial void OnDone();
+}
+
+public record Order(int Id);
+
+public class Primary(int seed)
+{
+    private readonly int _seed = seed;
 }

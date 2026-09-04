@@ -58,6 +58,17 @@ public class Enumerated
         return total;
     }
 
+    public int DeconstructingForeach((int, int)[] pairs)
+    {
+        var total = 0;
+        foreach (var (a, b) in pairs)
+        {
+            total += a + b;
+        }
+
+        return total;
+    }
+
     public int CaseLabel(int a)
     {
         switch (a)
