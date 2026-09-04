@@ -8,4 +8,4 @@ touched_lines_outside_spans: 0
 skipped_paths: []
 error:
   code: coverage_outside_repo
-  message: coverage report TestResults/coverage.cobertura.xml placed no class inside the repo root; example path {{EXAMPLE}}, repo root {{ROOT}}
+  message: coverage report TestResults/coverage.cobertura.xml placed no class inside the repo root; no class carries a filename to compare, repo root {{ROOT}}

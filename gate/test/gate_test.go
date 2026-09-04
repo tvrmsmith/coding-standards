@@ -911,8 +911,11 @@ func TestCoverageReportThatIsNotValidXMLFails(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
+	// The cause is carried into the message, so a read error and a malformed
+	// document do not reach the reader as the same sentence.
 	f.run().assertMatches(t, "coverage_unparseable", 1, f.baseLabel("main"),
-		"could not parse coverage report TestResults/fixed/coverage.cobertura.xml\n")
+		"could not parse coverage report TestResults/fixed/coverage.cobertura.xml; "+
+			"XML syntax error on line 2: unexpected EOF\n")
 }
 
 func TestMoveWithAnExtraCopyMeasuresBothAddedPaths(t *testing.T) {
@@ -1614,8 +1617,7 @@ func TestReportBuiltInAnotherCheckoutFailsNamingTheMismatch(t *testing.T) {
 	example := resolvedPath(t, classPath)
 	root := resolvedPath(t, f.root)
 	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
-		fmt.Sprintf("coverage report TestResults/coverage.cobertura.xml resolved no class inside the repo root; "+
-			"example resolved path %s, repo root %s\n", example, root),
+		outsideRepoStderr(example, root),
 		map[string]string{"EXAMPLE": example, "ROOT": root})
 }
 
@@ -1646,8 +1648,7 @@ func TestClassWithNoFilenameDoesNotSuppressTheOutsideRepoDiagnostic(t *testing.T
 	example := resolvedPath(t, classPath)
 	root := resolvedPath(t, f.root)
 	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
-		fmt.Sprintf("coverage report TestResults/coverage.cobertura.xml resolved no class inside the repo root; "+
-			"example resolved path %s, repo root %s\n", example, root),
+		outsideRepoStderr(example, root),
 		map[string]string{"EXAMPLE": example, "ROOT": root})
 }
 
@@ -1676,9 +1677,78 @@ func TestReportMeasuredAgainstAContainerMountFailsNamingTheMismatch(t *testing.T
 	example := filepath.ToSlash(mounted)
 	root := resolvedPath(t, f.root)
 	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
-		fmt.Sprintf("coverage report TestResults/coverage.cobertura.xml resolved no class inside the repo root; "+
-			"example resolved path %s, repo root %s\n", example, root),
+		outsideRepoStderr(example, root),
 		map[string]string{"EXAMPLE": example, "ROOT": root})
+}
+
+func TestRelativeSourceIsRefusedRatherThanResolvedAgainstTheWorkingDirectory(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// A <source> that is not absolute, joined onto a relative filename, names
+	// exactly the file the gate would score if it resolved candidates against
+	// its own working directory, which is the repo root. ADR 0004 resolves
+	// nothing that way, because the report would then be scored from a path it
+	// never named, so the report places nothing and is named instead.
+	f.write("TestResults/coverage.cobertura.xml", cobertura("src",
+		coverageClass{filename: "Ordering/OrderService.cs", lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	example := "src/Ordering/OrderService.cs"
+	root := resolvedPath(t, f.root)
+	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
+		outsideRepoStderr(example, root),
+		map[string]string{"EXAMPLE": example, "ROOT": root})
+}
+
+func TestReportWithNoSourcesAndRelativeFilenamesFailsNamingTheMismatch(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// <sources/> beside a relative filename leaves nothing to anchor the class
+	// to, so the join builds no candidate at all. That places no class inside
+	// the root just as surely as a candidate landing elsewhere does, and the
+	// report has to be named rather than scoring an empty set and dying
+	// downstream as a wall of unknown methods.
+	f.write("TestResults/coverage.cobertura.xml", coberturaNoSources(
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	root := resolvedPath(t, f.root)
+	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
+		outsideRepoStderr(orderService, root),
+		map[string]string{"EXAMPLE": orderService, "ROOT": root})
+}
+
+func TestReportWhoseEveryClassCarriesNoFilenameFailsSayingSo(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// Every class is malformed the one way that yields no candidate and no
+	// path to quote either. The report still placed nothing, so it still
+	// fails, and the message says there was nothing to compare rather than
+	// quoting an empty path as though it were one.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: "", lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	root := resolvedPath(t, f.root)
+	f.run().assertMatchesWith(t, "coverage_outside_repo_no_filename", 1, f.baseLabel("main"),
+		fmt.Sprintf("coverage report TestResults/coverage.cobertura.xml placed no class inside the repo root; "+
+			"no class carries a filename to compare, repo root %s\n", root),
+		map[string]string{"ROOT": root})
 }
 
 func TestDeterministicReportEmptyingSourcesFailsNamingTheProperty(t *testing.T) {
@@ -1814,20 +1884,97 @@ func TestReportCarryingBothErasedShapesNamesDeterministicReport(t *testing.T) {
 			"DeterministicReport=true; collect coverage with DeterministicReport=false\n")
 }
 
+func TestNumberedDeterministicPlaceholderFailsNamingTheProperty(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// MSBuild numbers the placeholder per source root, so a project with a
+	// second root, from a submodule or a source package, carries /_1/ rather
+	// than /_/. The remedy is the same property, and without matching the
+	// numbered form the path is merely absolute on Unix and the run would
+	// blame the checkout instead.
+	f.write("TestResults/coverage.cobertura.xml", coberturaNoSources(
+		coverageClass{filename: "/_1/src/Ordering/OrderService.cs", lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_source_root_erased_deterministic", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml carries no source root, erased by "+
+			"DeterministicReport=true; collect coverage with DeterministicReport=false\n")
+}
+
+func TestErasedSourceRootIsNamedAheadOfAnAmbiguousClass(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	// Order.cs exists under both sources, so on its own it is ambiguous.
+	f.write("src/a/Order.cs", csharpFile(20))
+	f.write("src/b/Order.cs", csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// One erased filename beside the ambiguous class. The erased root voids
+	// the whole document before any candidate is built, so the reader is told
+	// which property to turn off rather than shown a contradiction that is a
+	// consequence of it.
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(
+		[]string{filepath.Join(f.root, "src", "a"), filepath.Join(f.root, "src", "b")},
+		coverageClass{filename: "Order.cs", lines: spanCoverage(1, 1, 1)},
+		coverageClass{filename: "/_/src/Ordering/OrderService.cs", lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_source_root_erased_deterministic", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml carries no source root, erased by "+
+			"DeterministicReport=true; collect coverage with DeterministicReport=false\n")
+}
+
+func TestAmbiguousClassIsNamedAheadOfTheReportPlacingNothingInside(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write("src/a/Order.cs", csharpFile(20))
+	f.write("src/b/Order.cs", csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The first class in document order places nowhere, from a source outside
+	// the repo, and the second contradicts itself. The class-level check runs
+	// as each class is read, so the contradiction is named rather than the
+	// report-level verdict that is decided only after the last class.
+	otherCheckout := t.TempDir()
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(
+		[]string{otherCheckout, filepath.Join(f.root, "src", "a"), filepath.Join(f.root, "src", "b")},
+		coverageClass{filename: "obsolete/Old.cs", lines: spanCoverage(1, 1, 1)},
+		coverageClass{filename: "Order.cs", lines: spanCoverage(1, 1, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "file_ambiguous", 1, f.baseLabel("main"),
+		"class Order.cs in coverage report TestResults/coverage.cobertura.xml resolved to more than one path "+
+			"inside the repo root, src/a/Order.cs and src/b/Order.cs\n")
+}
+
 func TestCaseOnlyPathDifferenceIsRefusedRatherThanGuessed(t *testing.T) {
 	const other = "src/Ordering/Other.cs"
 	vanish := span{File: other, Name: "Other.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
 
 	f := newFixture(t, "main")
+	if !caseInsensitiveFilesystem(t, f.root) {
+		t.Skip("the filesystem is case sensitive, so the wrong-case candidate never resolves and the case is a duplicate of the unresolvable one")
+	}
 	f.write(orderService, csharpFile(80))
 	f.write(other, csharpFile(20))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 	f.touchLine(other, 7)
-	// The wrong-case candidate resolves on a case-insensitive filesystem and
-	// does not on a case-sensitive one, but neither spelling equals
-	// OrderService.cs's own case, so Cancel is unknown either way. Other.cs is
-	// correctly cased so the report is not empty of in-root classes on Linux.
+	// The wrong-case candidate resolves here, to a path whose case is not
+	// OrderService.cs's own, so refusing it rather than folding case is what
+	// leaves Cancel unknown. Other.cs is correctly cased, so the report still
+	// places a class inside the root.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: "src/Ordering/orderservice.cs", lines: spanCoverage(61, 3, 2)},
 		coverageClass{filename: other, lines: spanCoverage(6, 4, 1)}))
@@ -1947,8 +2094,7 @@ func TestReportWhoseEveryClassIsGoneFromDiskFailsNamingTheMismatch(t *testing.T)
 	example := filepath.ToSlash(filepath.Join(f.root, filepath.FromSlash(deletedFile)))
 	root := resolvedPath(t, f.root)
 	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
-		fmt.Sprintf("coverage report TestResults/coverage.cobertura.xml resolved no class inside the repo root; "+
-			"example resolved path %s, repo root %s\n", example, root),
+		outsideRepoStderr(example, root),
 		map[string]string{"EXAMPLE": example, "ROOT": root})
 }
 

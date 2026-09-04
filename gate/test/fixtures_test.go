@@ -186,10 +186,13 @@ func cobertura(sourceRoot string, classes ...coverageClass) string {
 	return renderCobertura([]string{sourceRoot}, classes...)
 }
 
-// coberturaNoSources is cobertura with <sources/> empty, which is what
-// DeterministicReport=true emits (issue 16, coverage_source_root_erased).
-// UseSourceLink=true is the other erased shape but a different document: it
-// keeps one <source> that is empty, so a case for it calls cobertura("").
+// coberturaNoSources is cobertura with <sources/> empty, so every class
+// filename stands alone. That document reads as an erased source root when the
+// filenames are relative or carry the /_/ placeholder DeterministicReport=true
+// writes (issue 16, coverage_source_root_erased), and as the legitimate
+// coverlet shape when they are absolute and carry their own root.
+// UseSourceLink=true is a different document again, keeping one <source> that
+// is empty, so a case for it calls cobertura("").
 func coberturaNoSources(classes ...coverageClass) string {
 	return renderCobertura(nil, classes...)
 }
@@ -245,6 +248,28 @@ func writeAbsolute(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// outsideRepoStderr is the coverage_outside_repo diagnostic as it reaches
+// stderr, so the several cases that reach it name the two machine-specific
+// paths once, in the same shape as the golden's holes.
+func outsideRepoStderr(example, root string) string {
+	return fmt.Sprintf("coverage report TestResults/coverage.cobertura.xml placed no class inside the repo root; "+
+		"example path %s, repo root %s\n", example, root)
+}
+
+// caseInsensitiveFilesystem reports whether dir's filesystem matches names
+// case insensitively, which decides whether a case-only path difference is a
+// difference the resolver can be asked about at all.
+func caseInsensitiveFilesystem(t *testing.T, dir string) bool {
+	t.Helper()
+	probe := filepath.Join(dir, "case-probe")
+	if err := os.WriteFile(probe, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(probe)
+	_, err := os.Stat(filepath.Join(dir, "CASE-PROBE"))
+	return err == nil
 }
 
 // resolvedPath is filepath.EvalSymlinks for a path a case knows exists,
