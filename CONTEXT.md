@@ -57,7 +57,9 @@ method name. Where spans nest, a source line belongs to the smallest span contai
 
 Two methods can share one span, since `int F(int x) => 1; int F(string x) => 2;` on one line is
 valid C#. Attribution still consults nothing but the span, so both overloads score against the same
-lines, and the extractor's parameter spelling separates them only as identities.
+lines, and the extractor's signature spelling separates them only as identities. A signature is more
+than a parameter list where a parameter list cannot separate two declarations on one line; the C#
+extractor's `MethodSpanResult` doc comment owns that format.
 
 Prefer "span" over "method identity" or "method key". The latter two invite a name-based reading,
 which is the reading this project rejects.
