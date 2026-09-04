@@ -1651,6 +1651,33 @@ func TestClassWithNoFilenameDoesNotSuppressTheOutsideRepoDiagnostic(t *testing.T
 		map[string]string{"EXAMPLE": example, "ROOT": root})
 }
 
+func TestSourceRootAbsentFromThisMachineFailsNamingTheMismatch(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+
+	// dotnet test ran in a container with the repo bind-mounted, so <source>
+	// names the mount and the filenames hang off it, and the gate runs on the
+	// host where that directory does not exist. Nothing resolves anywhere, so
+	// the source root itself is the evidence: it is the report's own claim
+	// about where the source was, and it is not here.
+	containerMount := filepath.Join(t.TempDir(), "src")
+	f.write("TestResults/coverage.cobertura.xml", cobertura(containerMount,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	example := filepath.ToSlash(containerMount)
+	root := resolvedPath(t, f.root)
+	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
+		fmt.Sprintf("coverage report TestResults/coverage.cobertura.xml resolved no class inside the repo root; "+
+			"example resolved path %s, repo root %s\n", example, root),
+		map[string]string{"EXAMPLE": example, "ROOT": root})
+}
+
 func TestDeterministicReportEmptyingSourcesFailsNamingTheProperty(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
@@ -1712,6 +1739,52 @@ func TestUseSourceLinkWithASchemelessDocumentKeyFailsNamingTheProperty(t *testin
 	f.run().assertMatches(t, "coverage_source_root_erased_sourcelink", 1, f.baseLabel("main"),
 		"coverage report TestResults/coverage.cobertura.xml carries a source link document key rather than a "+
 			"path, erased by UseSourceLink=true; collect coverage with UseSourceLink=false\n")
+}
+
+func TestUseSourceLinkDocumentKeyBesideARealSourceRootFailsNamingTheProperty(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// A URL document key in a report that still carries an ordinary source
+	// root, so the blank <source> half of the shape is absent and the key
+	// itself is the only thing that gives it away.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{
+			filename: "https://raw.githubusercontent.com/org/repo/deadbeef/src/Ordering/OrderService.cs",
+			lines:    spanCoverage(61, 3, 2),
+		}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_source_root_erased_sourcelink", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml carries a source link document key rather than a "+
+			"path, erased by UseSourceLink=true; collect coverage with UseSourceLink=false\n")
+}
+
+func TestBlankSourceWithAnAbsoluteFilenameScores(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// One blank <source> beside a filename that is already an absolute path.
+	// The filename carries its own root, so this is the coverlet shape ADR 0004
+	// names and not UseSourceLink=true: joining the blank source onto it leaves
+	// it unchanged, and it places inside the repo root.
+	f.write("TestResults/coverage.cobertura.xml", cobertura("",
+		coverageClass{
+			filename: filepath.Join(f.root, filepath.FromSlash(orderService)),
+			lines:    spanCoverage(61, 3, 2),
+		}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
 func TestReportCarryingBothErasedShapesNamesDeterministicReport(t *testing.T) {

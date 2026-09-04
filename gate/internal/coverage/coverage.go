@@ -2,9 +2,8 @@
 // which lines of a source file are instrumentable and which of those were
 // hit. It resolves report paths by ADR 0004's one rule, and the rule cuts two
 // ways: one path it cannot place inside the repo is a silent ignore, while a
-// report with an erased source root, a class contradicting itself, or classes
-// that resolved outside the root and none inside it fails the run with a typed
-// code.
+// report with an erased source root, a class contradicting itself, or no class
+// at all placed inside the root fails the run with a typed code.
 package coverage
 
 import (
@@ -169,11 +168,12 @@ var sourceLinkScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
 // 0004's 2026-09-03 amendment (issue 16) adds three checks ahead of the join,
 // in precedence order: an erased source root voids the whole report before
 // any candidate is built, a class resolving to more than one path inside the
-// root contradicts itself, and a report whose classes resolved outside the
-// root and none inside it is the git-worktree case. Any one candidate
-// resolving nowhere, or resolving outside the root, stays the silent ignore
-// ADR 0004 already decided, and a report whose every class merely no longer
-// exists on disk resolves nothing and fails nothing here.
+// root contradicts itself, and a report placing no class inside the root is
+// the wrong-tree case, evidenced either by a class that resolved outside it or
+// by a source root that is not on this machine. Any one candidate resolving
+// nowhere, or resolving outside the root, stays the silent ignore ADR 0004
+// already decided, and so does a report whose source root is there and whose
+// classes merely no longer are.
 func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath srcpath.Path) *report.Failure {
 	if failure := r.erasedSourceRoot(reportPath); failure != nil {
 		return failure
@@ -211,10 +211,36 @@ func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath srcpat
 		}
 	}
 
-	if !resolvedAnyClass && outsideExample != "" {
+	if resolvedAnyClass || len(r.Classes) == 0 {
+		return nil
+	}
+	if outsideExample != "" {
 		return outsideRepoFailure(outsideExample, reportPath, root)
 	}
+	if missing := r.missingSourceRoot(root); missing != "" {
+		return outsideRepoFailure(missing, reportPath, root)
+	}
 	return nil
+}
+
+// missingSourceRoot is the first <source> directory the report anchors its
+// classes on that is not on the gating machine at all, or "" when every source
+// it names is there. A report whose classes place nowhere is read against that
+// difference: a source root that exists and classes that do not is the stale
+// report ADR 0004 ignores, while a source root that does not exist is a report
+// measured somewhere else, the container bind mount as much as the second
+// checkout, and the reader is owed the path rather than a wall of unattributed
+// methods.
+func (r coberturaReport) missingSourceRoot(root srcpath.Root) string {
+	for _, source := range r.Sources {
+		if !filepath.IsAbs(source) {
+			continue
+		}
+		if root.Place(source).Placement == srcpath.NotOnDisk {
+			return filepath.ToSlash(source)
+		}
+	}
+	return ""
 }
 
 // erasedSourceRoot checks the two shapes MSBuild produces when the source
@@ -249,9 +275,10 @@ func (r coberturaReport) erasedSourceRoot(reportPath srcpath.Path) *report.Failu
 // rather than paths. ADR 0004 names two halves of that shape and either one
 // settles it: UseSourceLink=true writes the source root out as one blank
 // <source>, and the key it leaves in the filename can be a URL but need not
-// be, so a schemeless key is caught by the blank source beside it. A report
-// with no <source> at all is the separate, legitimate shape coverlet writes
-// when no computed source root prefixes the document, and is left alone.
+// be, so a schemeless key is caught by the blank source beside it. A blank
+// source alone is not enough, because an absolute filename carries its own
+// root and is the legitimate shape coverlet writes when no computed source
+// root prefixes the document; so is a report with no <source> at all.
 func (r coberturaReport) sourceLinked() bool {
 	if len(r.Classes) == 0 {
 		return false
@@ -269,7 +296,12 @@ func (r coberturaReport) sourceLinked() bool {
 			return false
 		}
 	}
-	return true
+	for _, class := range r.Classes {
+		if !filepath.IsAbs(class.Filename) {
+			return true
+		}
+	}
+	return false
 }
 
 // candidates lists every absolute path ADR 0004 derives from one class
@@ -318,11 +350,11 @@ func placeCandidates(candidates []string, root srcpath.Root) (distinct []srcpath
 	return distinct, outside
 }
 
-// outsideRepoFailure names the git-worktree case: no class in the report
-// resolved inside the root and at least one resolved outside it. The example
-// is the resolved path of the first such candidate in document order, so the
-// reader sees the path the gate compared, spelled the same way as the root
-// beside it.
+// outsideRepoFailure names the wrong-tree case: no class in the report placed
+// inside the root. The example is the first candidate that resolved outside it
+// in document order, or the first source root the report names that is not on
+// this machine, so the reader sees the path the gate compared, spelled the
+// same way as the root beside it.
 func outsideRepoFailure(example string, reportPath srcpath.Path, root srcpath.Root) *report.Failure {
 	return &report.Failure{
 		Code: report.CodeCoverageOutsideRepo,
