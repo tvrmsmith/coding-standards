@@ -201,6 +201,12 @@ func selectDiff(repo gitscope.Repo, sc scope.Scope) (selection, error) {
 func selectFiles(repo gitscope.Repo, names []string) (selection, error) {
 	var selected selection
 	resolved := make([]srcpath.Path, 0, len(names))
+	// --files is the first path list a developer writes by hand rather than
+	// one built from sorted map keys, so it is the first that can name one
+	// file twice, as `a.cs ./a.cs` does. The extractor is handed each file
+	// once: given it twice it reports every span in it twice, and the run
+	// exits 1 accusing the extractor of a contract violation over a typo.
+	seen := map[srcpath.Path]bool{}
 	for _, name := range names {
 		path, err := repo.Root().Named(name)
 		if err != nil {
@@ -209,6 +215,10 @@ func selectFiles(repo gitscope.Repo, names []string) (selection, error) {
 			selected.Failure = &report.Failure{Code: report.CodeFileUnresolved, Message: err.Error()}
 			return selected, nil
 		}
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
 		resolved = append(resolved, path)
 	}
 

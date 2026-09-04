@@ -106,7 +106,11 @@ func Parse(args []string) (Scope, error) {
 				return Scope{}, conflict(ModeSince, sc.Mode)
 			}
 			i++
-			if i >= len(args) {
+			// The same stop the --files arm makes: an argument starting with
+			// '-' is another flag the developer typed, so taking it as a ref
+			// would report a commit that does not exist rather than the
+			// usage block.
+			if i >= len(args) || strings.HasPrefix(args[i], "-") {
 				return Scope{}, &UsageError{Problem: "--since needs a ref"}
 			}
 			sc.Mode, sc.Ref, set = ModeSince, args[i], true
@@ -154,6 +158,13 @@ func Parse(args []string) (Scope, error) {
 
 // conflict reports two scope flags named on the same command line, the one
 // just seen first and the one already set second.
+//
+// A second --files is still a usage error, since the flag is variadic rather
+// than repeatable, but it names one scope and not two, so it gets the message
+// that says where the paths go.
 func conflict(second, first Mode) error {
+	if second == ModeFiles && first == ModeFiles {
+		return &UsageError{Problem: "--files takes every path in one list, as in 'metric-gate --files a.cs b.cs'"}
+	}
 	return &UsageError{Problem: flagName(second) + " and " + flagName(first) + " name two scopes; pass one"}
 }
