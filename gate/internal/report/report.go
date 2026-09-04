@@ -35,6 +35,13 @@ const (
 	CodeCoverageMissing               = "coverage_missing"
 	CodeCoverageUnparseable           = "coverage_unparseable"
 	CodeUnknownChangedMethod          = "unknown_changed_method"
+	// The three coverage-path causes ADR 0004's 2026-09-03 amendment defers to
+	// issue 16: a source root MSBuild erased, a class resolving to two paths
+	// inside the repo root, and a report resolving only outside it.
+	// coverage.mergeInto owns the order they are checked in.
+	CodeCoverageSourceRootErased = "coverage_source_root_erased"
+	CodeFileAmbiguous            = "file_ambiguous"
+	CodeCoverageOutsideRepo      = "coverage_outside_repo"
 )
 
 // ReasonFileUnmatched is the typed reason on an unknown row: the changed
