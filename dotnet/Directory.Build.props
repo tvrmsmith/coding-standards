@@ -17,6 +17,11 @@
          community fork of FluentAssertions 7; FluentAssertions 8 moved to a licence that bills
          commercial users, and this repo's own suite is the worked example of its standards. -->
     <AwesomeAssertionsVersion>9.6.0</AwesomeAssertionsVersion>
+
+    <!-- Both test projects and the three csproj snippets tests/verify-severities.sh generates
+         resolve xunit from here, so the harness cannot drift behind the suites it is meant to
+         mirror. -->
+    <XunitVersion>2.9.3</XunitVersion>
   </PropertyGroup>
 
 </Project>

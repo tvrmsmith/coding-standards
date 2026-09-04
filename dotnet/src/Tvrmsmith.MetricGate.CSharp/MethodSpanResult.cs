@@ -3,7 +3,10 @@ namespace Tvrmsmith.MetricGate.CSharp;
 /// <summary>One measured method span. <c>Name</c> is declaring type names joined by <c>.</c>, then
 /// the member name as metadata spells it, so a constructor is <c>Order..ctor</c>, a getter is
 /// <c>Order.get_Id</c>, an operator is <c>Order.op_Addition</c> and a local function is its
-/// container's name, a dot, then the local name. Type parameters are part of a name, so a generic
+/// container's name, a dot, then the local name, or its bare local name when no span encloses it at
+/// all, which is what top-level statements and an initializer lambda produce. A C# 14
+/// <c>extension</c> block contributes no name segment, so its members qualify to the static class
+/// declaring the block. Type parameters are part of a name, so a generic
 /// method reads <c>Order.Map&lt;TKey, TValue&gt;</c> and a generic type qualifies its members as
 /// <c>Cache&lt;TKey, TValue&gt;.Get</c>. No namespace and no parameter list. The full table, and
 /// which declarations get a span at all, live in <c>docs/csharp-decision-points.md</c>.
@@ -43,7 +46,11 @@ namespace Tvrmsmith.MetricGate.CSharp;
 /// without it two conversions written on one line would be indistinguishable. A property or event
 /// accessor takes <c>()</c>, since the declaration itself carries no parameter list and the
 /// implicit <c>value</c> parameter is never spelled. An indexer accessor takes the indexer's own parameter list instead, so
-/// <c>get_Item</c> on <c>this[int index]</c> is <c>(int)</c>.</para>
+/// <c>get_Item</c> on <c>this[int index]</c> is <c>(int)</c>. A non-static member of a C# 14
+/// <c>extension</c> block prepends the block's receiver parameter, the way the compiler emits it,
+/// so <c>Big()</c> in <c>extension(string t)</c> is <c>(string)</c>. That is also what tells two
+/// extension blocks apart, since neither contributes a name segment and both can be written on one
+/// line.</para>
 ///
 /// <para>It is syntactic, never resolved, so <c>List&lt;int&gt;</c> and an alias for it read as
 /// different signatures. That is enough for the one question the gate asks of it, because two

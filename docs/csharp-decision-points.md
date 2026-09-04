@@ -122,22 +122,25 @@ widening it, and synthesizing a span for a construct with no declaration syntax 
 it belongs with whichever change also moves the threshold. A local function declared in such a file is
 unaffected, since it does have a declaration and does get a span, under its bare name.
 
-A span's printed name follows the CLR's own naming for the member kind:
+A span's printed name is metadata's own naming for the member kind, with two deliberate departures
+noted in the table below, both of them there to tell declarations apart that metadata does not have to:
 
 | Declaration | Printed name |
 | --- | --- |
 | Method | `Order.Total` |
-| Generic method | `Order.Map<TKey, TValue>` |
+| Generic method | `Order.Map<TKey, TValue>`. **Departure**: metadata spells arity, `` Map`2 ``. Type parameter names read better in a report and cannot collide the way an arity count can |
 | Constructor | `Order..ctor` |
 | Static constructor | `Order..cctor` |
 | Finalizer | `Order.Finalize` |
 | Property getter | `Order.get_Id` |
 | Property setter | `Order.set_Id` |
-| Init-only accessor | `Order.init_Id` |
+| Init-only accessor | `Order.init_Id`. **Departure**: metadata emits `set_Id` with a `modreq(IsExternalInit)`, which syntax alone cannot see and which would collide with a `set` accessor on the same property |
 | Indexer getter | `Order.get_Item` |
 | Event add accessor | `Order.add_Changed` |
 | Event remove accessor | `Order.remove_Changed` |
 | Operator overload | `Order.op_Addition` |
+| Compound assignment operator | `Order.op_AdditionAssignment`. C# 14's instance form, `public void operator +=(Order o)`, is a different member from the static `op_Addition` above |
+| Instance increment or decrement | `Order.op_IncrementAssignment`. C# 14's parameterless instance form; the classic one-parameter static `operator ++` stays `op_Increment` |
 | Conversion operator | `Order.op_Implicit` (the target type lives in the signature, not the name) |
 | Local function | `Order.Total.Running` (container name, dot, local name) |
 | Generic local function | `Order.Total.Map<T>` (type parameters are part of a name here too) |
@@ -181,7 +184,12 @@ ceiling as of the 5.9.0 reference, and they settled the two questions the C# 13 
   it contributes no name segment. A member declared in one qualifies to the enclosing static class,
   `Beyond.get_IsLong`. Keeping the empty segment would spell `Beyond..get_IsLong`, whose doubled dot
   reads as the `..ctor` convention. Two extension blocks in one class can then declare the same
-  member name; their spans still differ by line, which is what span identity turns on.
+  member name, and written on one line their spans agree on line range too, so the signature of a
+  non-static extension member prepends the block's receiver parameter. That is what the compiler
+  emits anyway, an instance extension member becoming a static method whose first parameter is the
+  receiver, and it is the coordinate that keeps the pair distinct. A `static` member of an extension
+  block takes no receiver, and the compiler rejects two of them that would otherwise collide, so
+  excluding it loses no identity.
 - **Operator arity.** No change was needed. The receiver is not an operand for naming purposes, so a
   one-parameter `operator +` in an extension block really is unary plus. Compiling both forms
   confirms it: the emitted metadata is `op_UnaryPlus` for `operator +(string b)` and
@@ -189,4 +197,7 @@ ceiling as of the 5.9.0 reference, and they settled the two questions the C# 13 
   produces from the parameter list alone.
 
 `fixtures/Recent.cs` and `fixtures/Beyond.cs` pin the ceiling from below, so a silent downgrade of the
-reference reddens the suite. `fixtures/TwoExtensions.cs` pins the qualification rule.
+reference reddens the suite; `Beyond.cs` also holds the two operator forms the arity conclusion rests
+on. `fixtures/TwoExtensions.cs` pins the qualification rule, including the one-line pair that line
+range alone cannot separate. `fixtures/Operators.cs` pins the compound assignment operators C# 14
+added, which the ceiling also brought in reach.
