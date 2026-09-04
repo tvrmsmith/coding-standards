@@ -46,6 +46,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -105,12 +106,19 @@ type NoBaseError struct {
 	// NoCommits marks a repo with no HEAD at all, which is what --staged
 	// hits before the first commit.
 	NoCommits bool
+	// Cause is what git said when the ref resolved but the merge base did
+	// not, which is unrelated histories rather than a name that does not
+	// exist. It is carried because "does not name a commit" sends the
+	// developer hunting a typo that is not there.
+	Cause string
 }
 
 func (e NoBaseError) Error() string {
 	switch {
 	case e.NoCommits:
 		return "no diff base: this repo has no commits"
+	case e.Cause != "":
+		return "no diff base: HEAD and " + e.Ref + " share no common ancestor; git said " + e.Cause
 	case e.Ref != "":
 		return "no diff base: --since " + e.Ref + " does not name a commit"
 	default:
@@ -142,7 +150,7 @@ func (r Repo) ResolveRef(ref string) (Base, error) {
 	}
 	mergeBase, err := r.git("merge-base", "HEAD", ref)
 	if err != nil {
-		return Base{}, NoBaseError{Ref: ref}
+		return Base{}, NoBaseError{Ref: ref, Cause: cause(err)}
 	}
 	return Base{Ref: ref, Commit: strings.TrimSpace(mergeBase)}, nil
 }
@@ -230,10 +238,27 @@ func cachedFlag(base Base) []string {
 // what is staged, keeping the order it was given. A --staged run asks this
 // only about the files it is about to score, since a dirty file the run
 // never claimed cannot be misattributed to the wrong content.
+//
+// The comparison runs under the same blanked filter drivers and the same
+// diffFlags as TouchedLines, because it has to answer the question the gate
+// actually asks: does the text the extractor read off disk match the index
+// content the line numbers came from. git's own answer runs the repository's
+// clean driver over the working tree, so a driver that normalises the edit
+// away reports the two sides as equal and the guard passes on exactly the
+// divergence it exists to refuse.
+//
+// Every other exit is typed, so a missing filter binary lands in the
+// document's error block rather than exiting 1 with an empty stdout, which is
+// the shape TouchedLines already holds itself to on the same path.
 func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
+	drivers, err := r.filterDrivers()
+	if err != nil {
+		return nil, unreadableDiff(err)
+	}
+	args := append(append([]string{}, diffFlags...), "--quiet", "--")
 	var divergent []srcpath.Path
 	for _, path := range paths {
-		_, err := r.git("diff", "--quiet", "--", string(path))
+		_, err := r.gitBlanking(drivers, append(slices.Clone(args), string(path))...)
 		if err == nil {
 			continue
 		}
@@ -242,7 +267,7 @@ func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
 			divergent = append(divergent, path)
 			continue
 		}
-		return nil, err
+		return nil, unreadableDiff(err)
 	}
 	return divergent, nil
 }

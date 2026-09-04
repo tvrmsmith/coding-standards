@@ -119,26 +119,44 @@ func (r Root) Place(candidate string) Placed {
 // the form `git diff` emits.
 func FromSlash(rel string) Path { return Path(rel) }
 
-// Named resolves a path a human typed on --files. ADR 0004 resolves it
-// against the process working directory and then relativizes it to the
-// root, and makes a path the gate cannot place inside the repo exit 1
-// rather than be matched approximately.
+// Named resolves a path a human typed on --files. ADR 0004 resolves a
+// relative name against the process working directory and then relativizes
+// it to the root, and makes a path the gate cannot place inside the repo exit
+// 1 rather than be matched approximately. An absolute name already says where
+// it is, so joining it onto the working directory would name a path nobody
+// typed and report a file that exists as missing.
 //
-// The two errors name the path as the human typed it, name, not as the gate
+// A name that resolves to anything other than a regular file is refused, the
+// same rule Place applies, because no extractor claims a directory: the gate
+// would measure nothing and exit 0 pass over a tree the developer believes
+// they gated.
+//
+// The three errors name the path as the human typed it, name, not as the gate
 // resolved it, because that message reaches the document verbatim and a
 // resolved absolute path would tell the reader nothing about what they typed.
 func (r Root) Named(name string) (Path, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", err
+	candidate := filepath.FromSlash(name)
+	if !filepath.IsAbs(candidate) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		candidate = filepath.Join(cwd, candidate)
 	}
-	resolved, err := filepath.EvalSymlinks(filepath.Join(cwd, filepath.FromSlash(name)))
+	resolved, err := filepath.EvalSymlinks(candidate)
 	if err != nil {
 		return "", fmt.Errorf("%s does not exist", name)
 	}
 	rel, err := filepath.Rel(r.resolved, resolved)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("%s is outside the repo root", name)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("%s does not exist", name)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is a directory, not a file", name)
 	}
 	return Path(filepath.ToSlash(rel)), nil
 }
