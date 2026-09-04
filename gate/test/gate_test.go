@@ -1631,8 +1631,10 @@ func TestReportBuiltInAnotherCheckoutFailsNamingTheMismatch(t *testing.T) {
 	// A second checkout of the same source tree, entirely outside this
 	// fixture's repo root. Coverlet's <source> names it faithfully; nothing
 	// about the report is malformed, it was just measured against a different
-	// working tree than the one being gated.
-	otherCheckout := t.TempDir()
+	// working tree than the one being gated. The temp root is resolved once, so
+	// the expected path below is built by joining rather than by running the
+	// gate's own resolver over the answer.
+	otherCheckout := resolvedPath(t, t.TempDir())
 	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
 	writeAbsolute(t, classPath, csharpFile(80))
 	f.write("TestResults/coverage.cobertura.xml", cobertura(otherCheckout,
@@ -1642,7 +1644,7 @@ func TestReportBuiltInAnotherCheckoutFailsNamingTheMismatch(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	example := resolvedPath(t, classPath)
+	example := filepath.ToSlash(classPath)
 	root := resolvedPath(t, f.root)
 	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
 		outsideRepoStderr(example, root),
@@ -1661,7 +1663,7 @@ func TestClassWithNoFilenameDoesNotSuppressTheOutsideRepoDiagnostic(t *testing.T
 	// root, so an empty filename has to contribute no evidence rather than
 	// stand in for a class that resolved. The real class resolves under
 	// neither src/ nor anything else in this repo.
-	otherCheckout := t.TempDir()
+	otherCheckout := resolvedPath(t, t.TempDir())
 	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
 	writeAbsolute(t, classPath, csharpFile(80))
 	f.write("TestResults/coverage.cobertura.xml", renderCobertura(
@@ -1673,7 +1675,7 @@ func TestClassWithNoFilenameDoesNotSuppressTheOutsideRepoDiagnostic(t *testing.T
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	example := resolvedPath(t, classPath)
+	example := filepath.ToSlash(classPath)
 	root := resolvedPath(t, f.root)
 	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
 		outsideRepoStderr(example, root),
@@ -1717,17 +1719,16 @@ func TestClassFilenameNamingNoFileDoesNotSuppressTheOutsideRepoDiagnostic(t *tes
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 
-	// A class filename of "." joins onto the in-root <source> to name that
-	// directory itself, which resolves inside the root. It names no file, so
-	// it has to contribute no evidence, exactly as an empty filename does;
-	// otherwise one malformed class stands in for the real class, which
-	// resolved in another checkout entirely. ".." is the same case one level
-	// up, resolving to the repo root itself from a <source> inside it, "/" is
-	// the same case from the other end, and "../.." is the case no spelling of
-	// the filename can be carved out for: off the deepest <source> here it
-	// names the repo root, and only what it resolves to, a directory rather
-	// than a file, tells it apart from a path worth scoring.
-	otherCheckout := t.TempDir()
+	// Four directory-shaped filenames, none carved out by spelling: each one
+	// joins onto a <source> like any other filename and is refused for what it
+	// resolves to. "." names the in-root <source> directory itself, ".." the
+	// directory above it, "../.." the repo root off the deepest <source> here,
+	// and "/" resolves to the filesystem root, outside. Reading any of them as
+	// a placed class would let one malformed element stand in for the real
+	// class, which resolved in another checkout entirely, and suppress the
+	// diagnostic. The lines each one carries would score a file, so a
+	// regression here is a wrong number rather than a missing one.
+	otherCheckout := resolvedPath(t, t.TempDir())
 	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
 	writeAbsolute(t, classPath, csharpFile(80))
 	f.write("TestResults/coverage.cobertura.xml", renderCobertura(
@@ -1742,7 +1743,7 @@ func TestClassFilenameNamingNoFileDoesNotSuppressTheOutsideRepoDiagnostic(t *tes
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	example := resolvedPath(t, classPath)
+	example := filepath.ToSlash(classPath)
 	root := resolvedPath(t, f.root)
 	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
 		outsideRepoStderr(example, root),
@@ -2001,6 +2002,26 @@ func TestWhitespaceOnlySourceReadsAsBlankAndNamesTheProperty(t *testing.T) {
 	f.run().assertMatches(t, "coverage_source_root_erased_sourcelink", 1, f.baseLabel("main"),
 		"coverage report TestResults/coverage.cobertura.xml carries a source link document key rather than a "+
 			"path, erased by UseSourceLink=true; collect coverage with UseSourceLink=false\n")
+}
+
+func TestWhitespacePaddedSourceRootStillAnchorsTheJoin(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The other half of the same formatter's output: a real source root with
+	// whitespace either side of it. Trimming has to happen where the document
+	// is read, not only where the erased-root check looks, or the join carries
+	// the padding into every candidate and the report resolves nothing.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(" "+f.root+" ",
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
 func TestBlankSourceWithAnAbsoluteFilenameScores(t *testing.T) {

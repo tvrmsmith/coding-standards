@@ -116,8 +116,8 @@ func Load(root srcpath.Root, reports []srcpath.Path) (Set, error) {
 				Message: fmt.Sprintf("could not parse coverage report %s; %s", path, parseCause(err)),
 			}
 		}
-		if failure := parsed.mergeInto(set, root, path); failure != nil {
-			return nil, failure
+		if err := parsed.mergeInto(set, root, path); err != nil {
+			return nil, err
 		}
 	}
 	return set, nil
@@ -162,11 +162,14 @@ func parseReport(path string) (coberturaReport, error) {
 }
 
 // parseCause renders a parse failure without the absolute path os attaches to
-// a read error, which the message already names repo-relative.
+// a read error, which the message already names repo-relative. The operation
+// stays, because "open: permission denied" and "read: permission denied" are
+// different faults under the same wording and the reader cannot tell them
+// apart from the bare errno text.
 func parseCause(err error) string {
 	var pathErr *fs.PathError
 	if errors.As(err, &pathErr) {
-		return pathErr.Err.Error()
+		return pathErr.Op + ": " + pathErr.Err.Error()
 	}
 	return err.Error()
 }
@@ -199,7 +202,7 @@ var sourceLinkScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
 // The classes fold into a set of this report's own, unioned into the caller's
 // only once every check has passed, so a report that fails leaves nothing of
 // itself behind.
-func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath srcpath.Path) *report.Failure {
+func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath srcpath.Path) error {
 	if failure := r.erasedSourceRoot(reportPath); failure != nil {
 		return failure
 	}
@@ -257,17 +260,12 @@ func (s Set) union(other Set) {
 
 // joinPaths renders the paths one diagnostic quotes as a readable list, so a
 // class contradicting itself three ways names all three rather than the first
-// two.
+// two. Its one caller reaches it only for a class that resolved to more than
+// one path, so it takes at least two.
 func joinPaths(paths []srcpath.Path) string {
 	rendered := make([]string, 0, len(paths))
 	for _, path := range paths {
 		rendered = append(rendered, path.String())
-	}
-	switch len(rendered) {
-	case 0:
-		return ""
-	case 1:
-		return rendered[0]
 	}
 	return strings.Join(rendered[:len(rendered)-1], ", ") + " and " + rendered[len(rendered)-1]
 }
@@ -331,16 +329,15 @@ func (r coberturaReport) sourceLinked() bool {
 // carried, /src/src/app/Order.cs off <source> /src, and the outside-repo
 // diagnostic quotes the first candidate. A relative filename is joined to each
 // <source>, and the join is absolute only when the <source> it started from
-// was. A filename naming no file at all, whether it is empty, ".", ".." or a
-// bare separator, yields nothing, because joining any of those onto a <source>
-// names a directory rather than a file and would let one malformed class stand
-// in for a whole report's worth of classes that did not resolve. ".." is the
-// same case as "." one level up, and a filename that merely starts with ".."
-// still names a file, so only the bare form is carved out here; srcpath.Place
-// refuses every other directory-shaped filename by what it resolves to.
+// was. An empty filename is the one spelling carved out here, because a class
+// carrying no filename gives the reader no path to be shown at all and the
+// join would otherwise quote the <source> itself as though the report had
+// named it. Every other directory-shaped spelling, ".", "..", "../.." or a
+// bare directory name, is joined like any other and refused by srcpath.Place
+// for what it resolves to, so one such class cannot stand in for a whole
+// report's worth of classes that placed nothing.
 func (r coberturaReport) candidates(filename string) []string {
-	switch filepath.Clean(filepath.FromSlash(filename)) {
-	case ".", "..", string(filepath.Separator):
+	if filename == "" {
 		return nil
 	}
 	if filepath.IsAbs(filename) {
