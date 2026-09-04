@@ -63,6 +63,20 @@ settle, decided while implementing and recorded here:
 A report carrying no `<class>` element at all raises nothing, since it placed nothing to be outside; a changed
 method it fails to cover still fails the run as `unknown_changed_method`.
 
+Two more details of the shipped diagnostics, where the Consequences section below promises something narrower than
+what the gate emits:
+
+- Consequences says the zero-in-root failure names "one example resolved path". The message names an **example
+  path**, the first candidate of the first class carrying a filename, symlink-resolved when it resolved and as the
+  join built it when it did not. It is the best available reading of a path the gate compared, not a
+  guaranteed-resolved one, and quoting the as-built form is what tells a container mount apart from a test run
+  whose files are gone. It degrades to two further shapes the section does not describe: a candidate no `<source>`
+  anchored to an absolute path is quoted and named as such, since a bare relative string would read as a path
+  inside the repo, and a report whose classes carry no filename to join says so instead of quoting nothing.
+- Consequences describes the erased shape as filenames rooted at the `/_/` placeholder. MSBuild numbers the
+  placeholder per source root past the first, `/_1/`, `/_2/` and so on, and the shipped detector matches
+  `^/_[0-9]*/` to cover them.
+
 ## Considered options
 
 **Longest-suffix matching.** The standard fallback, and the one every prior implementation reaches for.

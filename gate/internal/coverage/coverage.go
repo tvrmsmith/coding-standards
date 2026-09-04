@@ -185,7 +185,7 @@ var sourceLinkScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
 
 // mergeInto resolves each class to a source path and folds its lines into the
 // set. Resolution runs per report, with that report's own <sources>. ADR
-// 0004's 2026-09-03 amendment (issue 16) adds three checks ahead of the join,
+// 0004's 2026-09-04 amendment (issue 16) adds three checks ahead of the join,
 // in precedence order: an erased source root voids the whole report before
 // any candidate is built, a class resolving to more than one path inside the
 // root contradicts itself, and a report that lands no class inside the root at
@@ -330,13 +330,15 @@ func (r coberturaReport) sourceLinked() bool {
 // candidates lists every path ADR 0004 derives from one class filename. Each
 // <source> is joined to it, plus the filename itself when it is already
 // absolute; the join is absolute only when the <source> it started from was.
-// A filename naming no file at all, whether it is empty, "." or a bare
+// A filename naming no file at all, whether it is empty, ".", ".." or a bare
 // separator, yields nothing, because joining any of those onto a <source> names
 // a directory, which resolves inside the root and would let one malformed class
-// stand in for a whole report's worth of classes that did not.
+// stand in for a whole report's worth of classes that did not. ".." is the same
+// case as "." one level up, and a filename that merely starts with ".." still
+// names a file, so only the bare form is carved out.
 func (r coberturaReport) candidates(filename string) []string {
 	switch filepath.Clean(filepath.FromSlash(filename)) {
-	case ".", string(filepath.Separator):
+	case ".", "..", string(filepath.Separator):
 		return nil
 	}
 	candidates := make([]string, 0, len(r.Sources)+1)
