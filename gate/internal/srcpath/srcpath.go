@@ -64,8 +64,9 @@ type Placed struct {
 // landed under the root at all. The path is empty when it did not.
 func (p Placed) Inside() (Path, bool) { return p.path, p.inside }
 
-// Resolved is the absolute slash-separated path the candidate landed on,
-// symlink-resolved when it resolves and as built when it does not. It is what a
+// Resolved is the slash-separated reading of the candidate, symlink-resolved
+// and absolute when it resolves and as built when it does not, which for a
+// candidate that was never absolute is the relative text itself. It is what a
 // diagnostic quotes, so it is the best available reading of the path the gate
 // compared.
 func (p Placed) Resolved() string { return p.resolved }

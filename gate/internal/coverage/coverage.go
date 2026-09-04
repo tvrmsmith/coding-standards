@@ -9,6 +9,7 @@ package coverage
 import (
 	"cmp"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -112,7 +113,7 @@ func Load(root srcpath.Root, reports []srcpath.Path) (Set, error) {
 		if err != nil {
 			return nil, &report.Failure{
 				Code:    report.CodeCoverageUnparseable,
-				Message: fmt.Sprintf("could not parse coverage report %s; %v", path, err),
+				Message: fmt.Sprintf("could not parse coverage report %s; %s", path, parseCause(err)),
 			}
 		}
 		if failure := parsed.mergeInto(set, root, path); failure != nil {
@@ -141,7 +142,10 @@ type coberturaLine struct {
 	Hits   int `xml:"hits,attr"`
 }
 
-// parseReport reads one Cobertura document off disk.
+// parseReport reads one Cobertura document off disk. Each <source> is trimmed
+// as it is read, so a source root that is only the whitespace an XML formatter
+// left between the tags is blank to every reader of the document, the join and
+// the erased-root check alike.
 func parseReport(path string) (coberturaReport, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -151,7 +155,20 @@ func parseReport(path string) (coberturaReport, error) {
 	if err := xml.Unmarshal(body, &parsed); err != nil {
 		return coberturaReport{}, err
 	}
+	for i, source := range parsed.Sources {
+		parsed.Sources[i] = strings.TrimSpace(source)
+	}
 	return parsed, nil
+}
+
+// parseCause renders a parse failure without the absolute path os attaches to
+// a read error, which the message already names repo-relative.
+func parseCause(err error) string {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err.Error()
+	}
+	return err.Error()
 }
 
 // erasedSourceRootPlaceholder matches the placeholder DeterministicReport=true rewrites
@@ -179,12 +196,15 @@ var sourceLinkScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
 // or a relative one with no <source> to anchor it, counts as landing nowhere
 // like any other, so a report made only of those fails too. Only a report
 // carrying no <class> element is silent, which is ADR 0004's one carve-out.
+// The classes fold into a set of this report's own, unioned into the caller's
+// only once every check has passed, so a report that fails leaves nothing of
+// itself behind.
 func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath srcpath.Path) *report.Failure {
 	if failure := r.erasedSourceRoot(reportPath); failure != nil {
 		return failure
 	}
 
-	resolvedAnyClass := false
+	merged := Set{}
 	example := ""
 	for _, class := range r.Classes {
 		distinct, first := placeCandidates(r.candidates(class.Filename), root)
@@ -195,29 +215,58 @@ func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath srcpat
 			return &report.Failure{
 				Code: report.CodeFileAmbiguous,
 				Message: fmt.Sprintf(
-					"class %s in coverage report %s resolved to more than one path inside the repo root, %s and %s",
-					class.Filename, reportPath, distinct[0], distinct[1]),
+					"class %s in coverage report %s resolved to more than one path inside the repo root, %s",
+					class.Filename, reportPath, joinPaths(distinct)),
 			}
 		}
 		if len(distinct) == 0 {
 			continue
 		}
-		resolvedAnyClass = true
 		path := distinct[0]
-		lines, ok := set[path]
+		lines, ok := merged[path]
 		if !ok {
 			lines = Lines{}
-			set[path] = lines
+			merged[path] = lines
 		}
 		for _, line := range class.Lines {
 			lines[line.Number] = lines[line.Number] || line.Hits > 0
 		}
 	}
 
-	if resolvedAnyClass || len(r.Classes) == 0 {
-		return nil
+	if len(merged) == 0 && len(r.Classes) > 0 {
+		return outsideRepoFailure(example, reportPath, root)
 	}
-	return outsideRepoFailure(example, reportPath, root)
+	set.union(merged)
+	return nil
+}
+
+// union folds another report's resolved lines in, a line staying covered once
+// any report recorded a hit on it.
+func (s Set) union(other Set) {
+	for path, lines := range other {
+		existing, ok := s[path]
+		if !ok {
+			existing = Lines{}
+			s[path] = existing
+		}
+		for number, covered := range lines {
+			existing[number] = existing[number] || covered
+		}
+	}
+}
+
+// joinPaths renders the paths one diagnostic quotes as a readable list, so a
+// class contradicting itself three ways names all three rather than the first
+// two.
+func joinPaths(paths []srcpath.Path) string {
+	rendered := make([]string, 0, len(paths))
+	for _, path := range paths {
+		rendered = append(rendered, path.String())
+	}
+	if len(rendered) < 2 {
+		return strings.Join(rendered, "")
+	}
+	return strings.Join(rendered[:len(rendered)-1], ", ") + " and " + rendered[len(rendered)-1]
 }
 
 // erasedSourceRoot checks the two shapes MSBuild produces when the source
@@ -266,7 +315,7 @@ func (r coberturaReport) sourceLinked() bool {
 		return false
 	}
 	for _, source := range r.Sources {
-		if strings.TrimSpace(source) != "" {
+		if source != "" {
 			return false
 		}
 	}
@@ -278,14 +327,16 @@ func (r coberturaReport) sourceLinked() bool {
 	return false
 }
 
-// candidates lists every absolute path ADR 0004 derives from one class
-// filename: each <source> joined to it, plus the filename itself when it is
-// already absolute. A class carrying no filename yields nothing, because
-// joining "" onto a <source> names the source directory itself, which resolves
-// inside the root and would let one malformed class stand in for a whole
-// report's worth of classes that did not.
+// candidates lists every path ADR 0004 derives from one class filename. Each
+// <source> is joined to it, plus the filename itself when it is already
+// absolute; the join is absolute only when the <source> it started from was.
+// A filename naming no file at all, whether it is empty, "." or a bare
+// separator, yields nothing, because joining any of those onto a <source> names
+// a directory, which resolves inside the root and would let one malformed class
+// stand in for a whole report's worth of classes that did not.
 func (r coberturaReport) candidates(filename string) []string {
-	if filename == "" {
+	switch filepath.Clean(filepath.FromSlash(filename)) {
+	case ".", string(filepath.Separator):
 		return nil
 	}
 	candidates := make([]string, 0, len(r.Sources)+1)
@@ -324,17 +375,23 @@ func placeCandidates(candidates []string, root srcpath.Root) (distinct []srcpath
 }
 
 // outsideRepoFailure names the wrong-tree case, where no class in the report
-// placed inside the root. The example is the first candidate of the first
-// class in document order, symlink-resolved when it resolved and as the join
-// built it when it did not, so the reader sees a path the gate compared and can
-// tell a report from another checkout, a container mount, or a test run whose
-// files are gone apart by looking at it. It is called "example path" rather
-// than "example resolved path" for that reason. A report whose classes carry
-// no filename to join builds no candidate at all, and says so.
+// placed inside the root. The example is the first candidate of the first class
+// in document order carrying a filename, symlink-resolved when it resolved and
+// as the join built it when it did not, so the reader sees a path the gate
+// compared and can tell a report from another checkout, a container mount, or a
+// test run whose files are gone apart by looking at it. It is called "example
+// path" rather than "example resolved path" for that reason. A candidate no
+// <source> anchored is not absolute and names nothing on disk, so the message
+// says so rather than quoting a relative string the reader would read as a path
+// inside the repo. A report whose classes carry no filename to join builds no
+// candidate at all, and says that instead.
 func outsideRepoFailure(example string, reportPath srcpath.Path, root srcpath.Root) *report.Failure {
 	compared := "example path " + example
-	if example == "" {
+	switch {
+	case example == "":
 		compared = "no class carries a filename to compare"
+	case !filepath.IsAbs(filepath.FromSlash(example)):
+		compared = "example path " + example + ", which no <source> anchored to an absolute path"
 	}
 	return &report.Failure{
 		Code: report.CodeCoverageOutsideRepo,
