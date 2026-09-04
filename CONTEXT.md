@@ -69,8 +69,9 @@ path the gate handles is either already a source path or is resolved to one, and
 be resolved fails the run rather than being matched approximately.
 
 The gate resolves the changed set and looks coverage up against it, rather than canonicalizing every
-path a report mentions. A report path outside the repo, or inside it but untouched by the diff, is
-not the gate's business.
+path a report mentions. One report path that will not place inside the repo, or places inside it but
+is untouched by the diff, is not the gate's business. A whole report is: one that places nothing
+inside the repo, or whose source root was erased before it was written, fails the run.
 
 Prefer "source path" over "file path" or "normalized path". The point of the term is that there is
 exactly one form, not that some normalizing happened.
