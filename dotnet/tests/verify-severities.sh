@@ -32,6 +32,11 @@ aa_version="$(sed -n 's/.*<AwesomeAssertionsVersion>\(.*\)<\/AwesomeAssertionsVe
   "$dotnet_root/Directory.Build.props")"
 [ -n "$aa_version" ] || fail "could not read AwesomeAssertionsVersion from Directory.Build.props"
 
+# Same for xunit, so the generated projects below cannot fall behind the real test projects.
+xunit_version="$(sed -n 's/.*<XunitVersion>\(.*\)<\/XunitVersion>.*/\1/p' \
+  "$dotnet_root/Directory.Build.props")"
+[ -n "$xunit_version" ] || fail "could not read XunitVersion from Directory.Build.props"
+
 echo "==> Building Tvrmsmith.Analyzers"
 dotnet build "$dotnet_root/src/Tvrmsmith.Analyzers/Tvrmsmith.Analyzers.csproj" \
   -c Release --nologo -v quiet
@@ -132,7 +137,7 @@ cat > "$twae/Twae.csproj" <<EOF
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="AwesomeAssertions" Version="$aa_version" />
-    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit" Version="$xunit_version" />
   </ItemGroup>
 </Project>
 EOF
@@ -218,7 +223,7 @@ cat > "$pkgconsumer/PkgConsumer.csproj" <<EOF
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="AwesomeAssertions" Version="$aa_version" />
-    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit" Version="$xunit_version" />
     <!-- No PrivateAssets here on purpose: developmentDependency=true in the nuspec should be
          what keeps this from leaking downstream. -->
     <PackageReference Include="Tvrmsmith.Analyzers" Version="$pkg_version" />
@@ -266,7 +271,7 @@ cat > "$scoped/Scoped.csproj" <<EOF
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="AwesomeAssertions" Version="$aa_version" />
-    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit" Version="$xunit_version" />
   </ItemGroup>
 </Project>
 EOF

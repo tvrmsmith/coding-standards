@@ -49,6 +49,7 @@ public static class Extractor
             catch (Exception e) when (e is IOException or UnauthorizedAccessException
                 or ArgumentException or NotSupportedException)
             {
+                Console.Error.WriteLine($"metric-gate-csharp: {path}: {e.Message}");
                 files.Add(new FileStatusResult(path, "failed"));
                 continue;
             }
@@ -57,9 +58,16 @@ public static class Extractor
             try
             {
                 var tree = CSharpSyntaxTree.ParseText(source, ParseOptions);
-                var hasParseError = tree.GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
-                if (hasParseError)
+                var errors = tree.GetDiagnostics()
+                    .Where(d => d.Severity == DiagnosticSeverity.Error)
+                    .ToList();
+                if (errors.Count > 0)
                 {
+                    // A construct past the language ceiling and a genuinely broken source file both
+                    // land here, and only the diagnostic tells the two apart, so it is what the
+                    // operator needs to see. First error only: a single unrecognised construct
+                    // cascades into dozens, and the first one names it.
+                    Console.Error.WriteLine($"metric-gate-csharp: {path}: {errors[0]}");
                     files.Add(new FileStatusResult(path, "failed"));
                     continue;
                 }
@@ -70,8 +78,12 @@ public static class Extractor
             // The collector walks a shape of C# it does not recognise by throwing, which is the
             // right answer for the file it is on and the wrong one for every other file in the
             // batch. Letting it escape crashes the process, so the gate gets no JSON at all in
-            // place of the one failed row this loop is here to build.
-            catch (Exception e)
+            // place of the one failed row this loop is here to build. The filter keeps that from
+            // swallowing a fault that is about the host rather than about this file: a broken
+            // Roslyn load or an exhausted heap would otherwise be recorded as "every .cs file in
+            // the batch is bad" and still exit 0, so it stays loud and stops the run.
+            catch (Exception e) when (e is not (OutOfMemoryException or TypeLoadException
+                or BadImageFormatException or FileLoadException or MissingMemberException))
             {
                 Console.Error.WriteLine($"metric-gate-csharp: {path}: {e}");
                 files.Add(new FileStatusResult(path, "failed"));

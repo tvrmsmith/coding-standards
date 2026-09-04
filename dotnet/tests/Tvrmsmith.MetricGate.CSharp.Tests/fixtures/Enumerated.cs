@@ -3,7 +3,8 @@ namespace Fixtures;
 // One method per construct docs/csharp-decision-points.md enumerates, each holding that construct
 // and nothing else, so a construct that stops scoring fails on its own name rather than moving an
 // aggregate somebody has to decompose. DefaultLabel through BitwiseOrOperator are the constructs
-// that document says score nothing, the last four of them being deltas where Roslyn does score.
+// that document says score nothing; four of them, DefaultLabel, ConditionalAccess,
+// BitwiseAndOperator and BitwiseOrOperator, are deltas where Roslyn does score.
 // Folded at the end pins a nested local function's points to the local function alone.
 public class Enumerated
 {

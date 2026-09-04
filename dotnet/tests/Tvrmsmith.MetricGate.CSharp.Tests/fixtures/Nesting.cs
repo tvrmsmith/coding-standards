@@ -109,4 +109,13 @@ public class Nesting
 
         Detached(1);
     };
+
+    // A generic local function's type parameters are part of its name, the way a generic method's
+    // are, and its arity is the backtick prefix on its signature.
+    public int WithGenericLocal(int n)
+    {
+        T Map<T>(T value) => value;
+
+        return Map(n);
+    }
 }

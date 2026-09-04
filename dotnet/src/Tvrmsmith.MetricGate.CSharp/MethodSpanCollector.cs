@@ -49,7 +49,7 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
             node,
             WithTypeParameters(node.Identifier.Text, node.TypeParameterList),
             node.ExplicitInterfaceSpecifier);
-        RecordSpan(node, name, Signature(node.ParameterList, node.TypeParameterList));
+        RecordSpan(node, name, Signature(node, node.ParameterList, node.TypeParameterList));
         Descend(name, () => base.VisitMethodDeclaration(node));
     }
 
@@ -62,7 +62,7 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
 
         var isStatic = node.Modifiers.Any(SyntaxKind.StaticKeyword);
         var name = QualifiedName(node, isStatic ? ".cctor" : ".ctor");
-        RecordSpan(node, name, Signature(node.ParameterList));
+        RecordSpan(node, name, Signature(node, node.ParameterList));
         Descend(name, () => base.VisitConstructorDeclaration(node));
     }
 
@@ -86,7 +86,7 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
         }
 
         var name = QualifiedName(node, OperatorName(node));
-        RecordSpan(node, name, Signature(node.ParameterList));
+        RecordSpan(node, name, Signature(node, node.ParameterList));
         Descend(name, () => base.VisitOperatorDeclaration(node));
     }
 
@@ -98,7 +98,7 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
         }
 
         var name = QualifiedName(node, ConversionOperatorName(node));
-        RecordSpan(node, name, Signature(node.ParameterList) + ":" + TypeName(node.Type));
+        RecordSpan(node, name, Signature(node, node.ParameterList) + ":" + TypeName(node.Type));
         Descend(name, () => base.VisitConversionOperatorDeclaration(node));
     }
 
@@ -111,7 +111,7 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
         }
 
         var name = QualifiedName(node, "get_" + node.Identifier.Text, node.ExplicitInterfaceSpecifier);
-        RecordSpan(node, name, "()");
+        RecordSpan(node, name, Signature(node, parameterList: null));
         Descend(name, () => base.VisitPropertyDeclaration(node));
     }
 
@@ -124,7 +124,7 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
         }
 
         var name = QualifiedName(node, "get_Item", node.ExplicitInterfaceSpecifier);
-        RecordSpan(node, name, Signature(node.ParameterList));
+        RecordSpan(node, name, Signature(node, node.ParameterList));
         Descend(name, () => base.VisitIndexerDeclaration(node));
     }
 
@@ -135,7 +135,7 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
             return;
         }
 
-        var hasImplementation = node.Body is not null || node.ExpressionBody is not null;
+        var hasImplementation = CarriesLines(node);
         if (!hasImplementation && !IsConcreteAutoAccessor(member))
         {
             return;
@@ -159,21 +159,28 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
 
         var localName = WithTypeParameters(node.Identifier.Text, node.TypeParameterList);
         var name = _nameStack.Count == 0 ? localName : _nameStack.Peek() + "." + localName;
-        var signature = Signature(node.ParameterList, node.TypeParameterList) + StartColumnSuffix(node);
+        var signature = Signature(node, node.ParameterList, node.TypeParameterList) + StartColumnSuffix(node);
         RecordSpan(node, name, signature);
         Descend(name, () => base.VisitLocalFunctionStatement(node));
     }
 
     /// <summary>
-    /// The span rule, in the one place every declaration visitor asks it: the compiler gives a
-    /// declaration lines to measure when it carries a body or an expression body. The single
-    /// carve-out is <see cref="IsConcreteAutoAccessor"/>.
+    /// The span rule, asked once per declaration kind that can carry lines of its own: the
+    /// compiler gives a declaration lines to measure when it carries a body or an expression body.
+    /// A property or indexer has no body of its own, so its visitor asks only whether it carries an
+    /// expression body and otherwise leaves the question to each of its accessors, which is what
+    /// the overload below answers. The single carve-out is <see cref="IsConcreteAutoAccessor"/>,
+    /// which gives a bodyless <c>get;</c> a span because the compiler synthesizes one for it.
     /// </summary>
     private static bool CarriesLines(BaseMethodDeclarationSyntax node) =>
         node.Body is not null || node.ExpressionBody is not null;
 
     /// <inheritdoc cref="CarriesLines(BaseMethodDeclarationSyntax)"/>
     private static bool CarriesLines(LocalFunctionStatementSyntax node) =>
+        node.Body is not null || node.ExpressionBody is not null;
+
+    /// <inheritdoc cref="CarriesLines(BaseMethodDeclarationSyntax)"/>
+    private static bool CarriesLines(AccessorDeclarationSyntax node) =>
         node.Body is not null || node.ExpressionBody is not null;
 
     private void Descend(string name, Action visitChildren)
@@ -186,8 +193,6 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
     private void RecordSpan(SyntaxNode node, string name, string signature)
     {
         var lineSpan = node.GetLocation().GetLineSpan();
-        var complexityWalker = new ComplexityWalker(node);
-        complexityWalker.Visit(node);
 
         _spans.Add(new MethodSpanResult(
             _file,
@@ -195,7 +200,7 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
             signature,
             lineSpan.StartLinePosition.Line + 1,
             lineSpan.EndLinePosition.Line + 1,
-            complexityWalker.Complexity));
+            ComplexityWalker.Score(node)));
     }
 
     /// <summary>
@@ -250,13 +255,15 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
     {
         var prefix = AccessorPrefix(node.Kind());
 
-        var (suffix, signature) = member switch
+        var (suffix, ownParameters) = member switch
         {
-            IndexerDeclarationSyntax indexer => ("Item", Signature(indexer.ParameterList)),
-            PropertyDeclarationSyntax property => (property.Identifier.Text, "()"),
-            EventDeclarationSyntax evt => (evt.Identifier.Text, "()"),
+            IndexerDeclarationSyntax indexer => ("Item", indexer.ParameterList),
+            PropertyDeclarationSyntax property => (property.Identifier.Text, null),
+            EventDeclarationSyntax evt => (evt.Identifier.Text, (BaseParameterListSyntax?)null),
             _ => throw new InvalidOperationException($"Unexpected accessor container: {member.GetType()}"),
         };
+
+        var signature = Signature(member, ownParameters);
 
         return (QualifiedName(member, prefix + suffix, member.ExplicitInterfaceSpecifier), signature);
     }
@@ -274,9 +281,9 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
     private static string OperatorName(OperatorDeclarationSyntax node)
     {
         var checkedPrefix = node.CheckedKeyword.IsKind(SyntaxKind.CheckedKeyword) ? "Checked" : string.Empty;
-        var isUnary = node.ParameterList.Parameters.Count == 1;
 
-        return "op_" + checkedPrefix + OperatorBaseName(node.OperatorToken.Kind(), isUnary);
+        return "op_" + checkedPrefix
+            + OperatorBaseName(node.OperatorToken.Kind(), node.ParameterList.Parameters.Count);
     }
 
     private static string ConversionOperatorName(ConversionOperatorDeclarationSyntax node)
@@ -288,16 +295,23 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
     }
 
     /// <summary>
-    /// Metadata operator names, keyed by operator token. <c>+</c> and <c>-</c> name a different
-    /// operator depending on their arity, which is what <paramref name="isUnary"/> decides. A token
-    /// this table does not name (a future language version's operator) falls back to the token's
-    /// <see cref="SyntaxKind"/> name with a trailing <c>Token</c> stripped, so an unrecognized
-    /// operator degrades to an ugly but stable name rather than crashing the extractor.
+    /// Metadata operator names, keyed by operator token. Three tokens name a different operator
+    /// depending on how many parameters the declaration takes, which is what
+    /// <paramref name="parameterCount"/> decides: <c>+</c> and <c>-</c> are unary at one parameter
+    /// and binary at two, and <c>++</c>/<c>--</c> are the C# 14 instance compound form at zero
+    /// parameters and the classic static form at one. The C# 14 compound assignment operators,
+    /// <c>+=</c> through <c>&gt;&gt;&gt;=</c>, are instance-only and take an <c>Assignment</c>
+    /// suffix. A token this table does not name (a future language version's operator) falls back
+    /// to the token's <see cref="SyntaxKind"/> name with a trailing <c>Token</c> stripped, so an
+    /// unrecognized operator degrades to an ugly but stable name rather than crashing the
+    /// extractor.
     /// </summary>
-    private static string OperatorBaseName(SyntaxKind tokenKind, bool isUnary) => tokenKind switch
+    private static string OperatorBaseName(SyntaxKind tokenKind, int parameterCount) => tokenKind switch
     {
-        SyntaxKind.PlusToken => isUnary ? "UnaryPlus" : "Addition",
-        SyntaxKind.MinusToken => isUnary ? "UnaryNegation" : "Subtraction",
+        SyntaxKind.PlusToken => parameterCount == 1 ? "UnaryPlus" : "Addition",
+        SyntaxKind.MinusToken => parameterCount == 1 ? "UnaryNegation" : "Subtraction",
+        SyntaxKind.PlusPlusToken => parameterCount == 0 ? "IncrementAssignment" : "Increment",
+        SyntaxKind.MinusMinusToken => parameterCount == 0 ? "DecrementAssignment" : "Decrement",
         SyntaxKind.AsteriskToken => "Multiply",
         SyntaxKind.SlashToken => "Division",
         SyntaxKind.PercentToken => "Modulus",
@@ -315,10 +329,19 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
         SyntaxKind.GreaterThanEqualsToken => "GreaterThanOrEqual",
         SyntaxKind.ExclamationToken => "LogicalNot",
         SyntaxKind.TildeToken => "OnesComplement",
-        SyntaxKind.PlusPlusToken => "Increment",
-        SyntaxKind.MinusMinusToken => "Decrement",
         SyntaxKind.TrueKeyword => "True",
         SyntaxKind.FalseKeyword => "False",
+        SyntaxKind.PlusEqualsToken => "AdditionAssignment",
+        SyntaxKind.MinusEqualsToken => "SubtractionAssignment",
+        SyntaxKind.AsteriskEqualsToken => "MultiplicationAssignment",
+        SyntaxKind.SlashEqualsToken => "DivisionAssignment",
+        SyntaxKind.PercentEqualsToken => "ModulusAssignment",
+        SyntaxKind.AmpersandEqualsToken => "BitwiseAndAssignment",
+        SyntaxKind.BarEqualsToken => "BitwiseOrAssignment",
+        SyntaxKind.CaretEqualsToken => "ExclusiveOrAssignment",
+        SyntaxKind.LessThanLessThanEqualsToken => "LeftShiftAssignment",
+        SyntaxKind.GreaterThanGreaterThanEqualsToken => "RightShiftAssignment",
+        SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken => "UnsignedRightShiftAssignment",
         _ => FallbackOperatorName(tokenKind),
     };
 
@@ -340,8 +363,9 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
     /// A C# 14 <c>extension(T receiver)</c> block is a <see cref="TypeDeclarationSyntax"/> with an
     /// empty identifier, so it is dropped rather than contributing a segment. Keeping it would
     /// spell <c>Beyond..get_IsLong</c>, whose doubled dot reads as the <c>..ctor</c> convention.
-    /// Two extension blocks in one type can then declare the same member name, but their spans
-    /// still differ by line, which is what span identity turns on.
+    /// Two extension blocks in one type can then declare the same member name, and writing both on
+    /// one line makes their line ranges agree too; <see cref="ExtensionReceiver"/> is what keeps
+    /// the two spans distinct.
     /// </remarks>
     private static string QualifiedName(
         SyntaxNode node,
@@ -373,13 +397,40 @@ internal sealed class MethodSpanCollector : CSharpSyntaxWalker
     }
 
     /// <summary>Builds the signature spelling <see cref="MethodSpanResult"/> documents.</summary>
-    private static string Signature(BaseParameterListSyntax parameterList, TypeParameterListSyntax? typeParameterList = null)
+    private static string Signature(
+        SyntaxNode declaration,
+        BaseParameterListSyntax? parameterList,
+        TypeParameterListSyntax? typeParameterList = null)
     {
         var arity = typeParameterList?.Parameters.Count ?? 0;
         var prefix = arity > 0 ? "`" + arity : string.Empty;
-        var parameters = parameterList.Parameters.Select(Parameter);
+        var own = parameterList?.Parameters.Select(Parameter) ?? Enumerable.Empty<string>();
+        var parameters = ExtensionReceiver(declaration).Concat(own);
 
         return prefix + "(" + string.Join(", ", parameters) + ")";
+    }
+
+    /// <summary>
+    /// The receiver parameter of the C# 14 <c>extension</c> block a member is declared directly in,
+    /// or nothing when it is declared anywhere else. The compiler emits an instance extension member
+    /// as a static method whose first parameter is the receiver, so prepending it is what metadata
+    /// already spells, and it is also the coordinate that tells two extension blocks apart. An
+    /// extension block contributes no name segment, so <c>M.Big</c> declared in
+    /// <c>extension(string t)</c> and <c>M.Big</c> declared in <c>extension(int n)</c> agree on name
+    /// and, if written on one line, on line range too; the receiver is the only thing left that
+    /// differs. A <c>static</c> member of an extension block takes no receiver, and the compiler
+    /// rejects two of them that would otherwise collide, so excluding it loses no identity.
+    /// </summary>
+    private static IEnumerable<string> ExtensionReceiver(SyntaxNode declaration)
+    {
+        if (declaration.Parent is not ExtensionBlockDeclarationSyntax block
+            || declaration is not MemberDeclarationSyntax member
+            || member.Modifiers.Any(SyntaxKind.StaticKeyword))
+        {
+            return Enumerable.Empty<string>();
+        }
+
+        return block.ParameterList?.Parameters.Select(Parameter) ?? Enumerable.Empty<string>();
     }
 
     private static string Parameter(ParameterSyntax parameter)

@@ -14,7 +14,7 @@ namespace Tvrmsmith.MetricGate.CSharp;
 /// own: a local function's decision points score against the local function alone, never against
 /// whatever declares it. A lambda or anonymous method is not such a declaration, so its decision
 /// points do fold into whichever span holds it, which is what keeps a method from hiding its
-/// branches in one. The root is the node this walker was asked to score, taken up front so that
+/// branches in one. The root is the node <see cref="Score"/> was handed, so that
 /// <see cref="VisitLocalFunctionStatement"/> tells a local function being scored in its own right
 /// from one nested inside the span under measure.
 /// </summary>
@@ -22,12 +22,25 @@ internal sealed class ComplexityWalker : CSharpSyntaxWalker
 {
     private readonly SyntaxNode _root;
 
-    public ComplexityWalker(SyntaxNode root)
+    private ComplexityWalker(SyntaxNode root)
     {
         _root = root;
     }
 
-    public int Complexity { get; private set; } = 1;
+    private int Complexity { get; set; } = 1;
+
+    /// <summary>
+    /// Scores <paramref name="node"/>. The only entry point, so the root the walk starts from and
+    /// the root <see cref="VisitLocalFunctionStatement"/> compares against are the same node by
+    /// construction rather than by the caller remembering to pass it twice.
+    /// </summary>
+    public static int Score(SyntaxNode node)
+    {
+        var walker = new ComplexityWalker(node);
+        walker.Visit(node);
+
+        return walker.Complexity;
+    }
 
     public override void VisitIfStatement(IfStatementSyntax node)
     {
