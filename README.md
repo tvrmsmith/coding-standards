@@ -98,9 +98,10 @@ of lint-only test-integrity rules. Despite the name it is not a bet on jest: tho
 `packages/eslint-config-tvrmsmith/README.md` explains the one setting this depends on.
 
 Beyond the guideline rules, the preset enables the untyped half of `typescript-eslint`,
-`eslint-plugin-regexp`, `eslint-plugin-sonarjs` and `eslint-plugin-react`. Every one of those
-plugins was already an indirect dependency of the packages being linted, with almost nothing turned
-on.
+`eslint-plugin-regexp`, `eslint-plugin-sonarjs`, `eslint-plugin-react` and
+`eslint-plugin-jsx-a11y`. Every one but the last was already an indirect dependency of the packages
+being linted, with almost nothing turned on. Accessibility was the one defect class nothing covered
+at all, which matters for a healthcare product, so that plugin is net-new.
 
 The type-aware rules from those same plugins are opt-in, in a separate `eslint-config-tvrmsmith/typed`
 entry point, because a typed rule in a package with no `projectService` throws and fails the run.

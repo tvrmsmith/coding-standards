@@ -1883,6 +1883,290 @@ export const C = ({ items = EMPTY }: { items?: Item[] }) => <p>{items.length}</p
 }`,
   },
 
+  // ---- a11y: text alternatives ----
+  {
+    rule: 'jsx-a11y/alt-text',
+    scope: 'source',
+    violating: `export const C = () => <img src="/cat.png" />`,
+    compliant: `export const C = () => <img src="/cat.png" alt="A tabby cat asleep on a keyboard" />`,
+  },
+  {
+    rule: 'jsx-a11y/img-redundant-alt',
+    scope: 'source',
+    violating: `export const C = () => <img src="/cat.png" alt="Photo of a cat" />`,
+    compliant: `export const C = () => <img src="/cat.png" alt="A tabby cat" />`,
+  },
+  {
+    rule: 'jsx-a11y/iframe-has-title',
+    scope: 'source',
+    violating: `export const C = () => <iframe src="/report" />`,
+    compliant: `export const C = () => <iframe src="/report" title="Quarterly report" />`,
+  },
+  {
+    rule: 'sonarjs/object-alt-content',
+    scope: 'source',
+    violating: `export const C = () => <object data="/chart.svg" />`,
+    compliant: `export const C = () => <object data="/chart.svg">Admissions by month</object>`,
+  },
+  {
+    rule: 'jsx-a11y/anchor-has-content',
+    scope: 'source',
+    violating: `export const C = () => <a href="/home" />`,
+    compliant: `export const C = () => <a href="/home">Home</a>`,
+  },
+  {
+    rule: 'jsx-a11y/heading-has-content',
+    scope: 'source',
+    violating: `export const C = () => <h1 />`,
+    compliant: `export const C = () => <h1>Admissions</h1>`,
+  },
+
+  // ---- a11y: document language ----
+  {
+    rule: 'jsx-a11y/html-has-lang',
+    scope: 'source',
+    violating: `export const C = () => <html />`,
+    compliant: `export const C = () => <html lang="en" />`,
+  },
+  {
+    rule: 'jsx-a11y/lang',
+    scope: 'source',
+    violating: `export const C = () => <html lang="engrish" />`,
+    compliant: `export const C = () => <html lang="en-GB" />`,
+  },
+
+  // ---- a11y: ARIA that is simply wrong ----
+  {
+    rule: 'jsx-a11y/aria-props',
+    scope: 'source',
+    violating: `export const C = () => <div aria-labeledby="title" />`,
+    compliant: `export const C = () => <div aria-labelledby="title" />`,
+  },
+  {
+    rule: 'jsx-a11y/aria-proptypes',
+    scope: 'source',
+    violating: `export const C = () => <div aria-hidden="yes" />`,
+    compliant: `export const C = () => <div aria-hidden={true} />`,
+  },
+  {
+    rule: 'jsx-a11y/aria-role',
+    scope: 'source',
+    violating: `export const C = () => <div role="datepicker" />`,
+    compliant: `export const C = () => <div role="grid" />`,
+  },
+  {
+    rule: 'jsx-a11y/aria-unsupported-elements',
+    scope: 'source',
+    violating: `export const C = () => <meta charSet="utf-8" aria-hidden={true} />`,
+    compliant: `export const C = () => <meta charSet="utf-8" />`,
+  },
+  {
+    rule: 'jsx-a11y/role-has-required-aria-props',
+    scope: 'source',
+    violating: `export const C = () => <div role="checkbox" />`,
+    compliant: `export const C = () => <div role="checkbox" aria-checked={false} />`,
+  },
+  {
+    rule: 'jsx-a11y/role-supports-aria-props',
+    scope: 'source',
+    violating: `export const C = () => <div role="heading" aria-required={true} />`,
+    compliant: `export const C = () => <div role="heading" aria-level={2} />`,
+  },
+  {
+    rule: 'jsx-a11y/no-redundant-roles',
+    scope: 'source',
+    violating: `export const C = () => <button type="button" role="button">Go</button>`,
+    compliant: `export const C = () => <button type="button">Go</button>`,
+  },
+  {
+    rule: 'jsx-a11y/aria-activedescendant-has-tabindex',
+    scope: 'source',
+    violating: `export const C = () => <div aria-activedescendant="opt-1" />`,
+    compliant: `export const C = () => <div aria-activedescendant="opt-1" tabIndex={0} />`,
+  },
+  {
+    rule: 'jsx-a11y/no-interactive-element-to-noninteractive-role',
+    scope: 'source',
+    violating: `export const C = () => <button type="button" role="presentation">Go</button>`,
+    compliant: `export const C = () => <button type="button">Go</button>`,
+  },
+  {
+    rule: 'jsx-a11y/no-noninteractive-element-to-interactive-role',
+    scope: 'source',
+    violating: `export const C = () => <li role="button">Go</li>`,
+    compliant: `export const C = () => <ul role="menu"><li role="menuitem">Go</li></ul>`,
+  },
+  {
+    rule: 'jsx-a11y/no-aria-hidden-on-focusable',
+    scope: 'source',
+    violating: `export const C = () => <button type="button" aria-hidden={true}>Go</button>`,
+    compliant: `export const C = () => <div aria-hidden={true}>Decorative</div>`,
+  },
+
+  // ---- a11y: keyboard reachability ----
+  {
+    rule: 'jsx-a11y/tabindex-no-positive',
+    scope: 'source',
+    violating: `export const C = () => <button type="button" tabIndex={1}>Go</button>`,
+    compliant: `export const C = () => <button type="button" tabIndex={0}>Go</button>`,
+  },
+  {
+    rule: 'jsx-a11y/no-noninteractive-tabindex',
+    scope: 'source',
+    violating: `export const C = () => <div tabIndex={0}>Text</div>`,
+    compliant: `export const C = () => <button type="button" tabIndex={0}>Go</button>`,
+  },
+  {
+    rule: 'jsx-a11y/interactive-supports-focus',
+    scope: 'source',
+    violating: `export const C = () => <div role="button" onClick={() => {}} onKeyDown={() => {}}>Go</div>`,
+    compliant: `export const C = () => (
+  <div role="button" tabIndex={0} onClick={() => {}} onKeyDown={() => {}}>Go</div>
+)`,
+  },
+  {
+    rule: 'jsx-a11y/no-access-key',
+    scope: 'source',
+    violating: `export const C = () => <button type="button" accessKey="h">Go</button>`,
+    compliant: `export const C = () => <button type="button">Go</button>`,
+  },
+  {
+    rule: 'jsx-a11y/no-autofocus',
+    scope: 'source',
+    violating: `export const C = () => <input autoFocus />`,
+    compliant: `export const C = () => <input />`,
+  },
+  {
+    rule: 'jsx-a11y/mouse-events-have-key-events',
+    scope: 'source',
+    violating: `export const C = () => <span onMouseOver={() => {}}>Total</span>`,
+    compliant: `export const C = () => <span onMouseOver={() => {}} onFocus={() => {}}>Total</span>`,
+  },
+
+  // ---- a11y: form controls and tables ----
+  {
+    rule: 'jsx-a11y/label-has-associated-control',
+    scope: 'source',
+    violating: `export const C = () => <label>Name</label>`,
+    compliant: `export const C = () => <label>Name<input name="name" /></label>`,
+  },
+  {
+    rule: 'jsx-a11y/autocomplete-valid',
+    scope: 'source',
+    violating: `export const C = () => <input autoComplete="given-nam" />`,
+    compliant: `export const C = () => <input autoComplete="given-name" />`,
+  },
+  {
+    rule: 'jsx-a11y/scope',
+    scope: 'source',
+    violating: `export const C = () => <div scope="col">Name</div>`,
+    compliant: `export const C = () => <th scope="col">Name</th>`,
+  },
+  {
+    rule: 'sonarjs/table-header',
+    scope: 'source',
+    violating: `export const C = () => (
+  <table>
+    <tr><td>Ada</td><td>36</td></tr>
+  </table>
+)`,
+    compliant: `export const C = () => (
+  <table>
+    <tr><th scope="col">Name</th><th scope="col">Age</th></tr>
+    <tr><td>Ada</td><td>36</td></tr>
+  </table>
+)`,
+  },
+  {
+    rule: 'sonarjs/no-table-as-layout',
+    scope: 'source',
+    violating: `export const C = () => (
+  <table role="presentation">
+    <tr><td>Sidebar</td><td>Content</td></tr>
+  </table>
+)`,
+    compliant: `export const C = () => (
+  <table>
+    <tr><th scope="col">Name</th></tr>
+    <tr><td>Ada</td></tr>
+  </table>
+)`,
+  },
+  {
+    rule: 'sonarjs/table-header-reference',
+    scope: 'source',
+    violating: `export const C = () => (
+  <table>
+    <tr><th id="name">Name</th><th id="age">Age</th></tr>
+    <tr><td headers="age">Ada</td><td headers="age">36</td></tr>
+  </table>
+)`,
+    compliant: `export const C = () => (
+  <table>
+    <tr><th id="name">Name</th><th id="age">Age</th></tr>
+    <tr><td headers="name">Ada</td><td headers="age">36</td></tr>
+  </table>
+)`,
+  },
+  {
+    rule: 'jsx-a11y/no-distracting-elements',
+    scope: 'source',
+    violating: `export const C = () => <marquee>Now hiring</marquee>`,
+    compliant: `export const C = () => <div>Now hiring</div>`,
+  },
+
+  // ---- a11y: judgement calls ----
+  {
+    rule: 'jsx-a11y/click-events-have-key-events',
+    scope: 'source',
+    violating: `export const C = () => <div role="button" tabIndex={0} onClick={() => {}}>Go</div>`,
+    compliant: `export const C = () => (
+  <div role="button" tabIndex={0} onClick={() => {}} onKeyDown={() => {}}>Go</div>
+)`,
+  },
+  {
+    rule: 'jsx-a11y/no-static-element-interactions',
+    scope: 'source',
+    violating: `export const C = () => <div onClick={() => {}} onKeyDown={() => {}}>Go</div>`,
+    compliant: `export const C = () => (
+  <div role="button" tabIndex={0} onClick={() => {}} onKeyDown={() => {}}>Go</div>
+)`,
+  },
+  {
+    rule: 'jsx-a11y/no-noninteractive-element-interactions',
+    scope: 'source',
+    violating: `export const C = () => <li onClick={() => {}} onKeyDown={() => {}}>Go</li>`,
+    compliant: `export const C = () => (
+  <li><button type="button" onClick={() => {}}>Go</button></li>
+)`,
+  },
+  {
+    rule: 'jsx-a11y/prefer-tag-over-role',
+    scope: 'source',
+    violating: `export const C = () => <div role="button">Go</div>`,
+    compliant: `export const C = () => <button type="button">Go</button>`,
+  },
+  {
+    rule: 'jsx-a11y/anchor-is-valid',
+    scope: 'source',
+    violating: `export const C = () => <a href="#">Go</a>`,
+    compliant: `export const C = () => <a href="/home">Go</a>`,
+  },
+  {
+    rule: 'jsx-a11y/anchor-ambiguous-text',
+    scope: 'source',
+    violating: `export const C = () => <a href="/report">click here</a>`,
+    compliant: `export const C = () => <a href="/report">View the quarterly report</a>`,
+  },
+  {
+    rule: 'jsx-a11y/media-has-caption',
+    scope: 'source',
+    violating: `export const C = () => <video src="/intro.mp4" />`,
+    compliant: `export const C = () => (
+  <video src="/intro.mp4"><track kind="captions" src="/intro.vtt" /></video>
+)`,
+  },
+
   // ---- F8 ----
   {
     rule: 'react-hooks/exhaustive-deps',

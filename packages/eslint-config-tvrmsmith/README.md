@@ -249,6 +249,7 @@ split cannot erode by accident.
 | `tvrmsmith/base/sonarjs-security` | source | Sonar's security family: hardcoded secrets, weak crypto, command and XXE injection, permissive file modes |
 | `tvrmsmith/base/sonarjs-tests` | test | Suite shapes that make a test not run or not report |
 | `tvrmsmith/react/jsx` | source | `eslint-plugin-react` correctness, security and deprecated-API rules, plus Sonar's two render-loop rules |
+| `tvrmsmith/react/a11y` | source | `eslint-plugin-jsx-a11y`: text alternatives, document language, ARIA validity, keyboard reachability, labelled controls. Plus Sonar's table and `<object>` rules, which jsx-a11y has no equivalent for |
 
 A few things worth knowing before editing them:
 
@@ -266,6 +267,11 @@ A few things worth knowing before editing them:
 - **The overlaps are resolved in favour of the untyped rule.** `react/jsx-no-leaked-render` over
   Sonar's typed copy, `jest/no-focused-tests` over `sonarjs/no-exclusive-tests`, `jest/valid-expect`
   over `sonarjs/async-test-assertions`, and `eslint-plugin-regexp` over Sonar's regex family.
+- **The a11y slice takes its allowlists from upstream, not from here.** Seven `jsx-a11y` rules
+  decide against a role/element table that upstream ships as *options* rather than defaults, so the
+  bare rule rejects correct ARIA: with no options, no element may carry any role. `react.js` sets
+  the severity and reads the table out of the plugin's own recommended config. Copying it here
+  would be a stale cache of something maintained against the ARIA spec.
 - **Volume is not a reason to exclude a rule.** The pre-commit hook scopes reporting to changed
   files, so a large standing backlog costs nothing. The exclusions below are all about the rule
   being wrong, not loud.
@@ -319,6 +325,12 @@ Two things about the severities here:
 - **`jest/prefer-each`** — a `for` loop around `it()` works; `.each` mainly buys nicer failure
   output. Shipping a rule at warn because it is only half believed is how a preset accumulates
   noise nobody acts on.
+- **`jsx-a11y/control-has-associated-label`** — it walks an element's children hunting for text,
+  which a component library defeats by construction: `<Button><Icon /></Button>` labelled by a prop
+  reads as unlabelled. Upstream ships it `off` in recommended *and* strict.
+  `label-has-associated-control` covers form controls without the guessing.
+- **`jsx-a11y/accessible-emoji`, `label-has-for`, `no-onchange`** — deprecated upstream.
+  `label-has-associated-control` is the replacement for the second.
 - **`sonarjs/no-reference-error`** — it flags any unresolved global, and the preset sets no
   `languageOptions.globals`, so it fired on `Buffer` and on the injected test globals. TypeScript
   and core `no-undef` already own this.

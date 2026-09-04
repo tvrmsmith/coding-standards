@@ -1,4 +1,5 @@
 import jestDom from 'eslint-plugin-jest-dom'
+import jsxA11y from 'eslint-plugin-jsx-a11y'
 import react from 'eslint-plugin-react'
 import reactHooks from 'eslint-plugin-react-hooks'
 import noEffect from 'eslint-plugin-react-you-might-not-need-an-effect'
@@ -268,4 +269,146 @@ const reactJsx = {
   },
 }
 
-export default [reactTests, reactSource, reactJsx]
+/**
+ * Accessibility. The only defect class the rest of the preset leaves entirely uncovered, and
+ * the one where the bug is invisible to everyone who is not affected by it.
+ *
+ * Static analysis reaches further here than it does elsewhere, because most of WCAG's
+ * machine-checkable half is a question about one element's attributes: is this role real, does
+ * it carry the props it requires, can this thing be reached by keyboard. The rules that need a
+ * rendered tree — contrast, focus order, reading order — are not here and are not lintable.
+ *
+ * This slice also pays for itself twice. `testing-library/prefer-screen-queries` and the whole
+ * role/label query direction in the test slice only work when production JSX carries the labels
+ * and roles these rules enforce.
+ *
+ * Off, and why:
+ *
+ * - **`accessible-emoji`, `label-has-for`, `no-onchange`** — deprecated upstream.
+ *   `label-has-associated-control` replaces the second.
+ * - **`control-has-associated-label`** — it walks an element's children hunting for text, and a
+ *   component library defeats that by construction: `<Button><Icon /></Button>` labelled by a
+ *   prop reads as unlabelled. Upstream ships it `off` in both recommended and strict, which is
+ *   the same judgement. `label-has-associated-control` covers form controls without the guessing.
+ *
+ * Four Sonar rules come along because jsx-a11y has no equivalent: nothing in it looks at tables
+ * or at `<object>`.
+ */
+/**
+ * Seven of these rules decide against a role/element allowlist that upstream ships as *options*,
+ * not as a default: `<li role="menuitem">` is correct ARIA, and the bare rule rejects it because
+ * with no options no element is allowed. So the severity below is ours and the allowlist stays
+ * upstream's, read out of their recommended config rather than copied. Copying it would be a
+ * stale cache of a table maintained against the ARIA spec.
+ *
+ * @param {Record<string, string>} rules rule id to severity
+ */
+const withUpstreamOptions = (rules) =>
+  Object.fromEntries(
+    Object.entries(rules).map(([rule, severity]) => {
+      const upstream = jsxA11y.flatConfigs.recommended.rules[rule]
+      const options = Array.isArray(upstream) ? upstream.slice(1) : []
+      return [rule, options.length > 0 ? [severity, ...options] : severity]
+    }),
+  )
+
+const reactA11y = {
+  name: 'tvrmsmith/react/a11y',
+  files: sourceFiles,
+  plugins: { 'jsx-a11y': jsxA11y, sonarjs },
+  rules: withUpstreamOptions({
+    // Text alternatives. An image with no alt is invisible to a screen reader; an image whose alt
+    // repeats "image of" is announced twice.
+    'jsx-a11y/alt-text': 'error',
+    'jsx-a11y/img-redundant-alt': 'error',
+    'jsx-a11y/iframe-has-title': 'error',
+    'sonarjs/object-alt-content': 'error',
+    // An anchor or heading with no text content is announced as an empty element.
+    'jsx-a11y/anchor-has-content': 'error',
+    'jsx-a11y/heading-has-content': 'error',
+
+    // Document language. Without it a screen reader reads English content in the user's default
+    // voice, and `lang` checks the value is a real BCP 47 tag rather than merely present.
+    'jsx-a11y/html-has-lang': 'error',
+    'jsx-a11y/lang': 'error',
+
+    // ARIA that is simply wrong: a misspelled prop, a value of the wrong type, a role that does
+    // not exist, a role missing the props it is defined to require, a prop the role does not
+    // support, ARIA on an element that ignores it, and a role restating what the tag already says.
+    // Every one is a typo-class defect with one right answer.
+    'jsx-a11y/aria-props': 'error',
+    'jsx-a11y/aria-proptypes': 'error',
+    'jsx-a11y/aria-role': 'error',
+    'jsx-a11y/aria-unsupported-elements': 'error',
+    'jsx-a11y/role-has-required-aria-props': 'error',
+    'jsx-a11y/role-supports-aria-props': 'error',
+    'jsx-a11y/no-redundant-roles': 'error',
+    'jsx-a11y/aria-activedescendant-has-tabindex': 'error',
+    // Re-typing an interactive element as static, or a static one as interactive, breaks the
+    // element's own behaviour: a `<button role="presentation">` is still focusable and still
+    // clickable, and now announces as nothing.
+    'jsx-a11y/no-interactive-element-to-noninteractive-role': 'error',
+    'jsx-a11y/no-noninteractive-element-to-interactive-role': 'error',
+    // `aria-hidden` on something focusable removes it from the accessibility tree and leaves it
+    // in the tab order, so keyboard focus lands on an element that announces nothing.
+    'jsx-a11y/no-aria-hidden-on-focusable': 'error',
+
+    // Keyboard reachability.
+    //
+    // A positive tabIndex jumps the element ahead of the document order and reorders the whole
+    // page for everyone.
+    'jsx-a11y/tabindex-no-positive': 'error',
+    // tabIndex on a `<div>` or an `<li>` puts a stop in the tab sequence at something that does
+    // nothing when you get there.
+    'jsx-a11y/no-noninteractive-tabindex': 'error',
+    // The mirror: something with an interactive role that keyboard focus cannot reach at all.
+    'jsx-a11y/interactive-supports-focus': 'error',
+    // `accessKey` collides with the shortcuts screen readers and browsers already bind.
+    'jsx-a11y/no-access-key': 'error',
+    // `autoFocus` moves focus on load, past whatever the user was reading.
+    'jsx-a11y/no-autofocus': 'error',
+    // `onMouseOver` with no `onFocus` is a hover affordance the keyboard cannot trigger.
+    'jsx-a11y/mouse-events-have-key-events': 'error',
+
+    // Form controls and tables. A control with no associated label is announced by its
+    // placeholder or not at all; a wrong `autoComplete` token silently disables autofill.
+    'jsx-a11y/label-has-associated-control': 'error',
+    'jsx-a11y/autocomplete-valid': 'error',
+    // `scope` belongs on `<th>` and nowhere else.
+    'jsx-a11y/scope': 'error',
+    // A table with no header row is a grid of unlabelled cells, and a layout table is announced
+    // as data. Neither has a jsx-a11y equivalent.
+    'sonarjs/table-header': 'error',
+    'sonarjs/no-table-as-layout': 'error',
+
+    // `<marquee>` and `<blink>` move content out from under people who cannot track it.
+    'jsx-a11y/no-distracting-elements': 'error',
+
+    // warn: each of these has a legitimate exception, or the fix is a restructure rather than an
+    // attribute.
+    //
+    // A `<div onClick>` needs a keyboard handler *and* a role, which is two rules reporting the
+    // same element. They stay separate because the fixes are separate, and because the answer is
+    // usually neither: it is a `<button>`.
+    'jsx-a11y/click-events-have-key-events': 'warn',
+    'jsx-a11y/no-static-element-interactions': 'warn',
+    // Handlers on an `<li>` or a `<p>`, which have semantics that a click does not fit.
+    'jsx-a11y/no-noninteractive-element-interactions': 'warn',
+    // `<div role="button">` works once you add the tabIndex and the key handler the rules above
+    // ask for. A `<button>` brings all of it for free.
+    'jsx-a11y/prefer-tag-over-role': 'warn',
+    // `<a href="#">` and `<a onClick>` are buttons wearing a link's clothes: no navigation, and
+    // no keyboard activation on space.
+    'jsx-a11y/anchor-is-valid': 'warn',
+    // "Click here" and "read more" are useless in a screen reader's list of links, which is read
+    // out of context. The default word list is the judgement call, not the principle.
+    'jsx-a11y/anchor-ambiguous-text': 'warn',
+    // A muted decorative background video genuinely has nothing to caption.
+    'jsx-a11y/media-has-caption': 'warn',
+    // Header references matter for a complex table and are noise for a simple one, and the rule
+    // cannot tell which it is looking at.
+    'sonarjs/table-header-reference': 'warn',
+  }),
+}
+
+export default [reactTests, reactSource, reactJsx, reactA11y]
