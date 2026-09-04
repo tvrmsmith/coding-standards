@@ -118,3 +118,27 @@ func (r Root) Place(candidate string) Placed {
 // FromSlash adopts an already repo-relative, slash-separated path, which is
 // the form `git diff` emits.
 func FromSlash(rel string) Path { return Path(rel) }
+
+// Named resolves a path a human typed on --files. ADR 0004 resolves it
+// against the process working directory and then relativizes it to the
+// root, and makes a path the gate cannot place inside the repo exit 1
+// rather than be matched approximately.
+//
+// The two errors name the path as the human typed it, name, not as the gate
+// resolved it, because that message reaches the document verbatim and a
+// resolved absolute path would tell the reader nothing about what they typed.
+func (r Root) Named(name string) (Path, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Join(cwd, filepath.FromSlash(name)))
+	if err != nil {
+		return "", fmt.Errorf("%s does not exist", name)
+	}
+	rel, err := filepath.Rel(r.resolved, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%s is outside the repo root", name)
+	}
+	return Path(filepath.ToSlash(rel)), nil
+}

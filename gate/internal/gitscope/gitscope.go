@@ -84,19 +84,38 @@ func (r Repo) Root() srcpath.Root { return r.root }
 type Base struct {
 	Ref    string
 	Commit string
+	// Staged makes the diff compare the index against Commit rather than the
+	// working tree.
+	Staged bool
 }
 
 // Label renders the base as the document's `base` field, "<ref>@<7-char sha>".
 func (b Base) Label() string { return b.Ref + "@" + b.Commit[:7] }
 
-// NoBaseError reports that none of ADR 0003's candidate refs resolved. The
-// message points at `--since`, issue 14's flag, per ADR 0003's Consequences:
-// a caller with no resolvable base needs a way to name one explicitly, and
-// the ADR already decided what that way is called.
-type NoBaseError struct{}
+// NoBaseError reports that the run has no commit to diff against: none of
+// ADR 0003's candidates resolved, --since named a ref that does not exist, or
+// --staged found no HEAD to diff the index against. The message points at
+// --since, issue 14's flag, per ADR 0003's Consequences, except when --since
+// is itself what failed or there is no commit at all, where naming it again
+// would tell the caller nothing new.
+type NoBaseError struct {
+	// Ref is the ref --since named, empty when the default candidates are
+	// what failed.
+	Ref string
+	// NoCommits marks a repo with no HEAD at all, which is what --staged
+	// hits before the first commit.
+	NoCommits bool
+}
 
-func (NoBaseError) Error() string {
-	return "no diff base: tried " + strings.Join(BaseCandidates, ", ") + "; name one with --since <ref>"
+func (e NoBaseError) Error() string {
+	switch {
+	case e.NoCommits:
+		return "no diff base: this repo has no commits"
+	case e.Ref != "":
+		return "no diff base: --since " + e.Ref + " does not name a commit"
+	default:
+		return "no diff base: tried " + strings.Join(BaseCandidates, ", ") + "; name one with --since <ref>"
+	}
 }
 
 // ResolveBase walks BaseCandidates and returns the merge base of HEAD and
@@ -113,6 +132,29 @@ func (r Repo) ResolveBase() (Base, error) {
 		return Base{Ref: ref, Commit: strings.TrimSpace(mergeBase)}, nil
 	}
 	return Base{}, NoBaseError{}
+}
+
+// ResolveRef is ResolveBase against the one ref --since named, so the run
+// measures the branch point rather than the tip.
+func (r Repo) ResolveRef(ref string) (Base, error) {
+	if _, err := r.git("rev-parse", "--verify", "--quiet", ref+"^{commit}"); err != nil {
+		return Base{}, NoBaseError{Ref: ref}
+	}
+	mergeBase, err := r.git("merge-base", "HEAD", ref)
+	if err != nil {
+		return Base{}, NoBaseError{Ref: ref}
+	}
+	return Base{Ref: ref, Commit: strings.TrimSpace(mergeBase)}, nil
+}
+
+// ResolveStaged is HEAD, the commit `git diff --cached` compares the index
+// against.
+func (r Repo) ResolveStaged() (Base, error) {
+	commit, err := r.git("rev-parse", "--verify", "--quiet", "HEAD")
+	if err != nil {
+		return Base{}, NoBaseError{NoCommits: true}
+	}
+	return Base{Ref: "HEAD", Commit: strings.TrimSpace(commit), Staged: true}, nil
 }
 
 // TouchedLines returns the new-side lines of `git diff -w -U0 --no-renames
@@ -153,7 +195,9 @@ func (r Repo) touchedLines(base Base) (map[srcpath.Path][]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	patch, err := r.gitBlanking(drivers, append(diffFlags, "-w", "-U0", "--no-renames", "--diff-filter=ACM", base.Commit)...)
+	args := append(append([]string{}, diffFlags...), "-w", "-U0", "--no-renames", "--diff-filter=ACM")
+	args = append(args, cachedFlag(base)...)
+	patch, err := r.gitBlanking(drivers, append(args, base.Commit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -169,6 +213,38 @@ func (r Repo) touchedLines(base Base) (map[srcpath.Path][]int, error) {
 		delete(touched, path)
 	}
 	return touched, nil
+}
+
+// cachedFlag is `--cached` when base.Staged, which is what turns a diff's
+// working-tree comparison into an index comparison. One diff code path
+// serves both ADR 0003's default scope and --staged this way, rather than a
+// second near-copy of TouchedLines and pureMoves.
+func cachedFlag(base Base) []string {
+	if base.Staged {
+		return []string{"--cached"}
+	}
+	return nil
+}
+
+// DivergentFromIndex lists the paths whose working-tree copy differs from
+// what is staged, keeping the order it was given. A --staged run asks this
+// only about the files it is about to score, since a dirty file the run
+// never claimed cannot be misattributed to the wrong content.
+func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
+	var divergent []srcpath.Path
+	for _, path := range paths {
+		_, err := r.git("diff", "--quiet", "--", string(path))
+		if err == nil {
+			continue
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			divergent = append(divergent, path)
+			continue
+		}
+		return nil, err
+	}
+	return divergent, nil
 }
 
 // filterDrivers is the config key of every content filter the repository
@@ -278,7 +354,9 @@ func noMatch(err error) bool {
 // would silently unscore a brand-new file. Counting depends on no `git diff
 // --raw` ordering, so the answer is the same whichever order git lists them in.
 func (r Repo) pureMoves(base Base, drivers []string) ([]srcpath.Path, error) {
-	raw, err := r.gitBlanking(drivers, append(rawFlags, "-z", "--abbrev=40", "--no-renames", "--diff-filter=AD", base.Commit)...)
+	args := append(append([]string{}, rawFlags...), "-z", "--abbrev=40", "--no-renames", "--diff-filter=AD")
+	args = append(args, cachedFlag(base)...)
+	raw, err := r.gitBlanking(drivers, append(args, base.Commit)...)
 	if err != nil {
 		return nil, err
 	}

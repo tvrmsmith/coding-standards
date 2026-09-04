@@ -1,17 +1,20 @@
 // Command metric-gate scores the methods a change touched against a metric
-// threshold. It takes one flag, --coverage <path>, repeatable, naming the
-// coverage reports to read in place of discovery; the rest of ADR 0005's
-// command line lands with its own issues, and any other argument is a usage
-// error. Stdout is one TOON document,
-// stderr is the human summary, one line except on the unknown_changed_method
-// path, which prints the cause above the counts, and the exit code is 0 pass,
-// 1 tool error, 2 threshold exceeded.
+// threshold. Its scope defaults to the merge base of HEAD and the default
+// branch, and --staged, --since <ref> or --files <path>... pick another
+// (ADR 0005, issue 14). --coverage <path>, repeatable, names the coverage
+// reports to read in place of discovery. The rest of ADR 0005's command line
+// lands with its own issues, and any other argument is a usage error. Package
+// scope owns the whole of argv, so the usage block one prints lists every
+// flag. Stdout is one TOON document, stderr is the human summary, one line
+// except on the unknown_changed_method path, which prints the cause above the
+// counts, and the exit code is 0 pass, 1 tool error, 2 threshold exceeded.
 //
 // Any error that is not typed as a report.Failure writes its cause to stderr,
 // leaves stdout empty, and exits 1. ADR 0005 sanctions that shape for a failure
-// upstream of the document, a malformed command line or not being in a git repo
-// at all, and its 2026-09-05 amendment records the command-line case, because a
-// run whose arguments never parsed never chose a repository to examine.
+// upstream of the document, a command line the gate refuses to guess at or not
+// being in a git repo at all, and its 2026-09-05 amendment records the
+// command-line case, because a run whose arguments never parsed never chose a
+// repository to examine.
 //
 // Two of those errors land downstream of the document instead, failing to stat
 // a changed file and failing to read the working directory a --coverage path
@@ -37,11 +40,18 @@ import (
 	"github.com/tvrmsmith/coding-standards/gate/internal/gitscope"
 	"github.com/tvrmsmith/coding-standards/gate/internal/join"
 	"github.com/tvrmsmith/coding-standards/gate/internal/report"
+	"github.com/tvrmsmith/coding-standards/gate/internal/scope"
 	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
 )
 
 func main() {
-	doc, err := measure(os.Args[1:])
+	sc, err := scope.Parse(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	doc, err := measure(sc)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -56,94 +66,43 @@ func main() {
 	os.Exit(doc.ExitCode())
 }
 
-// usageLine is the second line of every usage error this gate can print.
-const usageLine = "usage: metric-gate [--coverage <path>]..."
-
-// parseArgs reads the command line for the one flag this issue owns,
-// --coverage, repeatable and accepted as either "--coverage <path>" or
-// "--coverage=<path>". Anything else is a usage error, returned as a plain
-// error so main prints it to stderr and writes nothing to stdout. A malformed
-// command line is not a verdict about the code under test, and a consumer
-// that got a document for one would have to tell "the gate ran and found a
-// problem" from "the gate never ran" by reading the code. Both spellings
-// reach one value site, so neither can drift into accepting the empty value
-// an unset shell variable expands to. A value spelled like a flag is refused
-// there too: no producer writes a report whose name begins with two dashes,
-// and a mistyped flag read as a path would reach the developer as a coverage
-// diagnostic inside a document rather than as the usage error it is.
-func parseArgs(args []string) ([]string, error) {
-	var coveragePaths []string
-	for i := 0; i < len(args); i++ {
-		value, joined := strings.CutPrefix(args[i], "--coverage=")
-		switch {
-		case joined:
-		case args[i] == "--coverage":
-			value = ""
-			if i+1 < len(args) {
-				i++
-				value = args[i]
-			}
-		default:
-			return nil, fmt.Errorf("unknown argument: %s\n%s", args[i], usageLine)
-		}
-		if value == "" {
-			return nil, fmt.Errorf("--coverage needs a path\n%s", usageLine)
-		}
-		if strings.HasPrefix(value, "--") {
-			return nil, fmt.Errorf("--coverage needs a path, not the flag %s\n%s", value, usageLine)
-		}
-		coveragePaths = append(coveragePaths, value)
-	}
-	return coveragePaths, nil
-}
-
-// measure runs the gate over the repo containing the working directory. A
-// typed exit-1 cause becomes the document's error block; anything not typed as
-// a report.Failure comes back as an error, which the package doc above
-// enumerates.
-func measure(args []string) (report.Document, error) {
+// measure runs the gate over the repo containing the working directory,
+// scoped as sc names. A typed exit-1 cause becomes the document's error
+// block; anything not typed as a report.Failure comes back as an error, which
+// the package doc above enumerates.
+func measure(sc scope.Scope) (report.Document, error) {
 	var doc report.Document
-	coveragePaths, err := parseArgs(args)
-	if err != nil {
-		return doc, err
-	}
-
+	doc.Scope = string(sc.Mode)
 	repo, err := gitscope.Open()
 	if err != nil {
 		return doc, err
 	}
 
-	base, err := repo.ResolveBase()
-	if err != nil {
-		var noBase gitscope.NoBaseError
-		if errors.As(err, &noBase) {
-			doc.Failure = &report.Failure{Code: report.CodeNoDiffBase, Message: noBase.Error()}
-			return doc, nil
-		}
-		return doc, err
+	var selected selection
+	if sc.Mode == scope.ModeFiles {
+		selected, err = selectFiles(repo, sc.Files)
+	} else {
+		selected, err = selectDiff(repo, sc)
 	}
-	label := base.Label()
-	doc.Base = &label
-
-	touched, err := repo.TouchedLines(base)
+	// A selection that failed part-way still carries what it did establish,
+	// so a base resolved before the extractor broke is still the base the
+	// document names.
+	doc.Base = selected.Base
+	doc.TouchedLinesOutsideSpans = selected.TouchedLinesOutsideSpans
+	doc.SkippedPaths = selected.SkippedPaths
 	if failure, ok := asFailure(err); ok {
 		doc.Failure = failure
 		return doc, nil
 	} else if err != nil {
 		return doc, err
 	}
-
-	extracted, err := extract.Extract(repo.Root(), changedFiles(touched))
-	if failure, ok := asFailure(err); ok {
-		doc.Failure = failure
+	if selected.Failure != nil {
+		doc.Failure = selected.Failure
 		return doc, nil
-	} else if err != nil {
-		return doc, err
 	}
 
-	changed, outsideSpans := join.Changed(extracted, touched)
+	extracted, changed := selected.Extracted, selected.Changed
 	doc.ChangedMethods = len(changed)
-	doc.TouchedLinesOutsideSpans = outsideSpans
 	metric := report.Metric{Name: crap.Name, Display: crap.DisplayName, Threshold: crap.Threshold}
 	// ADR 0003: an empty changed-method set exits 0 before resolving any
 	// input, because a metric with nothing to compute is not asking for one.
@@ -152,8 +111,8 @@ func measure(args []string) (report.Document, error) {
 		return doc, nil
 	}
 
-	lines, skipped, err := loadCoverage(repo.Root(), coveragePaths, changed)
-	doc.SkippedPaths = skipped
+	lines, skipped, err := loadCoverage(repo.Root(), sc.Coverage, changed)
+	doc.SkippedPaths = append(doc.SkippedPaths, skipped...)
 	if failure, ok := asFailure(err); ok {
 		doc.Failure = failure
 		return doc, nil
@@ -174,6 +133,139 @@ func measure(args []string) (report.Document, error) {
 		}
 	}
 	return doc, nil
+}
+
+// selection is everything a scope establishes before any metric runs: which
+// spans exist, which of them the scope calls changed, and what the document
+// has to say about how they were reached.
+//
+// Failure is a cause the selection itself discovered, a base that will not
+// resolve or a file staged in one state and dirty in another. It is a field
+// rather than a returned error because the other fields are still meant for
+// the document on that path: a dirty staged file still has a base to name.
+type selection struct {
+	Base                     *string
+	Extracted                extract.Result
+	Changed                  []extract.Span
+	TouchedLinesOutsideSpans int
+	SkippedPaths             []string
+	Failure                  *report.Failure
+}
+
+// selectDiff resolves sc's git diff into a selection, the shape --staged,
+// --since and the merge-base default all share.
+func selectDiff(repo gitscope.Repo, sc scope.Scope) (selection, error) {
+	var selected selection
+	base, err := resolveBase(repo, sc)
+	if err != nil {
+		var noBase gitscope.NoBaseError
+		if errors.As(err, &noBase) {
+			selected.Failure = &report.Failure{Code: report.CodeNoDiffBase, Message: noBase.Error()}
+			return selected, nil
+		}
+		return selected, err
+	}
+	label := base.Label()
+	selected.Base = &label
+
+	touched, err := repo.TouchedLines(base)
+	if err != nil {
+		return selected, err
+	}
+
+	extracted, err := extract.Extract(repo.Root(), changedFiles(touched))
+	if err != nil {
+		return selected, err
+	}
+
+	if sc.Mode == scope.ModeStaged {
+		dirty, err := repo.DivergentFromIndex(claimedFiles(extracted))
+		if err != nil {
+			return selected, err
+		}
+		if len(dirty) > 0 {
+			selected.Failure = &report.Failure{Code: report.CodeStagedFileDirty, Message: dirtyMessage(dirty)}
+			return selected, nil
+		}
+	}
+
+	selected.Extracted = extracted
+	selected.Changed, selected.TouchedLinesOutsideSpans = join.Changed(extracted, touched)
+	return selected, nil
+}
+
+// selectFiles resolves names, --files' argument list, into a selection. This
+// is the shape ADR 0003 gives --files instead of a diff: every method in a
+// listed file is changed, there is no base to record, and
+// touched_lines_outside_spans has nothing to count.
+func selectFiles(repo gitscope.Repo, names []string) (selection, error) {
+	var selected selection
+	resolved := make([]srcpath.Path, 0, len(names))
+	for _, name := range names {
+		path, err := repo.Root().Named(name)
+		if err != nil {
+			// The message names the path as the developer typed it, which is
+			// the only spelling they can act on.
+			selected.Failure = &report.Failure{Code: report.CodeFileUnresolved, Message: err.Error()}
+			return selected, nil
+		}
+		resolved = append(resolved, path)
+	}
+
+	extracted, err := extract.Extract(repo.Root(), resolved)
+	if err != nil {
+		return selected, err
+	}
+	// ADR 0005's amendment predicted --files as a second producer of
+	// skipped_paths: a named file no extractor claims is neither measured
+	// nor an error, so it is listed rather than silently dropped.
+	selected.SkippedPaths = unclaimedPaths(resolved, extracted)
+	selected.Extracted = extracted
+	selected.Changed = join.InFiles(extracted, resolved)
+	return selected, nil
+}
+
+// unclaimedPaths lists which of resolved no extractor claimed, sorted.
+func unclaimedPaths(resolved []srcpath.Path, extracted extract.Result) []string {
+	var skipped []string
+	for _, path := range resolved {
+		if !extracted.Claimed[path] {
+			skipped = append(skipped, path.String())
+		}
+	}
+	slices.Sort(skipped)
+	return skipped
+}
+
+// resolveBase picks the git resolution matching sc.Mode. --files never
+// reaches it, because a file list names no commit to diff against.
+func resolveBase(repo gitscope.Repo, sc scope.Scope) (gitscope.Base, error) {
+	switch sc.Mode {
+	case scope.ModeSince:
+		return repo.ResolveRef(sc.Ref)
+	case scope.ModeStaged:
+		return repo.ResolveStaged()
+	default:
+		return repo.ResolveBase()
+	}
+}
+
+// claimedFiles lists the files extract.Extract claimed, sorted, which is
+// what a --staged run checks for divergence: a dirty staged Markdown file
+// the diff never claimed cannot be misattributed, so it does not refuse the
+// run.
+func claimedFiles(extracted extract.Result) []srcpath.Path {
+	return slices.Sorted(maps.Keys(extracted.Claimed))
+}
+
+// dirtyMessage names the files staged in one state and on disk in another,
+// comma-space separated in sorted order.
+func dirtyMessage(dirty []srcpath.Path) string {
+	names := make([]string, 0, len(dirty))
+	for _, path := range dirty {
+		names = append(names, path.String())
+	}
+	return "refusing to score " + strings.Join(names, ", ") + ": staged in one state and on disk in another"
 }
 
 // loadCoverage resolves the coverage input, and only because

@@ -17,10 +17,6 @@ import (
 // the spec version so a reader knows what produced the document.
 const Version = "0.1.0"
 
-// Scope is the only diff scope this gate has. ADR 0005 makes it a document
-// field; the flags that would vary it are other issues' work.
-const Scope = "merge-base"
-
 // The typed error codes for the exit-1 causes this gate can reach. An agent
 // branches on these rather than parsing the message.
 const (
@@ -36,6 +32,13 @@ const (
 	CodeCoverageUnparseable           = "coverage_unparseable"
 	CodeCoverageStale                 = "coverage_stale"
 	CodeUnknownChangedMethod          = "unknown_changed_method"
+	// CodeStagedFileDirty is a --staged run refusing a file staged in one
+	// state and on disk in another, which the join could otherwise attribute
+	// to the wrong content (issue 14).
+	CodeStagedFileDirty = "staged_file_dirty"
+	// CodeFileUnresolved is a --files path srcpath.Named could not place: it
+	// does not exist, or it resolves outside the repo root (issue 14).
+	CodeFileUnresolved = "file_unresolved"
 	// The three coverage-path causes ADR 0004's 2026-09-03 amendment defers to
 	// issue 16: a source root MSBuild erased, a class resolving to two paths
 	// inside the repo root, and a report resolving only outside it.
@@ -161,6 +164,9 @@ func (m Metric) WorstScore() float64 {
 
 // Document is one whole gate run's output.
 type Document struct {
+	// Scope is the token naming which diff the run measured (ADR 0005), one
+	// per mode: merge-base, staged, since, files.
+	Scope string
 	// Base is the resolved "<ref>@<sha>" label, or nil when resolution is
 	// what failed.
 	Base                     *string
@@ -227,7 +233,7 @@ func (d Document) Stdout() ([]byte, error) {
 		{Key: "status", Value: d.Status()},
 		{Key: "tool", Value: "metric-gate/" + Version},
 		{Key: "spec", Value: "toon/" + toon.SpecVersion},
-		{Key: "scope", Value: Scope},
+		{Key: "scope", Value: d.Scope},
 		{Key: "base", Value: nullable(d.Base)},
 		{Key: "changed_methods", Value: d.ChangedMethods},
 		{Key: "touched_lines_outside_spans", Value: d.TouchedLinesOutsideSpans},

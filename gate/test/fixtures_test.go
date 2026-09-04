@@ -121,6 +121,12 @@ func replaceLine(body string, n int, replacement string) string {
 	return strings.Join(lines, "\n")
 }
 
+// otherService and other are a second file and its one span, used by the
+// --files cases, which need a file list longer than one.
+const otherService = "src/Ordering/Other.cs"
+
+var other = span{File: otherService, Name: "Other.Run", StartLine: 10, EndLine: 20, Complexity: 4}
+
 // span is one method the stub extractor reports.
 type span struct {
 	File       string `json:"file"`
