@@ -814,7 +814,9 @@ func TestRepoWithNoResolvableDiffBaseNamesEveryRefAndPointsAtTheFlag(t *testing.
 	// A second commit is what makes the absent HEAD~1 fallback load-bearing.
 	// With one commit HEAD~1 does not resolve either, so a gate that did fall
 	// back would emit this same document. With two, a fallback would resolve
-	// a base, find a changed method and fail coverage_missing instead.
+	// a base and then fail downstream on the stub's empty output, which is
+	// unparsable extractor JSON, rather than producing the no-diff-base error
+	// this case pins.
 	f.touchLine(orderService, 20)
 	f.commitAll("second")
 	f.touchLine(orderService, 62)
