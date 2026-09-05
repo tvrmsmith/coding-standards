@@ -89,6 +89,9 @@ type stubConfig struct {
 	CapabilitiesStdout string   `json:"capabilitiesStdout"`
 	ExitCode           int      `json:"exitCode"`
 	Stdout             string   `json:"stdout"`
+	// StdinLog names a file the stub copies the gate's stdin to, which is how
+	// a case asserts the file list the extractor was handed.
+	StdinLog string `json:"stdinLog"`
 }
 
 // gitEnv pins the identity and dates git commits with, and cuts the

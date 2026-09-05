@@ -123,11 +123,12 @@ func TestStagedMeasuresOnlyWhatIsStaged(t *testing.T) {
 
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
-	// The stub parses only orderService and reports only cancel. Under the
-	// default merge-base scope the gate would hand the extractor Other.cs as
-	// well, and the stub's silence about it would fail the run with
-	// extractor_no_parse_status instead of producing this document, which is
-	// what makes --staged excluding the unstaged edit discriminating.
+	// The stub parses only orderService and reports both its spans, of which
+	// only cancel holds a staged line. Under the default merge-base scope the
+	// gate would hand the extractor Other.cs as well, and the stub's silence
+	// about it would fail the run with extractor_no_parse_status instead of
+	// producing this document, which is what makes --staged excluding the
+	// unstaged edit discriminating.
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
@@ -155,6 +156,33 @@ func TestStagedRefusesAFileStagedInOneStateAndDirtyInAnother(t *testing.T) {
 
 	f.runArgs("--staged").assertMatches(t, "staged_file_dirty", 1, f.headLabel(),
 		"refusing to score src/Ordering/OrderService.cs: staged in one state and on disk in another\n")
+}
+
+func TestStagedRefusesADirtyFileWhoseNameReadsAsAGlob(t *testing.T) {
+	// The Next.js route filename, and wildmatch magic to git. Handed to the
+	// divergence check as a bare pathspec, `[1]` is a character class that
+	// matches no file on disk, so git reports no difference and the gate
+	// scores index line numbers against the working-tree text.
+	const route = "src/Ordering/Order[1].cs"
+	routeCancel := span{File: route, Name: "Order1.Cancel", StartLine: 60, EndLine: 64, Complexity: 3}
+
+	f := newFixture(t, "main")
+	f.write(route, csharpFile(80))
+	f.commitAll("initial")
+
+	f.touchLine(route, 62)
+	f.git("add", route)
+	f.touchLine(route, 45)
+
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: route, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(route), []span{routeCancel}),
+	}
+
+	f.runArgs("--staged").assertMatches(t, "staged_glob_name_dirty", 1, f.headLabel(),
+		"refusing to score src/Ordering/Order[1].cs: staged in one state and on disk in another\n")
 }
 
 func TestFilesNamingAPathOutsideTheRepoRootFailsNamingThatPath(t *testing.T) {
@@ -187,7 +215,7 @@ func TestFilesMeasuresEveryMethodInTheNamedFilesRegardlessOfTheDiff(t *testing.T
 		coverageClass{filename: otherService, lines: spanCoverage(11, 4, 2)}))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(orderService, otherService), []span{placeAsync, cancel, other}),
+		Stdout:     extractorOutput(t, parsed(orderService, otherService), []span{placeAsync, cancel, otherRun}),
 	}
 
 	f.runArgs("--files", orderService, otherService).assertMatches(t, "files_named_directly", 0, "",
@@ -278,14 +306,132 @@ func TestFilesNamingTheSameFileTwiceHandsItToTheGateOnce(t *testing.T) {
 	f.write("docs/notes.md", "first\n")
 	f.commitAll("initial")
 	singleFileCoverageAndStub(t, f)
+	handed := filepath.Join(t.TempDir(), "handed")
+	f.stub.StdinLog = handed
 
-	// Two spellings of one path. The skipped file is what makes the case
-	// discriminating: a list handed on twice lists it twice, and the same
-	// repetition reaches the extractor, which then reports every span in the
-	// file twice and fails the run over a contract it did not break.
-	f.runArgs("--files", "docs/notes.md", "./docs/notes.md", orderService).
+	// Two spellings of each path. The skipped one is listed once in the
+	// document, and the claimed one reaches the extractor once: handed it
+	// twice the extractor reports every span in it twice and the run exits 1
+	// over a contract it did not break.
+	f.runArgs("--files", "docs/notes.md", "./docs/notes.md", orderService, "./"+orderService).
 		assertMatches(t, "files_with_skipped_path", 0, "",
 			"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
+
+	if got := readFile(t, handed); got != orderService+"\n" {
+		t.Errorf("the extractor was handed %q, want the one line %q", got, orderService+"\n")
+	}
+}
+
+func TestFilesNamingOneFileInTwoCasesHandsItToTheGateOnce(t *testing.T) {
+	f := newFixture(t, "main")
+	if !caseInsensitiveFilesystem(t, f.root) {
+		t.Skip("the filesystem is case sensitive, so the second spelling names no file and the case is a duplicate of the unresolvable one")
+	}
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	singleFileCoverageAndStub(t, f)
+	handed := filepath.Join(t.TempDir(), "handed")
+	f.stub.StdinLog = handed
+
+	// Both spellings name the one file here, and resolving symlinks does not
+	// settle their case, so only the filesystem's own answer to which file
+	// each landed on tells them apart from two files.
+	f.runArgs("--files", orderService, "src/ordering/OrderService.cs").
+		assertMatches(t, "files_single_file", 0, "",
+			"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
+
+	if got := readFile(t, handed); got != orderService+"\n" {
+		t.Errorf("the extractor was handed %q, want the one line %q", got, orderService+"\n")
+	}
+}
+
+func TestFilesReturnsEveryMethodInTheFileIncludingNestedOnes(t *testing.T) {
+	// validate nests inside placeAsync. Under a diff the smallest containing
+	// span takes the touched line and the container is not changed, but
+	// --files carries no line to narrow against, so both are measured.
+	validate := span{File: orderService, Name: "OrderService.PlaceAsync.Validate", StartLine: 45, EndLine: 50, Complexity: 2}
+
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+
+	// Lines 42-44 and 51 belong to placeAsync alone, 45-50 to validate, and
+	// only 51 is uncovered, so the two carry different coverage and neither
+	// row can stand in for the other.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: append(spanCoverage(42, 10, 9), spanCoverage(61, 3, 2)...)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, validate, cancel}),
+	}
+
+	f.runArgs("--files", orderService).assertMatches(t, "files_nested_span", 0, "",
+		"0 of 3 changed methods over CRAP threshold 30, worst score 10.27\n")
+}
+
+func TestStagedDoesNotRefuseADirtyFileNoExtractorClaims(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write("docs/notes.md", "first\n")
+	f.commitAll("initial")
+
+	f.touchLine(orderService, 62)
+	f.git("add", orderService)
+	// Staged in one state and on disk in another, the shape --staged refuses,
+	// on a file no extractor claims. The gate never scores it, so it has no
+	// line numbers to misattribute and the run proceeds.
+	f.write("docs/notes.md", "second\n")
+	f.git("add", "docs/notes.md")
+	f.write("docs/notes.md", "third\n")
+
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.runArgs("--staged").assertMatches(t, "staged_single_method", 0, f.headLabel(),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestSinceARefSharingNoHistoryWithHeadSaysSo(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	// An orphan branch is a second root commit, so the two histories share no
+	// commit and git answers the merge base with no rather than with a
+	// failure. The ref itself resolves, which is what tells this apart from a
+	// name that does not exist.
+	f.git("checkout", "--quiet", "--orphan", "unrelated")
+	f.write("docs/notes.md", "first\n")
+	f.commitAll("unrelated root")
+	f.git("checkout", "--quiet", "main")
+
+	f.runArgs("--since", "unrelated").assertMatches(t, "since_unrelated_histories", 1, "",
+		"no diff base: HEAD and unrelated share no common ancestor\n")
+}
+
+func TestSinceWithAnEmptyRefIsAUsageError(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+
+	result := f.runArgs("--since", "")
+
+	assertUsageError(t, result, "metric-gate: --since needs a ref"+usage)
+}
+
+// readFile is the content of a file a case asked the stub to write, which is
+// how it asserts what the gate handed the extractor rather than only what came
+// back out.
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
 }
 
 func TestFilesNamingAnAbsolutePathMeasuresTheFileItNames(t *testing.T) {

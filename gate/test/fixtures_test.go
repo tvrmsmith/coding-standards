@@ -121,11 +121,13 @@ func replaceLine(body string, n int, replacement string) string {
 	return strings.Join(lines, "\n")
 }
 
-// otherService and other are a second file and its one span, used by the
-// --files cases, which need a file list longer than one.
+// otherService and otherRun are a second file and its one span, used by the
+// --files cases, which need a file list longer than one. The span is not
+// called `other`, because gate_test.go already binds that name locally twice
+// and a package-level third meaning would shadow into both.
 const otherService = "src/Ordering/Other.cs"
 
-var other = span{File: otherService, Name: "Other.Run", StartLine: 10, EndLine: 20, Complexity: 4}
+var otherRun = span{File: otherService, Name: "Other.Run", StartLine: 10, EndLine: 20, Complexity: 4}
 
 // span is one method the stub extractor reports.
 type span struct {

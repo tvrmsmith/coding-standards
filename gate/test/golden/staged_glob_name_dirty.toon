@@ -1,0 +1,11 @@
+status: error
+tool: metric-gate/0.1.0
+spec: toon/4.1.1
+scope: staged
+base: {{BASE}}
+changed_methods: 0
+touched_lines_outside_spans: 0
+skipped_paths: []
+error:
+  code: staged_file_dirty
+  message: "refusing to score src/Ordering/Order[1].cs: staged in one state and on disk in another"

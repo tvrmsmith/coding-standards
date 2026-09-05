@@ -26,6 +26,10 @@ type config struct {
 	CapabilitiesStdout string `json:"capabilitiesStdout"`
 	ExitCode           int    `json:"exitCode"`
 	Stdout             string `json:"stdout"`
+	// StdinLog is a file the stub copies its stdin to, so a case can assert
+	// the file list the gate handed it rather than only the document that
+	// came out. Unset, the stub discards stdin as before.
+	StdinLog string `json:"stdinLog"`
 }
 
 func main() {
@@ -40,11 +44,32 @@ func main() {
 	}
 	// The real extractor reads every path before it answers, so the stub
 	// drains stdin too and the two agree on when the gate's write completes.
-	io.Copy(io.Discard, os.Stdin)
+	if err := drainStdin(cfg); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(64)
+	}
 	if cfg.ExitCode != 0 {
 		os.Exit(cfg.ExitCode)
 	}
 	fmt.Print(cfg.Stdout)
+}
+
+// drainStdin reads the path list the gate wrote, recording it when the case
+// asked for it. The read happens either way, so a case that logs nothing runs
+// against the same stub behaviour as one that does.
+func drainStdin(cfg config) error {
+	if cfg.StdinLog == "" {
+		io.Copy(io.Discard, os.Stdin)
+		return nil
+	}
+	body, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return fmt.Errorf("stub extractor: reading stdin: %w", err)
+	}
+	if err := os.WriteFile(cfg.StdinLog, body, 0o644); err != nil {
+		return fmt.Errorf("stub extractor: %w", err)
+	}
+	return nil
 }
 
 // loadConfig reads the config file named by METRIC_GATE_STUB.
