@@ -143,26 +143,29 @@ func (e *UnresolvedError) Error() string { return e.Name + " " + e.Reason }
 // NamedFiles resolves every path --files named, in the order they were typed,
 // with each file listed once however many spellings named it.
 //
-// The identity is the file the operating system says the name landed on, not
-// the text of the resolved path, because two spellings of one file can differ
-// in their text. `a.cs` and `./a.cs` differ before resolution, and an absolute
-// name and a relative one differ before it too. Handed the same file twice the
-// extractor reports every span in it twice, and the run exits 1 accusing the
-// extractor of a contract violation over a typo. Asking the filesystem also
-// keeps two genuinely different files that differ only in case, which a
-// case-sensitive filesystem allows, as the two files they are.
+// The identity is the resolved repo-relative path, which is the currency every
+// later stage keys on. `a.cs`, `./a.cs`, an absolute spelling and a symlink to
+// the file all come out of named as the same text, and spelledAsOnDisk forces
+// the tree's own case on top, so one text comparison covers every way of
+// writing one file. Handed the same file twice the extractor reports every span
+// in it twice, and the run exits 1 accusing the extractor of a contract
+// violation over a typo.
+//
+// Two tracked paths that are hard links to one inode stay two files, because
+// they are two paths the extractor reads and two paths a coverage report is
+// keyed by.
 func (r Root) NamedFiles(names []string) ([]Path, error) {
 	paths := make([]Path, 0, len(names))
-	seen := make([]os.FileInfo, 0, len(names))
+	seen := make(map[Path]bool, len(names))
 	for _, name := range names {
-		path, info, err := r.named(name)
+		path, err := r.named(name)
 		if err != nil {
 			return nil, err
 		}
-		if slices.ContainsFunc(seen, func(prior os.FileInfo) bool { return os.SameFile(prior, info) }) {
+		if seen[path] {
 			continue
 		}
-		seen = append(seen, info)
+		seen[path] = true
 		paths = append(paths, path)
 	}
 	return paths, nil
@@ -188,48 +191,44 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // UnresolvedError, so every refusal about the path reaches the document under
 // one code. Losing the working directory is not about the path at all, so it
 // travels as a plain error.
-//
-// The stat goes back to the caller beside the path, because it is what says
-// which file the name landed on and NamedFiles needs that to tell one file
-// named twice from two files.
-func (r Root) named(name string) (Path, os.FileInfo, error) {
+func (r Root) named(name string) (Path, error) {
 	candidate := filepath.FromSlash(name)
 	if !filepath.IsAbs(candidate) {
 		cwd, err := os.Getwd()
 		if err != nil {
-			return "", nil, fmt.Errorf("resolving %s against the working directory: %w", name, err)
+			return "", fmt.Errorf("resolving %s against the working directory: %w", name, err)
 		}
 		candidate = filepath.Join(cwd, candidate)
 	}
 	resolved, err := filepath.EvalSymlinks(candidate)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return "", nil, &UnresolvedError{Name: name, Reason: "does not exist"}
+			return "", &UnresolvedError{Name: name, Reason: "does not exist"}
 		}
-		return "", nil, unreadable(name, err)
+		return "", unreadable(name, err)
 	}
 	rel, err := filepath.Rel(r.resolved, resolved)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", nil, &UnresolvedError{Name: name, Reason: "is outside the repo root"}
+		return "", &UnresolvedError{Name: name, Reason: "is outside the repo root"}
 	}
 	info, err := os.Stat(resolved)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return "", nil, &UnresolvedError{Name: name, Reason: "does not exist"}
+			return "", &UnresolvedError{Name: name, Reason: "does not exist"}
 		}
-		return "", nil, unreadable(name, err)
+		return "", unreadable(name, err)
 	}
 	if !info.Mode().IsRegular() {
-		return "", nil, &UnresolvedError{Name: name, Reason: "is a directory, not a file"}
+		return "", &UnresolvedError{Name: name, Reason: "is a directory, not a file"}
 	}
 	spelled, err := r.spelledAsOnDisk(rel)
 	if err != nil {
-		return "", nil, unreadable(name, err)
+		return "", unreadable(name, err)
 	}
 	if !spelled {
-		return "", nil, &UnresolvedError{Name: name, Reason: "is not spelled as the file on disk is"}
+		return "", &UnresolvedError{Name: name, Reason: "is not spelled as the file on disk is"}
 	}
-	return Path(filepath.ToSlash(rel)), info, nil
+	return Path(filepath.ToSlash(rel)), nil
 }
 
 // unreadable is the refusal for a filesystem failure that is not the path

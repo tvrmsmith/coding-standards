@@ -34,17 +34,20 @@ const (
 	CodeUnknownChangedMethod          = "unknown_changed_method"
 	// CodeStagedFileDirty is a --staged run refusing a file staged in one
 	// state and on disk in another, which the join could otherwise attribute
-	// to the wrong content (issue 14).
+	// to the wrong content (issue 14). The check asks only about files an
+	// extractor claimed, except when extraction itself fails, where it asks
+	// about every path in the diff so a file staged and then deleted from disk
+	// is named for what it is rather than blamed on the extractor.
 	CodeStagedFileDirty = "staged_file_dirty"
 	// CodeFileUnresolved is a --files path the gate could not place on a
-	// source file, and it has four causes (issue 14). The path does not
-	// exist, it resolves above the repo root, it resolves inside the root but
-	// names a directory rather than a regular file, or the tree holds the
-	// file under a spelling other than the one typed, which a
-	// case-insensitive filesystem resolves to a path no coverage report is
-	// keyed by. Any other filesystem failure reading the path carries the
-	// operating system's own words under this code as well, so no refusal
-	// about a named path escapes the document.
+	// source file (issue 14). The path does not exist, it resolves above the
+	// repo root, it resolves inside the root but names a directory rather than
+	// a regular file, the tree holds the file under a spelling other than the
+	// one typed, which a case-insensitive filesystem resolves to a path no
+	// coverage report is keyed by, or the filesystem refused to answer about
+	// the path at all, which carries the operating system's own words. Every
+	// one of them lands here, so no refusal about a named path escapes the
+	// document.
 	CodeFileUnresolved = "file_unresolved"
 	// The three coverage-path causes ADR 0004's 2026-09-03 amendment defers to
 	// issue 16: a source root MSBuild erased, a class resolving to two paths
