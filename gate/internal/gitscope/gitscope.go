@@ -145,15 +145,27 @@ func (r Repo) ResolveBase() (Base, error) {
 // ResolveRef is ResolveBase against the one ref --since named, so the run
 // measures the branch point rather than the tip.
 //
-// Both invocations tell exit 1, which is git answering the question with no,
+// Every invocation tells exit 1, which is git answering the question with no,
 // from every other exit code, which is git failing to answer it. An unreadable
 // object store or an ambiguous ref reported as a name that does not exist sends
 // the developer hunting a typo, so it comes back typed as an unreadable diff
 // carrying git's own words instead.
+//
+// HEAD is verified before the merge base is asked for, the same check
+// ResolveStaged makes, because merge-base against an unborn HEAD exits 128 with
+// "Not a valid object name HEAD". Left to fall through, a branch made with
+// `git checkout --orphan` reports the diff as unparseable for a run that never
+// reached a diff, when what the repo has is no commit on this branch.
 func (r Repo) ResolveRef(ref string) (Base, error) {
 	if _, err := r.git("rev-parse", "--verify", "--quiet", ref+"^{commit}"); err != nil {
 		if noMatch(err) {
 			return Base{}, NoBaseError{Ref: ref}
+		}
+		return Base{}, unreadableDiff(err)
+	}
+	if _, err := r.git("rev-parse", "--verify", "--quiet", "HEAD"); err != nil {
+		if noMatch(err) {
+			return Base{}, NoBaseError{NoCommits: true}
 		}
 		return Base{}, unreadableDiff(err)
 	}

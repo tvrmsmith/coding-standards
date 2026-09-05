@@ -500,6 +500,80 @@ func TestSinceWithAnEmptyRefIsAUsageError(t *testing.T) {
 	assertUsageError(t, result, "metric-gate: --since needs a ref"+usage)
 }
 
+func TestAScopeFlagAfterADifferentOneNamesBothScopes(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+
+	// --files arriving second on a command line that already named a scope. The
+	// message that says where the paths go belongs to a repeated --files alone,
+	// and this line really does name two scopes.
+	result := f.runArgs("--staged", "--files", orderService)
+
+	assertUsageError(t, result, "metric-gate: --files and --staged name two scopes; pass one"+usage)
+}
+
+func TestSinceOnABranchWithNoCommitSaysTheRepoHasNone(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	// An orphan branch that was never committed on. main resolves, so the ref
+	// check passes and HEAD is what does not, which git reports from merge-base
+	// as exit 128 rather than the exit 1 that means no. Read as a failure to
+	// answer, the run blames a diff it never asked for.
+	f.git("checkout", "--quiet", "--orphan", "work")
+
+	f.runArgs("--since", "main").assertMatches(t, "since_no_commits", 1, "",
+		"no diff base: this repo has no commits\n")
+}
+
+func TestStagedNamesTheDirtyFileWhenTheExtractorFailsOnIt(t *testing.T) {
+	const added = "src/Ordering/New.cs"
+
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+
+	// Staged and then deleted from disk, which is the widest divergence
+	// --staged refuses. The extractor is handed a path with nothing to read and
+	// fails on it, so no file is claimed and the ordinary divergence check sees
+	// nothing. Reported as the extractor's own failure the caller is told its
+	// source does not parse, when the cause is the refusal this scope exists for.
+	f.write(added, csharpFile(20))
+	f.git("add", added)
+	if err := os.Remove(filepath.Join(f.root, filepath.FromSlash(added))); err != nil {
+		t.Fatal(err)
+	}
+	f.stub = stubConfig{Extensions: []string{".cs"}, ExitCode: 3}
+
+	f.runArgs("--staged").assertMatches(t, "staged_extractor_dirty", 1, f.headLabel(),
+		"refusing to score src/Ordering/New.cs: staged in one state and on disk in another\n")
+}
+
+func TestFilesNamingTwoHardLinksToOneInodeMeasuresBoth(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	// Two tracked paths, one inode. They are two files to the extractor and two
+	// files to a coverage report, so dropping either as a duplicate spelling
+	// leaves a file the developer named unmeasured under a pass.
+	if err := os.Link(filepath.Join(f.root, filepath.FromSlash(orderService)),
+		filepath.Join(f.root, filepath.FromSlash(otherService))); err != nil {
+		t.Fatal(err)
+	}
+	f.commitAll("initial")
+
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: append(spanCoverage(42, 10, 9), spanCoverage(61, 3, 2)...)},
+		coverageClass{filename: otherService, lines: spanCoverage(11, 4, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService, otherService), []span{placeAsync, cancel, otherRun}),
+	}
+
+	f.runArgs("--files", orderService, otherService).assertMatches(t, "files_named_directly", 0, "",
+		"0 of 3 changed methods over CRAP threshold 30, worst score 9.08\n")
+}
+
 // readFile is the content of a file a case asked the stub to write, which is
 // how it asserts what the gate handed the extractor rather than only what came
 // back out.

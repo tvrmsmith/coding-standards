@@ -175,16 +175,29 @@ func selectDiff(repo gitscope.Repo, sc scope.Scope) (selection, error) {
 
 	extracted, err := extract.Extract(repo.Root(), changedFiles(touched))
 	if err != nil {
+		// The widest divergence, a file staged and then deleted from disk,
+		// reaches the extractor as a path with nothing to read and comes back
+		// as the extractor's own failure. Nothing was claimed, so the ordinary
+		// check below cannot see it, and a caller branching on the code would
+		// be told its source does not parse. The diff's own paths answer that
+		// here. A divergence check that cannot run leaves the extractor's cause
+		// standing, since it is the one the gate did establish.
+		if sc.Mode == scope.ModeStaged {
+			if dirty, dirtyErr := stagedDirty(repo, changedFiles(touched)); dirtyErr == nil && dirty != nil {
+				selected.Failure = dirty
+				return selected, nil
+			}
+		}
 		return selected, err
 	}
 
 	if sc.Mode == scope.ModeStaged {
-		dirty, err := repo.DivergentFromIndex(claimedFiles(extracted))
+		dirty, err := stagedDirty(repo, claimedFiles(extracted))
 		if err != nil {
 			return selected, err
 		}
-		if len(dirty) > 0 {
-			selected.Failure = &report.Failure{Code: report.CodeStagedFileDirty, Message: dirtyMessage(dirty)}
+		if dirty != nil {
+			selected.Failure = dirty
 			return selected, nil
 		}
 	}
@@ -261,6 +274,21 @@ func resolveBase(repo gitscope.Repo, sc scope.Scope) (gitscope.Base, error) {
 // run.
 func claimedFiles(extracted extract.Result) []srcpath.Path {
 	return slices.Sorted(maps.Keys(extracted.Claimed))
+}
+
+// stagedDirty renders the refusal when any of paths is staged in one state and
+// on disk in another, and nil when none is. The failure to ask comes back
+// separately from the answer, because one caller reports it and the other is
+// already carrying a cause it would rather keep.
+func stagedDirty(repo gitscope.Repo, paths []srcpath.Path) (*report.Failure, error) {
+	dirty, err := repo.DivergentFromIndex(paths)
+	if err != nil {
+		return nil, err
+	}
+	if len(dirty) == 0 {
+		return nil, nil
+	}
+	return &report.Failure{Code: report.CodeStagedFileDirty, Message: dirtyMessage(dirty)}, nil
 }
 
 // dirtyMessage names the files staged in one state and on disk in another,
