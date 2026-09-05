@@ -103,6 +103,29 @@ land inside the repo root, the git-worktree and container cases. The full list i
 code is a contract change and belongs in this list on the same commit, which is the 2026-09-03 rule restated
 against the list that now governs.
 
+**Amended 2026-09-05.** The enumeration is **fifteen** codes, and this list supersedes every count above. One
+joined with [issue 15](https://github.com/tvrmsmith/coding-standards/issues/15), which closes the deferral the
+2026-09-03 amendment recorded: the gate now reads the report's own `timestamp` attribute and stats every file
+that contributed a changed method, so that amendment's "The gate reads no report timestamp today" no longer
+describes the binary. `coverage_stale` is a report whose timestamp predates the newest of those mtimes. It emits
+`status: error` with an `error` block and no table, and no method is scored against a report the run refused. The
+message names the report and closes with the step that clears it, which differs by how the report reached the
+gate: a discovered one says to clear stale `TestResults` directories and re-run the tests, and one named on
+`--coverage` says to regenerate that file or point the flag somewhere current. Clearing a directory does nothing
+for a path the developer typed. The full list is `no_diff_base`, `diff_unparseable`, `extractor_failed`,
+`extractor_path_mismatch`, `extractor_capabilities_mismatch`, `extractor_duplicate_span`,
+`extractor_invalid_span`, `parse_failed`, `coverage_missing`, `coverage_unparseable`, `coverage_stale`,
+`coverage_source_root_erased`, `file_ambiguous`, `coverage_outside_repo`, and `unknown_changed_method`.
+
+Two rules under that code are decisions rather than mechanics. **A report the staleness rule cannot judge is
+refused as `coverage_unparseable`, not trusted.** A missing `timestamp` attribute, an empty one, and one that is
+not base-10 epoch seconds all refuse, and the message distinguishes them, since a report carrying
+`timestamp="2026-01-01T00:00:00Z"` needs its units fixed and telling its author the attribute is absent sends
+them looking for something already there. **Staleness compares whole truncated seconds, and equal seconds is not
+stale**, which deviates from the "with zero tolerance" wording on issue 15. The Cobertura attribute carries
+second resolution and cannot express anything finer, so a literal sub-second comparison would refuse reports on
+an ordering the format never recorded.
+
 Three parts of that shape are decisions in their own right.
 
 **The fix instruction is two typed cells, never prose.** `action` is one of `raise_coverage`, `split_method`, or
