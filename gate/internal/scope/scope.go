@@ -26,8 +26,8 @@ const (
 	ModeStaged Mode = "staged"
 	// ModeSince measures the merge base of HEAD and an explicit ref.
 	ModeSince Mode = "since"
-	// ModeFiles measures every method in an explicit file list. Parsing
-	// recognises it; nothing downstream acts on it yet.
+	// ModeFiles measures every method in an explicit file list, so it
+	// resolves no base and reads no diff.
 	ModeFiles Mode = "files"
 )
 
@@ -109,8 +109,10 @@ func Parse(args []string) (Scope, error) {
 			// The same stop the --files arm makes: an argument starting with
 			// '-' is another flag the developer typed, so taking it as a ref
 			// would report a commit that does not exist rather than the
-			// usage block.
-			if i >= len(args) || strings.HasPrefix(args[i], "-") {
+			// usage block. An empty argument names no ref either, and taken
+			// as one it reaches the caller as the default-candidates message
+			// telling them to pass the flag they just passed.
+			if i >= len(args) || args[i] == "" || strings.HasPrefix(args[i], "-") {
 				return Scope{}, &UsageError{Problem: "--since needs a ref"}
 			}
 			sc.Mode, sc.Ref, set = ModeSince, args[i], true

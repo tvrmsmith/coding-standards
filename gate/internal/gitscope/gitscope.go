@@ -106,19 +106,19 @@ type NoBaseError struct {
 	// NoCommits marks a repo with no HEAD at all, which is what --staged
 	// hits before the first commit.
 	NoCommits bool
-	// Cause is what git said when the ref resolved but the merge base did
-	// not, which is unrelated histories rather than a name that does not
-	// exist. It is carried because "does not name a commit" sends the
-	// developer hunting a typo that is not there.
-	Cause string
+	// Unrelated marks the ref resolving while the merge base does not, which
+	// is a history sharing no commit with HEAD. It is carried because "does
+	// not name a commit" sends the developer hunting a typo that is not
+	// there.
+	Unrelated bool
 }
 
 func (e NoBaseError) Error() string {
 	switch {
 	case e.NoCommits:
 		return "no diff base: this repo has no commits"
-	case e.Cause != "":
-		return "no diff base: HEAD and " + e.Ref + " share no common ancestor; git said " + e.Cause
+	case e.Unrelated:
+		return "no diff base: HEAD and " + e.Ref + " share no common ancestor"
 	case e.Ref != "":
 		return "no diff base: --since " + e.Ref + " does not name a commit"
 	default:
@@ -144,23 +144,39 @@ func (r Repo) ResolveBase() (Base, error) {
 
 // ResolveRef is ResolveBase against the one ref --since named, so the run
 // measures the branch point rather than the tip.
+//
+// Both invocations tell exit 1, which is git answering the question with no,
+// from every other exit code, which is git failing to answer it. An unreadable
+// object store or an ambiguous ref reported as a name that does not exist sends
+// the developer hunting a typo, so it comes back typed as an unreadable diff
+// carrying git's own words instead.
 func (r Repo) ResolveRef(ref string) (Base, error) {
 	if _, err := r.git("rev-parse", "--verify", "--quiet", ref+"^{commit}"); err != nil {
-		return Base{}, NoBaseError{Ref: ref}
+		if noMatch(err) {
+			return Base{}, NoBaseError{Ref: ref}
+		}
+		return Base{}, unreadableDiff(err)
 	}
 	mergeBase, err := r.git("merge-base", "HEAD", ref)
 	if err != nil {
-		return Base{}, NoBaseError{Ref: ref, Cause: cause(err)}
+		if noMatch(err) {
+			return Base{}, NoBaseError{Ref: ref, Unrelated: true}
+		}
+		return Base{}, unreadableDiff(err)
 	}
 	return Base{Ref: ref, Commit: strings.TrimSpace(mergeBase)}, nil
 }
 
 // ResolveStaged is HEAD, the commit `git diff --cached` compares the index
-// against.
+// against. It draws the same line ResolveRef does: exit 1 is a repo with no
+// commits, and anything else is git failing to read the one it has.
 func (r Repo) ResolveStaged() (Base, error) {
 	commit, err := r.git("rev-parse", "--verify", "--quiet", "HEAD")
 	if err != nil {
-		return Base{}, NoBaseError{NoCommits: true}
+		if noMatch(err) {
+			return Base{}, NoBaseError{NoCommits: true}
+		}
+		return Base{}, unreadableDiff(err)
 	}
 	return Base{Ref: "HEAD", Commit: strings.TrimSpace(commit), Staged: true}, nil
 }
@@ -247,6 +263,22 @@ func cachedFlag(base Base) []string {
 // away reports the two sides as equal and the guard passes on exactly the
 // divergence it exists to refuse.
 //
+// Each path travels as a `:(literal)` pathspec, because git reads a bare
+// pathspec as a wildmatch pattern. `Order[1].cs` would name a character class
+// and match neither the file it spells nor anything else, so the guard would
+// pass on the very file it was asked about, and `[id].tsx` is the ordinary
+// Next.js route filename rather than an exotic one.
+//
+// In a repository whose clean driver transforms content, git-lfs or git-crypt
+// rather than the pass-through case above, this refuses more than the developer
+// edited. `git add` wrote the index blob through the filter and the blanked
+// comparison reads the working tree raw, so once a file's stat cache is
+// invalidated by a fresh clone, a checkout or a touch, the two sides differ for
+// a file nobody changed and no edit clears the refusal. The comparison is still
+// the honest one, since the extractor does read text the index line numbers did
+// not come from. The durable answer is having the extractor read the index blob
+// under --staged, which issue 14 leaves to a follow-up.
+//
 // Every other exit is typed, so a missing filter binary lands in the
 // document's error block rather than exiting 1 with an empty stdout, which is
 // the shape TouchedLines already holds itself to on the same path.
@@ -255,10 +287,10 @@ func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
 	if err != nil {
 		return nil, unreadableDiff(err)
 	}
-	args := append(append([]string{}, diffFlags...), "--quiet", "--")
 	var divergent []srcpath.Path
 	for _, path := range paths {
-		_, err := r.gitBlanking(drivers, append(slices.Clone(args), string(path))...)
+		args := slices.Concat(diffFlags, []string{"--quiet", "--", ":(literal)" + string(path)})
+		_, err := r.gitBlanking(drivers, args...)
 		if err == nil {
 			continue
 		}

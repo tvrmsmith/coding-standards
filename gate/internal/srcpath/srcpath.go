@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -119,7 +120,36 @@ func (r Root) Place(candidate string) Placed {
 // the form `git diff` emits.
 func FromSlash(rel string) Path { return Path(rel) }
 
-// Named resolves a path a human typed on --files. ADR 0004 resolves a
+// NamedFiles resolves every path --files named, in the order they were typed,
+// with each file listed once however many spellings named it.
+//
+// The identity is the file the operating system says the name landed on, not
+// the text of the resolved path, because two spellings of one file can differ
+// in their text. `a.cs ./a.cs` differ before resolution and `src/A.cs
+// src/a.cs` still differ after it on a case-insensitive filesystem, where
+// EvalSymlinks leaves the case the caller typed. Handed the same file twice the
+// extractor reports every span in it twice, and the run exits 1 accusing the
+// extractor of a contract violation over a typo. Asking the filesystem also
+// keeps two genuinely different files that differ only in case, which a
+// case-sensitive filesystem allows, as the two files they are.
+func (r Root) NamedFiles(names []string) ([]Path, error) {
+	paths := make([]Path, 0, len(names))
+	seen := make([]os.FileInfo, 0, len(names))
+	for _, name := range names {
+		path, info, err := r.named(name)
+		if err != nil {
+			return nil, err
+		}
+		if slices.ContainsFunc(seen, func(prior os.FileInfo) bool { return os.SameFile(prior, info) }) {
+			continue
+		}
+		seen = append(seen, info)
+		paths = append(paths, path)
+	}
+	return paths, nil
+}
+
+// named resolves a path a human typed on --files. ADR 0004 resolves a
 // relative name against the process working directory and then relativizes
 // it to the root, and makes a path the gate cannot place inside the repo exit
 // 1 rather than be matched approximately. An absolute name already says where
@@ -134,29 +164,33 @@ func FromSlash(rel string) Path { return Path(rel) }
 // The three errors name the path as the human typed it, name, not as the gate
 // resolved it, because that message reaches the document verbatim and a
 // resolved absolute path would tell the reader nothing about what they typed.
-func (r Root) Named(name string) (Path, error) {
+//
+// The stat goes back to the caller beside the path, because it is what says
+// which file the name landed on and NamedFiles needs that to tell one file
+// named twice from two files.
+func (r Root) named(name string) (Path, os.FileInfo, error) {
 	candidate := filepath.FromSlash(name)
 	if !filepath.IsAbs(candidate) {
 		cwd, err := os.Getwd()
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		candidate = filepath.Join(cwd, candidate)
 	}
 	resolved, err := filepath.EvalSymlinks(candidate)
 	if err != nil {
-		return "", fmt.Errorf("%s does not exist", name)
+		return "", nil, fmt.Errorf("%s does not exist", name)
 	}
 	rel, err := filepath.Rel(r.resolved, resolved)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("%s is outside the repo root", name)
+		return "", nil, fmt.Errorf("%s is outside the repo root", name)
 	}
 	info, err := os.Stat(resolved)
 	if err != nil {
-		return "", fmt.Errorf("%s does not exist", name)
+		return "", nil, fmt.Errorf("%s does not exist", name)
 	}
 	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("%s is a directory, not a file", name)
+		return "", nil, fmt.Errorf("%s is a directory, not a file", name)
 	}
-	return Path(filepath.ToSlash(rel)), nil
+	return Path(filepath.ToSlash(rel)), info, nil
 }

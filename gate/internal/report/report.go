@@ -36,8 +36,9 @@ const (
 	// state and on disk in another, which the join could otherwise attribute
 	// to the wrong content (issue 14).
 	CodeStagedFileDirty = "staged_file_dirty"
-	// CodeFileUnresolved is a --files path srcpath.Named could not place: it
-	// does not exist, or it resolves outside the repo root (issue 14).
+	// CodeFileUnresolved is a --files path the gate could not place on a
+	// source file: it does not exist, it resolves outside the repo root, or
+	// it names a directory rather than a file (issue 14).
 	CodeFileUnresolved = "file_unresolved"
 	// The three coverage-path causes ADR 0004's 2026-09-03 amendment defers to
 	// issue 16: a source root MSBuild erased, a class resolving to two paths
