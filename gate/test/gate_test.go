@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1642,7 +1643,7 @@ func TestNamedCoverageReportIsUsedAndDiscoveryIsIgnored(t *testing.T) {
 	// Discoverable, and it holds a fourth instrumentable line the named report
 	// has never heard of. Consulting discovery instead of the named report
 	// scores Cancel 12.00, and consulting both unions to two lines of four and
-	// scores it 5.06. Only replacement scores it 3.33. Covering the same lines
+	// scores it 4.13. Only replacement scores it 3.33. Covering the same lines
 	// here would leave the two indistinguishable, since the union of a covered
 	// line and an uncovered one is covered either way.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
@@ -1659,16 +1660,31 @@ func TestNamedCoverageReportIsUsedAndDiscoveryIsIgnored(t *testing.T) {
 		f.baseLabel("main"), "0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
-func TestCoverageReportWithNoUsableTimestampIsRefused(t *testing.T) {
-	// A stamp the staleness rule cannot read is refused the same way whether
-	// the attribute is missing or present and unreadable. The ISO-8601 case is
-	// not hypothetical: producers other than coverlet write instants there,
-	// and parsing one as a base-10 integer would silently judge the report
-	// against the Unix epoch.
+func TestCoverageReportWithNoTimestampIsRefused(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", coberturaStamped("", f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_untimestamped", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml carries no timestamp, so it cannot be judged against the code it describes\n")
+}
+
+func TestCoverageReportWithAnUnreadableTimestampIsRefused(t *testing.T) {
+	// Producers other than coverlet write the attribute in other units, so the
+	// developer meeting this has a timestamp in front of them and needs to be
+	// told the units are wrong rather than that it is missing. Parsing either
+	// of these as base-10 seconds would judge the report against the Unix
+	// epoch instead.
 	stamps := map[string]string{
-		"attribute absent":     "",
-		"ISO-8601 instant":     "2026-01-01T00:00:00Z",
-		"milliseconds and dot": "1767225600.123",
+		"ISO-8601 instant":   "2026-01-01T00:00:00Z",
+		"fractional seconds": "1767225600.123",
 	}
 	for name, stamp := range stamps {
 		t.Run(name, func(t *testing.T) {
@@ -1683,8 +1699,10 @@ func TestCoverageReportWithNoUsableTimestampIsRefused(t *testing.T) {
 				Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 			}
 
-			f.run().assertMatches(t, "coverage_untimestamped", 1, f.baseLabel("main"),
-				"coverage report TestResults/coverage.cobertura.xml carries no timestamp, so it cannot be judged against the code it describes\n")
+			f.run().assertMatchesWith(t, "coverage_timestamp_not_epoch_seconds", 1, f.baseLabel("main"),
+				"coverage report TestResults/coverage.cobertura.xml carries an unreadable timestamp "+
+					strconv.Quote(stamp)+"; it must be epoch seconds\n",
+				map[string]string{"STAMP": stamp})
 		})
 	}
 }

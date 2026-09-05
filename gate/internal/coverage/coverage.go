@@ -214,9 +214,8 @@ func Load(root srcpath.Root, sources []Source, newest Newest) (Set, error) {
 		at, ok := parsed.timestamp()
 		if !ok {
 			return nil, &report.Failure{
-				Code: report.CodeCoverageUnparseable,
-				Message: "coverage report " + source.Name +
-					" carries no timestamp, so it cannot be judged against the code it describes",
+				Code:    report.CodeCoverageUnparseable,
+				Message: "coverage report " + source.Name + parsed.timestampCause(),
 			}
 		}
 		// Staleness is checked before the merge, not after it, so a refused
@@ -258,6 +257,18 @@ func (r coberturaReport) timestamp() (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return time.Unix(seconds, 0), true
+}
+
+// timestampCause says why the staleness rule could not read the report's own
+// clock, split by shape because the two shapes need different fixes: an
+// attribute that is absent has to be written, while one the rule cannot parse
+// is already there and only in the wrong units. The offending value is quoted
+// so the developer sees what the gate read rather than what they meant.
+func (r coberturaReport) timestampCause() string {
+	if r.Timestamp == "" {
+		return " carries no timestamp, so it cannot be judged against the code it describes"
+	}
+	return fmt.Sprintf(" carries an unreadable timestamp %q; it must be epoch seconds", r.Timestamp)
 }
 
 type coberturaClass struct {
