@@ -1653,12 +1653,14 @@ func TestReportBuiltInAnotherCheckoutFailsNamingTheMismatch(t *testing.T) {
 
 // TestForeignReportBesideAHealthyOneFailsNamingTheForeignOne pins issue 16's
 // per-report failure against the multi-report shape none of the existing
-// fixtures exercise: discovery sorts reports, so "good" loads before "stale"
-// and the foreign one is the second report reached, which is what makes
-// naming it in the message a real assertion and not an accident of there
-// being only one report to name. Good alone covers two of Cancel's three
+// fixtures exercise. Discovery sorts reports, so "good" loads before "stale"
+// and "zz-good" sorts after it: the foreign report is neither the first nor
+// the last of the three, so naming it rules out an implementation that names
+// whichever report it saw first as well as one that names the last, rather
+// than passing by accident of there being only one report to name. The
+// healthy reports each cover two of Cancel's three
 // lines, which scores 3.33 and passes on its own, so the failure document
-// also pins that the healthy coverage is discarded rather than merged in
+// also pins that healthy coverage is discarded rather than merged in
 // alongside the report that failed.
 func TestForeignReportBesideAHealthyOneFailsNamingTheForeignOne(t *testing.T) {
 	f := newFixture(t, "main")
@@ -1673,6 +1675,9 @@ func TestForeignReportBesideAHealthyOneFailsNamingTheForeignOne(t *testing.T) {
 	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
 	writeAbsolute(t, classPath, csharpFile(80))
 	f.write("TestResults/stale/coverage.cobertura.xml", cobertura(otherCheckout,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+
+	f.write("TestResults/zz-good/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 
 	f.stub = stubConfig{
