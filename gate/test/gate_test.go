@@ -1659,20 +1659,112 @@ func TestNamedCoverageReportIsUsedAndDiscoveryIsIgnored(t *testing.T) {
 		f.baseLabel("main"), "0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
-func TestCoverageReportWithNoTimestampIsRefused(t *testing.T) {
+func TestCoverageReportWithNoUsableTimestampIsRefused(t *testing.T) {
+	// A stamp the staleness rule cannot read is refused the same way whether
+	// the attribute is missing or present and unreadable. The ISO-8601 case is
+	// not hypothetical: producers other than coverlet write instants there,
+	// and parsing one as a base-10 integer would silently judge the report
+	// against the Unix epoch.
+	stamps := map[string]string{
+		"attribute absent":     "",
+		"ISO-8601 instant":     "2026-01-01T00:00:00Z",
+		"milliseconds and dot": "1767225600.123",
+	}
+	for name, stamp := range stamps {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, "main")
+			f.write(orderService, csharpFile(80))
+			f.commitAll("initial")
+			f.touchLine(orderService, 62)
+			f.write("TestResults/coverage.cobertura.xml", coberturaStamped(stamp, f.root,
+				coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+			f.stub = stubConfig{
+				Extensions: []string{".cs"},
+				Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+			}
+
+			f.run().assertMatches(t, "coverage_untimestamped", 1, f.baseLabel("main"),
+				"coverage report TestResults/coverage.cobertura.xml carries no timestamp, so it cannot be judged against the code it describes\n")
+		})
+	}
+}
+
+func TestStalenessIsJudgedOnEveryDiscoveredReportNotJustTheFirst(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	f.write("TestResults/coverage.cobertura.xml", coberturaStamped("", f.root,
-		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	// Discovery consumes reports in Name order, so the stale one here is the
+	// second the loader reaches. A run that judged only the first would merge
+	// this one and score the method against a report predating the edit, which
+	// is the leftover-TestResults case the remedy sentence is written for.
+	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml",
+		coberturaStamped(f.editStamp(orderService, 0), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
+	f.write("tests/Beta.Tests/TestResults/run/coverage.cobertura.xml",
+		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	f.run().assertMatches(t, "coverage_untimestamped", 1, f.baseLabel("main"),
-		"coverage report TestResults/coverage.cobertura.xml carries no timestamp, so it cannot be judged against the code it describes\n")
+	f.run().assertMatches(t, "coverage_stale_second_report", 1, f.baseLabel("main"),
+		"coverage report tests/Beta.Tests/TestResults/run/coverage.cobertura.xml was written before "+
+			"src/Ordering/OrderService.cs was last edited; clear stale TestResults directories and re-run the tests\n")
+}
+
+func TestStalenessIsJudgedOnEveryNamedReportNotJustTheFirst(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("artifacts/unit.xml", coberturaStamped(f.editStamp(orderService, 0), f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
+	f.write("artifacts/integration.xml", coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// The remedy names the report the developer passed, since clearing
+	// TestResults would not replace a file they generated themselves.
+	f.runWithArgs("--coverage", "artifacts/unit.xml", "--coverage", "artifacts/integration.xml").assertMatches(
+		t, "named_coverage_stale_second", 1, f.baseLabel("main"),
+		"coverage report artifacts/integration.xml was written before src/Ordering/OrderService.cs was last edited; "+
+			"regenerate artifacts/integration.xml or point --coverage at a current report\n")
+}
+
+func TestNamedReportOutsideTheRepoIsReadAndNamedAsTyped(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// A CI job that collects coverage into a workspace directory beside the
+	// checkout, rather than under it. The report has no repo-relative form, so
+	// the document can only name it the way the developer typed it, but its
+	// <sources> still anchors every class inside the repo and the lines it
+	// records are scored.
+	typed := filepath.Join(t.TempDir(), "coverage.xml")
+	writeAbsolute(t, typed, coberturaStamped(f.editStamp(orderService, 0), f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 4, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.runWithArgs("--coverage", typed).assertMatches(t, "named_report_outside_repo", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 4.13\n")
+
+	writeAbsolute(t, typed, coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 4, 2)}))
+
+	f.runWithArgs("--coverage", typed).assertMatchesWith(t, "named_report_outside_repo_stale", 1,
+		f.baseLabel("main"),
+		"coverage report "+typed+" was written before src/Ordering/OrderService.cs was last edited; "+
+			"regenerate "+typed+" or point --coverage at a current report\n",
+		map[string]string{"REPORT": typed})
 }
 
 func TestReportStampedAtTheSecondTheSourceWasEditedIsFresh(t *testing.T) {
@@ -1813,7 +1905,8 @@ func TestAbsoluteNamedReportIsNamedRepoRelativeInTheDocument(t *testing.T) {
 	// relativizes for the name the document carries.
 	f.runWithArgs("--coverage", filepath.Join(f.root, "artifacts", "coverage.xml")).assertMatches(
 		t, "named_coverage_stale", 1, f.baseLabel("main"),
-		"coverage report artifacts/coverage.xml was written before src/Ordering/OrderService.cs was last edited; clear stale TestResults directories and re-run the tests\n")
+		"coverage report artifacts/coverage.xml was written before src/Ordering/OrderService.cs was last edited; "+
+			"regenerate artifacts/coverage.xml or point --coverage at a current report\n")
 }
 
 func TestRelativeNamedReportResolvesAgainstTheWorkingDirectory(t *testing.T) {
@@ -1835,7 +1928,8 @@ func TestRelativeNamedReportResolvesAgainstTheWorkingDirectory(t *testing.T) {
 	// lands outside the repo, where there is no report to read at all.
 	f.runFromWithArgs("tests", "--coverage", "../artifacts/from-subdir.xml").assertMatches(
 		t, "named_relative_stale", 1, f.baseLabel("main"),
-		"coverage report artifacts/from-subdir.xml was written before src/Ordering/OrderService.cs was last edited; clear stale TestResults directories and re-run the tests\n")
+		"coverage report artifacts/from-subdir.xml was written before src/Ordering/OrderService.cs was last edited; "+
+			"regenerate artifacts/from-subdir.xml or point --coverage at a current report\n")
 }
 
 func TestNamedReportThatIsNotOnDiskIsRefusedAsUnparseable(t *testing.T) {

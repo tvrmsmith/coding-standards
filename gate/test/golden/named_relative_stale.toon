@@ -8,4 +8,4 @@ touched_lines_outside_spans: 0
 skipped_paths: []
 error:
   code: coverage_stale
-  message: coverage report artifacts/from-subdir.xml was written before src/Ordering/OrderService.cs was last edited; clear stale TestResults directories and re-run the tests
+  message: coverage report artifacts/from-subdir.xml was written before src/Ordering/OrderService.cs was last edited; regenerate artifacts/from-subdir.xml or point --coverage at a current report

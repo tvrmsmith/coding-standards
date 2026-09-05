@@ -47,6 +47,33 @@ type Source struct {
 	// report resolves inside the repo, and the developer's own spelling for
 	// a named one that does not, which has no repo-relative form.
 	Name string
+	// Origin is how the report reached the gate, which decides the remedy a
+	// refusal offers.
+	Origin Origin
+}
+
+// Origin distinguishes the two ways a report reaches the gate, because the
+// developer's next step differs between them: a discovered report is one of
+// several a directory may hold, while a named one is the single file they
+// pointed at.
+type Origin int
+
+const (
+	Discovered Origin = iota
+	NamedOnCommandLine
+)
+
+// staleRemedy closes the stale-report message with the step that clears it.
+// `dotnet test` leaves every previous run's TestResults directory on disk, so
+// a discovered report the gate refused is most often one the developer has
+// already replaced and does not know is still there. Clearing that directory
+// does nothing for a report they named themselves, which nothing but a fresh
+// run over that same path replaces.
+func (s Source) staleRemedy() string {
+	if s.Origin == NamedOnCommandLine {
+		return "; regenerate " + s.Name + " or point --coverage at a current report"
+	}
+	return "; clear stale TestResults directories and re-run the tests"
 }
 
 // Newest is the freshest edit among the files that contributed a changed
@@ -123,7 +150,7 @@ func Named(root srcpath.Root, cwd string, paths []string) []Source {
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(cwd, abs)
 		}
-		sources = append(sources, Source{Abs: abs, Name: namedAs(root, abs, path)})
+		sources = append(sources, Source{Abs: abs, Name: namedAs(root, abs, path), Origin: NamedOnCommandLine})
 	}
 	return sources
 }
@@ -198,7 +225,7 @@ func Load(root srcpath.Root, sources []Source, newest Newest) (Set, error) {
 			return nil, &report.Failure{
 				Code: report.CodeCoverageStale,
 				Message: "coverage report " + source.Name + " was written before " +
-					newest.File.String() + " was last edited" + staleRemedy,
+					newest.File.String() + " was last edited" + source.staleRemedy(),
 			}
 		}
 		if err := parsed.mergeInto(set, root, source.Name); err != nil {
@@ -207,12 +234,6 @@ func Load(root srcpath.Root, sources []Source, newest Newest) (Set, error) {
 	}
 	return set, nil
 }
-
-// staleRemedy closes the stale-report message with the step that clears it.
-// `dotnet test` leaves every previous run's TestResults directory on disk, so
-// the report the gate refused is most often one the developer has already
-// replaced and does not know is still there.
-const staleRemedy = "; clear stale TestResults directories and re-run the tests"
 
 // coberturaReport is the subset of the Cobertura schema the gate reads. Only
 // <timestamp>, <sources>, each class's filename, and each line's number and
