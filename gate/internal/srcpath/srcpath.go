@@ -182,10 +182,12 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 //
 // A refusal says "does not exist" only when the filesystem said the path is
 // not there. A parent directory the process cannot enter, a symlink cycle or a
-// component that is not a directory come back as themselves, since sending the
-// developer after a typo that is not there is the misdiagnosis NoBaseError.Unrelated
-// was added to avoid. Losing the working directory is not about the path at all,
-// so it travels as a plain error rather than an UnresolvedError.
+// component that is not a directory carry what the operating system said
+// instead, since sending the developer after a typo that is not there is the
+// misdiagnosis NoBaseError.Unrelated was added to avoid. All of them are still
+// UnresolvedError, so every refusal about the path reaches the document under
+// one code. Losing the working directory is not about the path at all, so it
+// travels as a plain error.
 //
 // The stat goes back to the caller beside the path, because it is what says
 // which file the name landed on and NamedFiles needs that to tell one file
@@ -204,7 +206,7 @@ func (r Root) named(name string) (Path, os.FileInfo, error) {
 		if errors.Is(err, fs.ErrNotExist) {
 			return "", nil, &UnresolvedError{Name: name, Reason: "does not exist"}
 		}
-		return "", nil, fmt.Errorf("resolving %s: %w", name, err)
+		return "", nil, unreadable(name, err)
 	}
 	rel, err := filepath.Rel(r.resolved, resolved)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -215,19 +217,36 @@ func (r Root) named(name string) (Path, os.FileInfo, error) {
 		if errors.Is(err, fs.ErrNotExist) {
 			return "", nil, &UnresolvedError{Name: name, Reason: "does not exist"}
 		}
-		return "", nil, fmt.Errorf("reading %s: %w", name, err)
+		return "", nil, unreadable(name, err)
 	}
 	if !info.Mode().IsRegular() {
 		return "", nil, &UnresolvedError{Name: name, Reason: "is a directory, not a file"}
 	}
 	spelled, err := r.spelledAsOnDisk(rel)
 	if err != nil {
-		return "", nil, fmt.Errorf("reading the directories above %s: %w", name, err)
+		return "", nil, unreadable(name, err)
 	}
 	if !spelled {
 		return "", nil, &UnresolvedError{Name: name, Reason: "is not spelled as the file on disk is"}
 	}
 	return Path(filepath.ToSlash(rel)), info, nil
+}
+
+// unreadable is the refusal for a filesystem failure that is not the path
+// being absent, ENOTDIR from a name typed through a file, ELOOP from a symlink
+// cycle, or EACCES on a parent directory.
+//
+// The reason carries the errno's own words rather than the whole fs.PathError,
+// because that error quotes an absolute path the developer never typed and
+// which reads differently on every machine, and the name they did type already
+// opens the message.
+func unreadable(name string, err error) *UnresolvedError {
+	cause := err
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		cause = pathErr.Err
+	}
+	return &UnresolvedError{Name: name, Reason: "could not be read, " + cause.Error()}
 }
 
 // spelledAsOnDisk reports whether every component of rel is spelled the way the

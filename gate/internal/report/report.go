@@ -37,8 +37,14 @@ const (
 	// to the wrong content (issue 14).
 	CodeStagedFileDirty = "staged_file_dirty"
 	// CodeFileUnresolved is a --files path the gate could not place on a
-	// source file: it does not exist, it resolves outside the repo root, or
-	// it names a directory rather than a file (issue 14).
+	// source file, and it has four causes (issue 14). The path does not
+	// exist, it resolves above the repo root, it resolves inside the root but
+	// names a directory rather than a regular file, or the tree holds the
+	// file under a spelling other than the one typed, which a
+	// case-insensitive filesystem resolves to a path no coverage report is
+	// keyed by. Any other filesystem failure reading the path carries the
+	// operating system's own words under this code as well, so no refusal
+	// about a named path escapes the document.
 	CodeFileUnresolved = "file_unresolved"
 	// The three coverage-path causes ADR 0004's 2026-09-03 amendment defers to
 	// issue 16: a source root MSBuild erased, a class resolving to two paths
