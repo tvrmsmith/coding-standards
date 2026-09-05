@@ -13,7 +13,9 @@
 package srcpath
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -120,14 +122,31 @@ func (r Root) Place(candidate string) Placed {
 // the form `git diff` emits.
 func FromSlash(rel string) Path { return Path(rel) }
 
+// UnresolvedError is a name --files gave that the gate refuses to place on a
+// source file. It carries the name as the developer typed it, because the
+// message reaches the document verbatim and that is the only spelling they can
+// act on.
+//
+// The type exists so a caller can tell a refusal about the path from a failure
+// that is not about any path, a process whose working directory was deleted for
+// instance. Both come back from NamedFiles, and only the first is ADR 0005's
+// file_unresolved, whose message the reader expects to name a path.
+type UnresolvedError struct {
+	// Name is the path as the developer typed it.
+	Name string
+	// Reason completes the sentence after Name, as in "does not exist".
+	Reason string
+}
+
+func (e *UnresolvedError) Error() string { return e.Name + " " + e.Reason }
+
 // NamedFiles resolves every path --files named, in the order they were typed,
 // with each file listed once however many spellings named it.
 //
 // The identity is the file the operating system says the name landed on, not
 // the text of the resolved path, because two spellings of one file can differ
-// in their text. `a.cs ./a.cs` differ before resolution and `src/A.cs
-// src/a.cs` still differ after it on a case-insensitive filesystem, where
-// EvalSymlinks leaves the case the caller typed. Handed the same file twice the
+// in their text. `a.cs` and `./a.cs` differ before resolution, and an absolute
+// name and a relative one differ before it too. Handed the same file twice the
 // extractor reports every span in it twice, and the run exits 1 accusing the
 // extractor of a contract violation over a typo. Asking the filesystem also
 // keeps two genuinely different files that differ only in case, which a
@@ -161,9 +180,12 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // would measure nothing and exit 0 pass over a tree the developer believes
 // they gated.
 //
-// The three errors name the path as the human typed it, name, not as the gate
-// resolved it, because that message reaches the document verbatim and a
-// resolved absolute path would tell the reader nothing about what they typed.
+// A refusal says "does not exist" only when the filesystem said the path is
+// not there. A parent directory the process cannot enter, a symlink cycle or a
+// component that is not a directory come back as themselves, since sending the
+// developer after a typo that is not there is the misdiagnosis NoBaseError.Unrelated
+// was added to avoid. Losing the working directory is not about the path at all,
+// so it travels as a plain error rather than an UnresolvedError.
 //
 // The stat goes back to the caller beside the path, because it is what says
 // which file the name landed on and NamedFiles needs that to tell one file
@@ -173,24 +195,66 @@ func (r Root) named(name string) (Path, os.FileInfo, error) {
 	if !filepath.IsAbs(candidate) {
 		cwd, err := os.Getwd()
 		if err != nil {
-			return "", nil, err
+			return "", nil, fmt.Errorf("resolving %s against the working directory: %w", name, err)
 		}
 		candidate = filepath.Join(cwd, candidate)
 	}
 	resolved, err := filepath.EvalSymlinks(candidate)
 	if err != nil {
-		return "", nil, fmt.Errorf("%s does not exist", name)
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil, &UnresolvedError{Name: name, Reason: "does not exist"}
+		}
+		return "", nil, fmt.Errorf("resolving %s: %w", name, err)
 	}
 	rel, err := filepath.Rel(r.resolved, resolved)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", nil, fmt.Errorf("%s is outside the repo root", name)
+		return "", nil, &UnresolvedError{Name: name, Reason: "is outside the repo root"}
 	}
 	info, err := os.Stat(resolved)
 	if err != nil {
-		return "", nil, fmt.Errorf("%s does not exist", name)
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil, &UnresolvedError{Name: name, Reason: "does not exist"}
+		}
+		return "", nil, fmt.Errorf("reading %s: %w", name, err)
 	}
 	if !info.Mode().IsRegular() {
-		return "", nil, fmt.Errorf("%s is a directory, not a file", name)
+		return "", nil, &UnresolvedError{Name: name, Reason: "is a directory, not a file"}
+	}
+	spelled, err := r.spelledAsOnDisk(rel)
+	if err != nil {
+		return "", nil, fmt.Errorf("reading the directories above %s: %w", name, err)
+	}
+	if !spelled {
+		return "", nil, &UnresolvedError{Name: name, Reason: "is not spelled as the file on disk is"}
 	}
 	return Path(filepath.ToSlash(rel)), info, nil
+}
+
+// spelledAsOnDisk reports whether every component of rel is spelled the way the
+// directory holding it spells it.
+//
+// This only bites on a case-insensitive filesystem, APFS or NTFS, where
+// EvalSymlinks hands back the case the caller typed rather than the case on
+// disk. The gate would then hand the extractor `src/ordering/Order.cs` while
+// coverage, placed through Place, carries the tracked `src/Ordering/Order.cs`,
+// join would match neither against the other, and every method in a fully
+// covered file would come back unknown and fail the run. ADR 0004 fails a path
+// the gate cannot place rather than matching it approximately, so a spelling the
+// tree does not use is refused instead.
+//
+// The walk reads directories rather than comparing case-folded text, because
+// folding would also merge two files a case-sensitive filesystem keeps apart.
+func (r Root) spelledAsOnDisk(rel string) (bool, error) {
+	dir := r.resolved
+	for _, component := range strings.Split(rel, string(filepath.Separator)) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return false, err
+		}
+		if !slices.ContainsFunc(entries, func(e os.DirEntry) bool { return e.Name() == component }) {
+			return false, nil
+		}
+		dir = filepath.Join(dir, component)
+	}
+	return true, nil
 }

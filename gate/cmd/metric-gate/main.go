@@ -206,10 +206,15 @@ func selectFiles(repo gitscope.Repo, names []string) (selection, error) {
 	// since both turn on which file a typed name landed on.
 	resolved, err := repo.Root().NamedFiles(names)
 	if err != nil {
-		// The message names the path as the developer typed it, which is the
-		// only spelling they can act on.
-		selected.Failure = &report.Failure{Code: report.CodeFileUnresolved, Message: err.Error()}
-		return selected, nil
+		// Only a refusal about the path itself carries the typed code, whose
+		// message the reader expects to name a path. Anything else, a lost
+		// working directory for instance, is upstream of the document.
+		var unresolved *srcpath.UnresolvedError
+		if errors.As(err, &unresolved) {
+			selected.Failure = &report.Failure{Code: report.CodeFileUnresolved, Message: unresolved.Error()}
+			return selected, nil
+		}
+		return selected, err
 	}
 
 	extracted, err := extract.Extract(repo.Root(), resolved)

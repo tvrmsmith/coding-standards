@@ -322,27 +322,76 @@ func TestFilesNamingTheSameFileTwiceHandsItToTheGateOnce(t *testing.T) {
 	}
 }
 
-func TestFilesNamingOneFileInTwoCasesHandsItToTheGateOnce(t *testing.T) {
+func TestFilesNamingAFileInTheWrongCaseRefusesRatherThanMeasuresIt(t *testing.T) {
 	f := newFixture(t, "main")
 	if !caseInsensitiveFilesystem(t, f.root) {
-		t.Skip("the filesystem is case sensitive, so the second spelling names no file and the case is a duplicate of the unresolvable one")
+		t.Skip("the filesystem is case sensitive, so the mis-cased spelling names no file and the case is a duplicate of the unresolvable one")
 	}
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	singleFileCoverageAndStub(t, f)
-	handed := filepath.Join(t.TempDir(), "handed")
-	f.stub.StdinLog = handed
 
-	// Both spellings name the one file here, and resolving symlinks does not
-	// settle their case, so only the filesystem's own answer to which file
-	// each landed on tells them apart from two files.
-	f.runArgs("--files", orderService, "src/ordering/OrderService.cs").
-		assertMatches(t, "files_single_file", 0, "",
-			"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
+	// The spelling resolves here, and resolving symlinks does not settle its
+	// case, so the gate would hand the extractor src/ordering/... while
+	// coverage carries the tracked src/Ordering/... . The two would match
+	// nothing against each other and every method in a covered file would come
+	// back unknown, so the run refuses the spelling instead.
+	f.runArgs("--files", "src/ordering/OrderService.cs").
+		assertMatches(t, "files_wrong_case", 1, "",
+			"src/ordering/OrderService.cs is not spelled as the file on disk is\n")
+}
 
-	if got := readFile(t, handed); got != orderService+"\n" {
-		t.Errorf("the extractor was handed %q, want the one line %q", got, orderService+"\n")
+func TestFilesWithAnEmptyPathIsAUsageError(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+
+	// An empty argument does not start with '-', so the slurp takes it, and
+	// joined onto the working directory it names the working directory.
+	result := f.runArgs("--files", "")
+
+	assertUsageError(t, result, "metric-gate: --files was handed an empty path"+usage)
+}
+
+func TestStagedMeasuresNothingForAPureMoveStagedOnItsOwn(t *testing.T) {
+	const origin = "src/Ordering/Origin.cs"
+	const moved = "src/Ordering/Moved.cs"
+	vanish := span{File: moved, Name: "Moved.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(origin, csharpFile(20))
+	f.commitAll("initial")
+	f.git("mv", origin, moved)
+	// ADR 0003's rule that a rename with no content change touches nothing
+	// holds over the index too, so the pre-commit hook this scope exists for
+	// does not demand coverage for every method in a file the developer only
+	// moved. This does not pin cachedFlag inside pureMoves: that comparison
+	// reads the added side off the working tree either way, so under --staged
+	// on a clean tree the cached and uncached listings agree on every path.
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(moved), []span{vanish}),
 	}
+
+	f.runArgs("--staged").assertMatches(t, "staged_pure_move", 0, f.headLabel(),
+		"no changed methods, nothing to measure\n")
+}
+
+func TestARunWithScopeFlagsDoesNotChangeTheScopeOfTheNextRun(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	singleFileCoverageAndStub(t, f)
+
+	f.runArgs("--files", orderService)
+
+	// Bare argv after a flagged run, so the document names the merge-base
+	// scope and only the touched method. A flag left behind on the fixture
+	// would put --files here instead, and both the scope line and the row
+	// count would go red.
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
 func TestFilesReturnsEveryMethodInTheFileIncludingNestedOnes(t *testing.T) {

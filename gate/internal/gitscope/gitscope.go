@@ -219,9 +219,8 @@ func (r Repo) touchedLines(base Base) (map[srcpath.Path][]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	args := append(append([]string{}, diffFlags...), "-w", "-U0", "--no-renames", "--diff-filter=ACM")
-	args = append(args, cachedFlag(base)...)
-	patch, err := r.gitBlanking(drivers, append(args, base.Commit)...)
+	args := slices.Concat(diffFlags, []string{"-w", "-U0", "--no-renames", "--diff-filter=ACM"}, cachedFlag(base), []string{base.Commit})
+	patch, err := r.gitBlanking(drivers, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -263,11 +262,14 @@ func cachedFlag(base Base) []string {
 // away reports the two sides as equal and the guard passes on exactly the
 // divergence it exists to refuse.
 //
-// Each path travels as a `:(literal)` pathspec, because git reads a bare
-// pathspec as a wildmatch pattern. `Order[1].cs` would name a character class
-// and match neither the file it spells nor anything else, so the guard would
-// pass on the very file it was asked about, and `[id].tsx` is the ordinary
-// Next.js route filename rather than an exotic one.
+// Every path travels as a `:(literal)` pathspec on one invocation, because git
+// reads a bare pathspec as a wildmatch pattern. `Order[1].cs` would name a
+// character class and match neither the file it spells nor anything else, so the
+// guard would pass on the very file it was asked about, and `[id].tsx` is the
+// ordinary Next.js route filename rather than an exotic one. Pathspecs compose,
+// so `--name-only -z` names the divergent subset directly and a commit touching
+// two hundred files costs one git rather than two hundred. core.quotePath is
+// pinned false, so the NUL-separated names come back as git spells them.
 //
 // In a repository whose clean driver transforms content, git-lfs or git-crypt
 // rather than the pass-through case above, this refuses more than the developer
@@ -279,27 +281,36 @@ func cachedFlag(base Base) []string {
 // not come from. The durable answer is having the extractor read the index blob
 // under --staged, which issue 14 leaves to a follow-up.
 //
-// Every other exit is typed, so a missing filter binary lands in the
-// document's error block rather than exiting 1 with an empty stdout, which is
-// the shape TouchedLines already holds itself to on the same path.
+// Every failure is typed, so a missing filter binary lands in the document's
+// error block rather than exiting 1 with an empty stdout, which is the shape
+// TouchedLines already holds itself to on the same path.
 func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
 	drivers, err := r.filterDrivers()
 	if err != nil {
 		return nil, unreadableDiff(err)
 	}
+	pathspecs := make([]string, 0, len(paths))
+	for _, path := range paths {
+		pathspecs = append(pathspecs, ":(literal)"+string(path))
+	}
+	out, err := r.gitBlanking(drivers, slices.Concat(diffFlags, []string{"--name-only", "-z", "--"}, pathspecs)...)
+	if err != nil {
+		return nil, unreadableDiff(err)
+	}
+	named := map[srcpath.Path]bool{}
+	for _, name := range strings.Split(strings.TrimSuffix(out, "\x00"), "\x00") {
+		if name != "" {
+			named[srcpath.FromSlash(name)] = true
+		}
+	}
 	var divergent []srcpath.Path
 	for _, path := range paths {
-		args := slices.Concat(diffFlags, []string{"--quiet", "--", ":(literal)" + string(path)})
-		_, err := r.gitBlanking(drivers, args...)
-		if err == nil {
-			continue
-		}
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		if named[path] {
 			divergent = append(divergent, path)
-			continue
 		}
-		return nil, unreadableDiff(err)
 	}
 	return divergent, nil
 }
@@ -411,9 +422,8 @@ func noMatch(err error) bool {
 // would silently unscore a brand-new file. Counting depends on no `git diff
 // --raw` ordering, so the answer is the same whichever order git lists them in.
 func (r Repo) pureMoves(base Base, drivers []string) ([]srcpath.Path, error) {
-	args := append(append([]string{}, rawFlags...), "-z", "--abbrev=40", "--no-renames", "--diff-filter=AD")
-	args = append(args, cachedFlag(base)...)
-	raw, err := r.gitBlanking(drivers, append(args, base.Commit)...)
+	args := slices.Concat(rawFlags, []string{"-z", "--abbrev=40", "--no-renames", "--diff-filter=AD"}, cachedFlag(base), []string{base.Commit})
+	raw, err := r.gitBlanking(drivers, args...)
 	if err != nil {
 		return nil, err
 	}
