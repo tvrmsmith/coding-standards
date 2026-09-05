@@ -221,6 +221,32 @@ func (f *fixture) runArgs(args ...string) runResult {
 	return f.runWithArgs(args...)
 }
 
+// runArgsFrom is runArgs with the gate started in a subdirectory of the
+// fixture rather than at its root, which is where a developer's shell and a
+// pre-commit hook actually sit. It stands beside exec rather than passing
+// through it, because every other helper wants the root and one of them
+// quietly gaining a directory parameter is how a sibling case starts running
+// somewhere it did not ask for.
+func (f *fixture) runArgsFrom(subdir string, args ...string) runResult {
+	f.t.Helper()
+	cmd := exec.Command(filepath.Join(binDir, "metric-gate"), args...)
+	cmd.Dir = filepath.Join(f.root, filepath.FromSlash(subdir))
+	cmd.Env = append(os.Environ(), append(append([]string{}, gitEnv...), "METRIC_GATE_STUB="+f.stubConfigPath())...)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	result := runResult{stdout: stdout.String(), stderr: stderr.String()}
+	switch e := err.(type) {
+	case nil:
+	case *exec.ExitError:
+		result.exitCode = e.ExitCode()
+	default:
+		f.t.Fatalf("running metric-gate: %v", err)
+	}
+	return result
+}
+
 // stubConfigPath writes the case's stub config out and returns its path.
 func (f *fixture) stubConfigPath() string {
 	f.t.Helper()

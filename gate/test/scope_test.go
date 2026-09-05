@@ -341,6 +341,35 @@ func TestFilesNamingAFileInTheWrongCaseRefusesRatherThanMeasuresIt(t *testing.T)
 			"src/ordering/OrderService.cs is not spelled as the file on disk is\n")
 }
 
+func TestFilesNamingAPathThroughAFileFailsInTheDocument(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+
+	// A typo that puts a filename where a directory belongs. The operating
+	// system answers ENOTDIR rather than saying the path is absent, and every
+	// other --files refusal reaches the document, so this one does too rather
+	// than exiting 1 with an empty stdout an agent cannot tell from a crash.
+	f.runArgs("--files", orderService+"/x.cs").
+		assertMatches(t, "files_not_a_directory", 1, "",
+			"src/Ordering/OrderService.cs/x.cs could not be read, not a directory\n")
+}
+
+func TestFilesResolvesARelativePathAgainstTheWorkingDirectory(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	singleFileCoverageAndStub(t, f)
+
+	// The shell a pre-commit hook runs in sits wherever the developer is, not
+	// at the repo root. OrderService.cs names nothing from the root, so a
+	// resolution joined onto the root rather than the working directory
+	// refuses a file sitting right there.
+	f.runArgsFrom("src/Ordering", "--files", "OrderService.cs").
+		assertMatches(t, "files_single_file", 0, "",
+			"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
+}
+
 func TestFilesWithAnEmptyPathIsAUsageError(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
