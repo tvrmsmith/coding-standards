@@ -89,6 +89,17 @@ Two further resolution rules the implementation settled, both narrowing what cou
   name a path no report ever carried, `/src/src/app/Order.cs` off `<source>` `/src`, and the outside-repo
   diagnostic quotes the first candidate, so the reader would be shown a path the gate invented.
 
+**Amended 2026-09-05.** The human-typed rule above gained two refusals with
+[issue 14](https://github.com/tvrmsmith/coding-standards/issues/14), both under ADR 0005's `file_unresolved` code.
+A `--files` path that resolves inside the root but names a directory rather than a regular file is exit 1, matching
+the regular-file narrowing the paragraph above applies to coverage candidates. A `--files` path the tree spells in
+another case is also exit 1, because a case-insensitive filesystem resolves it to a real file that no coverage
+report is keyed by, so the run would measure a file the report cannot cover. That second refusal applies the
+reasoning of "Case folding for macOS. Rejected" to a path the developer typed, which the 2026-09-03 amendment above
+scoped to coverage-path resolution, so this records the new application rather than widening the rejection.
+`srcpath.Root` checks the spelling component by component against the directory entries and names the path as the
+developer typed it. Canonicalizing to git's spelling instead of refusing stays available as a later relaxation.
+
 ## Considered options
 
 **Longest-suffix matching.** The standard fallback, and the one every prior implementation reaches for.

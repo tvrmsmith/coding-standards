@@ -130,6 +130,20 @@ resolves inside the repo but that no extractor claims is neither measured nor an
 dropped in silence, and the named paths sort ahead of whatever coverage discovery could not read. The field still
 never gates.
 
+**Amended 2026-09-05.** `file_unresolved` has more causes than the two the 2026-09-04 amendment named. A `--files`
+path earns it when it does not exist, when it resolves above the repo root, when it resolves inside the root but
+names a directory rather than a regular file, when it names a file the tree holds under a different spelling, which
+a case-insensitive filesystem otherwise resolves to a path no coverage report is keyed by, and when the filesystem
+refuses to answer at all, which carries the underlying cause rather than escaping the document. The gate refuses all
+of them rather than matching approximately, which is the rule CONTEXT.md's source path already states.
+`staged_file_dirty` is narrower than that amendment said: the divergence check asks only about files an extractor
+claimed, so a file staged in one state and dirty on disk in another does not refuse the run when nothing scored it,
+because a file the gate never measured is one it cannot misattribute. The exception is a `--staged` run whose
+extraction fails, which checks divergence before reporting the extractor's own failure, so a staged file deleted
+from disk is named for what it is. `--files` is variadic and not repeatable, so a second `--files` is a usage error
+and issue 11's "(repeatable)" spelling does not hold for it. The enumeration stays at **sixteen** codes and the list
+above stands unchanged.
+
 **Amended 2026-09-05.** The enumeration is **fifteen** codes, and this list supersedes every count above. One
 joined with [issue 15](https://github.com/tvrmsmith/coding-standards/issues/15), which closes the deferral the
 2026-09-03 amendment recorded: the gate now reads the report's own `timestamp` attribute and stats every file
