@@ -53,31 +53,31 @@ const usageLine = "usage: metric-gate [--coverage <path>]..."
 // parseArgs reads the command line for the one flag this issue owns,
 // --coverage, repeatable and accepted as either "--coverage <path>" or
 // "--coverage=<path>". Anything else is a usage error, returned as a plain
-// error so main prints it to stderr and writes no document (ADR 0005: a
-// failure upstream of the document has no document).
+// error so main prints it to stderr and writes nothing to stdout. A malformed
+// command line is not a verdict about the code under test, and a consumer
+// that got a document for one would have to tell "the gate ran and found a
+// problem" from "the gate never ran" by reading the code. Both spellings
+// reach one value site, so neither can drift into accepting the empty value
+// an unset shell variable expands to.
 func parseArgs(args []string) ([]string, error) {
 	var coveragePaths []string
 	for i := 0; i < len(args); i++ {
-		arg := args[i]
+		value, joined := strings.CutPrefix(args[i], "--coverage=")
 		switch {
-		case arg == "--coverage":
-			i++
-			// An empty value is rejected on both spellings, so an unset
-			// shell variable expanding to nothing cannot reach the reader
-			// as a report that names nothing.
-			if i >= len(args) || args[i] == "" {
-				return nil, fmt.Errorf("--coverage needs a path\n%s", usageLine)
+		case joined:
+		case args[i] == "--coverage":
+			value = ""
+			if i+1 < len(args) {
+				i++
+				value = args[i]
 			}
-			coveragePaths = append(coveragePaths, args[i])
-		case strings.HasPrefix(arg, "--coverage="):
-			value := strings.TrimPrefix(arg, "--coverage=")
-			if value == "" {
-				return nil, fmt.Errorf("--coverage needs a path\n%s", usageLine)
-			}
-			coveragePaths = append(coveragePaths, value)
 		default:
-			return nil, fmt.Errorf("unknown argument: %s\n%s", arg, usageLine)
+			return nil, fmt.Errorf("unknown argument: %s\n%s", args[i], usageLine)
 		}
+		if value == "" {
+			return nil, fmt.Errorf("--coverage needs a path\n%s", usageLine)
+		}
+		coveragePaths = append(coveragePaths, value)
 	}
 	return coveragePaths, nil
 }

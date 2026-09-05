@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -44,8 +43,9 @@ const Glob = "**/" + resultsDir + "/**/" + ReportName
 type Source struct {
 	// Abs is where the report sits on disk.
 	Abs string
-	// Name is how a failure names the report: repo-relative for a
-	// discovered one, exactly as typed for one the developer named.
+	// Name is how a failure names the report: repo-relative whenever the
+	// report resolves inside the repo, and the developer's own spelling for
+	// a named one that does not, which has no repo-relative form.
 	Name string
 }
 
@@ -167,53 +167,15 @@ func underResultsDir(rel string) bool {
 	return false
 }
 
-// Load reads every source, drops the ones a later run in the same results
-// directory has superseded, and unions what is left into one set: a line is
+// Load reads every source in order and unions them into one set: a line is
 // instrumentable when any report lists it, and covered when any report
-// records a non-zero hit. Every source has to read, unmarshal and carry a
-// timestamp, and every surviving one has to be no older than newest.At;
-// failing any of those stops the run rather than dropping the report, because
-// a stale report silently dropped is exactly the untested code the rule exists
-// to catch. An empty newest.At (the zero time) can never trip the staleness
-// rule.
+// records a non-zero hit. Before a report merges, it has to read, unmarshal,
+// carry a timestamp, and be no older than newest.At; failing any of those
+// stops the run rather than dropping the report, because a stale report
+// silently dropped is exactly the untested code the rule exists to catch.
+// An empty newest.At (the zero time) can never trip the staleness rule.
 func Load(root srcpath.Root, sources []Source, newest Newest) (Set, error) {
-	reports, err := readAll(sources)
-	if err != nil {
-		return nil, err
-	}
 	set := Set{}
-	for _, current := range supersede(reports) {
-		// Staleness is checked before the merge, not after it, so a refused
-		// report never contributes a line even transiently.
-		if current.at.Before(newest.At) {
-			return nil, &report.Failure{
-				Code: report.CodeCoverageStale,
-				Message: "coverage report " + current.source.Name + " was written before " +
-					newest.File.String() + " was last edited",
-			}
-		}
-		if err := current.doc.mergeInto(set, root, current.source.Name); err != nil {
-			return nil, err
-		}
-	}
-	return set, nil
-}
-
-// loaded is one source read off disk beside the clock it carries, which is
-// what decides both which report in a results directory is current and
-// whether that one is stale.
-type loaded struct {
-	source Source
-	doc    coberturaReport
-	at     time.Time
-}
-
-// readAll reads every source in order. A report that cannot be parsed, or
-// that carries no timestamp to judge it by, fails the whole run naming
-// itself, superseded or not: nothing can rank a report whose clock cannot be
-// read, and a corrupt file under TestResults is worth saying out loud.
-func readAll(sources []Source) ([]loaded, error) {
-	reports := make([]loaded, 0, len(sources))
 	for _, source := range sources {
 		parsed, err := parseReport(source.Abs)
 		if err != nil {
@@ -230,53 +192,27 @@ func readAll(sources []Source) ([]loaded, error) {
 					" carries no timestamp, so it cannot be judged against the code it describes",
 			}
 		}
-		reports = append(reports, loaded{source: source, doc: parsed, at: at})
+		// Staleness is checked before the merge, not after it, so a refused
+		// report never contributes a line even transiently.
+		if at.Before(newest.At) {
+			return nil, &report.Failure{
+				Code: report.CodeCoverageStale,
+				Message: "coverage report " + source.Name + " was written before " +
+					newest.File.String() + " was last edited" + staleRemedy,
+			}
+		}
+		if err := parsed.mergeInto(set, root, source.Name); err != nil {
+			return nil, err
+		}
 	}
-	return reports, nil
+	return set, nil
 }
 
-// supersede keeps one report per results directory, the newest by the clock
-// each carries, in the order the sources arrived. `dotnet test` writes a
-// fresh TestResults/<guid>/ on every run and never removes the previous
-// run's directory, so without this the ordinary second edit-and-test
-// iteration is refused for a report a fresh one has already replaced. Only
-// reports sharing a results directory compete: two test projects each have a
-// TestResults directory of their own, so the union across projects is
-// untouched, and a report failing resolution or staleness in one group still
-// fails the whole run and names itself. A tie on equal clocks keeps the
-// first, which for discovered reports is the Name-sorted first.
-func supersede(reports []loaded) []loaded {
-	winner := map[string]int{}
-	for i, candidate := range reports {
-		group := resultsGroup(candidate.source.Abs)
-		held, ok := winner[group]
-		if !ok || candidate.at.After(reports[held].at) {
-			winner[group] = i
-		}
-	}
-	current := make([]loaded, 0, len(winner))
-	for _, i := range slices.Sorted(maps.Values(winner)) {
-		current = append(current, reports[i])
-	}
-	return current
-}
-
-// resultsGroup is the results directory a report competes inside: the
-// innermost TestResults ancestor of its path. A report with no such ancestor,
-// which is every report a developer named by hand, is its own group and is
-// never superseded by anything.
-func resultsGroup(abs string) string {
-	for dir := filepath.Dir(abs); ; {
-		if filepath.Base(dir) == resultsDir {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return abs
-		}
-		dir = parent
-	}
-}
+// staleRemedy closes the stale-report message with the step that clears it.
+// `dotnet test` leaves every previous run's TestResults directory on disk, so
+// the report the gate refused is most often one the developer has already
+// replaced and does not know is still there.
+const staleRemedy = "; clear stale TestResults directories and re-run the tests"
 
 // coberturaReport is the subset of the Cobertura schema the gate reads. Only
 // <timestamp>, <sources>, each class's filename, and each line's number and

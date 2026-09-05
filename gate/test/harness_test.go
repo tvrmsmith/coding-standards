@@ -79,6 +79,8 @@ type fixture struct {
 	t    *testing.T
 	root string
 	stub stubConfig
+	// workdir is the directory the gate runs in, empty for the repo root.
+	workdir string
 }
 
 // stubConfig is the canned extractor behaviour for one case, in the shape
@@ -195,6 +197,17 @@ func (f *fixture) runWithArgs(args ...string) runResult {
 	return f.exec(binDir, args, "METRIC_GATE_STUB="+f.stubConfigPath())
 }
 
+// runFromWithArgs is runWithArgs with the gate started in a subdirectory of
+// the fixture repo, which is how a case pins what a relative path on the
+// command line resolves against.
+func (f *fixture) runFromWithArgs(sub string, args ...string) runResult {
+	f.t.Helper()
+	previous := f.workdir
+	f.workdir = filepath.Join(f.root, filepath.FromSlash(sub))
+	defer func() { f.workdir = previous }()
+	return f.runWithArgs(args...)
+}
+
 // stubConfigPath writes the case's stub config out and returns its path.
 func (f *fixture) stubConfigPath() string {
 	f.t.Helper()
@@ -215,6 +228,9 @@ func (f *fixture) exec(dir string, args []string, extraEnv ...string) runResult 
 	f.t.Helper()
 	cmd := exec.Command(filepath.Join(dir, "metric-gate"), args...)
 	cmd.Dir = f.root
+	if f.workdir != "" {
+		cmd.Dir = f.workdir
+	}
 	cmd.Env = append(os.Environ(), append(append([]string{}, gitEnv...), extraEnv...)...)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
