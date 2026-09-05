@@ -124,6 +124,14 @@ func Parse(args []string) (Scope, error) {
 			var files []string
 			for i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				i++
+				// An empty argument does not start with '-', so the slurp
+				// takes it, and it names no file. Resolved it is the working
+				// directory itself, so the run would exit 1 saying an empty
+				// name is a directory and the reader would see a message
+				// naming nothing.
+				if args[i] == "" {
+					return Scope{}, &UsageError{Problem: "--files was handed an empty path"}
+				}
 				files = append(files, args[i])
 			}
 			if len(files) == 0 {
