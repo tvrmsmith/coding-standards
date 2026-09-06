@@ -231,8 +231,9 @@ func (f *fixture) modTime(rel string) time.Time {
 	return info.ModTime().Truncate(time.Second)
 }
 
-// setModTime backdates the file at rel, which is how a case pins the ordering
-// of two edits the filesystem would otherwise stamp within the same second.
+// setModTime sets the modification time of the file at rel to at, which is how
+// a case pins either the exact ordering of two edits or an exact tie between
+// them, neither of which the filesystem's own stamping can be asked for.
 func (f *fixture) setModTime(rel string, at time.Time) {
 	f.t.Helper()
 	if err := os.Chtimes(filepath.Join(f.root, filepath.FromSlash(rel)), at, at); err != nil {

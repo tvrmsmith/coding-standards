@@ -1620,9 +1620,9 @@ func TestCoverageReportOlderThanTheCodeItDescribesIsRefused(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// 1767225600 is 2026-01-01, years behind the mtime of a file the fixture
-	// just wrote.
-	f.write("TestResults/coverage.cobertura.xml", coberturaStamped("1767225600", f.root,
+	// A year behind the source's own mtime, derived from it rather than fixed,
+	// so the case cannot be turned green by the machine's clock.
+	f.write("TestResults/coverage.cobertura.xml", coberturaStamped(f.editStamp(orderService, -365*24*time.Hour), f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
@@ -1658,6 +1658,72 @@ func TestNamedCoverageReportIsUsedAndDiscoveryIsIgnored(t *testing.T) {
 
 	f.runWithArgs("--coverage", "artifacts/coverage.xml").assertMatches(t, "named_coverage_report", 0,
 		f.baseLabel("main"), "0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestNamingAReportSkipsDiscoveryEntirely(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The one place discovery would walk cannot be read, so a run that still
+	// walked it would report the directory under skipped_paths. An empty list
+	// beside an unreadable TestResults subtree is the only reading that says
+	// the walk never happened.
+	f.denyRead("TestResults/locked")
+	f.write("artifacts/coverage.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.runWithArgs("--coverage", "artifacts/coverage.xml").assertMatches(t, "named_coverage_report", 0,
+		f.baseLabel("main"), "0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestNamedReportReachedThroughASymlinkIsNamedRepoRelative(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("artifacts/coverage.xml",
+		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// The typed path reaches a directory inside the repo through a symlink
+	// beside it. Relativizing what the developer typed rather than what it
+	// resolves to would name the report link/coverage.xml, a spelling no other
+	// diagnostic in the document uses for the same file.
+	symlinkedDir(t, filepath.Join(f.root, "artifacts"), filepath.Join(f.root, "link"))
+	f.runWithArgs("--coverage", "link/coverage.xml").assertMatches(
+		t, "named_coverage_stale", 1, f.baseLabel("main"),
+		"coverage report artifacts/coverage.xml was written before src/Ordering/OrderService.cs was last edited; "+
+			"regenerate artifacts/coverage.xml or point --coverage at a current report\n")
+}
+
+func TestStaleReportIsRefusedAheadOfItsErasedSourceRoot(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// A report that is both stale and carries the DeterministicReport=true
+	// placeholder. Staleness runs ahead of resolution, so the report is refused
+	// for its age; a run that resolved first would send the developer to fix
+	// the MSBuild property on a report they are about to regenerate anyway.
+	f.write("TestResults/coverage.cobertura.xml",
+		renderCobertura(f.editStamp(orderService, -time.Second), nil,
+			coverageClass{filename: "/_/src/Ordering/OrderService.cs", lines: spanCoverage(61, 3, 3)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_stale", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml was written before src/Ordering/OrderService.cs was last edited; clear stale TestResults directories and re-run the tests\n")
 }
 
 func TestCoverageReportWithNoTimestampIsRefused(t *testing.T) {
@@ -1754,16 +1820,15 @@ func TestStalenessIsJudgedOnEveryNamedReportNotJustTheFirst(t *testing.T) {
 			"regenerate artifacts/integration.xml or point --coverage at a current report\n")
 }
 
-func TestNamedReportOutsideTheRepoIsReadAndNamedAsTyped(t *testing.T) {
+func TestNamedReportOutsideTheRepoIsRead(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 	// A CI job that collects coverage into a workspace directory beside the
-	// checkout, rather than under it. The report has no repo-relative form, so
-	// the document can only name it the way the developer typed it, but its
-	// <sources> still anchors every class inside the repo and the lines it
-	// records are scored.
+	// checkout, rather than under it. Its <sources> still anchors every class
+	// inside the repo, so the lines it records are scored like any other
+	// report's.
 	typed := filepath.Join(t.TempDir(), "coverage.xml")
 	writeAbsolute(t, typed, coberturaStamped(f.editStamp(orderService, 0), f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 4, 2)}))
@@ -1774,9 +1839,22 @@ func TestNamedReportOutsideTheRepoIsReadAndNamedAsTyped(t *testing.T) {
 
 	f.runWithArgs("--coverage", typed).assertMatches(t, "named_report_outside_repo", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 4.13\n")
+}
 
+func TestStaleNamedReportOutsideTheRepoIsNamedAsTyped(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The same out-of-repo report, one second stale. It has no repo-relative
+	// form, so the refusal can only name it the way the developer typed it.
+	typed := filepath.Join(t.TempDir(), "coverage.xml")
 	writeAbsolute(t, typed, coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 4, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
 
 	f.runWithArgs("--coverage", typed).assertMatchesWith(t, "named_report_outside_repo_stale", 1,
 		f.baseLabel("main"),
@@ -1862,9 +1940,8 @@ func TestChangedFilesEditedInTheSameSecondNameTheSmallestPath(t *testing.T) {
 	f.touchLine(pricingFile, 62)
 	// Equal mtimes, so which file the stale message names is decided by the
 	// tie-break rather than by the order the extractor reported the spans in.
-	// Order.cs is the lexicographically smallest path and is reported second
-	// of three, so keeping the first file seen would name Pricing.cs and
-	// keeping the last would name OrderService.cs.
+	// The extractor reports Pricing.cs first and OrderService.cs last; only a
+	// run that orders the files itself names Order.cs, the smallest path.
 	edited := f.modTime(orderService)
 	for _, file := range []string{orderService, orderFile, pricingFile} {
 		f.setModTime(file, edited)
@@ -1995,6 +2072,27 @@ func TestCoverageFlagWithNoPathIsAUsageError(t *testing.T) {
 			f.stub = stubConfig{Extensions: []string{".cs"}}
 
 			assertUsageError(t, f.runWithArgs(args...), want)
+		})
+	}
+}
+
+func TestCoverageFlagGivenAnotherFlagIsAUsageError(t *testing.T) {
+	// A mistyped flag after --coverage would otherwise be swallowed as a report
+	// path and reach the developer as a coverage diagnostic inside a document,
+	// which reads as "the gate ran and your coverage is wrong" rather than
+	// "the command line is wrong". No producer names a report with two leading
+	// dashes, so the flag spelling is the one worth refusing.
+	spellings := map[string][]string{
+		"separate value": {"--coverage", "--nope"},
+		"joined value":   {"--coverage=--nope"},
+	}
+	for name, args := range spellings {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, "main")
+			f.stub = stubConfig{Extensions: []string{".cs"}}
+
+			assertUsageError(t, f.runWithArgs(args...),
+				"--coverage needs a path, not the flag --nope\nusage: metric-gate [--coverage <path>]...\n")
 		})
 	}
 }

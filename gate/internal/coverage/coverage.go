@@ -127,7 +127,7 @@ func Discover(root srcpath.Root) (sources []Source, skipped []string, err error)
 		if !underResultsDir(rel) {
 			return nil
 		}
-		sources = append(sources, Source{Abs: path, Name: filepath.ToSlash(rel)})
+		sources = append(sources, Source{Abs: path, Name: filepath.ToSlash(rel), Origin: Discovered})
 		return nil
 	})
 	if err != nil {
@@ -211,11 +211,11 @@ func Load(root srcpath.Root, sources []Source, newest Newest) (Set, error) {
 				Message: fmt.Sprintf("could not parse coverage report %s; %s", source.Name, parseCause(err)),
 			}
 		}
-		at, ok := parsed.timestamp()
-		if !ok {
+		at, err := parsed.timestamp()
+		if err != nil {
 			return nil, &report.Failure{
 				Code:    report.CodeCoverageUnparseable,
-				Message: "coverage report " + source.Name + parsed.timestampCause(),
+				Message: "coverage report " + source.Name + " " + err.Error(),
 			}
 		}
 		// Staleness is checked before the merge, not after it, so a refused
@@ -245,30 +245,23 @@ type coberturaReport struct {
 }
 
 // timestamp reads the report's own clock, which is what the staleness rule
-// judges rather than any timestamp of the file on disk. It reports false when
-// the attribute is absent, empty, or not a base-10 integer, none of which the
-// rule can run without.
-func (r coberturaReport) timestamp() (time.Time, bool) {
+// judges rather than any timestamp of the file on disk. The error is the
+// reason the rule cannot run, worded for the refusal message and split by
+// shape because the two shapes need different fixes: an attribute that is
+// absent has to be written, while one the rule cannot parse is already there
+// and only in the wrong units. The offending value is quoted so the developer
+// sees what the gate read rather than what they meant. Resolving the verdict
+// and its reason in one place is what stops a further rejection shape from
+// refusing under one wording and explaining itself with another.
+func (r coberturaReport) timestamp() (time.Time, error) {
 	if r.Timestamp == "" {
-		return time.Time{}, false
+		return time.Time{}, errors.New("carries no timestamp, so it cannot be judged against the code it describes")
 	}
 	seconds, err := strconv.ParseInt(r.Timestamp, 10, 64)
 	if err != nil {
-		return time.Time{}, false
+		return time.Time{}, fmt.Errorf("carries an unreadable timestamp %q; it must be epoch seconds", r.Timestamp)
 	}
-	return time.Unix(seconds, 0), true
-}
-
-// timestampCause says why the staleness rule could not read the report's own
-// clock, split by shape because the two shapes need different fixes: an
-// attribute that is absent has to be written, while one the rule cannot parse
-// is already there and only in the wrong units. The offending value is quoted
-// so the developer sees what the gate read rather than what they meant.
-func (r coberturaReport) timestampCause() string {
-	if r.Timestamp == "" {
-		return " carries no timestamp, so it cannot be judged against the code it describes"
-	}
-	return fmt.Sprintf(" carries an unreadable timestamp %q; it must be epoch seconds", r.Timestamp)
+	return time.Unix(seconds, 0), nil
 }
 
 type coberturaClass struct {

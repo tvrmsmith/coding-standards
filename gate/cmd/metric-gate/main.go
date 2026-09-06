@@ -8,8 +8,8 @@
 // 1 tool error, 2 threshold exceeded.
 //
 // The one exception to "stdout is one TOON document" is a failure upstream of
-// the document itself, such as not being in a git repo at all. Those write the
-// cause to stderr, leave stdout empty, and exit 1.
+// the document itself, such as a malformed command line or not being in a git
+// repo at all. Those write the cause to stderr, leave stdout empty, and exit 1.
 package main
 
 import (
@@ -58,7 +58,10 @@ const usageLine = "usage: metric-gate [--coverage <path>]..."
 // that got a document for one would have to tell "the gate ran and found a
 // problem" from "the gate never ran" by reading the code. Both spellings
 // reach one value site, so neither can drift into accepting the empty value
-// an unset shell variable expands to.
+// an unset shell variable expands to. A value spelled like a flag is refused
+// there too: no producer writes a report whose name begins with two dashes,
+// and a mistyped flag read as a path would reach the developer as a coverage
+// diagnostic inside a document rather than as the usage error it is.
 func parseArgs(args []string) ([]string, error) {
 	var coveragePaths []string
 	for i := 0; i < len(args); i++ {
@@ -76,6 +79,9 @@ func parseArgs(args []string) ([]string, error) {
 		}
 		if value == "" {
 			return nil, fmt.Errorf("--coverage needs a path\n%s", usageLine)
+		}
+		if strings.HasPrefix(value, "--") {
+			return nil, fmt.Errorf("--coverage needs a path, not the flag %s\n%s", value, usageLine)
 		}
 		coveragePaths = append(coveragePaths, value)
 	}
@@ -181,7 +187,7 @@ func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (co
 	if len(named) > 0 {
 		cwd, err := os.Getwd()
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("resolving --coverage paths against the working directory: %w", err)
 		}
 		set, err := coverage.Load(root, coverage.Named(root, cwd, named), newest)
 		return set, nil, err
@@ -204,8 +210,9 @@ func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (co
 // newestEdit stats the working-tree file of every distinct span file among
 // the changed methods, and returns the greatest modification time, truncated
 // to whole seconds, along with the file that holds it. A tie on equal times
-// is broken on the lexicographically smallest path, so the message a stale
-// report gets is deterministic.
+// resolves to the lexicographically smallest path, and keeping the first file
+// seen is enough for that because join.Changed sorts its spans by file before
+// returning them, so this loop always walks paths in ascending order.
 func newestEdit(root srcpath.Root, changed []extract.Span) (coverage.Newest, error) {
 	var newest coverage.Newest
 	seen := map[srcpath.Path]bool{}
@@ -219,7 +226,7 @@ func newestEdit(root srcpath.Root, changed []extract.Span) (coverage.Newest, err
 			return coverage.Newest{}, fmt.Errorf("stat %s: %w", span.File, err)
 		}
 		at := info.ModTime().Truncate(time.Second)
-		if newest.File == "" || at.After(newest.At) || (at.Equal(newest.At) && span.File < newest.File) {
+		if newest.File == "" || at.After(newest.At) {
 			newest = coverage.Newest{File: span.File, At: at}
 		}
 	}
