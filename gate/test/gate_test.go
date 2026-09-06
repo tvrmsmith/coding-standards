@@ -1743,11 +1743,11 @@ func TestCoverageReportWithNoTimestampIsRefused(t *testing.T) {
 }
 
 func TestCoverageReportWithAnUnreadableTimestampIsRefused(t *testing.T) {
-	// Producers other than coverlet write the attribute in other units, so the
-	// developer meeting this has a timestamp in front of them and needs to be
-	// told the units are wrong rather than that it is missing. Parsing either
-	// of these as base-10 seconds would judge the report against the Unix
-	// epoch instead.
+	// Producers other than coverlet write the attribute in a different
+	// representation, so the developer meeting this has a timestamp in front of
+	// them and needs to be told to rewrite it rather than that it is missing.
+	// Neither spelling is a base-10 integer, and reading either as one would
+	// judge the report against the Unix epoch instead.
 	stamps := map[string]string{
 		"ISO-8601 instant":   "2026-01-01T00:00:00Z",
 		"fractional seconds": "1767225600.123",
@@ -1938,10 +1938,11 @@ func TestChangedFilesEditedInTheSameSecondNameTheSmallestPath(t *testing.T) {
 	f.touchLine(orderService, 62)
 	f.touchLine(orderFile, 62)
 	f.touchLine(pricingFile, 62)
-	// Equal mtimes, so which file the stale message names is decided by the
-	// tie-break rather than by the order the extractor reported the spans in.
-	// The extractor reports Pricing.cs first and OrderService.cs last; only a
-	// run that orders the files itself names Order.cs, the smallest path.
+	// Equal mtimes, so no file is newer and the answer rests entirely on the
+	// order the newest-edit scan walks them in. join.Changed drains its spans
+	// out of a Go map before sorting them, so without that sort the order is
+	// arbitrary and the message names whichever file the runtime happened to
+	// yield first. Order.cs, the smallest path, is the only stable answer.
 	edited := f.modTime(orderService)
 	for _, file := range []string{orderService, orderFile, pricingFile} {
 		f.setModTime(file, edited)
@@ -2048,11 +2049,10 @@ func TestNamedReportThatIsNotOnDiskIsRefusedAsUnparseable(t *testing.T) {
 
 func TestUnknownArgumentIsAUsageError(t *testing.T) {
 	f := newFixture(t, "main")
-	f.stub = stubConfig{Extensions: []string{".cs"}}
 
 	// A usage error is decided before the gate opens the repo, so the fixture
-	// carries no commit, no source and no report: nothing about the tree can
-	// change the answer.
+	// carries no commit, no source, no report and no extractor config: nothing
+	// about the tree can change the answer.
 	assertUsageError(t, f.runWithArgs("--nope"),
 		"unknown argument: --nope\nusage: metric-gate [--coverage <path>]...\n")
 }
@@ -2069,7 +2069,6 @@ func TestCoverageFlagWithNoPathIsAUsageError(t *testing.T) {
 	for name, args := range spellings {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t, "main")
-			f.stub = stubConfig{Extensions: []string{".cs"}}
 
 			assertUsageError(t, f.runWithArgs(args...), want)
 		})
@@ -2089,7 +2088,6 @@ func TestCoverageFlagGivenAnotherFlagIsAUsageError(t *testing.T) {
 	for name, args := range spellings {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t, "main")
-			f.stub = stubConfig{Extensions: []string{".cs"}}
 
 			assertUsageError(t, f.runWithArgs(args...),
 				"--coverage needs a path, not the flag --nope\nusage: metric-gate [--coverage <path>]...\n")
@@ -2180,7 +2178,7 @@ func TestClassWithNoFilenameDoesNotSuppressTheOutsideRepoDiagnostic(t *testing.T
 	otherCheckout := resolvedPath(t, t.TempDir())
 	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
 	writeAbsolute(t, classPath, csharpFile(80))
-	f.write("TestResults/coverage.cobertura.xml", renderCobertura(nowStamp(),
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
 		[]string{otherCheckout, filepath.Join(f.root, "src")},
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)},
 		coverageClass{filename: "", lines: spanCoverage(1, 1, 1)}))
@@ -2245,7 +2243,7 @@ func TestClassFilenameNamingNoFileDoesNotSuppressTheOutsideRepoDiagnostic(t *tes
 	otherCheckout := resolvedPath(t, t.TempDir())
 	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
 	writeAbsolute(t, classPath, csharpFile(80))
-	f.write("TestResults/coverage.cobertura.xml", renderCobertura(nowStamp(),
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
 		[]string{otherCheckout, filepath.Join(f.root, "src"), filepath.Join(f.root, "src", "Ordering")},
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)},
 		coverageClass{filename: ".", lines: spanCoverage(1, 1, 1)},
@@ -2619,7 +2617,7 @@ func TestErasedSourceRootIsNamedAheadOfAnAmbiguousClass(t *testing.T) {
 	// the whole document before any candidate is built, so the reader is told
 	// which property to turn off rather than shown a contradiction that is a
 	// consequence of it.
-	f.write("TestResults/coverage.cobertura.xml", renderCobertura(nowStamp(),
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
 		[]string{filepath.Join(f.root, "src", "a"), filepath.Join(f.root, "src", "b")},
 		coverageClass{filename: "Order.cs", lines: spanCoverage(1, 1, 1)},
 		coverageClass{filename: "/_/src/Ordering/OrderService.cs", lines: spanCoverage(61, 3, 2)}))
@@ -2645,7 +2643,7 @@ func TestAmbiguousClassIsNamedAheadOfTheReportPlacingNothingInside(t *testing.T)
 	// as each class is read, so the contradiction is named rather than the
 	// report-level verdict that is decided only after the last class.
 	otherCheckout := t.TempDir()
-	f.write("TestResults/coverage.cobertura.xml", renderCobertura(nowStamp(),
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
 		[]string{otherCheckout, filepath.Join(f.root, "src", "a"), filepath.Join(f.root, "src", "b")},
 		coverageClass{filename: "obsolete/Old.cs", lines: spanCoverage(1, 1, 1)},
 		coverageClass{filename: "Order.cs", lines: spanCoverage(1, 1, 1)}))
@@ -2700,7 +2698,7 @@ func TestClassYieldingTwoCandidatesInsideRepoRootFailsNamingBoth(t *testing.T) {
 	f.touchLine(orderService, 62)
 	// The sources are listed b before a, so the message's sorted order is not
 	// the order the candidates arrive in.
-	f.write("TestResults/coverage.cobertura.xml", renderCobertura(nowStamp(),
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
 		[]string{filepath.Join(f.root, "src", "b"), filepath.Join(f.root, "src", "a")},
 		coverageClass{filename: "Order.cs", lines: spanCoverage(1, 1, 1)}))
 	f.stub = stubConfig{
@@ -2727,7 +2725,7 @@ func TestClassYieldingThreeCandidatesInsideRepoRootFailsNamingAllOfThem(t *testi
 	// A contradiction the reader has to resolve by hand, so the message names
 	// every path the class resolved to. Quoting the first two would leave the
 	// reader deleting one copy and hitting the same failure again.
-	f.write("TestResults/coverage.cobertura.xml", renderCobertura(nowStamp(),
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
 		[]string{
 			filepath.Join(f.root, "src", "c"),
 			filepath.Join(f.root, "src", "a"),
@@ -2756,7 +2754,7 @@ func TestReportPathOutsideRepoIsIgnoredInSilence(t *testing.T) {
 	// already resolved inside the root from the report's other source.
 	otherCheckout := t.TempDir()
 	writeAbsolute(t, filepath.Join(otherCheckout, "obsolete", "Old.cs"), csharpFile(5))
-	f.write("TestResults/coverage.cobertura.xml", renderCobertura(nowStamp(),
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
 		[]string{f.root, otherCheckout},
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)},
 		coverageClass{filename: "obsolete/Old.cs", lines: spanCoverage(1, 1, 1)}))
@@ -2855,7 +2853,7 @@ func TestReportListingTheSameSourceTwiceIsNotAmbiguous(t *testing.T) {
 	f.touchLine(orderService, 62)
 	// Both <source> elements yield the same candidate for the one class, so
 	// the class resolves to one path and file_ambiguous must not fire.
-	f.write("TestResults/coverage.cobertura.xml", renderCobertura(nowStamp(),
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
 		[]string{f.root, f.root},
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{

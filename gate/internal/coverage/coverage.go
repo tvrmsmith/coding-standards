@@ -122,6 +122,7 @@ func Discover(root srcpath.Root) (sources []Source, skipped []string, err error)
 		}
 		rel, err := filepath.Rel(root.Dir(), path)
 		if err != nil {
+			skipped = append(skipped, filepath.ToSlash(path))
 			return nil
 		}
 		if !underResultsDir(rel) {
@@ -248,8 +249,9 @@ type coberturaReport struct {
 // judges rather than any timestamp of the file on disk. The error is the
 // reason the rule cannot run, worded for the refusal message and split by
 // shape because the two shapes need different fixes: an attribute that is
-// absent has to be written, while one the rule cannot parse is already there
-// and only in the wrong units. The offending value is quoted so the developer
+// absent has to be written, while one that is not a base-10 integer is already
+// there and only in the wrong representation, which is a value to rewrite
+// rather than one to add. The offending value is quoted so the developer
 // sees what the gate read rather than what they meant. Resolving the verdict
 // and its reason in one place is what stops a further rejection shape from
 // refusing under one wording and explaining itself with another.

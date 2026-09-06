@@ -185,11 +185,11 @@ func spanCoverage(start, count, covered int) []coverageLine {
 
 // cobertura renders a coverage report in coverlet's shape, with the source
 // root in <sources> and each class's filename relative to it, which is the
-// pairing ADR 0004 resolves paths from. It stamps the report now, which is
-// newer than any source the fixture wrote before it, so a case that is not
-// about staleness is never refused for it.
+// pairing ADR 0004 resolves paths from. It stamps the report ahead of every
+// source the case can write, so a case that is not about staleness is never
+// refused for it whatever order it builds its fixture in.
 func cobertura(sourceRoot string, classes ...coverageClass) string {
-	return renderCobertura(nowStamp(), []string{sourceRoot}, classes...)
+	return renderCobertura(freshStamp(), []string{sourceRoot}, classes...)
 }
 
 // coberturaStamped is cobertura carrying the given root timestamp attribute,
@@ -200,10 +200,15 @@ func coberturaStamped(stamp, sourceRoot string, classes ...coverageClass) string
 	return renderCobertura(stamp, []string{sourceRoot}, classes...)
 }
 
-// nowStamp is the current second, as a Cobertura timestamp attribute spells
-// it.
-func nowStamp() string {
-	return stampAt(time.Now())
+// freshStamp is an hour ahead of now, as a Cobertura timestamp attribute
+// spells it. An hour rather than the current second, because the current
+// second is only newer than the sources a case has already written: a report
+// built before the case's last touchLine would be refused as stale for a
+// reason that has nothing to do with what the case tests. Stamping ahead of
+// every source the case can write leaves coberturaStamped as the only way to
+// produce a stale report, so statement order stops deciding the verdict.
+func freshStamp() string {
+	return stampAt(time.Now().Add(time.Hour))
 }
 
 // stampAt renders an instant as a Cobertura timestamp attribute spells it.
@@ -253,16 +258,19 @@ func (f *fixture) setModTime(rel string, at time.Time) {
 // UseSourceLink=true is a different document again, keeping one <source> that
 // is empty, so a case for it calls cobertura("").
 func coberturaNoSources(classes ...coverageClass) string {
-	return renderCobertura(nowStamp(), nil, classes...)
+	return renderCobertura(freshStamp(), nil, classes...)
 }
 
 // renderCobertura is the document builder, taking the timestamp attribute and
 // the <source> list directly. A case naming more than one source is a class
 // with two in-root candidates (issue 16, file_ambiguous) or a report split
-// across two checkouts. An empty stamp omits the timestamp attribute; every
-// case that is not about staleness passes nowStamp(), since issue 15 refuses
-// a report older than the source it describes and a fixed stamp would make
-// every fixture stale.
+// across two checkouts. An empty stamp omits the timestamp attribute
+// altogether, which is as close as this builder gets to the unjudgeable
+// report: encoding/xml decodes an absent attribute and timestamp="" to the
+// same empty string, so the gate cannot tell the two apart and neither
+// spelling is worth a case of its own. Every case that is not about staleness
+// passes freshStamp(), since issue 15 refuses a report older than the source
+// it describes and a fixed stamp would make every fixture stale.
 func renderCobertura(stamp string, sources []string, classes ...coverageClass) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>` + "\n")
