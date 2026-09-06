@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to a PR makes the previous run's answer irrelevant, so stop paying for it.
+# main is exempt: every commit there is a distinct answer worth keeping.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  gate:
+    name: gate (go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          # The version lives in go.mod so the runner and a developer's machine
+          # cannot disagree about it.
+          go-version-file: gate/go.mod
+          cache-dependency-path: gate/go.sum
+      - run: go vet ./...
+        working-directory: gate
+      - run: go test ./... -count=1
+        working-directory: gate
+
+  dotnet:
+    name: extractor and analyzers (dotnet)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          # Two lines, two jobs. 10.0.x supplies the SDK that builds and packs;
+          # 8.0.x supplies the runtime the net8.0 test assemblies execute on.
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - run: dotnet test tests/Tvrmsmith.Analyzers.Tests/Tvrmsmith.Analyzers.Tests.csproj
+        working-directory: dotnet
+      - run: dotnet test tests/Tvrmsmith.MetricGate.CSharp.Tests/Tvrmsmith.MetricGate.CSharp.Tests.csproj
+        working-directory: dotnet
+      - run: dotnet build src/Tvrmsmith.Analyzers/Tvrmsmith.Analyzers.csproj -c Release
+        working-directory: dotnet
+      - run: ./tests/verify-severities.sh
+        working-directory: dotnet
+
+  node:
+    name: harness and eslint packages (node)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          # 24 is the LTS line. Local development runs the current line, so a
+          # failure here that does not reproduce locally is a version gap.
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            harness/pnpm-lock.yaml
+            packages/*/pnpm-lock.yaml
+
+      # There is no pnpm workspace: each project carries its own lockfile and
+      # installs independently. harness depends on eslint-config-tvrmsmith
+      # through `link:`, which resolves to the sibling directory rather than
+      # copying it, so harness reads that directory's own node_modules and the
+      # two packages have to be installed before it.
+      - run: pnpm install --frozen-lockfile
+        working-directory: packages/eslint-plugin-tvrmsmith
+      - run: pnpm install --frozen-lockfile
+        working-directory: packages/eslint-config-tvrmsmith
+      - run: pnpm install --frozen-lockfile
+        working-directory: harness
+
+      - run: pnpm test
+        working-directory: packages/eslint-plugin-tvrmsmith
+      - run: pnpm test
+        working-directory: packages/eslint-config-tvrmsmith
+      - run: pnpm test
+        working-directory: harness
+
+  wiring:
+    name: every suite is wired in
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The jobs above name their projects one by one, which keeps install
+      # order explicit but lets a seventh project land and never run. This step
+      # finds the suites on disk and fails when the set differs from the set
+      # wired in above, so adding one is a workflow edit rather than a silent
+      # omission.
+      #
+      # A suite is a package.json carrying a `test` script, or a csproj
+      # referencing Microsoft.NET.Test.Sdk. Both discriminators are properties
+      # of a real test runner, which is what keeps the fixtures out:
+      # packages/eslint-config-tvrmsmith/test/fixture-package has no scripts,
+      # and dotnet/tests/Consumer exists to emit diagnostics rather than to be
+      # run.
+      - name: Compare the suites on disk against the ones the jobs run
+        run: |
+          set -euo pipefail
+
+          cat > expected <<'EOF'
+          dotnet/tests/Tvrmsmith.Analyzers.Tests/Tvrmsmith.Analyzers.Tests.csproj
+          dotnet/tests/Tvrmsmith.MetricGate.CSharp.Tests/Tvrmsmith.MetricGate.CSharp.Tests.csproj
+          harness/package.json
+          packages/eslint-config-tvrmsmith/package.json
+          packages/eslint-plugin-tvrmsmith/package.json
+          EOF
+
+          {
+            git ls-files '*/package.json' 'package.json' \
+              | while read -r manifest; do
+                  if node -e 'process.exit(require("./" + process.argv[1]).scripts?.test ? 0 : 1)' "$manifest"; then
+                    echo "$manifest"
+                  fi
+                done
+            git ls-files '*.csproj' \
+              | xargs grep -l 'Microsoft\.NET\.Test\.Sdk'
+          } | sort > found
+
+          if ! diff -u expected found; then
+            echo
+            echo "The suites on disk differ from the ones .github/workflows/ci.yml runs."
+            echo "A line only in 'found' is a suite nothing executes: add it to a job above,"
+            echo "and to the expected list here. A line only in 'expected' has moved or gone."
+            exit 1
+          fi
+
+          echo "All $(wc -l < expected | tr -d ' ') suites are wired in."
