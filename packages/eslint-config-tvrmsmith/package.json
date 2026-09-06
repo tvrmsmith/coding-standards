@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Curated off-the-shelf ESLint preset enforcing the tvrmsmith coding standards.",
   "license": "MIT",
+  "packageManager": "pnpm@9.15.9",
   "exports": {
     ".": "./index.js",
     "./base": "./base.js",

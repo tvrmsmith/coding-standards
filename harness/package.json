@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Machine-local adoption harness: the ESLint layering wrapper, the changed-files linter and the pre-commit hook that installs them into a repo without committing anything to it.",
   "license": "MIT",
+  "packageManager": "pnpm@9.15.9",
   "scripts": {
     "test": "node --test test/*.test.js"
   },
