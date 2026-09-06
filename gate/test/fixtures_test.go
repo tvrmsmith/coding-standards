@@ -424,6 +424,24 @@ func (f *fixture) denyRead(rel string) {
 	f.t.Cleanup(func() { os.Chmod(full, 0o755) })
 }
 
+// denyReadKeepingEntry makes the existing directory at rel impossible to list
+// while leaving it possible to enter, which is mode 0o111. A path through it
+// still resolves and still stats, so this is what puts a --files name past
+// every check that only walks the path and in front of the one that reads the
+// directory to see how the tree spells its entries. Root ignores the mode, so a
+// case relying on this skips there.
+func (f *fixture) denyReadKeepingEntry(rel string) {
+	f.t.Helper()
+	if os.Geteuid() == 0 {
+		f.t.Skip("running as root, which lists a directory with no read bit anyway")
+	}
+	full := filepath.Join(f.root, filepath.FromSlash(rel))
+	if err := os.Chmod(full, 0o111); err != nil {
+		f.t.Fatal(err)
+	}
+	f.t.Cleanup(func() { os.Chmod(full, 0o755) })
+}
+
 // denyReadFile makes the file at rel unreadable, so reading the report fails
 // on the file itself rather than on its contents. Root ignores the mode, so a
 // case relying on this skips there.

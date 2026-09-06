@@ -104,6 +104,29 @@ func Extract(root srcpath.Root, changed []srcpath.Path) (Result, error) {
 	return result, nil
 }
 
+// Routable lists which of changed the language table could hand to an
+// extractor, judged by the same static extension lists worthRunning consults
+// and in the order it was given them.
+//
+// A caller only needs this after extraction failed. Result.Claimed is the
+// authority while a run succeeds, but a failed run claims nothing, and a caller
+// that has to say something about the files extraction was working on would
+// otherwise fall back to every path in the diff and name a Markdown file no
+// extractor would ever have read.
+func Routable(changed []srcpath.Path) []srcpath.Path {
+	var routable []srcpath.Path
+	for _, path := range changed {
+		if slices.ContainsFunc(sortedLanguages(), func(name string) bool {
+			return slices.ContainsFunc(languages[name].extensions, func(ext string) bool {
+				return strings.EqualFold(ext, path.Ext())
+			})
+		}) {
+			routable = append(routable, path)
+		}
+	}
+	return routable
+}
+
 // worthRunning lists the languages at least one changed path could belong to,
 // judged by the table's static extensions. This is the only use of that list:
 // once a binary is launched, its own --capabilities answer decides which paths

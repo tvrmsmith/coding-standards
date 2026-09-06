@@ -140,9 +140,13 @@ func measure(sc scope.Scope) (report.Document, error) {
 // has to say about how they were reached.
 //
 // Failure is a cause the selection itself discovered, a base that will not
-// resolve or a file staged in one state and dirty in another. It is a field
-// rather than a returned error because the other fields are still meant for
-// the document on that path: a dirty staged file still has a base to name.
+// resolve, a file staged in one state and dirty in another, or a --files path
+// the gate cannot place on a source file. It is a field rather than a returned
+// error because the other fields are still meant for the document on the first
+// two: a dirty staged file still has a base to name. A --files refusal has
+// nothing else to preserve, since that scope resolves no base and the run stops
+// on the first path it will not take, and it travels the same way so every
+// caller reads one channel.
 type selection struct {
 	Base                     *string
 	Extracted                extract.Result
@@ -179,11 +183,15 @@ func selectDiff(repo gitscope.Repo, sc scope.Scope) (selection, error) {
 		// reaches the extractor as a path with nothing to read and comes back
 		// as the extractor's own failure. Nothing was claimed, so the ordinary
 		// check below cannot see it, and a caller branching on the code would
-		// be told its source does not parse. The diff's own paths answer that
-		// here. A divergence check that cannot run leaves the extractor's cause
-		// standing, since it is the one the gate did establish.
+		// be told its source does not parse. The paths the extractor was handed
+		// answer that here. They are asked about rather than the whole diff,
+		// because a dirty staged Markdown file the extractor never saw would
+		// otherwise replace the extractor's own cause with one about a file
+		// nothing was going to read. A divergence check that cannot run leaves
+		// the extractor's cause standing, since it is the one the gate did
+		// establish.
 		if sc.Mode == scope.ModeStaged {
-			if dirty, dirtyErr := stagedDirty(repo, changedFiles(touched)); dirtyErr == nil && dirty != nil {
+			if dirty, dirtyErr := stagedDirty(repo, extract.Routable(changedFiles(touched))); dirtyErr == nil && dirty != nil {
 				selected.Failure = dirty
 				return selected, nil
 			}

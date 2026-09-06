@@ -187,7 +187,9 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // not there. A parent directory the process cannot enter, a symlink cycle or a
 // component that is not a directory carry what the operating system said
 // instead, since sending the developer after a typo that is not there is the
-// misdiagnosis NoBaseError.Unrelated was added to avoid. All of them are still
+// misdiagnosis NoBaseError.Unrelated was added to avoid. A path the root cannot
+// be relativized against at all, a second drive letter on Windows rather than a
+// location above the root, carries its own cause for the same reason. All of them are still
 // UnresolvedError, so every refusal about the path reaches the document under
 // one code. Losing the working directory is not about the path at all, so it
 // travels as a plain error.
@@ -208,7 +210,10 @@ func (r Root) named(name string) (Path, error) {
 		return "", unreadable(name, err)
 	}
 	rel, err := filepath.Rel(r.resolved, resolved)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if err != nil {
+		return "", unreadable(name, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", &UnresolvedError{Name: name, Reason: "is outside the repo root"}
 	}
 	info, err := os.Stat(resolved)
