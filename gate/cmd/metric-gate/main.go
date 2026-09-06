@@ -1,12 +1,17 @@
 // Command metric-gate scores the methods a change touched against a metric
-// threshold. It takes no flags (ADR 0005): stdout is one TOON document,
+// threshold. It takes one flag, --coverage <path>, repeatable, naming the
+// coverage reports to read in place of discovery; the rest of ADR 0005's
+// command line lands with its own issues, and any other argument is a usage
+// error. Stdout is one TOON document,
 // stderr is the human summary, one line except on the unknown_changed_method
 // path, which prints the cause above the counts, and the exit code is 0 pass,
 // 1 tool error, 2 threshold exceeded.
 //
 // The one exception to "stdout is one TOON document" is a failure upstream of
-// the document itself, such as not being in a git repo at all. Those write the
-// cause to stderr, leave stdout empty, and exit 1.
+// the document itself, such as a malformed command line or not being in a git
+// repo at all. Those write the cause to stderr, leave stdout empty, and exit 1.
+// ADR 0005's 2026-09-05 amendment records that exception, so it is part of the
+// output contract rather than a gap in it.
 package main
 
 import (
@@ -16,6 +21,8 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strings"
+	"time"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/coverage"
 	"github.com/tvrmsmith/coding-standards/gate/internal/crap"
@@ -27,7 +34,7 @@ import (
 )
 
 func main() {
-	doc, err := measure()
+	doc, err := measure(os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -42,12 +49,58 @@ func main() {
 	os.Exit(doc.ExitCode())
 }
 
+// usageLine is the second line of every usage error this gate can print.
+const usageLine = "usage: metric-gate [--coverage <path>]..."
+
+// parseArgs reads the command line for the one flag this issue owns,
+// --coverage, repeatable and accepted as either "--coverage <path>" or
+// "--coverage=<path>". Anything else is a usage error, returned as a plain
+// error so main prints it to stderr and writes nothing to stdout. A malformed
+// command line is not a verdict about the code under test, and a consumer
+// that got a document for one would have to tell "the gate ran and found a
+// problem" from "the gate never ran" by reading the code. Both spellings
+// reach one value site, so neither can drift into accepting the empty value
+// an unset shell variable expands to. A value spelled like a flag is refused
+// there too: no producer writes a report whose name begins with two dashes,
+// and a mistyped flag read as a path would reach the developer as a coverage
+// diagnostic inside a document rather than as the usage error it is.
+func parseArgs(args []string) ([]string, error) {
+	var coveragePaths []string
+	for i := 0; i < len(args); i++ {
+		value, joined := strings.CutPrefix(args[i], "--coverage=")
+		switch {
+		case joined:
+		case args[i] == "--coverage":
+			value = ""
+			if i+1 < len(args) {
+				i++
+				value = args[i]
+			}
+		default:
+			return nil, fmt.Errorf("unknown argument: %s\n%s", args[i], usageLine)
+		}
+		if value == "" {
+			return nil, fmt.Errorf("--coverage needs a path\n%s", usageLine)
+		}
+		if strings.HasPrefix(value, "--") {
+			return nil, fmt.Errorf("--coverage needs a path, not the flag %s\n%s", value, usageLine)
+		}
+		coveragePaths = append(coveragePaths, value)
+	}
+	return coveragePaths, nil
+}
+
 // measure runs the gate over the repo containing the working directory. A
 // typed exit-1 cause becomes the document's error block; only a problem the
 // document cannot describe, such as not being in a repo at all, comes back as
 // an error.
-func measure() (report.Document, error) {
+func measure(args []string) (report.Document, error) {
 	var doc report.Document
+	coveragePaths, err := parseArgs(args)
+	if err != nil {
+		return doc, err
+	}
+
 	repo, err := gitscope.Open()
 	if err != nil {
 		return doc, err
@@ -92,7 +145,7 @@ func measure() (report.Document, error) {
 		return doc, nil
 	}
 
-	lines, skipped, err := loadCoverage(repo.Root())
+	lines, skipped, err := loadCoverage(repo.Root(), coveragePaths, changed)
 	doc.SkippedPaths = skipped
 	if failure, ok := asFailure(err); ok {
 		doc.Failure = failure
@@ -120,23 +173,66 @@ func measure() (report.Document, error) {
 // crap.DeclaredInputs names it. The failure names the metric that is stuck
 // rather than the file that is absent (ADR 0002). The paths discovery could
 // not read come back alongside, including on the missing-report failure,
-// where they are the likeliest explanation for it.
-func loadCoverage(root srcpath.Root) (coverage.Set, []string, error) {
+// where they are the likeliest explanation for it. When the developer named
+// any report, discovery does not run at all: skipped_paths stays empty, and
+// the named sources go straight to Load. The newest edit is computed here,
+// behind the declared-input guard, so a metric asking for no coverage pays no
+// stat for one.
+func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (coverage.Set, []string, error) {
 	if !slices.Contains(crap.DeclaredInputs, inputCoverage) {
 		return nil, nil, nil
 	}
-	reports, skipped, err := coverage.Discover(root)
+	newest, err := newestEdit(root, changed)
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(reports) == 0 {
+	if len(named) > 0 {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolving --coverage paths against the working directory: %w", err)
+		}
+		set, err := coverage.Load(root, coverage.Named(root, cwd, named), newest)
+		return set, nil, err
+	}
+	sources, skipped, err := coverage.Discover(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(sources) == 0 {
 		return nil, skipped, &report.Failure{
-			Code:    report.CodeCoverageMissing,
-			Message: crap.DisplayName + " requires a coverage report, none found",
+			Code: report.CodeCoverageMissing,
+			Message: crap.DisplayName + " requires a coverage report, none found matching " +
+				coverage.Glob + " under the repo root",
 		}
 	}
-	set, err := coverage.Load(root, reports)
+	set, err := coverage.Load(root, sources, newest)
 	return set, skipped, err
+}
+
+// newestEdit stats the working-tree file of every distinct span file among
+// the changed methods, and returns the greatest modification time, truncated
+// to whole seconds, along with the file that holds it. A tie on equal times
+// resolves to the lexicographically smallest path, and keeping the first file
+// seen is enough for that because join.Changed returns its spans in ascending
+// file order, which its doc comment promises and its own test holds it to.
+func newestEdit(root srcpath.Root, changed []extract.Span) (coverage.Newest, error) {
+	var newest coverage.Newest
+	seen := map[srcpath.Path]bool{}
+	for _, span := range changed {
+		if seen[span.File] {
+			continue
+		}
+		seen[span.File] = true
+		info, err := os.Stat(root.Abs(span.File))
+		if err != nil {
+			return coverage.Newest{}, fmt.Errorf("stat %s: %w", span.File, err)
+		}
+		at := info.ModTime().Truncate(time.Second)
+		if newest.File == "" || at.After(newest.At) {
+			newest = coverage.Newest{File: span.File, At: at}
+		}
+	}
+	return newest, nil
 }
 
 // inputCoverage is the declared input name a coverage report answers.

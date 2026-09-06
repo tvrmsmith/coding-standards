@@ -23,6 +23,13 @@ const dotnetProject = "../../dotnet/src/Tvrmsmith.MetricGate.CSharp"
 // Its fixture and golden are pinned to match fail_single_method's numbers, so
 // if the real tool and the stub ever disagree about a span or a complexity,
 // this is what catches it.
+//
+// The coverage report it hands the gate is still synthetic. coverlet.collector,
+// the producer the C# extractor targets, writes its timestamp attribute as
+// ten-digit epoch seconds, which is the one representation the gate reads, so
+// building the report here rather than collecting one costs no coverage of the
+// staleness rule. Collecting real coverage means running dotnet test, which is
+// issue 21's work and not this case's.
 func TestFullStackDrivesTheRealDotnetExtractor(t *testing.T) {
 	if testing.Short() {
 		t.Skip("full-stack case packs and installs a dotnet tool, skipped with -short")

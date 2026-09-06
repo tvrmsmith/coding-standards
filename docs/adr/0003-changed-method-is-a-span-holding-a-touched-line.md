@@ -64,6 +64,12 @@ stats no source file, so editing code without re-running the tests scores agains
 The rule stands as decided; only its arrival is deferred. It is recorded here so a reader meets a dated deferral
 rather than guessing whether the gap is a defect.
 
+**Amended 2026-09-05.** [Issue 15](https://github.com/tvrmsmith/coding-standards/issues/15) landed the staleness
+rule, so the deferral above is closed. The gate reads the report's own `timestamp` attribute and stats every file
+that contributed a changed method, and editing code without re-running the tests now fails rather than scoring
+against the previous report and exiting 0. The typed code it fails with, and what happens to a report whose
+timestamp cannot be read at all, live in [ADR 0005](0005-the-machine-document-is-the-only-output.md).
+
 ## Considered options
 
 **Take method line ranges from the coverage report.** No second parse, and the ranges arrive already aligned with the coverage they scope. Rejected because it makes identity depend on a language-specific artifact the gate does not own, which is the seam [ADR 0001](0001-crap-gate-topology.md) exists to draw, and because a method absent from the report would then be invisible rather than `unknown`.

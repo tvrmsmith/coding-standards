@@ -7,5 +7,5 @@ changed_methods: 1
 touched_lines_outside_spans: 0
 skipped_paths: []
 error:
-  code: coverage_missing
-  message: CRAP requires a coverage report, none found matching **/TestResults/**/coverage.cobertura.xml under the repo root
+  code: coverage_unparseable
+  message: "could not parse coverage report artifacts/typo.xml; open: no such file or directory"

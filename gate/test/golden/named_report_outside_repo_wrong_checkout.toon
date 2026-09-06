@@ -7,5 +7,5 @@ changed_methods: 1
 touched_lines_outside_spans: 0
 skipped_paths: []
 error:
-  code: coverage_missing
-  message: CRAP requires a coverage report, none found matching **/TestResults/**/coverage.cobertura.xml under the repo root
+  code: coverage_outside_repo
+  message: coverage report {{REPORT}} placed no class inside the repo root; example path {{EXAMPLE}}, repo root {{ROOT}}
