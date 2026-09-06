@@ -1,6 +1,14 @@
 name: CI
 
+# No step needs a token beyond checkout's read of this repository, so the whole
+# workflow drops to the narrowest scope rather than inheriting the repository
+# default.
+permissions:
+  contents: read
+
 on:
+  # pull_request already covers the review path, so pushes are filtered to main
+  # to avoid paying twice for branches nobody has opened a PR against yet.
   push:
     branches: [main]
   pull_request:
@@ -8,7 +16,7 @@ on:
 # A new push to a PR makes the previous run's answer irrelevant, so stop paying for it.
 # main is exempt: every commit there is a distinct answer worth keeping.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
@@ -22,7 +30,12 @@ jobs:
           # The version lives in go.mod so the runner and a developer's machine
           # cannot disagree about it.
           go-version-file: gate/go.mod
-          cache-dependency-path: gate/go.sum
+          # gate declares no requires yet, so there is no go.sum on disk. Both
+          # files are listed so the cache key starts covering dependencies the
+          # day gate gains one.
+          cache-dependency-path: |
+            gate/go.mod
+            gate/go.sum
       - run: go vet ./...
         working-directory: gate
       - run: go test ./... -count=1
@@ -40,14 +53,24 @@ jobs:
           dotnet-version: |
             8.0.x
             10.0.x
+
+      # Each suite below runs even after an earlier one fails, so one round trip
+      # reports every broken suite rather than only the first.
       - run: dotnet test tests/Tvrmsmith.Analyzers.Tests/Tvrmsmith.Analyzers.Tests.csproj
         working-directory: dotnet
+        if: ${{ !cancelled() }}
       - run: dotnet test tests/Tvrmsmith.MetricGate.CSharp.Tests/Tvrmsmith.MetricGate.CSharp.Tests.csproj
         working-directory: dotnet
+        if: ${{ !cancelled() }}
+      # verify-severities.sh builds this project first thing. Building it here
+      # too costs seconds and fails fast on a compile error instead of waiting
+      # out the longer script.
       - run: dotnet build src/Tvrmsmith.Analyzers/Tvrmsmith.Analyzers.csproj -c Release
         working-directory: dotnet
+        if: ${{ !cancelled() }}
       - run: ./tests/verify-severities.sh
         working-directory: dotnet
+        if: ${{ !cancelled() }}
 
   node:
     name: harness and eslint packages (node)
@@ -72,6 +95,9 @@ jobs:
       # through `link:`, which resolves to the sibling directory rather than
       # copying it, so harness reads that directory's own node_modules and the
       # two packages have to be installed before it.
+      #
+      # These three stay fail-fast. A failed install makes every later result
+      # meaningless.
       - run: pnpm install --frozen-lockfile
         working-directory: packages/eslint-plugin-tvrmsmith
       - run: pnpm install --frozen-lockfile
@@ -81,53 +107,78 @@ jobs:
 
       - run: pnpm test
         working-directory: packages/eslint-plugin-tvrmsmith
+        if: ${{ !cancelled() }}
       - run: pnpm test
         working-directory: packages/eslint-config-tvrmsmith
+        if: ${{ !cancelled() }}
       - run: pnpm test
         working-directory: harness
+        if: ${{ !cancelled() }}
 
   wiring:
     name: every suite is wired in
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # Same line as the node job, so the discriminator below reads a
+          # manifest the same way CI runs it.
+          node-version: 24
 
       # The jobs above name their projects one by one, which keeps install
       # order explicit but lets a seventh project land and never run. This step
-      # finds the suites on disk and fails when the set differs from the set
-      # wired in above, so adding one is a workflow edit rather than a silent
-      # omission.
+      # finds the suites on disk and diffs them against a hand-maintained list.
+      # It catches a suite that exists but nothing executes. It does not catch a
+      # step someone deleted, because the list below is copied by hand rather
+      # than derived from the jobs above.
       #
-      # A suite is a package.json carrying a `test` script, or a csproj
-      # referencing Microsoft.NET.Test.Sdk. Both discriminators are properties
-      # of a real test runner, which is what keeps the fixtures out:
+      # A suite is a package.json carrying a `test` script, a csproj referencing
+      # Microsoft.NET.Test.Sdk, a Go module, or a verifier script under
+      # dotnet/tests. All four discriminators are properties of a real test
+      # runner, which is what keeps the fixtures out:
       # packages/eslint-config-tvrmsmith/test/fixture-package has no scripts,
       # and dotnet/tests/Consumer exists to emit diagnostics rather than to be
       # run.
-      - name: Compare the suites on disk against the ones the jobs run
+      - name: Compare the suites on disk against the hand-maintained list
         run: |
           set -euo pipefail
 
-          cat > expected <<'EOF'
+          expected="$RUNNER_TEMP/expected"
+          found="$RUNNER_TEMP/found"
+
+          cat > "$expected" <<'EOF'
           dotnet/tests/Tvrmsmith.Analyzers.Tests/Tvrmsmith.Analyzers.Tests.csproj
           dotnet/tests/Tvrmsmith.MetricGate.CSharp.Tests/Tvrmsmith.MetricGate.CSharp.Tests.csproj
+          dotnet/tests/verify-severities.sh
+          gate/go.mod
           harness/package.json
           packages/eslint-config-tvrmsmith/package.json
           packages/eslint-plugin-tvrmsmith/package.json
           EOF
 
           {
+            # node prints the path when the manifest has a `test` script and
+            # says nothing when it does not, so a manifest node cannot parse
+            # exits non-zero and aborts the step naming the file instead of
+            # quietly dropping out of the set.
             git ls-files '*/package.json' 'package.json' \
-              | while read -r manifest; do
-                  if node -e 'process.exit(require("./" + process.argv[1]).scripts?.test ? 0 : 1)' "$manifest"; then
-                    echo "$manifest"
-                  fi
+              | while IFS= read -r manifest; do
+                  node -e 'const p = process.argv[1];
+                           const src = require("fs").readFileSync(p, "utf8");
+                           let m;
+                           try { m = JSON.parse(src); }
+                           catch (e) { throw new Error(p + ": " + e.message); }
+                           if (m.scripts && m.scripts.test) console.log(p);' "$manifest"
                 done
-            git ls-files '*.csproj' \
-              | xargs grep -l 'Microsoft\.NET\.Test\.Sdk'
-          } | sort > found
+            # git grep takes the pathspec itself, so no path splitting, and
+            # exit 1 means no match while anything else is a real failure.
+            git grep -l 'Microsoft\.NET\.Test\.Sdk' -- '*.csproj' || [ "$?" -eq 1 ]
+            git ls-files '*/go.mod' 'go.mod'
+            git ls-files 'dotnet/tests/*.sh'
+          } | LC_ALL=C sort > "$found"
 
-          if ! diff -u expected found; then
+          if ! diff -u "$expected" "$found"; then
             echo
             echo "The suites on disk differ from the ones .github/workflows/ci.yml runs."
             echo "A line only in 'found' is a suite nothing executes: add it to a job above,"
@@ -135,4 +186,4 @@ jobs:
             exit 1
           fi
 
-          echo "All $(wc -l < expected | tr -d ' ') suites are wired in."
+          echo "All $(wc -l < "$expected") suites are wired in."
