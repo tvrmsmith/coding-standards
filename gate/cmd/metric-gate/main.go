@@ -139,13 +139,14 @@ func measure(sc scope.Scope) (report.Document, error) {
 // spans exist, which of them the scope calls changed, and what the document
 // has to say about how they were reached.
 //
-// Failure is a cause the selection itself discovered, a base that will not
-// resolve, a file staged in one state and dirty in another, or a --files path
+// Failure is a cause the selection itself discovered, a file staged in one
+// state and dirty in another, a base that will not resolve, or a --files path
 // the gate cannot place on a source file. It is a field rather than a returned
 // error because the other fields are still meant for the document on the first
-// two: a dirty staged file still has a base to name. A --files refusal has
-// nothing else to preserve, since that scope resolves no base and the run stops
-// on the first path it will not take, and it travels the same way so every
+// of those, where a dirty staged file still has a base to name. The other two
+// have nothing else to preserve, since a base that will not resolve is the
+// first thing the diff scopes ask for and --files resolves no base at all and
+// stops on the first path it will not take. They travel the same way so every
 // caller reads one channel.
 type selection struct {
 	Base                     *string

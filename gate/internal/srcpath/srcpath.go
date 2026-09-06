@@ -179,9 +179,11 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // typed and report a file that exists as missing.
 //
 // A name that resolves to anything other than a regular file is refused, the
-// same rule Place applies, because no extractor claims a directory: the gate
-// would measure nothing and exit 0 pass over a tree the developer believes
-// they gated.
+// same rule Place applies, because no extractor claims a directory or a fifo,
+// so the gate would measure nothing and exit 0 pass over a tree the developer
+// believes they gated. A directory is named as one, since that is the mistake
+// a developer actually makes, and every other mode is refused as not a regular
+// file rather than being called a directory it is not.
 //
 // A refusal says "does not exist" only when the filesystem said the path is
 // not there. A parent directory the process cannot enter, a symlink cycle or a
@@ -223,8 +225,11 @@ func (r Root) named(name string) (Path, error) {
 		}
 		return "", unreadable(name, err)
 	}
-	if !info.Mode().IsRegular() {
+	if info.IsDir() {
 		return "", &UnresolvedError{Name: name, Reason: "is a directory, not a file"}
+	}
+	if !info.Mode().IsRegular() {
+		return "", &UnresolvedError{Name: name, Reason: "is not a regular file"}
 	}
 	spelled, err := r.spelledAsOnDisk(rel)
 	if err != nil {
