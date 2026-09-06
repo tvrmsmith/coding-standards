@@ -59,7 +59,10 @@ type Source struct {
 type Origin int
 
 const (
-	Discovered Origin = iota
+	// originUnset is the zero value, so a Source built without an Origin
+	// cannot silently pass for either of the two real ones.
+	originUnset Origin = iota
+	Discovered
 	NamedOnCommandLine
 )
 
@@ -68,12 +71,19 @@ const (
 // a discovered report the gate refused is most often one the developer has
 // already replaced and does not know is still there. Clearing that directory
 // does nothing for a report they named themselves, which nothing but a fresh
-// run over that same path replaces.
+// run over that same path replaces. A Source carrying no Origin has no remedy
+// either way, and offering it the discovered one would send a developer who
+// named a report to clear a directory that holds nothing of theirs, so the
+// unset value stops the run rather than guessing.
 func (s Source) staleRemedy() string {
-	if s.Origin == NamedOnCommandLine {
+	switch s.Origin {
+	case NamedOnCommandLine:
 		return "; regenerate " + s.Name + " or point --coverage at a current report"
+	case Discovered:
+		return "; clear stale TestResults directories and re-run the tests"
+	default:
+		panic("coverage: source " + s.Name + " reached the staleness rule with no Origin")
 	}
-	return "; clear stale TestResults directories and re-run the tests"
 }
 
 // Newest is the freshest edit among the files that contributed a changed
@@ -157,10 +167,14 @@ func Named(root srcpath.Root, cwd string, paths []string) []Source {
 }
 
 // namedAs renders a named report the way the document names paths. It
-// resolves symlinks when the report is there to resolve, so a path reached
-// through one relativizes against the resolved root rather than escaping it,
-// and falls back to the join for a path naming nothing on disk, which still
-// has to be named in the failure that says so.
+// relativizes the resolved reading of the path against the resolved root, so a
+// path reached through a symlink is named repo-relative rather than escaping
+// the root. A path naming nothing on disk resolves as far as it exists, since
+// the root itself is very often reached through a symlink (/tmp and /var on
+// macOS) and comparing an unresolved path against the resolved root would
+// escape for the indirection rather than for where the path actually is. Only
+// a path that is genuinely outside the repo keeps the developer's spelling,
+// which is the one form it has.
 //
 // It answers "is this inside the repo" itself, where srcpath's package doc
 // claims that question for srcpath alone. srcpath.Root.Place cannot answer it
@@ -173,15 +187,26 @@ func Named(root srcpath.Root, cwd string, paths []string) []Source {
 // three behind an existence-agnostic sibling of Place, which is a change to
 // srcpath and not to a branch about staleness.
 func namedAs(root srcpath.Root, abs, typed string) string {
-	resolved := abs
-	if evaluated, err := filepath.EvalSymlinks(abs); err == nil {
-		resolved = evaluated
-	}
-	rel, err := filepath.Rel(root.Dir(), resolved)
+	rel, err := filepath.Rel(root.Dir(), resolveExisting(abs))
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return typed
 	}
 	return filepath.ToSlash(rel)
+}
+
+// resolveExisting resolves the symlinks of the deepest ancestor of abs that is
+// on disk and rejoins the components below it as they were typed. A path that
+// exists whole resolves whole, and one naming nothing still comes back rooted
+// where it really sits rather than behind whatever link led there.
+func resolveExisting(abs string) string {
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	parent := filepath.Dir(abs)
+	if parent == abs {
+		return abs
+	}
+	return filepath.Join(resolveExisting(parent), filepath.Base(abs))
 }
 
 // relative renders a walked path the way the document names paths, falling
@@ -260,9 +285,10 @@ type coberturaReport struct {
 // judges rather than any timestamp of the file on disk. The error is the
 // reason the rule cannot run, worded for the refusal message and split by
 // shape because the two shapes need different fixes: an attribute that is
-// absent has to be written, while one that is not a base-10 integer is already
-// there and only in the wrong representation, which is a value to rewrite
-// rather than one to add. The offending value is quoted so the developer
+// absent has to be written, while any value ParseInt cannot read as base-10
+// seconds, another representation of an instant or plain garbage alike, is
+// already there and is a value to rewrite rather than one to add. The
+// offending value is quoted so the developer
 // sees what the gate read rather than what they meant. Resolving the verdict
 // and its reason in one place is what stops a further rejection shape from
 // refusing under one wording and explaining itself with another.

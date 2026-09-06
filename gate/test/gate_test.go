@@ -1783,7 +1783,7 @@ func TestStalenessIsJudgedOnEveryDiscoveredReportNotJustTheFirst(t *testing.T) {
 	// this one and score the method against a report predating the edit, which
 	// is the leftover-TestResults case the remedy sentence is written for.
 	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml",
-		coberturaStamped(f.editStamp(orderService, 0), f.root,
+		coberturaStamped(freshStamp(), f.root,
 			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
 	f.write("tests/Beta.Tests/TestResults/run/coverage.cobertura.xml",
 		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
@@ -1803,7 +1803,7 @@ func TestStalenessIsJudgedOnEveryNamedReportNotJustTheFirst(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	f.write("artifacts/unit.xml", coberturaStamped(f.editStamp(orderService, 0), f.root,
+	f.write("artifacts/unit.xml", coberturaStamped(freshStamp(), f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
 	f.write("artifacts/integration.xml", coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
@@ -1830,7 +1830,7 @@ func TestNamedReportOutsideTheRepoIsRead(t *testing.T) {
 	// inside the repo, so the lines it records are scored like any other
 	// report's.
 	typed := filepath.Join(t.TempDir(), "coverage.xml")
-	writeAbsolute(t, typed, coberturaStamped(f.editStamp(orderService, 0), f.root,
+	writeAbsolute(t, typed, coberturaStamped(freshStamp(), f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 4, 2)}))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
@@ -2045,6 +2045,67 @@ func TestNamedReportThatIsNotOnDiskIsRefusedAsUnparseable(t *testing.T) {
 	f.runWithArgs("--coverage", "artifacts/typo.xml").assertMatches(
 		t, "named_report_absent", 1, f.baseLabel("main"),
 		"could not parse coverage report artifacts/typo.xml; open: no such file or directory\n")
+}
+
+func TestAbsentNamedReportUnderASymlinkedRootIsStillNamedRepoRelative(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// The absolute path names nothing, so there is no report to resolve
+	// symlinks through, and it reaches the repo through one: /tmp and /var are
+	// symlinks on macOS, so this is the ordinary shape of an absolute path a
+	// developer types there. Relativizing it unresolved against the resolved
+	// root escapes for the indirection alone, and ADR 0004 has the document
+	// naming paths repo-relative whenever they have that form.
+	link := symlinkedDir(t, f.root, filepath.Join(t.TempDir(), "link"))
+	f.runWithArgs("--coverage", filepath.Join(link, "artifacts", "typo.xml")).assertMatches(
+		t, "named_report_absent", 1, f.baseLabel("main"),
+		"could not parse coverage report artifacts/typo.xml; open: no such file or directory\n")
+}
+
+func TestAChangedFileMissingFromTheWorkingTreeStopsTheRunWithNoDocument(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.git("checkout", "--quiet", "-b", "feature")
+	f.touchLine(orderService, 62)
+	f.commitAll("edit Cancel on the branch")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// A sparse checkout: the file is tracked and its edit is in the diff, so
+	// the changed method is known, but nothing of it is on disk for the
+	// staleness rule to read an mtime off.
+	f.git("update-index", "--skip-worktree", orderService)
+	absent := filepath.Join(f.root, filepath.FromSlash(orderService))
+	if err := os.Remove(absent); err != nil {
+		t.Fatal(err)
+	}
+	_, statErr := os.Stat(filepath.Join(resolvedPath(t, f.root), filepath.FromSlash(orderService)))
+	if statErr == nil {
+		t.Fatalf("%s is still readable, which the case needs it not to be", orderService)
+	}
+
+	// This is the shape the run has today, not the shape it should have: ADR
+	// 0005 sanctions a documentless exit 1 only for a failure upstream of the
+	// document, and this one lands after the changed methods are counted. Issue
+	// 31 gives the failure a typed code, and moves it inside the document; this
+	// case goes red the day it does, which is what it is here for.
+	result := f.runWithArgs()
+	if result.exitCode != 1 || result.stdout != "" {
+		t.Errorf("gate exited %d with stdout %q, want exit 1 and nothing on stdout", result.exitCode, result.stdout)
+	}
+	if want := "stat " + orderService + ": " + statErr.Error() + "\n"; result.stderr != want {
+		t.Errorf("stderr = %q, want %q", result.stderr, want)
+	}
 }
 
 func TestUnknownArgumentIsAUsageError(t *testing.T) {
