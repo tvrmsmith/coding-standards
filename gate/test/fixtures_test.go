@@ -442,6 +442,48 @@ func (f *fixture) denyReadKeepingEntry(rel string) {
 	f.t.Cleanup(func() { os.Chmod(full, 0o755) })
 }
 
+// setExecutable turns the executable bit on for the file at rel, which is the
+// one index-to-working-tree difference that is not content. A filesystem that
+// does not carry the bit leaves the tree identical to the index and there is no
+// difference for the case to be about, so it skips there, asked of git rather
+// than guessed at from the operating system's name.
+func (f *fixture) setExecutable(rel string) {
+	f.t.Helper()
+	full := filepath.Join(f.root, filepath.FromSlash(rel))
+	info, err := os.Stat(full)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.Chmod(full, info.Mode()|0o111); err != nil {
+		f.t.Fatal(err)
+	}
+	if f.git("diff", "--name-only", "--", rel) == "" {
+		f.t.Skip("git does not record the executable bit here, so there is no mode-only difference to make")
+	}
+}
+
+// symlinkTo puts a symbolic link at the repo-relative rel pointing at the
+// absolute target, and skips the case on a filesystem that will not make one.
+func (f *fixture) symlinkTo(target, rel string) {
+	f.t.Helper()
+	full := filepath.Join(f.root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.Symlink(target, full); err != nil {
+		f.t.Skipf("the filesystem does not allow symlinks: %v", err)
+	}
+}
+
+// removeFile deletes rel from the working tree and leaves the index holding
+// it, which is the unstaged deletion half of a divergence between the two.
+func (f *fixture) removeFile(rel string) {
+	f.t.Helper()
+	if err := os.Remove(filepath.Join(f.root, filepath.FromSlash(rel))); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
 // denyReadFile makes the file at rel unreadable, so reading the report fails
 // on the file itself rather than on its contents. Root ignores the mode, so a
 // case relying on this skips there.

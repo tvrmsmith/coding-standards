@@ -147,10 +147,16 @@ func (r Repo) ResolveBase() (Base, error) {
 // measures the branch point rather than the tip.
 //
 // Every invocation tells exit 1, which is git answering the question with no,
-// from every other exit code, which is git failing to answer it. An unreadable
-// object store or an ambiguous ref reported as a name that does not exist sends
-// the developer hunting a typo, so it comes back typed as an unreadable diff
-// carrying git's own words instead.
+// from every other exit code, which is git failing to answer it. A rev spec git
+// refuses to evaluate, `--since main@{9}` against a shorter reflog, or an object
+// store missing a commit the merge base has to walk, reported as a name that
+// does not exist would send the developer hunting a typo, so it comes back
+// typed as an unreadable diff instead.
+//
+// The merge base carries git's own words. The two `rev-parse --verify` checks
+// carry the failed command rather than a sentence, because `--quiet` is what
+// makes an absent ref exit 1 at all and it silences git on every other exit
+// code with it.
 //
 // HEAD is verified before the merge base is asked for, the same check
 // ResolveStaged makes, because merge-base against an unborn HEAD exits 128 with
@@ -303,6 +309,13 @@ func cachedFlag(base Base) []string {
 // a pair git scored as a rename would come back under one name and leave the
 // other file unnamed in the refusal.
 //
+// `core.fileMode=false` goes on this invocation alone, because the executable
+// bit is not content. Staging a file and then running chmod +x on it leaves the
+// text the extractor reads exactly as the index line numbers describe, so there
+// is nothing to misattribute, and without the pin git names the path, the run
+// refuses with staged_file_dirty and no edit clears it. The pin cannot hide a
+// content divergence, since git still compares the blobs.
+//
 // Every failure is typed, so a missing filter binary lands in the document's
 // error block rather than exiting 1 with an empty stdout, which is the shape
 // TouchedLines already holds itself to on the same path.
@@ -318,7 +331,9 @@ func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
 	for _, path := range paths {
 		pathspecs = append(pathspecs, ":(literal)"+string(path))
 	}
-	out, err := r.gitBlanking(drivers, slices.Concat(diffFlags, []string{"--name-only", "-z", "--no-renames", "--"}, pathspecs)...)
+	args := slices.Concat([]string{"-c", "core.fileMode=false"}, diffFlags,
+		[]string{"--name-only", "-z", "--no-renames", "--"}, pathspecs)
+	out, err := r.gitBlanking(drivers, args...)
 	if err != nil {
 		return nil, unreadableDiff(err)
 	}
@@ -782,6 +797,9 @@ type gitError struct {
 }
 
 func (e *gitError) Error() string {
+	if e.stderr == "" {
+		return fmt.Sprintf("git %s: %v", strings.Join(e.args, " "), e.err)
+	}
 	return fmt.Sprintf("git %s: %v: %s", strings.Join(e.args, " "), e.err, e.stderr)
 }
 

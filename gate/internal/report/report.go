@@ -43,8 +43,9 @@ const (
 	CodeStagedFileDirty = "staged_file_dirty"
 	// CodeFileUnresolved is a --files path the gate could not place on a
 	// source file (issue 14). The path does not exist, it resolves above the
-	// repo root, it resolves inside the root but names a directory rather than
-	// a regular file, the tree holds the file under a spelling other than the
+	// repo root, it resolves inside the root but names a directory, it names
+	// some other thing that is not a regular file, the tree holds the file
+	// under a spelling other than the
 	// one typed, which a case-insensitive filesystem resolves to a path no
 	// coverage report is keyed by, or the filesystem refused to answer about
 	// the path at all, which carries the operating system's own words. Every

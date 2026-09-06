@@ -1,6 +1,8 @@
 package srcpath
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -56,10 +58,10 @@ func TestSpelledAsOnDiskReportsADirectoryItCannotRead(t *testing.T) {
 	// A filesystem that will not answer is neither a match nor a mismatch, and
 	// reported as a mismatch it would tell the developer their spelling is
 	// wrong when the tree never said so.
-	_, err := root.spelledAsOnDisk(filepath.Join("src", "Ordering", "OrderService.cs"))
+	spelled, err := root.spelledAsOnDisk(filepath.Join("src", "Ordering", "OrderService.cs"))
 
-	if err == nil {
-		t.Error("spelledAsOnDisk on a directory it cannot read returned no error, want the filesystem's own cause")
+	if !errors.Is(err, fs.ErrPermission) || spelled {
+		t.Errorf("spelledAsOnDisk on a directory it cannot read returned %v, %v, want false and a permission error", spelled, err)
 	}
 }
 

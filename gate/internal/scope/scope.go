@@ -80,6 +80,10 @@ func flagName(m Mode) string {
 // first, then the flag already set, so the developer reads which one they
 // typed twice.
 //
+// Mode is the whole of that record, because no flag spells the merge-base
+// default, so a mode other than it is a flag already taken. A second parallel
+// bool would be one more thing a fourth flag could forget to set.
+//
 // --coverage is repeatable and takes either spelling, "--coverage <path>" or
 // "--coverage=<path>". Both reach one value site, so neither can drift into
 // accepting the empty value an unset shell variable expands to. A value
@@ -90,19 +94,18 @@ func flagName(m Mode) string {
 func Parse(args []string) (Scope, error) {
 	var sc Scope
 	sc.Mode = ModeMergeBase
-	set := false
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
 		case arg == "--staged":
-			if set {
+			if sc.Mode != ModeMergeBase {
 				return Scope{}, conflict(ModeStaged, sc.Mode)
 			}
-			sc.Mode, set = ModeStaged, true
+			sc.Mode = ModeStaged
 
 		case arg == "--since":
-			if set {
+			if sc.Mode != ModeMergeBase {
 				return Scope{}, conflict(ModeSince, sc.Mode)
 			}
 			i++
@@ -115,10 +118,10 @@ func Parse(args []string) (Scope, error) {
 			if i >= len(args) || args[i] == "" || strings.HasPrefix(args[i], "-") {
 				return Scope{}, &UsageError{Problem: "--since needs a ref"}
 			}
-			sc.Mode, sc.Ref, set = ModeSince, args[i], true
+			sc.Mode, sc.Ref = ModeSince, args[i]
 
 		case arg == "--files":
-			if set {
+			if sc.Mode != ModeMergeBase {
 				return Scope{}, conflict(ModeFiles, sc.Mode)
 			}
 			var files []string
@@ -137,7 +140,7 @@ func Parse(args []string) (Scope, error) {
 			if len(files) == 0 {
 				return Scope{}, &UsageError{Problem: "--files needs at least one path"}
 			}
-			sc.Mode, sc.Files, set = ModeFiles, files, true
+			sc.Mode, sc.Files = ModeFiles, files
 
 		case arg == "--coverage", strings.HasPrefix(arg, "--coverage="):
 			value, joined := strings.CutPrefix(arg, "--coverage=")

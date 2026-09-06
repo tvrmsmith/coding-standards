@@ -394,9 +394,10 @@ func TestStagedMeasuresNothingForAPureMoveStagedOnItsOwn(t *testing.T) {
 	// ADR 0003's rule that a rename with no content change touches nothing
 	// holds over the index too, so the pre-commit hook this scope exists for
 	// does not demand coverage for every method in a file the developer only
-	// moved. This does not pin cachedFlag inside pureMoves: that comparison
-	// reads the added side off the working tree either way, so under --staged
-	// on a clean tree the cached and uncached listings agree on every path.
+	// moved. The tree is clean, so the cached and uncached listings agree here
+	// and this case says nothing about cachedFlag inside pureMoves.
+	// TestStagedLooksForPureMovesInTheIndexRatherThanTheWorkingTree is the one
+	// that pins it.
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(moved), []span{vanish}),
@@ -771,4 +772,117 @@ func singleFileCoverageAndStub(t *testing.T, f *fixture) {
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
+}
+
+func TestStagedScoresAFileWhoseOnlyDifferenceOnDiskIsTheExecutableBit(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+
+	f.touchLine(orderService, 62)
+	f.git("add", orderService)
+	// The bit is not content. The text on disk is byte for byte what the index
+	// holds, so the extractor reads the lines the staged numbers describe and
+	// there is nothing to misattribute, but a plain diff still names the path
+	// and the run would refuse a tree no edit can clean.
+	f.setExecutable(orderService)
+
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.runArgs("--staged").assertMatches(t, "staged_single_method", 0, f.headLabel(),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestFilesNamingASymlinkMeasuresTheFileItPointsAt(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.symlinkTo(filepath.Join(f.root, filepath.FromSlash(orderService)), "src/Ordering/Link.cs")
+	singleFileCoverageAndStub(t, f)
+
+	// The extractor and the coverage report are both keyed by the target's
+	// path. Measured under the link's own path instead, the file would match
+	// no report path and every method in it would come back unknown.
+	f.runArgs("--files", "src/Ordering/Link.cs").assertMatches(t, "files_single_file", 0, "",
+		"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
+}
+
+func TestFilesNamingASymlinkOutOfTheRepoFailsNamingThePathAsTyped(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	outside := filepath.Join(t.TempDir(), "outside.cs")
+	writeAbsolute(t, outside, csharpFile(10))
+	f.symlinkTo(outside, "src/Ordering/Outside.cs")
+
+	// The link is inside the root and the file it names is not. Stopping at
+	// the link, the gate would measure a file no commit of this repo holds and
+	// report it under a path inside the repo.
+	f.runArgs("--files", "src/Ordering/Outside.cs").
+		assertMatches(t, "files_symlink_outside_repo", 1, "",
+			"src/Ordering/Outside.cs is outside the repo root\n")
+}
+
+func TestFilesListsANamedSkipAheadOfOneCoverageDiscoveryFound(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write("docs/notes.md", "first\n")
+	f.commitAll("initial")
+	singleFileCoverageAndStub(t, f)
+	f.denyRead("TestResults/locked")
+
+	// Both producers of skipped_paths at once, which is the order ADR 0005
+	// fixes: the paths the developer named, then whatever coverage discovery
+	// could not read. "TestResults/locked" sorts ahead of "docs/notes.md", so
+	// a merge that sorted the two or appended them the other way round goes
+	// red here.
+	f.runArgs("--files", "docs/notes.md", orderService).
+		assertMatches(t, "files_skip_before_discovery_skip", 0, "",
+			"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
+}
+
+func TestSinceNamingARevisionGitWillNotEvaluateReportsAnUnreadableDiff(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+
+	// A reflog entry the log does not have. git refuses the revision rather
+	// than answering that it names no commit, and reported as a ref that does
+	// not exist it would send the developer looking for a branch they never
+	// typed.
+	f.runArgs("--since", "HEAD@{99}").assertMatches(t, "since_ref_unreadable", 1, "",
+		"could not read the diff: git rev-parse --verify --quiet HEAD@{99}^{commit}: exit status 128\n")
+}
+
+func TestStagedLooksForPureMovesInTheIndexRatherThanTheWorkingTree(t *testing.T) {
+	const origin = "src/Ordering/Origin.cs"
+	const moved = "src/Ordering/Moved.cs"
+	vanish := span{File: moved, Name: "Moved.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(origin, csharpFile(20))
+	f.commitAll("initial")
+	// The index holds one added file and no deletion. The working tree holds
+	// that add beside a deletion nobody staged, which is the pure move the
+	// index does not have. Read off the working tree the two would pair up,
+	// Moved.cs would be dropped as a file the developer only renamed, and a
+	// staged addition would go unscored under exit 0 pass.
+	f.copyFile(origin, moved)
+	f.git("add", moved)
+	f.removeFile(origin)
+
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: moved, lines: spanCoverage(5, 5, 4)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(moved), []span{vanish}),
+	}
+
+	f.runArgs("--staged").assertMatches(t, "staged_add_over_unstaged_deletion", 0, f.headLabel(),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 4.13\n")
 }
