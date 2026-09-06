@@ -886,3 +886,46 @@ func TestStagedLooksForPureMovesInTheIndexRatherThanTheWorkingTree(t *testing.T)
 	f.runArgs("--staged").assertMatches(t, "staged_add_over_unstaged_deletion", 0, f.headLabel(),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 4.13\n")
 }
+
+func TestStagedWithNoSourceStagedAsksTheDivergenceCheckAboutNothing(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write("docs/notes.md", "first\n")
+	f.commitAll("initial")
+
+	f.git("add", "docs/notes.md")
+	f.write("docs/notes.md", "second\n")
+	f.git("add", "docs/notes.md")
+	// Edited and never staged, so the run does not measure it and cannot
+	// misattribute it. No extractor claims anything either, so the divergence
+	// check is handed an empty path list, and a check that asked git anyway
+	// would get the whole working tree back and refuse over this file.
+	f.touchLine(orderService, 62)
+	f.stub = stubConfig{Extensions: []string{".cs"}}
+
+	f.runArgs("--staged").assertMatches(t, "staged_no_source_staged", 0, f.headLabel(),
+		"no changed methods, nothing to measure\n")
+}
+
+func TestFilesOrdersTheSpansItFoundRatherThanKeepingTheExtractorsOrder(t *testing.T) {
+	const calc = "src/Ordering/Calc.cs"
+	// Two methods declared on one line, so the document's own sort by
+	// descending score ties on every key it compares and the rows come out in
+	// the order the join handed them over. That order is the join's to fix,
+	// since a real extractor emits spans in whatever order it walked the file.
+	f1 := span{File: calc, Name: "Calc.F", Signature: "(int)", StartLine: 14, EndLine: 14, Complexity: 1}
+	g := span{File: calc, Name: "Calc.G", Signature: "(string)", StartLine: 14, EndLine: 14, Complexity: 1}
+
+	f := newFixture(t, "main")
+	f.write(calc, csharpFile(20))
+	f.commitAll("initial")
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: calc, lines: spanCoverage(14, 1, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(calc), []span{g, f1}),
+	}
+
+	f.runArgs("--files", calc).assertMatches(t, "files_two_overloads_sorted", 0, "",
+		"0 of 2 changed methods over CRAP threshold 30, worst score 1.00\n")
+}
