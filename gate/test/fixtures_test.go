@@ -185,9 +185,9 @@ func spanCoverage(start, count, covered int) []coverageLine {
 
 // cobertura renders a coverage report in coverlet's shape, with the source
 // root in <sources> and each class's filename relative to it, which is the
-// pairing ADR 0004 resolves paths from. It stamps the report ahead of every
-// source the case can write, so a case that is not about staleness is never
-// refused for it whatever order it builds its fixture in.
+// pairing ADR 0004 resolves paths from. It stamps the report at the moment the
+// case builds it, which is the moment coverlet would have written it, leaving
+// coberturaStamped as the way a case asks for a stale one.
 func cobertura(sourceRoot string, classes ...coverageClass) string {
 	return renderCobertura(freshStamp(), []string{sourceRoot}, classes...)
 }
@@ -200,15 +200,14 @@ func coberturaStamped(stamp, sourceRoot string, classes ...coverageClass) string
 	return renderCobertura(stamp, []string{sourceRoot}, classes...)
 }
 
-// freshStamp is an hour ahead of now, as a Cobertura timestamp attribute
-// spells it. An hour rather than the current second, because the current
-// second is only newer than the sources a case has already written: a report
-// built before the case's last touchLine would be refused as stale for a
-// reason that has nothing to do with what the case tests. Stamping ahead of
-// every source the case can write leaves coberturaStamped as the only way to
-// produce a stale report, so statement order stops deciding the verdict.
+// freshStamp is the current second, as a Cobertura timestamp attribute spells
+// it. The real clock rather than any slack ahead of it, so no case comes to
+// depend on the gate accepting a report claiming to have been produced in the
+// future, which is the tolerance issue 30 exists to take away. Every case
+// writes its report after the sources it describes, and equal seconds is not
+// stale, so the current second is already fresh everywhere.
 func freshStamp() string {
-	return stampAt(time.Now().Add(time.Hour))
+	return stampAt(time.Now())
 }
 
 // stampAt renders an instant as a Cobertura timestamp attribute spells it.

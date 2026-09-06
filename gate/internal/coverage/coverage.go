@@ -122,7 +122,7 @@ func Discover(root srcpath.Root) (sources []Source, skipped []string, err error)
 		}
 		rel, err := filepath.Rel(root.Dir(), path)
 		if err != nil {
-			skipped = append(skipped, filepath.ToSlash(path))
+			skipped = append(skipped, relative(root, path))
 			return nil
 		}
 		if !underResultsDir(rel) {
