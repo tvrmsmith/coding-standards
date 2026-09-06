@@ -2069,7 +2069,7 @@ func TestAbsentNamedReportUnderASymlinkedRootIsStillNamedRepoRelative(t *testing
 		"could not parse coverage report artifacts/typo.xml; open: no such file or directory\n")
 }
 
-func TestAChangedFileMissingFromTheWorkingTreeStopsTheRunWithNoDocument(t *testing.T) {
+func TestAChangedFileMissingFromTheWorkingTreeCurrentlyStopsTheRunOutsideTheDocument(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2222,6 +2222,38 @@ func TestReportBuiltInAnotherCheckoutFailsNamingTheMismatch(t *testing.T) {
 	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
 		outsideRepoStderr(example, root),
 		map[string]string{"EXAMPLE": example, "ROOT": root})
+}
+
+func TestNamedReportBuiltInAnotherCheckoutIsQuotedAsTyped(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+
+	// The same wrong-checkout report as the case above, reaching the gate on
+	// --coverage from outside the repo instead of through discovery. The
+	// resolution diagnostics take the report's display name as the developer
+	// spelled it, so this is where that spelling has to survive: relativizing
+	// an out-of-repo path would quote a ../ chain climbing out of the root,
+	// which names no file the developer typed or can look at.
+	otherCheckout := resolvedPath(t, t.TempDir())
+	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
+	writeAbsolute(t, classPath, csharpFile(80))
+	typed := filepath.Join(t.TempDir(), "coverage.xml")
+	writeAbsolute(t, typed, cobertura(otherCheckout,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	example := filepath.ToSlash(classPath)
+	root := resolvedPath(t, f.root)
+	f.runWithArgs("--coverage", typed).assertMatchesWith(t, "named_report_outside_repo_wrong_checkout", 1,
+		f.baseLabel("main"),
+		fmt.Sprintf("coverage report %s placed no class inside the repo root; example path %s, repo root %s\n",
+			typed, example, root),
+		map[string]string{"REPORT": typed, "EXAMPLE": example, "ROOT": root})
 }
 
 func TestClassWithNoFilenameDoesNotSuppressTheOutsideRepoDiagnostic(t *testing.T) {

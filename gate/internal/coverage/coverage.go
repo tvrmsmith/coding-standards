@@ -71,10 +71,13 @@ const (
 // a discovered report the gate refused is most often one the developer has
 // already replaced and does not know is still there. Clearing that directory
 // does nothing for a report they named themselves, which nothing but a fresh
-// run over that same path replaces. A Source carrying no Origin has no remedy
-// either way, and offering it the discovered one would send a developer who
-// named a report to clear a directory that holds nothing of theirs, so the
-// unset value stops the run rather than guessing.
+// run over that same path replaces. A Source carrying no Origin closes the
+// message with nothing at all: the reader still learns which report was refused
+// and why, which is the part the gate knows, and a remedy it cannot determine
+// is worse guessed than omitted. Refusing loudly instead is not available here
+// either, since an unrecovered panic exits 2 and ADR 0005 spends that code on
+// "threshold exceeded", so the one unreachable arm would tell CI the code
+// failed the gate.
 func (s Source) staleRemedy() string {
 	switch s.Origin {
 	case NamedOnCommandLine:
@@ -82,7 +85,7 @@ func (s Source) staleRemedy() string {
 	case Discovered:
 		return "; clear stale TestResults directories and re-run the tests"
 	default:
-		panic("coverage: source " + s.Name + " reached the staleness rule with no Origin")
+		return ""
 	}
 }
 
@@ -197,13 +200,18 @@ func namedAs(root srcpath.Root, abs, typed string) string {
 // resolveExisting resolves the symlinks of the deepest ancestor of abs that is
 // on disk and rejoins the components below it as they were typed. A path that
 // exists whole resolves whole, and one naming nothing still comes back rooted
-// where it really sits rather than behind whatever link led there.
+// where it really sits rather than behind whatever link led there. Only a
+// component that is not there is climbed past: a symlink loop or an ancestor
+// the process may not search is a real fault, and climbing over it would rename
+// a report that does sit inside the repo into one the document names as though
+// it sat outside.
 func resolveExisting(abs string) string {
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err == nil {
 		return resolved
 	}
 	parent := filepath.Dir(abs)
-	if parent == abs {
+	if !errors.Is(err, fs.ErrNotExist) || parent == abs {
 		return abs
 	}
 	return filepath.Join(resolveExisting(parent), filepath.Base(abs))
