@@ -577,6 +577,33 @@ export function createBase({ extraRestrictedSyntax = [] } = {}) {
     },
     {
       /**
+       * Canonical-URI catalogues, where `no-clear-text-protocols` reports a false positive.
+       *
+       * A canonical URI is an opaque identifier compared byte for byte, not an address anything
+       * fetches, so the scheme is part of the name: `http://loinc.org` over https names a
+       * different code system and stops matching the codings sent and received.
+       *
+       * The rule already grants this exact exemption through its own NAMESPACE_URI_AUTHORITIES
+       * list, which carries `hl7.org` and `unitsofmeasure.org` among the XML/RDF namespace hosts.
+       * That list simply predates the other registered FHIR authorities (`loinc.org`,
+       * `snomed.info`, `www.nlm.nih.gov`, `cms.gov`), so a single catalogue declaring all six
+       * reports on some entries and not others. The list is upstream and takes no options, and
+       * an inline disable cannot be used either: the harness renames plugin namespaces at lint
+       * time, so a comment naming `tvrmsmith-sonarjs/...` is an unknown rule to the repository's
+       * own ESLint and fails its CI. Hence a scoped off rather than a suppression in the source.
+       *
+       * Scoped to model/constant modules that declare such catalogues as data. Widen the glob
+       * rather than suppressing at a call site if another one appears.
+       */
+      name: 'tvrmsmith/base/canonical-uri-catalogues',
+      files: ['**/models/*.model.ts', '**/terminology/**/*.ts'],
+      plugins: { sonarjs },
+      rules: {
+        'sonarjs/no-clear-text-protocols': 'off',
+      },
+    },
+    {
+      /**
        * SonarJS test-integrity rules, alongside the `jest` ones above. No overlap with them:
        * `sonarjs/no-exclusive-tests` duplicates `jest/no-focused-tests` and is off, and
        * `sonarjs/async-test-assertions` duplicates `jest/valid-expect`.
