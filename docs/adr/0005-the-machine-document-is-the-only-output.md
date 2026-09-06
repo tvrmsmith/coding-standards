@@ -119,12 +119,21 @@ for a path the developer typed. The full list is `no_diff_base`, `diff_unparseab
 
 Two rules under that code are decisions rather than mechanics. **A report the staleness rule cannot judge is
 refused as `coverage_unparseable`, not trusted.** A missing `timestamp` attribute, an empty one, and one that is
-not base-10 epoch seconds all refuse, and the message distinguishes them, since a report carrying
-`timestamp="2026-01-01T00:00:00Z"` needs its units fixed and telling its author the attribute is absent sends
-them looking for something already there. **Staleness compares whole truncated seconds, and equal seconds is not
+not base-10 epoch seconds all refuse, and the message separates an absent or empty attribute from one that is
+present and unreadable, since a report carrying `timestamp="2026-01-01T00:00:00Z"` needs its units fixed and
+telling its author the attribute is absent sends them looking for something already there. Absent and empty
+share one wording because `encoding/xml` decodes both to the same empty string and the gate cannot tell them
+apart. **Staleness compares whole truncated seconds, and equal seconds is not
 stale**, which deviates from the "with zero tolerance" wording on issue 15. The Cobertura attribute carries
 second resolution and cannot express anything finer, so a literal sub-second comparison would refuse reports on
 an ordering the format never recorded.
+
+The same change adds argument parsing, so the binary can now reject its own command line, and that run is the one
+exception to "stdout is one TOON document". A malformed invocation writes nothing to stdout, prints the usage
+error to stderr, and exits with the existing tool-error 1. The document reports on a repository the gate
+examined, and a run whose arguments never parsed never chose one to examine, so there is nothing for a document
+to describe. No typed code covers it and the enumeration stays at fifteen, because the codes name what the gate
+found in a repository and this run has no repository.
 
 Three parts of that shape are decisions in their own right.
 

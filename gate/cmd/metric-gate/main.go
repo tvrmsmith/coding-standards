@@ -10,6 +10,8 @@
 // The one exception to "stdout is one TOON document" is a failure upstream of
 // the document itself, such as a malformed command line or not being in a git
 // repo at all. Those write the cause to stderr, leave stdout empty, and exit 1.
+// ADR 0005's 2026-09-05 amendment records that exception, so it is part of the
+// output contract rather than a gap in it.
 package main
 
 import (
