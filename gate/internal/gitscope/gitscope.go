@@ -100,8 +100,9 @@ func (b Base) Label() string { return b.Ref + "@" + b.Commit[:7] }
 // is itself what failed or there is no commit at all, where naming it again
 // would tell the caller nothing new.
 type NoBaseError struct {
-	// Ref is the ref --since named, empty when the default candidates are
-	// what failed.
+	// Ref is the ref --since named. It is empty when the default candidates
+	// are what failed, and empty whenever NoCommits is true, which ResolveRef
+	// reports from its HEAD check and ResolveStaged from its only one.
 	Ref string
 	// NoCommits marks a repo with no HEAD at all, which is what --staged
 	// hits before the first commit.
@@ -293,6 +294,15 @@ func cachedFlag(base Base) []string {
 // not come from. The durable answer is having the extractor read the index blob
 // under --staged, which issue 14 leaves to a follow-up.
 //
+// `--no-renames` travels with the diffFlags for the reason TouchedLines and
+// pureMoves carry it, that one package cannot hold two definitions of what git
+// reports. An index-to-working-tree comparison has no added side for git to pair
+// a deletion with, since a path in the tree and not in the index is untracked
+// and no diff lists it, so the flag changes no answer today. It is what keeps
+// this call answering the same question if it is ever handed two commits, where
+// a pair git scored as a rename would come back under one name and leave the
+// other file unnamed in the refusal.
+//
 // Every failure is typed, so a missing filter binary lands in the document's
 // error block rather than exiting 1 with an empty stdout, which is the shape
 // TouchedLines already holds itself to on the same path.
@@ -308,7 +318,7 @@ func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
 	for _, path := range paths {
 		pathspecs = append(pathspecs, ":(literal)"+string(path))
 	}
-	out, err := r.gitBlanking(drivers, slices.Concat(diffFlags, []string{"--name-only", "-z", "--"}, pathspecs)...)
+	out, err := r.gitBlanking(drivers, slices.Concat(diffFlags, []string{"--name-only", "-z", "--no-renames", "--"}, pathspecs)...)
 	if err != nil {
 		return nil, unreadableDiff(err)
 	}

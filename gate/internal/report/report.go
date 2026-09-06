@@ -35,9 +35,11 @@ const (
 	// CodeStagedFileDirty is a --staged run refusing a file staged in one
 	// state and on disk in another, which the join could otherwise attribute
 	// to the wrong content (issue 14). The check asks only about files an
-	// extractor claimed, except when extraction itself fails, where it asks
-	// about every path in the diff so a file staged and then deleted from disk
-	// is named for what it is rather than blamed on the extractor.
+	// extractor claimed, except when extraction itself fails and claims
+	// nothing, where it asks about the paths the extractor was handed so a file
+	// staged and then deleted from disk is named for what it is rather than
+	// blamed on the extractor. A dirty path no extractor would have read never
+	// reaches this code under either rule.
 	CodeStagedFileDirty = "staged_file_dirty"
 	// CodeFileUnresolved is a --files path the gate could not place on a
 	// source file (issue 14). The path does not exist, it resolves above the

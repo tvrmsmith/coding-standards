@@ -413,7 +413,10 @@ func TestARunWithScopeFlagsDoesNotChangeTheScopeOfTheNextRun(t *testing.T) {
 	f.touchLine(orderService, 62)
 	singleFileCoverageAndStub(t, f)
 
-	f.runArgs("--files", orderService)
+	// The flagged run is asserted too, so a sequence that degenerates into two
+	// failing runs cannot pass as the one this case is named for.
+	f.runArgs("--files", orderService).assertMatches(t, "files_single_file", 0, "",
+		"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
 
 	// Bare argv after a flagged run, so the document names the merge-base
 	// scope and only the touched method. A flag left behind on the fixture
@@ -572,6 +575,118 @@ func TestFilesNamingTwoHardLinksToOneInodeMeasuresBoth(t *testing.T) {
 
 	f.runArgs("--files", orderService, otherService).assertMatches(t, "files_named_directly", 0, "",
 		"0 of 3 changed methods over CRAP threshold 30, worst score 9.08\n")
+}
+
+func TestSinceReportsADiffGitRefusesToPrintInTheDocument(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.git("branch", "release")
+	// The ref and the merge base both resolve, so the document exists and
+	// ADR 0005 requires it on stdout under this scope too. The diff then reads
+	// the old side's blob, which is gone, so git exits 128 before printing a
+	// patch. Returned untyped instead, the run would exit 1 with an empty
+	// stdout an agent cannot tell from a crash.
+	blob := f.git("rev-parse", "HEAD:"+orderService)
+	f.touchLine(orderService, 62)
+	f.removeLooseObject(blob)
+
+	f.runArgs("--since", "release").assertMatchesWith(t, "since_diff_unreadable", 1, f.baseLabel("release"),
+		"could not read the diff: fatal: unable to read "+blob+"\n",
+		map[string]string{"BLOB": blob})
+}
+
+func TestStagedReportsADiffGitRefusesToPrintInTheDocument(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	blob := f.git("rev-parse", "HEAD:"+orderService)
+	f.touchLine(orderService, 62)
+	f.git("add", orderService)
+	f.removeLooseObject(blob)
+
+	f.runArgs("--staged").assertMatchesWith(t, "staged_diff_unreadable", 1, f.headLabel(),
+		"could not read the diff: fatal: unable to read "+blob+"\n",
+		map[string]string{"BLOB": blob})
+}
+
+func TestStagedKeepsTheExtractorsCauseWhenTheDirtyFileIsOneNoExtractorReads(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write("docs/notes.md", "first\n")
+	f.commitAll("initial")
+
+	// The extractor fails on a source file that is not dirty, and a Markdown
+	// file is separately staged and then edited. Asked about every path in the
+	// diff, the fallback would report staged_file_dirty naming docs/notes.md
+	// and replace the extractor's own cause with one about a file nothing was
+	// ever going to read.
+	f.touchLine(orderService, 62)
+	f.git("add", orderService)
+	f.write("docs/notes.md", "second\n")
+	f.git("add", "docs/notes.md")
+	f.write("docs/notes.md", "third\n")
+	f.stub = stubConfig{Extensions: []string{".cs"}, ExitCode: 3}
+
+	f.runArgs("--staged").assertMatches(t, "staged_extractor_failed", 1, f.headLabel(),
+		"csharp extractor exited 3\n")
+}
+
+func TestStagedNamesEveryDirtyFileInOneSortedMessage(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write(otherService, csharpFile(30))
+	f.commitAll("initial")
+
+	// Two files staged in one state and on disk in another. Both are the
+	// gate's to score, so a message naming one of them sends the developer
+	// back for a second run to find the other.
+	f.touchLine(orderService, 62)
+	f.touchLine(otherService, 12)
+	f.git("add", orderService, otherService)
+	f.touchLine(orderService, 45)
+	f.touchLine(otherService, 20)
+
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService, otherService), []span{placeAsync, cancel, otherRun}),
+	}
+
+	f.runArgs("--staged").assertMatches(t, "staged_two_files_dirty", 1, f.headLabel(),
+		"refusing to score src/Ordering/OrderService.cs, src/Ordering/Other.cs: staged in one state and on disk in another\n")
+}
+
+func TestFilesListsEveryUnhandledPathSortedRatherThanAsTyped(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write("docs/notes.md", "first\n")
+	f.write("docs/architecture.md", "first\n")
+	f.commitAll("initial")
+	singleFileCoverageAndStub(t, f)
+
+	// The two unhandled paths are named in reverse sorted order, so a document
+	// that echoed the command line back would list notes.md first.
+	f.runArgs("--files", "docs/notes.md", "docs/architecture.md", orderService).
+		assertMatches(t, "files_two_skipped_paths", 0, "",
+			"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
+}
+
+func TestFilesNamingAFileInADirectoryItCannotReadFailsInTheDocument(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.denyReadKeepingEntry("src/Ordering")
+
+	// The directory can be entered, so the path resolves and names a regular
+	// file, and only the spelling check has to read the directory itself. A
+	// filesystem that will not answer is not the tree disagreeing with the
+	// spelling, so the refusal carries what the operating system said instead
+	// of accusing the developer of a typo.
+	f.runArgs("--files", orderService).
+		assertMatches(t, "files_unreadable_directory", 1, "",
+			"src/Ordering/OrderService.cs could not be read, permission denied\n")
 }
 
 // readFile is the content of a file a case asked the stub to write, which is
