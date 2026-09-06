@@ -211,8 +211,8 @@ func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (co
 // the changed methods, and returns the greatest modification time, truncated
 // to whole seconds, along with the file that holds it. A tie on equal times
 // resolves to the lexicographically smallest path, and keeping the first file
-// seen is enough for that because join.Changed sorts its spans by file before
-// returning them, so this loop always walks paths in ascending order.
+// seen is enough for that because join.Changed returns its spans in ascending
+// file order, which its doc comment promises and its own test holds it to.
 func newestEdit(root srcpath.Root, changed []extract.Span) (coverage.Newest, error) {
 	var newest coverage.Newest
 	seen := map[srcpath.Path]bool{}

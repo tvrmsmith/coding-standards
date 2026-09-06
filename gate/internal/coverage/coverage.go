@@ -161,6 +161,17 @@ func Named(root srcpath.Root, cwd string, paths []string) []Source {
 // through one relativizes against the resolved root rather than escaping it,
 // and falls back to the join for a path naming nothing on disk, which still
 // has to be named in the failure that says so.
+//
+// It answers "is this inside the repo" itself, where srcpath's package doc
+// claims that question for srcpath alone. srcpath.Root.Place cannot answer it
+// here, since Place requires a regular file and the whole point of namedAs is
+// to name a path that may be nothing. So separator handling and
+// case-insensitive filesystems now have two answers, and correcting one leaves
+// the other as it was, so a named report would be relativized where the other
+// call site keeps the typed spelling, or the reverse. relative()
+// below is a third spelling, with no escape guard at all. Issue 36 unifies all
+// three behind an existence-agnostic sibling of Place, which is a change to
+// srcpath and not to a branch about staleness.
 func namedAs(root srcpath.Root, abs, typed string) string {
 	resolved := abs
 	if evaluated, err := filepath.EvalSymlinks(abs); err == nil {
