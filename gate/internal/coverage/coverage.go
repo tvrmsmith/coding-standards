@@ -48,8 +48,9 @@ type Source struct {
 	// Abs is where the report sits on disk.
 	Abs string
 	// Name is how a failure names the report: repo-relative whenever the
-	// report resolves inside the repo, and the developer's own spelling for
-	// a named one that does not, which has no repo-relative form.
+	// report resolves inside the repo, and the resolved absolute path for a
+	// named one that does not, which has no repo-relative form. namedAs
+	// records why the absolute form beats the developer's own spelling there.
 	Name string
 	// Origin is how the report reached the gate, which decides the remedy a
 	// refusal offers.
