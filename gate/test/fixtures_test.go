@@ -105,6 +105,15 @@ func (f *fixture) moveLines(src string, from, to int, dst string, after int) {
 	f.write(dst, strings.Join(slices.Insert(dstLines, after, cut...), "\n"))
 }
 
+// insertBlankLine puts an empty line into the file at rel after the one-based
+// line after, which moves every line below it. It is the whitespace-only edit
+// `git diff -w` still reports, since -w ignores whitespace inside a line and
+// not a line the other side does not have at all.
+func (f *fixture) insertBlankLine(rel string, after int) {
+	f.t.Helper()
+	f.write(rel, strings.Join(slices.Insert(strings.Split(f.read(rel), "\n"), after, ""), "\n"))
+}
+
 // read returns the current content of the file at rel.
 func (f *fixture) read(rel string) string {
 	f.t.Helper()

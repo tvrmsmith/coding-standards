@@ -648,10 +648,10 @@ func TestStagedNamesEveryDirtyFileInOneMessage(t *testing.T) {
 
 	// Two files staged in one state and on disk in another. Both are the
 	// gate's to score, so a message naming one of them sends the developer
-	// back for a second run to find the other. What this pins is the ", " join
-	// rather than an ordering rule: dirtyMessage sorts nothing, and the order
-	// the two names come out in is the one claimedFiles already fixed with
-	// slices.Sorted upstream.
+	// back for a second run to find the other. What this pins is the ", " join.
+	// The order the two names come out in is dirtyMessage's own sort, which
+	// this case cannot tell from the sort claimedFiles already did upstream, so
+	// the unit case beside dirtyMessage is what holds that rule.
 	f.touchLine(orderService, 62)
 	f.touchLine(otherService, 12)
 	f.git("add", orderService, otherService)
@@ -949,6 +949,32 @@ func TestStagedScoresAFileTheWorkingCopyOnlyReindented(t *testing.T) {
 
 	f.runArgs("--staged").assertMatches(t, "staged_single_method", 0, f.headLabel(),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestStagedRefusesAFileTheWorkingCopyAddedABlankLineTo(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+
+	f.touchLine(orderService, 62)
+	f.git("add", orderService)
+	// The other side of the reindent case. A blank line added after staging
+	// moves every line below it, so the spans the extractor reports off disk sit
+	// one line away from the staged content the coverage numbers describe, and
+	// the run would score the wrong lines and report a number rather than an
+	// error. -w forgives whitespace inside a line and not a line the index does
+	// not have, which is what keeps this refusal standing.
+	f.insertBlankLine(orderService, 10)
+
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.runArgs("--staged").assertMatches(t, "staged_file_dirty", 1, f.headLabel(),
+		"refusing to score src/Ordering/OrderService.cs: staged in one state and on disk in another\n")
 }
 
 func TestFilesNamingOnlyUnhandledPathsPassesWithoutReachingCoverage(t *testing.T) {
