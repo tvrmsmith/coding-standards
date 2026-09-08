@@ -1,0 +1,12 @@
+status: pass
+tool: metric-gate/0.1.0
+spec: toon/4.1.1
+scope: merge-base
+base: {{BASE}}
+changed_methods: 1
+touched_lines_outside_spans: 0
+skipped_paths: []
+metrics[1|]{name|threshold|measured|failed}:
+  crap|30|1|0
+crap[1|]{file|start|end|name|complexity|coverage|score|state|action|target_coverage|reason}:
+  src/Ordering/OrderService.cs|60|64|OrderService.Cancel|3|0.333|5.67|measured|none|null|null

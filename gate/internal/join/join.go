@@ -19,6 +19,12 @@ import (
 // an unknown method; it is a diagnostic that never gates. Only files an
 // extractor claimed are counted, since a line in a file no extractor handles
 // is outside the measurement rather than outside a span.
+//
+// The spans come back in the total order sortSpans defines, ascending by file
+// first. That is a promise to callers rather than only the row determinism
+// the printed table needs. cmd/metric-gate reads the first span of an
+// equal-mtime tie as the smallest path when it names a file in the
+// coverage_stale message, and nothing else tells it what it is holding.
 func Changed(extracted extract.Result, touched map[srcpath.Path][]int) (changed []extract.Span, outsideSpans int) {
 	byFile := groupByFile(extracted.Spans)
 	inside := map[extract.Span]bool{}

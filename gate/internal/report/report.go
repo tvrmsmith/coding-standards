@@ -34,6 +34,7 @@ const (
 	CodeParseFailed                   = "parse_failed"
 	CodeCoverageMissing               = "coverage_missing"
 	CodeCoverageUnparseable           = "coverage_unparseable"
+	CodeCoverageStale                 = "coverage_stale"
 	CodeUnknownChangedMethod          = "unknown_changed_method"
 	// The three coverage-path causes ADR 0004's 2026-09-03 amendment defers to
 	// issue 16: a source root MSBuild erased, a class resolving to two paths
