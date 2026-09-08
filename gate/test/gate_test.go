@@ -1901,6 +1901,34 @@ func TestRelativeNamedReportOutsideTheRepoIsNamedAbsolutely(t *testing.T) {
 		map[string]string{"REPORT": named})
 }
 
+func TestNamedReportOutsideTheRepoIsNamedPastItsSymlink(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// Two spellings of one out-of-repo report, the link and its target. The
+	// document names the same file the same way whichever one reaches
+	// --coverage, so the refusal quotes the target rather than the link the
+	// developer walked in through.
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	link := symlinkedDir(t, real, filepath.Join(dir, "link"))
+	writeAbsolute(t, filepath.Join(real, "coverage.xml"),
+		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 4, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	named := filepath.ToSlash(filepath.Join(resolvedPath(t, real), "coverage.xml"))
+	f.runWithArgs("--coverage", filepath.Join(link, "coverage.xml")).assertMatchesWith(
+		t, "named_report_outside_repo_stale", 1, f.baseLabel("main"),
+		"coverage report "+named+" was written before src/Ordering/OrderService.cs was last edited; "+
+			"regenerate "+named+" or point --coverage at a current report\n",
+		map[string]string{"REPORT": named})
+}
+
 func TestReportStampedAtTheSecondTheSourceWasEditedIsFresh(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
