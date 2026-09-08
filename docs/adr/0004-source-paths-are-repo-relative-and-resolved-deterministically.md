@@ -100,6 +100,11 @@ scoped to coverage-path resolution, so this records the new application rather t
 `srcpath.Root` checks the spelling component by component against the directory entries and names the path as the
 developer typed it. Canonicalizing to git's spelling instead of refusing stays available as a later relaxation.
 
+**Amended 2026-09-07.** The first of those two refusals is wider than the paragraph above says. It covers every
+non-regular inode, not directories alone, so a `--files` path naming a fifo, socket or device node is exit 1 under
+the same code. The gate says "is a directory, not a file" for a directory and "is not a regular file" for the rest,
+which matches how the regular-file narrowing above already reads for coverage candidates.
+
 ## Considered options
 
 **Longest-suffix matching.** The standard fallback, and the one every prior implementation reaches for.
