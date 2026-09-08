@@ -183,6 +183,31 @@ examined, and a run whose arguments never parsed never chose one to examine, so 
 to describe. No typed code covers it and the enumeration stays at fifteen, because the codes name what the gate
 found in a repository and this run has no repository.
 
+**Amended 2026-09-07.** Two corrections to the 2026-09-05 amendment on `file_unresolved` above, neither of them a
+change of decision. First, `file_unresolved` covers every non-regular inode, not the directory case alone. The gate
+says "is a directory, not a file" for a directory and "is not a regular file" for a fifo, socket or device node, so
+a `--files` path naming any of them is refused under the same code. Second, the extraction-failure exception for
+`staged_file_dirty` asks only about the paths the extractor was handed and failed on, not about every path in the
+diff, so an unrelated dirty staged file no longer replaces the extractor's own cause. A file staged and then
+deleted from disk is still named for what it is, because that path is one the extractor was handed.
+
+**Amended 2026-09-09.** The two counts stated on 2026-09-05 crossed. The issue 14 amendment says **sixteen**,
+counting `staged_file_dirty` and `file_unresolved`; the issue 15 amendment says **fifteen**, counting
+`coverage_stale`; each was written against a list the other had not landed yet, and each claims to supersede every
+count above it. The union is **seventeen**, which supersedes both, and the Consequences section below still says
+"fourteen exit-1 causes" because it predates all three. The full list is `no_diff_base`, `diff_unparseable`,
+`extractor_failed`, `extractor_path_mismatch`, `extractor_capabilities_mismatch`, `extractor_duplicate_span`,
+`extractor_invalid_span`, `parse_failed`, `coverage_missing`, `coverage_unparseable`, `coverage_stale`,
+`coverage_source_root_erased`, `file_ambiguous`, `coverage_outside_repo`, `staged_file_dirty`, `file_unresolved`,
+and `unknown_changed_method`. No code is added or removed here; only the count and the one list that governs are.
+
+**Amended 2026-09-09.** One parser owns argv. The 2026-09-05 amendment on issue 15 records that the binary can
+reject its own command line, and issue 14 adds the scope flags to the same command line, so `--staged`, `--since`,
+`--files` and `--coverage` are parsed in one place and one usage block lists all four. Two parsers, each rejecting
+the other's flags as unknown, cannot print a usage block that tells the truth. The exit-1-with-empty-stdout shape
+that amendment gives a malformed invocation is unchanged, and no typed code covers it, for the reason it gives:
+the codes name what the gate found in a repository and a run whose arguments never parsed never chose one.
+
 Three parts of that shape are decisions in their own right.
 
 **The fix instruction is two typed cells, never prose.** `action` is one of `raise_coverage`, `split_method`, or
