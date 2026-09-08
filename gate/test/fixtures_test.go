@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -753,6 +754,23 @@ func (f *fixture) removeLooseObject(sha string) {
 	if err := os.Remove(filepath.Join(f.root, ".git", "objects", sha[:2], sha[2:])); err != nil {
 		f.t.Fatal(err)
 	}
+}
+
+// gitStderr is what git prints when the command at args fails in the fixture.
+// A case whose document quotes git's own complaint asks git for the sentence
+// rather than freezing one release's wording into a golden, the way readCause
+// asks the operating system for its own.
+func (f *fixture) gitStderr(args ...string) string {
+	f.t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = f.root
+	cmd.Env = append(os.Environ(), gitEnv...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err == nil {
+		f.t.Fatalf("git %s succeeded, which the case needs to fail", strings.Join(args, " "))
+	}
+	return strings.TrimSpace(stderr.String())
 }
 
 // externalDiffScript writes an executable that prints nothing and exits 0, the

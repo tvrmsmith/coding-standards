@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/tvrmsmith/coding-standards/gate/internal/scope"
 	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
 	"github.com/tvrmsmith/coding-standards/gate/internal/toon"
 )
@@ -36,10 +37,11 @@ const (
 	// state and on disk in another, which the join could otherwise attribute
 	// to the wrong content (issue 14). The check asks only about files an
 	// extractor claimed, except when extraction itself fails and claims
-	// nothing, where it asks about the paths the extractor was handed so a file
-	// staged and then deleted from disk is named for what it is rather than
-	// blamed on the extractor. A dirty path no extractor would have read never
-	// reaches this code under either rule.
+	// nothing, where it asks about the paths the gate could hand to an
+	// extractor by the static extension table, so a file staged and then
+	// deleted from disk is named for what it is rather than blamed on the
+	// extractor. A dirty path no extractor would have read never reaches this
+	// code under either rule.
 	CodeStagedFileDirty = "staged_file_dirty"
 	// CodeFileUnresolved is a --files path the gate could not place on a
 	// source file (issue 14). The path does not exist, it resolves above the
@@ -177,9 +179,11 @@ func (m Metric) WorstScore() float64 {
 
 // Document is one whole gate run's output.
 type Document struct {
-	// Scope is the token naming which diff the run measured (ADR 0005), one
-	// per mode: merge-base, staged, since, files.
-	Scope string
+	// Scope is the token naming which scope the run used (ADR 0005), one per
+	// mode: merge-base, staged, since, files. It carries scope's own type so
+	// the four-token set stays the compiler's to enforce, which is what the
+	// removed `const Scope = "merge-base"` used to do.
+	Scope scope.Mode
 	// Base is the resolved "<ref>@<sha>" label, or nil when resolution is
 	// what failed.
 	Base                     *string
@@ -246,7 +250,7 @@ func (d Document) Stdout() ([]byte, error) {
 		{Key: "status", Value: d.Status()},
 		{Key: "tool", Value: "metric-gate/" + Version},
 		{Key: "spec", Value: "toon/" + toon.SpecVersion},
-		{Key: "scope", Value: d.Scope},
+		{Key: "scope", Value: string(d.Scope)},
 		{Key: "base", Value: nullable(d.Base)},
 		{Key: "changed_methods", Value: d.ChangedMethods},
 		{Key: "touched_lines_outside_spans", Value: d.TouchedLinesOutsideSpans},
