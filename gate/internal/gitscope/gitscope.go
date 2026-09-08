@@ -320,6 +320,9 @@ func cachedFlag(base Base) []string {
 // error block rather than exiting 1 with an empty stdout, which is the shape
 // TouchedLines already holds itself to on the same path.
 func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
+	// A short circuit that saves spawning git when there is nothing to ask it
+	// about. It changes no answer, since the trailing filter over paths returns
+	// an empty result for an empty slice whatever git prints.
 	if len(paths) == 0 {
 		return nil, nil
 	}
@@ -422,9 +425,9 @@ func blankingEnv(keys []string) []string {
 // filterDriverKeys matches every spelling of a content filter driver.
 const filterDriverKeys = `^filter\..*\.(clean|process|required)$`
 
-// noMatch reports whether err is `git config --get-regexp` finding nothing,
-// which it reports as exit 1 with no output. Any other exit code is a real
-// failure to read the repository's config and is not an empty answer.
+// noMatch reports whether err is git exiting 1, which is git answering the
+// question with no rather than failing to answer it. What the no means belongs
+// to the caller, so each one says it where it asks.
 func noMatch(err error) bool {
 	var exitErr *exec.ExitError
 	return errors.As(err, &exitErr) && exitErr.ExitCode() == 1

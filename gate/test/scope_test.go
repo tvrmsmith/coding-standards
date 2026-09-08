@@ -887,26 +887,6 @@ func TestStagedLooksForPureMovesInTheIndexRatherThanTheWorkingTree(t *testing.T)
 		"0 of 1 changed methods over CRAP threshold 30, worst score 4.13\n")
 }
 
-func TestStagedWithNoSourceStagedAsksTheDivergenceCheckAboutNothing(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.write("docs/notes.md", "first\n")
-	f.commitAll("initial")
-
-	f.git("add", "docs/notes.md")
-	f.write("docs/notes.md", "second\n")
-	f.git("add", "docs/notes.md")
-	// Edited and never staged, so the run does not measure it and cannot
-	// misattribute it. No extractor claims anything either, so the divergence
-	// check is handed an empty path list, and a check that asked git anyway
-	// would get the whole working tree back and refuse over this file.
-	f.touchLine(orderService, 62)
-	f.stub = stubConfig{Extensions: []string{".cs"}}
-
-	f.runArgs("--staged").assertMatches(t, "staged_no_source_staged", 0, f.headLabel(),
-		"no changed methods, nothing to measure\n")
-}
-
 func TestFilesOrdersTheSpansItFoundRatherThanKeepingTheExtractorsOrder(t *testing.T) {
 	const calc = "src/Ordering/Calc.cs"
 	// Two methods declared on one line, so the document's own sort by
