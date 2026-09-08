@@ -178,7 +178,8 @@ func selectDiff(repo gitscope.Repo, sc scope.Scope) (selection, error) {
 		return failing(selected, err)
 	}
 
-	extracted, err := extract.Extract(repo.Root(), changedFiles(touched))
+	files := changedFiles(touched)
+	extracted, err := extract.Extract(repo.Root(), files)
 	if err != nil {
 		// The widest divergence, a file staged and then deleted from disk,
 		// reaches the extractor as a path with nothing to read and comes back
@@ -192,7 +193,7 @@ func selectDiff(repo gitscope.Repo, sc scope.Scope) (selection, error) {
 		// A divergence check that cannot run leaves the extractor's cause
 		// standing, since it is the one the gate did establish.
 		if base.Staged {
-			if dirty, dirtyErr := stagedDirty(repo, extract.Routable(changedFiles(touched))); dirtyErr == nil && dirty != nil {
+			if dirty, dirtyErr := stagedDirty(repo, extract.Routable(files)); dirtyErr == nil && dirty != nil {
 				selected.Failure = dirty
 				return selected, nil
 			}
@@ -301,12 +302,15 @@ func stagedDirty(repo gitscope.Repo, paths []srcpath.Path) (*report.Failure, err
 }
 
 // dirtyMessage names the files staged in one state and on disk in another,
-// comma-space separated in sorted order.
+// comma-space separated in sorted order. The sort happens here rather than
+// being left to the callers, both of which hand over a sorted list today, so
+// the order the goldens pin is held where the sentence is built.
 func dirtyMessage(dirty []srcpath.Path) string {
 	names := make([]string, 0, len(dirty))
 	for _, path := range dirty {
 		names = append(names, path.String())
 	}
+	slices.Sort(names)
 	return "refusing to score " + strings.Join(names, ", ") + ": staged in one state and on disk in another"
 }
 

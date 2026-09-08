@@ -55,11 +55,16 @@ func main() {
 }
 
 // drainStdin reads the path list the gate wrote, recording it when the case
-// asked for it. The read happens either way, so a case that logs nothing runs
-// against the same stub behaviour as one that does.
+// asked for it. The read happens either way and a failed read fails the stub
+// either way, so a case that logs nothing runs against the same stub behaviour
+// as one that does. Dropped on the discarding side, a broken pipe from the
+// gate's write would come back as a successful extraction in the suite built to
+// catch it.
 func drainStdin(cfg config) error {
 	if cfg.StdinLog == "" {
-		io.Copy(io.Discard, os.Stdin)
+		if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+			return fmt.Errorf("stub extractor: reading stdin: %w", err)
+		}
 		return nil
 	}
 	body, err := io.ReadAll(os.Stdin)

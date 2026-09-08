@@ -8,4 +8,4 @@ touched_lines_outside_spans: 0
 skipped_paths: []
 error:
   code: no_diff_base
-  message: "no diff base: this repo has no commits"
+  message: "no diff base: this branch has no commit"

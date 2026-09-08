@@ -97,15 +97,19 @@ func (b Base) Label() string { return b.Ref + "@" + b.Commit[:7] }
 // ADR 0003's candidates resolved, --since named a ref that does not exist, or
 // --staged found no HEAD to diff the index against. The message points at
 // --since, issue 14's flag, per ADR 0003's Consequences, except when --since
-// is itself what failed or there is no commit at all, where naming it again
+// is itself what failed or the branch has no commit, where naming it again
 // would tell the caller nothing new.
 type NoBaseError struct {
 	// Ref is the ref --since named. It is empty when the default candidates
 	// are what failed, and empty whenever NoCommits is true, which ResolveRef
 	// reports from its HEAD check and ResolveStaged from its only one.
 	Ref string
-	// NoCommits marks a repo with no HEAD at all, which is what --staged
-	// hits before the first commit.
+	// NoCommits marks a branch git resolves no commit for, which is what
+	// --staged hits before the first commit and what a branch made with
+	// `git checkout --orphan` hits in a repo holding a full history. The
+	// message names the branch rather than the repo for that second case,
+	// where telling the developer the repo has no commits contradicts the log
+	// they can print.
 	NoCommits bool
 	// Unrelated marks the ref resolving while the merge base does not, which
 	// is a history sharing no commit with HEAD. It is carried because "does
@@ -117,7 +121,7 @@ type NoBaseError struct {
 func (e NoBaseError) Error() string {
 	switch {
 	case e.NoCommits:
-		return "no diff base: this repo has no commits"
+		return "no diff base: this branch has no commit"
 	case e.Unrelated:
 		return "no diff base: HEAD and " + e.Ref + " share no common ancestor"
 	case e.Ref != "":
@@ -187,8 +191,8 @@ func (r Repo) ResolveRef(ref string) (Base, error) {
 }
 
 // ResolveStaged is HEAD, the commit `git diff --cached` compares the index
-// against. It draws the same line ResolveRef does: exit 1 is a repo with no
-// commits, and anything else is git failing to read the one it has.
+// against. It draws the same line ResolveRef does: exit 1 is a branch with no
+// commit on it, and anything else is git failing to read the one it has.
 func (r Repo) ResolveStaged() (Base, error) {
 	commit, err := r.git("rev-parse", "--verify", "--quiet", "HEAD")
 	if err != nil {
@@ -358,6 +362,29 @@ func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
 	if err != nil {
 		return nil, unreadableDiff(err)
 	}
+	named, err := parseNumstatPaths(out)
+	if err != nil {
+		return nil, err
+	}
+	var divergent []srcpath.Path
+	for _, path := range paths {
+		if named[path] {
+			divergent = append(divergent, path)
+		}
+	}
+	return divergent, nil
+}
+
+// parseNumstatPaths reads the set of paths out of `--numstat -z` output. It is
+// its own function because a real git cannot be made to print a record this
+// parser refuses, so the refusal is only reachable, and only testable, from
+// here.
+//
+// A binary difference prints its two counts as "-", which is a shape this reads
+// like any other, since the counts are not what the caller asked about. A
+// record without both tabs is a shape the parser does not know, so it is
+// refused rather than read as a path that happens to hold a tab.
+func parseNumstatPaths(out string) (map[srcpath.Path]bool, error) {
 	named := map[srcpath.Path]bool{}
 	for _, record := range strings.Split(strings.TrimSuffix(out, "\x00"), "\x00") {
 		if record == "" {
@@ -372,13 +399,7 @@ func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
 		}
 		named[srcpath.FromSlash(fields[2])] = true
 	}
-	var divergent []srcpath.Path
-	for _, path := range paths {
-		if named[path] {
-			divergent = append(divergent, path)
-		}
-	}
-	return divergent, nil
+	return named, nil
 }
 
 // filterDrivers is the config key of every content filter the repository
