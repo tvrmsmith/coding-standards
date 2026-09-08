@@ -273,22 +273,40 @@ func cachedFlag(base Base) []string {
 // only about the files it is about to score, since a dirty file the run
 // never claimed cannot be misattributed to the wrong content.
 //
-// The comparison runs under the same blanked filter drivers and the same
-// diffFlags as TouchedLines, because it has to answer the question the gate
-// actually asks: does the text the extractor read off disk match the index
-// content the line numbers came from. git's own answer runs the repository's
-// clean driver over the working tree, so a driver that normalises the edit
-// away reports the two sides as equal and the guard passes on exactly the
-// divergence it exists to refuse.
+// The comparison runs under the same blanked filter drivers as TouchedLines,
+// and under the same flags, diffFlags plus the `-w` TouchedLines adds at its
+// own call site, because it has to answer the question the gate actually asks:
+// does the text the extractor read off disk match the index content the line
+// numbers came from. git's own answer runs the repository's clean driver over
+// the working tree, so a driver that normalises the edit away reports the two
+// sides as equal and the guard passes on exactly the divergence it exists to
+// refuse.
+//
+// `-w` is what keeps the guard's definition of changed the gate's own. Staging
+// a file and then letting an editor reindent the working copy shifts no line
+// and changes no complexity, so there is nothing to misattribute, and without
+// the flag git names the path and only re-staging clears the refusal. It cannot
+// hide a divergence that moves a line, since that is --ignore-blank-lines
+// rather than -w, and it cannot hide a content edit.
+//
+// The listing is `--numstat` rather than `--name-only` for `-w` to reach it at
+// all. git applies the whitespace options while it generates a patch, and
+// --name-only never generates one, so it names a reindented file whatever it is
+// asked to ignore. numstat counts the lines the same patch holds, and a
+// whitespace-only difference leaves git printing no record for the path.
 //
 // Every path travels as a `:(literal)` pathspec on one invocation, because git
 // reads a bare pathspec as a wildmatch pattern. `Order[1].cs` would name a
 // character class and match neither the file it spells nor anything else, so the
 // guard would pass on the very file it was asked about, and `[id].tsx` is the
 // ordinary Next.js route filename rather than an exotic one. Pathspecs compose,
-// so `--name-only -z` names the divergent subset directly and a commit touching
+// so `--numstat -z` names the divergent subset directly and a commit touching
 // two hundred files costs one git rather than two hundred. core.quotePath is
-// pinned false, so the NUL-separated names come back as git spells them.
+// pinned false, so the NUL-separated records come back as git spells them, and
+// with renames off each record is the two counts and the path under one NUL,
+// which is why the path is what follows the second tab rather than a record of
+// its own. A record without those two tabs is a shape this parser does not know,
+// so it is refused rather than read as a path that happens to hold a tab.
 //
 // In a repository whose clean driver transforms content, git-lfs or git-crypt
 // rather than the pass-through case above, this refuses more than the developer
@@ -335,16 +353,24 @@ func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
 		pathspecs = append(pathspecs, ":(literal)"+string(path))
 	}
 	args := slices.Concat([]string{"-c", "core.fileMode=false"}, diffFlags,
-		[]string{"--name-only", "-z", "--no-renames", "--"}, pathspecs)
+		[]string{"-w", "--numstat", "-z", "--no-renames", "--"}, pathspecs)
 	out, err := r.gitBlanking(drivers, args...)
 	if err != nil {
 		return nil, unreadableDiff(err)
 	}
 	named := map[srcpath.Path]bool{}
-	for _, name := range strings.Split(strings.TrimSuffix(out, "\x00"), "\x00") {
-		if name != "" {
-			named[srcpath.FromSlash(name)] = true
+	for _, record := range strings.Split(strings.TrimSuffix(out, "\x00"), "\x00") {
+		if record == "" {
+			continue
 		}
+		fields := strings.SplitN(record, "\t", 3)
+		if len(fields) != 3 {
+			return nil, &report.Failure{
+				Code:    report.CodeDiffUnparseable,
+				Message: "could not read the diff: git printed the numstat record " + strconv.Quote(record),
+			}
+		}
+		named[srcpath.FromSlash(fields[2])] = true
 	}
 	var divergent []srcpath.Path
 	for _, path := range paths {

@@ -72,7 +72,7 @@ func main() {
 // the package doc above enumerates.
 func measure(sc scope.Scope) (report.Document, error) {
 	var doc report.Document
-	doc.Scope = string(sc.Mode)
+	doc.Scope = sc.Mode
 	repo, err := gitscope.Open()
 	if err != nil {
 		return doc, err
@@ -90,10 +90,7 @@ func measure(sc scope.Scope) (report.Document, error) {
 	doc.Base = selected.Base
 	doc.TouchedLinesOutsideSpans = selected.TouchedLinesOutsideSpans
 	doc.SkippedPaths = selected.SkippedPaths
-	if failure, ok := asFailure(err); ok {
-		doc.Failure = failure
-		return doc, nil
-	} else if err != nil {
+	if err != nil {
 		return doc, err
 	}
 	if selected.Failure != nil {
@@ -112,6 +109,9 @@ func measure(sc scope.Scope) (report.Document, error) {
 	}
 
 	lines, skipped, err := loadCoverage(repo.Root(), sc.Coverage, changed)
+	// The append is what enforces ADR 0005's order, the paths --files named
+	// first and coverage discovery's skips after them. Merging the two lists
+	// and sorting the result would read as tidier and would break it.
 	doc.SkippedPaths = append(doc.SkippedPaths, skipped...)
 	if failure, ok := asFailure(err); ok {
 		doc.Failure = failure
@@ -168,14 +168,14 @@ func selectDiff(repo gitscope.Repo, sc scope.Scope) (selection, error) {
 			selected.Failure = &report.Failure{Code: report.CodeNoDiffBase, Message: noBase.Error()}
 			return selected, nil
 		}
-		return selected, err
+		return failing(selected, err)
 	}
 	label := base.Label()
 	selected.Base = &label
 
 	touched, err := repo.TouchedLines(base)
 	if err != nil {
-		return selected, err
+		return failing(selected, err)
 	}
 
 	extracted, err := extract.Extract(repo.Root(), changedFiles(touched))
@@ -184,26 +184,26 @@ func selectDiff(repo gitscope.Repo, sc scope.Scope) (selection, error) {
 		// reaches the extractor as a path with nothing to read and comes back
 		// as the extractor's own failure. Nothing was claimed, so the ordinary
 		// check below cannot see it, and a caller branching on the code would
-		// be told its source does not parse. The paths the extractor was handed
-		// answer that here. They are asked about rather than the whole diff,
-		// because a dirty staged Markdown file the extractor never saw would
-		// otherwise replace the extractor's own cause with one about a file
-		// nothing was going to read. A divergence check that cannot run leaves
-		// the extractor's cause standing, since it is the one the gate did
-		// establish.
-		if sc.Mode == scope.ModeStaged {
+		// be told its source does not parse. The paths the gate could hand to an
+		// extractor by the static extension table answer that here. They are
+		// asked about rather than the whole diff, because a dirty staged
+		// Markdown file the extractor never saw would otherwise replace the
+		// extractor's own cause with one about a file nothing was going to read.
+		// A divergence check that cannot run leaves the extractor's cause
+		// standing, since it is the one the gate did establish.
+		if base.Staged {
 			if dirty, dirtyErr := stagedDirty(repo, extract.Routable(changedFiles(touched))); dirtyErr == nil && dirty != nil {
 				selected.Failure = dirty
 				return selected, nil
 			}
 		}
-		return selected, err
+		return failing(selected, err)
 	}
 
-	if sc.Mode == scope.ModeStaged {
+	if base.Staged {
 		dirty, err := stagedDirty(repo, claimedFiles(extracted))
 		if err != nil {
-			return selected, err
+			return failing(selected, err)
 		}
 		if dirty != nil {
 			selected.Failure = dirty
@@ -236,12 +236,12 @@ func selectFiles(repo gitscope.Repo, names []string) (selection, error) {
 			selected.Failure = &report.Failure{Code: report.CodeFileUnresolved, Message: unresolved.Error()}
 			return selected, nil
 		}
-		return selected, err
+		return failing(selected, err)
 	}
 
 	extracted, err := extract.Extract(repo.Root(), resolved)
 	if err != nil {
-		return selected, err
+		return failing(selected, err)
 	}
 	// ADR 0005's amendment predicted --files as a second producer of
 	// skipped_paths: a named file no extractor claims is neither measured
@@ -417,6 +417,17 @@ func unknownMessage(unknown int) string {
 // extractor sees the same stdin on every run.
 func changedFiles(touched map[srcpath.Path][]int) []srcpath.Path {
 	return slices.Sorted(maps.Keys(touched))
+}
+
+// failing folds a typed exit-1 cause into the selection that was carrying it
+// as an error, so every cause a selection discovered reaches its caller on the
+// one Failure field. A cause the document cannot describe stays an error.
+func failing(selected selection, err error) (selection, error) {
+	if failure, ok := asFailure(err); ok {
+		selected.Failure = failure
+		return selected, nil
+	}
+	return selected, err
 }
 
 // asFailure unwraps a typed exit-1 cause out of an error.

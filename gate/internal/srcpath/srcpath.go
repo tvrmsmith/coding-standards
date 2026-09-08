@@ -106,16 +106,34 @@ func (r Root) Place(candidate string) Placed {
 	if err != nil || !info.Mode().IsRegular() {
 		return placed
 	}
-	rel, err := filepath.Rel(r.resolved, resolved)
-	if err != nil {
-		return placed
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	rel, inside, err := r.relativize(resolved)
+	if err != nil || !inside {
 		return placed
 	}
 	placed.inside = true
-	placed.path = Path(filepath.ToSlash(rel))
+	placed.path = rel
 	return placed
+}
+
+// relativize reads an already resolved absolute path as a path under the root,
+// and says whether it landed under it at all. Place and named both ask, and
+// each decides for itself what a candidate that landed above the root means, so
+// the one definition of "outside" lives here rather than being spelled twice
+// and drifting.
+//
+// The error is the root and the candidate having no relative reading at all, a
+// second drive letter on Windows rather than a location above the root. It is a
+// third answer because it is not a placement, and a caller that reports it says
+// so in its own words.
+func (r Root) relativize(resolved string) (Path, bool, error) {
+	rel, err := filepath.Rel(r.resolved, resolved)
+	if err != nil {
+		return "", false, err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false, nil
+	}
+	return Path(filepath.ToSlash(rel)), true, nil
 }
 
 // FromSlash adopts an already repo-relative, slash-separated path, which is
@@ -191,7 +209,9 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // instead, since sending the developer after a typo that is not there is the
 // misdiagnosis NoBaseError.Unrelated was added to avoid. A path the root cannot
 // be relativized against at all, a second drive letter on Windows rather than a
-// location above the root, carries its own cause for the same reason. All of them are still
+// location above the root, says that in the gate's own words rather than
+// carrying filepath.Rel's, which quote two absolute paths the developer never
+// typed. All of them are still
 // UnresolvedError, so every refusal about the path reaches the document under
 // one code. Losing the working directory is not about the path at all, so it
 // travels as a plain error.
@@ -211,11 +231,11 @@ func (r Root) named(name string) (Path, error) {
 		}
 		return "", unreadable(name, err)
 	}
-	rel, err := filepath.Rel(r.resolved, resolved)
+	rel, inside, err := r.relativize(resolved)
 	if err != nil {
-		return "", unreadable(name, err)
+		return "", &UnresolvedError{Name: name, Reason: "has no path relative to the repo root"}
 	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if !inside {
 		return "", &UnresolvedError{Name: name, Reason: "is outside the repo root"}
 	}
 	info, err := os.Stat(resolved)
@@ -231,14 +251,14 @@ func (r Root) named(name string) (Path, error) {
 	if !info.Mode().IsRegular() {
 		return "", &UnresolvedError{Name: name, Reason: "is not a regular file"}
 	}
-	spelled, err := r.spelledAsOnDisk(rel)
+	spelled, err := r.spelledAsOnDisk(filepath.FromSlash(string(rel)))
 	if err != nil {
 		return "", unreadable(name, err)
 	}
 	if !spelled {
 		return "", &UnresolvedError{Name: name, Reason: "is not spelled as the file on disk is"}
 	}
-	return Path(filepath.ToSlash(rel)), nil
+	return rel, nil
 }
 
 // unreadable is the refusal for a filesystem failure that is not the path

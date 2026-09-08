@@ -324,6 +324,11 @@ func TestFilesNamingTheSameFileTwiceHandsItToTheGateOnce(t *testing.T) {
 
 func TestFilesNamingAFileInTheWrongCaseRefusesRatherThanMeasuresIt(t *testing.T) {
 	f := newFixture(t, "main")
+	// macOS only by construction. Every Linux runner is case sensitive, where
+	// the mis-cased spelling names no file at all and the refusal is the
+	// absent-path one instead. srcpath's spelling_test.go carries the
+	// Linux-reachable coverage of the decision branch, so what skips here is
+	// the document and the message rather than the logic.
 	if !caseInsensitiveFilesystem(t, f.root) {
 		t.Skip("the filesystem is case sensitive, so the mis-cased spelling names no file and the case is a duplicate of the unresolvable one")
 	}
@@ -633,7 +638,7 @@ func TestStagedKeepsTheExtractorsCauseWhenTheDirtyFileIsOneNoExtractorReads(t *t
 		"csharp extractor exited 3\n")
 }
 
-func TestStagedNamesEveryDirtyFileInOneSortedMessage(t *testing.T) {
+func TestStagedNamesEveryDirtyFileInOneMessage(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.write(otherService, csharpFile(30))
@@ -641,7 +646,10 @@ func TestStagedNamesEveryDirtyFileInOneSortedMessage(t *testing.T) {
 
 	// Two files staged in one state and on disk in another. Both are the
 	// gate's to score, so a message naming one of them sends the developer
-	// back for a second run to find the other.
+	// back for a second run to find the other. What this pins is the ", " join
+	// rather than an ordering rule: dirtyMessage sorts nothing, and the order
+	// the two names come out in is the one claimedFiles already fixed with
+	// slices.Sorted upstream.
 	f.touchLine(orderService, 62)
 	f.touchLine(otherService, 12)
 	f.git("add", orderService, otherService)
@@ -908,4 +916,66 @@ func TestFilesOrdersTheSpansItFoundRatherThanKeepingTheExtractorsOrder(t *testin
 
 	f.runArgs("--files", calc).assertMatches(t, "files_two_overloads_sorted", 0, "",
 		"0 of 2 changed methods over CRAP threshold 30, worst score 1.00\n")
+}
+
+func TestStagedScoresAFileTheWorkingCopyOnlyReindented(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+
+	f.touchLine(orderService, 62)
+	f.git("add", orderService)
+	// Format on save after staging. Every line keeps its number and its
+	// content, which is exactly what `git diff -w` is defined to ignore and
+	// what the gate's own diff already ignores, so there is nothing to
+	// misattribute. Compared without -w the guard names the path and the run
+	// refuses a tree only re-staging can clean.
+	f.write(orderService, indented(f.read(orderService), "    "))
+
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.runArgs("--staged").assertMatches(t, "staged_single_method", 0, f.headLabel(),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestFilesNamingOnlyUnhandledPathsPassesWithoutReachingCoverage(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write("docs/notes.md", "first\n")
+	f.commitAll("initial")
+	f.denyRead("TestResults/locked")
+	f.stub = stubConfig{Extensions: []string{".cs"}}
+
+	// No extractor claims the one named path, so the changed set is empty and
+	// ADR 0003 exits 0 pass before any input is resolved. The locked directory
+	// is what makes that visible: coverage discovery would list it in
+	// skipped_paths, so a document carrying only the named path proves the
+	// early exit ran ahead of discovery.
+	f.runArgs("--files", "docs/notes.md").
+		assertMatches(t, "files_only_unhandled_path", 0, "",
+			"no changed methods, nothing to measure\n")
+}
+
+func TestSinceReportsAMergeBaseGitCannotWalkAsAnUnreadableDiff(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.git("branch", "other")
+	f.touchLine(orderService, 62)
+	f.commitAll("second")
+	f.removeLooseObject(f.git("rev-parse", "HEAD"))
+
+	// Both `rev-parse --verify` checks pass, since neither reads the commit
+	// they name, and the walk merge-base has to make is the first thing that
+	// touches the missing object. Left to fall through to the exit-1 arm this
+	// would come back as two histories sharing no commit, sending the
+	// developer after a branch relationship that is not the problem.
+	f.runArgs("--since", "other").assertMatchesWith(t, "since_merge_base_unreadable", 1, "",
+		"could not read the diff: "+f.gitStderr("merge-base", "HEAD", "other")+"\n",
+		map[string]string{"CAUSE": f.gitStderr("merge-base", "HEAD", "other")})
 }
