@@ -1845,13 +1845,15 @@ func TestNamedReportOutsideTheRepoIsRead(t *testing.T) {
 		"0 of 1 changed methods over CRAP threshold 30, worst score 4.13\n")
 }
 
-func TestStaleNamedReportOutsideTheRepoIsNamedAsTyped(t *testing.T) {
+func TestStaleNamedReportOutsideTheRepoIsNamedAbsolutely(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 	// The same out-of-repo report, one second stale. It has no repo-relative
-	// form, so the refusal can only name it the way the developer typed it.
+	// form, so the refusal names it by the absolute path the containment test
+	// weighed, which is the one spelling a document carrying no working
+	// directory can be resolved against.
 	typed := filepath.Join(t.TempDir(), "coverage.xml")
 	writeAbsolute(t, typed, coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 4, 2)}))
@@ -1860,11 +1862,43 @@ func TestStaleNamedReportOutsideTheRepoIsNamedAsTyped(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
+	named := resolvedPath(t, typed)
 	f.runWithArgs("--coverage", typed).assertMatchesWith(t, "named_report_outside_repo_stale", 1,
 		f.baseLabel("main"),
-		"coverage report "+typed+" was written before src/Ordering/OrderService.cs was last edited; "+
-			"regenerate "+typed+" or point --coverage at a current report\n",
-		map[string]string{"REPORT": typed})
+		"coverage report "+named+" was written before src/Ordering/OrderService.cs was last edited; "+
+			"regenerate "+named+" or point --coverage at a current report\n",
+		map[string]string{"REPORT": named})
+}
+
+func TestRelativeNamedReportOutsideTheRepoIsNamedAbsolutely(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The developer runs the gate from a subdirectory and points --coverage at
+	// a sibling of the checkout by a path relative to where they stand. The
+	// document carries no working directory, so quoting what they typed would
+	// hand a consumer a name it cannot resolve, and the same file named from
+	// the repo root would print a different string.
+	outside := filepath.Join(t.TempDir(), "coverage.xml")
+	writeAbsolute(t, outside, coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 4, 2)}))
+	workdir := filepath.Join(f.root, "src")
+	typed, err := filepath.Rel(workdir, outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	named := resolvedPath(t, outside)
+	f.runFromWithArgs("src", "--coverage", typed).assertMatchesWith(t, "named_report_outside_repo_stale", 1,
+		f.baseLabel("main"),
+		"coverage report "+named+" was written before src/Ordering/OrderService.cs was last edited; "+
+			"regenerate "+named+" or point --coverage at a current report\n",
+		map[string]string{"REPORT": named})
 }
 
 func TestReportStampedAtTheSecondTheSourceWasEditedIsFresh(t *testing.T) {
@@ -2233,7 +2267,7 @@ func TestReportBuiltInAnotherCheckoutFailsNamingTheMismatch(t *testing.T) {
 		map[string]string{"EXAMPLE": example, "ROOT": root})
 }
 
-func TestNamedReportBuiltInAnotherCheckoutIsQuotedAsTyped(t *testing.T) {
+func TestNamedReportBuiltInAnotherCheckoutIsQuotedAbsolutely(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2241,10 +2275,10 @@ func TestNamedReportBuiltInAnotherCheckoutIsQuotedAsTyped(t *testing.T) {
 
 	// The same wrong-checkout report as the case above, reaching the gate on
 	// --coverage from outside the repo instead of through discovery. The
-	// resolution diagnostics take the report's display name as the developer
-	// spelled it, so this is where that spelling has to survive: relativizing
-	// an out-of-repo path would quote a ../ chain climbing out of the root,
-	// which names no file the developer typed or can look at.
+	// resolution diagnostics take the report's display name, so this is where
+	// the absolute spelling has to survive. Relativizing an out-of-repo path
+	// would quote a ../ chain climbing out of the root, which names no file the
+	// developer can look at.
 	otherCheckout := resolvedPath(t, t.TempDir())
 	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
 	writeAbsolute(t, classPath, csharpFile(80))
@@ -2258,11 +2292,12 @@ func TestNamedReportBuiltInAnotherCheckoutIsQuotedAsTyped(t *testing.T) {
 
 	example := filepath.ToSlash(classPath)
 	root := resolvedPath(t, f.root)
+	named := resolvedPath(t, typed)
 	f.runWithArgs("--coverage", typed).assertMatchesWith(t, "named_report_outside_repo_wrong_checkout", 1,
 		f.baseLabel("main"),
 		fmt.Sprintf("coverage report %s placed no class inside the repo root; example path %s, repo root %s\n",
-			typed, example, root),
-		map[string]string{"REPORT": typed, "EXAMPLE": example, "ROOT": root})
+			named, example, root),
+		map[string]string{"REPORT": named, "EXAMPLE": example, "ROOT": root})
 }
 
 // TestForeignReportBesideAHealthyOneFailsNamingTheForeignOne pins issue 16's

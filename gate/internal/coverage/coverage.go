@@ -159,8 +159,8 @@ func Discover(root srcpath.Root) (sources []Source, skipped []string, err error)
 // Named resolves each developer-typed path against cwd when it is relative,
 // then relativizes it for the Name the document carries, which is ADR 0004's
 // one rule for a human-typed path. A named path may live anywhere, inside the
-// repo or outside it, and one outside has no repo-relative form, so it keeps
-// the spelling the developer typed.
+// repo or outside it, and one outside has no repo-relative form, so it is named
+// by its absolute path.
 func Named(root srcpath.Root, cwd string, paths []string) []Source {
 	sources := make([]Source, 0, len(paths))
 	for _, path := range paths {
@@ -168,7 +168,7 @@ func Named(root srcpath.Root, cwd string, paths []string) []Source {
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(cwd, abs)
 		}
-		sources = append(sources, Source{Abs: abs, Name: namedAs(root, abs, path), Origin: NamedOnCommandLine})
+		sources = append(sources, Source{Abs: abs, Name: namedAs(root, abs), Origin: NamedOnCommandLine})
 	}
 	return sources
 }
@@ -179,9 +179,13 @@ func Named(root srcpath.Root, cwd string, paths []string) []Source {
 // the root. A path naming nothing on disk resolves as far as it exists, since
 // the root itself is very often reached through a symlink (/tmp and /var on
 // macOS) and comparing an unresolved path against the resolved root would
-// escape for the indirection rather than for where the path actually is. Only
-// a path that is genuinely outside the repo keeps the developer's spelling,
-// which is the one form it has.
+// escape for the indirection rather than for where the path actually is. A
+// path that is genuinely outside the repo has no repo-relative form, so it is
+// named by the same resolved absolute path the containment test just weighed.
+// The developer's own spelling was rejected for that case: the document carries
+// no working directory (ADR 0005), so a relative name reaches a consumer that
+// cannot resolve it, and the same report named from two directories would print
+// two strings.
 //
 // It answers "is this inside the repo" itself, where srcpath's package doc
 // claims that question for srcpath alone. srcpath.Root.Place cannot answer it
@@ -193,10 +197,11 @@ func Named(root srcpath.Root, cwd string, paths []string) []Source {
 // below is a third spelling, with no escape guard at all. Issue 36 unifies all
 // three behind an existence-agnostic sibling of Place, which is a change to
 // srcpath and not to a branch about staleness.
-func namedAs(root srcpath.Root, abs, typed string) string {
-	rel, err := filepath.Rel(root.Dir(), resolveExisting(abs))
+func namedAs(root srcpath.Root, abs string) string {
+	resolved := resolveExisting(abs)
+	rel, err := filepath.Rel(root.Dir(), resolved)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return typed
+		return filepath.ToSlash(resolved)
 	}
 	return filepath.ToSlash(rel)
 }
