@@ -128,6 +128,13 @@ stale**, which deviates from the "with zero tolerance" wording on issue 15. The 
 second resolution and cannot express anything finer, so a literal sub-second comparison would refuse reports on
 an ordering the format never recorded.
 
+`--coverage` also narrows the 2026-09-02 amendment's "on every run rather than under one flag". `skipped_paths`
+carries what coverage discovery could not read, and a run given `--coverage` never walks, so the field is empty
+there by construction rather than because the walk found everything readable. That is the honest answer: the gate
+cannot report on directories it had no reason to open, and filling the field from a walk the developer opted out
+of would invent a diagnostic. A consumer reading `skipped_paths: []` therefore learns nothing about the
+filesystem on a `--coverage` run, and the reports it should ask about are the ones named on the command line.
+
 The same change adds argument parsing, so the binary can now reject its own command line, and that run is the one
 exception to "stdout is one TOON document". A malformed invocation writes nothing to stdout, prints the usage
 error to stderr, and exits with the existing tool-error 1. The document reports on a repository the gate
