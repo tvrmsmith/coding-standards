@@ -1,7 +1,12 @@
 // Package srcpath owns the gate's one path currency (ADR 0004): a
 // repo-relative, slash-separated path from `git rev-parse --show-toplevel`.
-// Every conversion into that form lives here, so the invariant is enforced
-// once rather than separately in extract and coverage.
+// Every conversion that produces a Path lives here, so the invariant is
+// enforced once rather than separately in extract and coverage.
+//
+// Two sites in coverage, namedAs and relative, decide containment themselves
+// and produce a display string rather than a Path, because they name a report
+// that may not exist on disk and Place requires a regular file. Issue 36
+// unifies them behind an existence-agnostic sibling of Place.
 package srcpath
 
 import (

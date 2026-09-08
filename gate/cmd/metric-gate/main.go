@@ -7,11 +7,14 @@
 // path, which prints the cause above the counts, and the exit code is 0 pass,
 // 1 tool error, 2 threshold exceeded.
 //
-// The one exception to "stdout is one TOON document" is a failure upstream of
-// the document itself, such as a malformed command line or not being in a git
-// repo at all. Those write the cause to stderr, leave stdout empty, and exit 1.
-// ADR 0005's 2026-09-05 amendment records that exception, so it is part of the
-// output contract rather than a gap in it.
+// The one exception to "stdout is one TOON document" is any error that is not
+// typed as a report.Failure: a malformed command line, not being in a git repo
+// at all, and, past base resolution, failing to stat a changed file or to read
+// the working directory for a --coverage path. Those write the cause to stderr,
+// leave stdout empty, and exit 1. ADR 0005's 2026-09-05 amendment records the
+// exception, so it is part of the output contract rather than a gap in it.
+// Typed codes for the stat and working-directory failures are deferred to
+// issue 31, so until it lands they reach the developer as bare stderr text.
 package main
 
 import (
@@ -91,9 +94,9 @@ func parseArgs(args []string) ([]string, error) {
 }
 
 // measure runs the gate over the repo containing the working directory. A
-// typed exit-1 cause becomes the document's error block; only a problem the
-// document cannot describe, such as not being in a repo at all, comes back as
-// an error.
+// typed exit-1 cause becomes the document's error block; anything not typed as
+// a report.Failure comes back as an error, which the package doc above
+// enumerates.
 func measure(args []string) (report.Document, error) {
 	var doc report.Document
 	coveragePaths, err := parseArgs(args)

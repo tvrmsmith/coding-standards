@@ -1665,13 +1665,14 @@ func TestNamingAReportSkipsDiscoveryEntirely(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// The one place discovery would walk cannot be read, so a run that still
-	// walked it would report the directory under skipped_paths. An empty list
-	// beside an unreadable TestResults subtree is the only reading that says
-	// the walk never happened.
-	f.denyRead("TestResults/locked")
 	f.write("artifacts/coverage.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	// A discoverable report older than the code it describes. It is load-bearing
+	// setup, not leftovers: any run that reaches discovery refuses it as
+	// coverage_stale, so only a run that skips the walk entirely can pass here.
+	f.write("TestResults/run/coverage.cobertura.xml",
+		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
