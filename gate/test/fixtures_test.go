@@ -773,6 +773,28 @@ func (f *fixture) gitStderr(args ...string) string {
 	return strings.TrimSpace(stderr.String())
 }
 
+// corruptPackedRefs packs every ref and appends a line git cannot read, so
+// reading any ref, HEAD included, fails rather than answering no.
+//
+// It is the ref store rather than one branch file because git reports every
+// damaged branch file, an empty one, junk in place of the sha, a name it
+// refuses, a symref loop, as the exit 1 that means no such ref. The store is
+// the only place a case can make the HEAD check fail to answer at all, which
+// is the difference the gate draws between a branch with no commit and a repo
+// it cannot read.
+func (f *fixture) corruptPackedRefs() {
+	f.t.Helper()
+	f.git("pack-refs", "--all")
+	path := filepath.Join(f.root, ".git", "packed-refs")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(body, "not a ref line\n"...), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
 // externalDiffScript writes an executable that prints nothing and exits 0, the
 // shape of an external diff driver that hides every change from the parser.
 func externalDiffScript(t *testing.T) string {

@@ -297,7 +297,7 @@ func TestStagedBeforeTheFirstCommitFailsWithNoBase(t *testing.T) {
 	f.git("add", orderService)
 
 	f.runArgs("--staged").assertMatches(t, "staged_no_commits", 1, "",
-		"no diff base: this repo has no commits\n")
+		"no diff base: this branch has no commit\n")
 }
 
 func TestFilesNamingTheSameFileTwiceHandsItToTheGateOnce(t *testing.T) {
@@ -522,18 +522,20 @@ func TestAScopeFlagAfterADifferentOneNamesBothScopes(t *testing.T) {
 	assertUsageError(t, result, "metric-gate: --files and --staged name two scopes; pass one"+usage)
 }
 
-func TestSinceOnABranchWithNoCommitSaysTheRepoHasNone(t *testing.T) {
+func TestSinceOnABranchWithNoCommitSaysTheBranchHasNone(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	// An orphan branch that was never committed on. main resolves, so the ref
 	// check passes and HEAD is what does not, which git reports from merge-base
 	// as exit 128 rather than the exit 1 that means no. Read as a failure to
-	// answer, the run blames a diff it never asked for.
+	// answer, the run blames a diff it never asked for. The repo here holds a
+	// full history, so a message about the repo having no commits would be
+	// contradicted by the log the developer can print.
 	f.git("checkout", "--quiet", "--orphan", "work")
 
 	f.runArgs("--since", "main").assertMatches(t, "since_no_commits", 1, "",
-		"no diff base: this repo has no commits\n")
+		"no diff base: this branch has no commit\n")
 }
 
 func TestStagedNamesTheDirtyFileWhenTheExtractorFailsOnIt(t *testing.T) {
@@ -742,6 +744,9 @@ func TestStagedRefusesAFileACleanFilterMakesLookUnmodified(t *testing.T) {
 	// working tree differs from the index is no, and the gate would score
 	// index line numbers against text on disk that does not match them.
 	f.write(orderService, replaceLine(f.read(orderService), 45, "// line 45, hidden"))
+	if f.git("diff", "--name-only", "--", orderService) != "" {
+		t.Skip("the clean filter did not hide the edit here, so git reports the ordinary divergence and the case cannot be about the blanked driver")
+	}
 
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
@@ -931,6 +936,9 @@ func TestStagedScoresAFileTheWorkingCopyOnlyReindented(t *testing.T) {
 	// misattribute. Compared without -w the guard names the path and the run
 	// refuses a tree only re-staging can clean.
 	f.write(orderService, indented(f.read(orderService), "    "))
+	if f.git("diff", "--name-only", "--", orderService) == "" {
+		t.Fatal("the reindent left the working copy matching the index, so nothing here is for -w to hide")
+	}
 
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
@@ -978,4 +986,47 @@ func TestSinceReportsAMergeBaseGitCannotWalkAsAnUnreadableDiff(t *testing.T) {
 	f.runArgs("--since", "other").assertMatchesWith(t, "since_merge_base_unreadable", 1, "",
 		"could not read the diff: "+f.gitStderr("merge-base", "HEAD", "other")+"\n",
 		map[string]string{"CAUSE": f.gitStderr("merge-base", "HEAD", "other")})
+}
+
+func TestStagedReportsAHeadGitCannotReadAsAnUnreadableDiff(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.corruptPackedRefs()
+
+	// git answers the HEAD check with exit 128 rather than the exit 1 that
+	// means no commit. Read as no commit, the run would tell a developer whose
+	// repo holds a full history to make their first one, and re-staging would
+	// never clear it because staging is not what is broken.
+	cause := f.gitStderr("rev-parse", "--verify", "--quiet", "HEAD")
+
+	f.runArgs("--staged").assertMatchesWith(t, "staged_head_unreadable", 1, "",
+		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": cause})
+}
+
+func TestFilesKeepsTheExtractorsCauseWhenExtractionDies(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.stub = stubConfig{Extensions: []string{".cs"}, ExitCode: 3}
+
+	// --files has no divergence check to substitute a cause of its own, so what
+	// the extractor said is what the document carries. The base stays null
+	// because this scope resolves none, and skipped_paths stays empty because
+	// the list of what no extractor claimed is built after extraction returns.
+	f.runArgs("--files", orderService).assertMatches(t, "files_extractor_failed", 1, "",
+		"csharp extractor exited 3\n")
+}
+
+func TestTheSameScopeFlagTwiceNamesTwoScopes(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+
+	// A second --staged names no second scope, but the message treats the
+	// command line as the developer wrote it rather than deciding they meant
+	// one flag, which is the same call the two-different-flags case makes.
+	result := f.runArgs("--staged", "--staged")
+
+	assertUsageError(t, result, "metric-gate: --staged and --staged name two scopes; pass one"+usage)
 }
