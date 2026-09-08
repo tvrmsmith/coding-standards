@@ -5,6 +5,7 @@
   "type": "module",
   "description": "The custom ESLint rules behind the tvrmsmith coding standards — the guidelines with no off-the-shelf equivalent.",
   "license": "MIT",
+  "packageManager": "pnpm@9.15.9",
   "exports": {
     ".": "./index.js",
     "./package.json": "./package.json"
