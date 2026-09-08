@@ -1667,12 +1667,15 @@ func TestNamingAReportSkipsDiscoveryEntirely(t *testing.T) {
 	f.touchLine(orderService, 62)
 	f.write("artifacts/coverage.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
-	// A discoverable report older than the code it describes. It is load-bearing
-	// setup, not leftovers: any run that reaches discovery refuses it as
-	// coverage_stale, so only a run that skips the walk entirely can pass here.
+	// Two traps, both load-bearing setup rather than leftovers. The stale
+	// discoverable report is refused as coverage_stale by any run that reaches
+	// discovery, so only a run that skips the walk can reach the golden. The
+	// unreadable directory is what makes the golden's empty skipped_paths mean
+	// no walk happened rather than a walk that read everything.
 	f.write("TestResults/run/coverage.cobertura.xml",
 		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
 			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.denyRead("TestResults/locked")
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
@@ -1872,7 +1875,12 @@ func TestReportStampedAtTheSecondTheSourceWasEditedIsFresh(t *testing.T) {
 	// The Cobertura timestamp attribute has second resolution and cannot
 	// express anything finer, so equal seconds is not stale. Stamping the
 	// report at exactly the source's truncated mtime pins that boundary
-	// instead of leaving it to how fast the case ran.
+	// instead of leaving it to how fast the case ran. The half second the
+	// fixture puts on the mtime is what makes the truncation load-bearing: a
+	// gate that compared untruncated times would read the source as newer than
+	// the report, and this case would go red on any filesystem rather than only
+	// on one whose own stamping happened to carry nanoseconds.
+	f.setModTime(orderService, f.modTime(orderService).Add(500*time.Millisecond))
 	f.write("TestResults/coverage.cobertura.xml", coberturaStamped(f.editStamp(orderService, 0), f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 1)}))
 	f.stub = stubConfig{

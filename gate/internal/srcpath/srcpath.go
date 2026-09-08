@@ -3,10 +3,13 @@
 // Every conversion that produces a Path lives here, so the invariant is
 // enforced once rather than separately in extract and coverage.
 //
-// Two sites in coverage, namedAs and relative, decide containment themselves
-// and produce a display string rather than a Path, because they name a report
-// that may not exist on disk and Place requires a regular file. Issue 36
-// unifies them behind an existence-agnostic sibling of Place.
+// Two sites in coverage render a report name as a display string rather than a
+// Path, and neither goes through Place. namedAs is a second owner of the
+// containment decision, because it has to name a path that may not exist on
+// disk and Place requires a regular file. relative is a third spelling of the
+// repo-relative rendering with no escape guard at all, correct only because its
+// callers hand it paths the walk already found under the root. Issue 36 unifies
+// all three behind an existence-agnostic sibling of Place.
 package srcpath
 
 import (

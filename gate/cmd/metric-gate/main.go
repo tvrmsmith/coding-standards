@@ -7,14 +7,18 @@
 // path, which prints the cause above the counts, and the exit code is 0 pass,
 // 1 tool error, 2 threshold exceeded.
 //
-// The one exception to "stdout is one TOON document" is any error that is not
-// typed as a report.Failure: a malformed command line, not being in a git repo
-// at all, and, past base resolution, failing to stat a changed file or to read
-// the working directory for a --coverage path. Those write the cause to stderr,
-// leave stdout empty, and exit 1. ADR 0005's 2026-09-05 amendment records the
-// exception, so it is part of the output contract rather than a gap in it.
-// Typed codes for the stat and working-directory failures are deferred to
-// issue 31, so until it lands they reach the developer as bare stderr text.
+// Any error that is not typed as a report.Failure writes its cause to stderr,
+// leaves stdout empty, and exits 1. ADR 0005 sanctions that shape for a failure
+// upstream of the document, a malformed command line or not being in a git repo
+// at all, and its 2026-09-05 amendment records the command-line case, because a
+// run whose arguments never parsed never chose a repository to examine.
+//
+// Two of those errors land downstream of the document instead, failing to stat
+// a changed file and failing to read the working directory a --coverage path
+// resolves against, and that shape is a known deviation from the contract
+// rather than part of it. Both happen after the changed methods are counted, so
+// the gate did examine a repository and still emits nothing. Issue 31 gives them
+// typed codes and moves them inside the document.
 package main
 
 import (
