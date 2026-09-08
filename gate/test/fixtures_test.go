@@ -9,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf16"
 )
 
@@ -183,9 +185,64 @@ func spanCoverage(start, count, covered int) []coverageLine {
 
 // cobertura renders a coverage report in coverlet's shape, with the source
 // root in <sources> and each class's filename relative to it, which is the
-// pairing ADR 0004 resolves paths from.
+// pairing ADR 0004 resolves paths from. It stamps the report at the moment the
+// case builds it, which is the moment coverlet would have written it, leaving
+// coberturaStamped as the way a case asks for a stale one.
 func cobertura(sourceRoot string, classes ...coverageClass) string {
-	return renderCobertura([]string{sourceRoot}, classes...)
+	return renderCobertura(freshStamp(), []string{sourceRoot}, classes...)
+}
+
+// coberturaStamped is cobertura carrying the given root timestamp attribute,
+// which is the producer's own clock and the value the staleness rule reads.
+// An empty stamp omits the attribute, which is the report the rule cannot
+// judge.
+func coberturaStamped(stamp, sourceRoot string, classes ...coverageClass) string {
+	return renderCobertura(stamp, []string{sourceRoot}, classes...)
+}
+
+// freshStamp is the current second, as a Cobertura timestamp attribute spells
+// it. The real clock rather than any slack ahead of it, so no case comes to
+// depend on the gate accepting a report claiming to have been produced in the
+// future, which is the tolerance issue 30 exists to take away. Every case
+// writes its report after the sources it describes, and equal seconds is not
+// stale, so the current second is already fresh everywhere.
+func freshStamp() string {
+	return stampAt(time.Now())
+}
+
+// stampAt renders an instant as a Cobertura timestamp attribute spells it.
+func stampAt(at time.Time) string {
+	return strconv.FormatInt(at.Unix(), 10)
+}
+
+// editStamp is the whole second the file at rel was last modified, shifted by
+// offset, as a Cobertura timestamp attribute spells it. The staleness rule
+// compares whole seconds on both sides, so a case that means to sit exactly on
+// that boundary has to read the source's own mtime rather than trust how fast
+// it ran.
+func (f *fixture) editStamp(rel string, offset time.Duration) string {
+	f.t.Helper()
+	return stampAt(f.modTime(rel).Add(offset))
+}
+
+// modTime is the truncated modification time of the file at rel.
+func (f *fixture) modTime(rel string) time.Time {
+	f.t.Helper()
+	info, err := os.Stat(filepath.Join(f.root, filepath.FromSlash(rel)))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return info.ModTime().Truncate(time.Second)
+}
+
+// setModTime sets the modification time of the file at rel to at, which is how
+// a case pins either the exact ordering of two edits or an exact tie between
+// them, neither of which the filesystem's own stamping can be asked for.
+func (f *fixture) setModTime(rel string, at time.Time) {
+	f.t.Helper()
+	if err := os.Chtimes(filepath.Join(f.root, filepath.FromSlash(rel)), at, at); err != nil {
+		f.t.Fatal(err)
+	}
 }
 
 // coberturaNoSources is cobertura with <sources/> empty, so every class
@@ -200,16 +257,27 @@ func cobertura(sourceRoot string, classes ...coverageClass) string {
 // UseSourceLink=true is a different document again, keeping one <source> that
 // is empty, so a case for it calls cobertura("").
 func coberturaNoSources(classes ...coverageClass) string {
-	return renderCobertura(nil, classes...)
+	return renderCobertura(freshStamp(), nil, classes...)
 }
 
-// renderCobertura is the document builder, taking the <source> list directly.
-// A case naming more than one source is a class with two in-root candidates
-// (issue 16, file_ambiguous) or a report split across two checkouts.
-func renderCobertura(sources []string, classes ...coverageClass) string {
+// renderCobertura is the document builder, taking the timestamp attribute and
+// the <source> list directly. A case naming more than one source is a class
+// with two in-root candidates (issue 16, file_ambiguous) or a report split
+// across two checkouts. An empty stamp omits the timestamp attribute
+// altogether, which is as close as this builder gets to the unjudgeable
+// report: encoding/xml decodes an absent attribute and timestamp="" to the
+// same empty string, so the gate cannot tell the two apart and neither
+// spelling is worth a case of its own. Every case that is not about staleness
+// passes freshStamp(), since issue 15 refuses a report older than the source
+// it describes and a fixed stamp would make every fixture stale.
+func renderCobertura(stamp string, sources []string, classes ...coverageClass) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>` + "\n")
-	b.WriteString(`<coverage line-rate="0" version="1.9" timestamp="1767225600">` + "\n")
+	timestampAttr := ""
+	if stamp != "" {
+		timestampAttr = fmt.Sprintf(` timestamp="%s"`, xmlAttribute(stamp))
+	}
+	fmt.Fprintf(&b, `<coverage line-rate="0" version="1.9"%s>`+"\n", timestampAttr)
 	if len(sources) == 0 {
 		b.WriteString("  <sources/>\n")
 	} else {
