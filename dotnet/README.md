@@ -135,6 +135,11 @@ dotnet build src/Tvrmsmith.Analyzers/Tvrmsmith.Analyzers.csproj -c Release
 ./tests/verify-severities.sh
 ```
 
+`global.json` next to this file pins the SDK these commands build with, at `10.0.100` rolling
+forward to a later feature band, so CI and a developer's machine cannot disagree about it. The
+projects target `net8.0`, so running the tests also needs the 8.0 runtime installed alongside that
+SDK.
+
 `Tvrmsmith.Analyzers.Tests` runs each analyzer over snippets compiled against the real
 AwesomeAssertions 9.6.0, with a fixture type that carries its own `Should()` returning a bespoke
 assertions type — the shape `TVRM0003` exists for. Every rule has both halves: the violating
