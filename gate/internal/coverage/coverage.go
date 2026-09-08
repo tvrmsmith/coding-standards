@@ -1,6 +1,10 @@
-// Package coverage discovers Cobertura reports, parses them, and answers
-// which lines of a source file are instrumentable and which of those were
-// hit. It resolves report paths by ADR 0004's one rule, and the rule cuts two
+// Package coverage discovers Cobertura reports, or takes the ones the
+// developer named on the command line instead, parses them, and answers which
+// lines of a source file are instrumentable and which of those were hit. A
+// report it cannot trust, one older than the code it describes or one whose
+// own timestamp it cannot read, is refused rather than merged, because
+// coverage silently dropped reaches the score as untested code.
+// It resolves report paths by ADR 0004's one rule, and the rule cuts two
 // ways: one path it cannot place inside the repo is a silent ignore, while a
 // report with an erased source root, a class contradicting itself, or no class
 // placed inside the root fails the run with a typed code.
