@@ -1,14 +1,9 @@
 // Package coverage discovers Cobertura reports, or takes the ones the
 // developer named on the command line instead, parses them, and answers which
 // lines of a source file are instrumentable and which of those were hit. A
-// report it cannot trust at all, one whose own timestamp it cannot read or
-// one stamped implausibly far ahead of now, is refused rather than merged,
-// because coverage silently dropped reaches the score as untested code. A
-// report merely older than the code it describes is refused the same way when
-// a human named it, but one discovery found is instead skipped as a report a
-// fresher run has already superseded, since dotnet test leaves every earlier
-// run's TestResults directory on disk and the developer never asked the gate
-// to weigh it against the fresh one sitting beside it.
+// report it cannot trust, one older than the code it describes or one whose
+// own timestamp it cannot read, is refused rather than merged, because
+// coverage silently dropped reaches the score as untested code.
 // It resolves report paths by ADR 0004's one rule, and the rule cuts two
 // ways: one path it cannot place inside the repo is a silent ignore, while a
 // report with an erased source root, a class contradicting itself, or no class
@@ -254,111 +249,44 @@ func underResultsDir(rel string) bool {
 	return false
 }
 
-// clockSkewTolerance is how far ahead of the gate's own clock a report may
-// claim to have been written before the gate stops believing it. An
-// unsynchronised CI agent or a machine resumed from a suspended VM drifts by
-// hours, not days, so a day of slack still lets an honest producer's report
-// through. A producer that writes the timestamp attribute in epoch
-// milliseconds rather than seconds, coverage.py's Cobertura writer among
-// several Java ones, lands the parsed instant tens of thousands of years in
-// the future, which this window separates from an honest clock by an enormous
-// margin. The rule exists at all because without it, at.Before(newest.At) can
-// never be true for a timestamp that far out, so the staleness comparison
-// silently stops running and the report merges as though it had passed.
-const clockSkewTolerance = 24 * time.Hour
-
 // Load reads every source in order and unions them into one set: a line is
 // instrumentable when any report lists it, and covered when any report
-// records a non-zero hit. now is a parameter rather than a call to time.Now()
-// here, so a test can pin the instant a report is judged against; a
-// package-level clock would let the pinning happen anywhere and a reader of
-// this signature would not see it.
-//
-// Before a report merges, it has to read, unmarshal, carry a readable
-// timestamp no more than clockSkewTolerance ahead of now, and be no older than
-// newest.At. Failing to read, unmarshal or carry a readable timestamp stops
-// the run rather than dropping the report, because a bad report silently
-// dropped is exactly the untested code the staleness rule exists to catch. A
-// timestamp implausibly far ahead of now stops the run the same way whichever
-// Origin the source carries, since a report the gate cannot trust is not one a
-// fresher run superseded.
-//
-// A report merely older than newest.At is judged by Origin instead. One a
-// human named on --coverage still refuses the run: they chose it, and
-// clearing a TestResults directory produces nothing new in its place. One
-// Discovered is skipped rather than refused, its Name appended to the
-// returned []string, and it contributes no line, not even transiently,
-// because dotnet test leaves every earlier run's TestResults directory on
-// disk and a fresh report sitting beside it should not fail the run over a
-// leftover. A run where every source was skipped that way still refuses,
-// naming every one of them, since skipping all of them would otherwise pass
-// silently with nothing scored at all.
-//
+// records a non-zero hit. Before a report merges, it has to read, unmarshal,
+// carry a timestamp, and be no older than newest.At; failing any of those
+// stops the run rather than dropping the report, because a stale report
+// silently dropped is exactly the untested code the rule exists to catch.
 // An empty newest.At (the zero time) can never trip the staleness rule.
-func Load(root srcpath.Root, sources []Source, newest Newest, now time.Time) (Set, []string, error) {
+func Load(root srcpath.Root, sources []Source, newest Newest) (Set, error) {
 	set := Set{}
-	var skipped []string
 	for _, source := range sources {
 		parsed, err := parseReport(source.Abs)
 		if err != nil {
-			return nil, nil, &report.Failure{
+			return nil, &report.Failure{
 				Code:    report.CodeCoverageUnparseable,
 				Message: fmt.Sprintf("could not parse coverage report %s; %s", source.Name, parseCause(err)),
 			}
 		}
 		at, err := parsed.timestamp()
 		if err != nil {
-			return nil, nil, &report.Failure{
+			return nil, &report.Failure{
 				Code:    report.CodeCoverageUnparseable,
 				Message: "coverage report " + source.Name + " " + err.Error(),
 			}
 		}
-		if at.After(now.Add(clockSkewTolerance)) {
-			return nil, nil, &report.Failure{
-				Code: report.CodeCoverageUnparseable,
-				Message: fmt.Sprintf("coverage report %s carries a timestamp %q more than %s ahead of now; it must be epoch seconds",
-					source.Name, parsed.Timestamp, strings.TrimSuffix(clockSkewTolerance.String(), "0m0s")),
-			}
-		}
-		// Staleness is checked before the merge, not after it, so a refused or
-		// skipped report never contributes a line even transiently.
+		// Staleness is checked before the merge, not after it, so a refused
+		// report never contributes a line even transiently.
 		if at.Before(newest.At) {
-			if source.Origin == Discovered {
-				skipped = append(skipped, source.Name)
-				continue
-			}
-			return nil, nil, &report.Failure{
+			return nil, &report.Failure{
 				Code: report.CodeCoverageStale,
 				Message: "coverage report " + source.Name + " was written before " +
 					newest.File.String() + " was last edited" + source.staleRemedy(),
 			}
 		}
 		if err := parsed.mergeInto(set, root, source.Name); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
-	if len(skipped) > 0 && len(skipped) == len(sources) {
-		return nil, nil, allSupersededFailure(skipped, newest)
-	}
-	return set, skipped, nil
-}
-
-// allSupersededFailure refuses the run when every source Load saw was a
-// Discovered report skipped as superseded, leaving nothing to score. It
-// hardcodes the Discovered remedy rather than calling Source.staleRemedy,
-// because every name it is given reached the skipped list through that one
-// origin and by the time the loop ends the Source itself is gone, only its
-// Name kept.
-func allSupersededFailure(skipped []string, newest Newest) *report.Failure {
-	noun, verb := "report", "was"
-	if len(skipped) > 1 {
-		noun, verb = "reports", "were"
-	}
-	return &report.Failure{
-		Code: report.CodeCoverageStale,
-		Message: fmt.Sprintf("coverage %s %s %s written before %s was last edited; clear stale TestResults directories and re-run the tests",
-			noun, joinPaths(skipped), verb, newest.File.String()),
-	}
+	return set, nil
 }
 
 // coberturaReport is the subset of the Cobertura schema the gate reads. Only
@@ -519,22 +447,14 @@ func (s Set) union(other Set) {
 	}
 }
 
-// joinPaths renders paths one diagnostic quotes as a readable list, so a
+// joinPaths renders the paths one diagnostic quotes as a readable list, so a
 // class contradicting itself three ways names all three rather than the first
-// two. It is generic over any ~string rather than srcpath.Path alone, so the
-// same rendering serves a file_ambiguous diagnostic and the all-superseded
-// coverage_stale one, which names []string report names that have no
-// srcpath.Path of their own, some of them (a report named on --coverage) not
-// even inside the repo. A single element returns alone rather than joining
-// against nothing, which the file_ambiguous caller never needs, since a class
-// resolving to one path is not ambiguous, but the coverage_stale caller does.
-func joinPaths[T ~string](paths []T) string {
-	if len(paths) == 1 {
-		return string(paths[0])
-	}
+// two. Its one caller reaches it only for a class that resolved to more than
+// one path, so it takes at least two.
+func joinPaths(paths []srcpath.Path) string {
 	rendered := make([]string, 0, len(paths))
 	for _, path := range paths {
-		rendered = append(rendered, string(path))
+		rendered = append(rendered, path.String())
 	}
 	return strings.Join(rendered[:len(rendered)-1], ", ") + " and " + rendered[len(rendered)-1]
 }

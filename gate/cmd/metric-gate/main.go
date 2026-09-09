@@ -338,9 +338,7 @@ func dirtyMessage(dirty []srcpath.Path) string {
 // not read come back alongside, including on the missing-report failure,
 // where they are the likeliest explanation for it. When the developer named
 // any report, discovery does not run at all: skipped_paths stays empty, and
-// the named sources go straight to Load. That branch always returns a nil
-// skipped list of its own too, since a named report is the one Source.Origin
-// coverage.Load never skips as superseded. The newest edit is computed here,
+// the named sources go straight to Load. The newest edit is computed here,
 // behind the declared-input guard, so a metric asking for no coverage pays no
 // stat for one.
 func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (coverage.Set, []string, error) {
@@ -356,7 +354,7 @@ func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (co
 		if err != nil {
 			return nil, nil, fmt.Errorf("resolving --coverage paths against the working directory: %w", err)
 		}
-		set, _, err := coverage.Load(root, coverage.Named(root, cwd, named), newest, time.Now())
+		set, err := coverage.Load(root, coverage.Named(root, cwd, named), newest)
 		return set, nil, err
 	}
 	sources, skipped, err := coverage.Discover(root)
@@ -370,14 +368,7 @@ func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (co
 				coverage.Glob + " under the repo root",
 		}
 	}
-	set, superseded, err := coverage.Load(root, sources, newest, time.Now())
-	// discovery's own skips and Load's superseded skips are two different
-	// reasons a path is missing from the score, a walk that could not read a
-	// directory and a report a fresher run replaced, but skipped_paths does
-	// not distinguish them, so they append into one sorted list rather than
-	// two fields the document would have to carry separately.
-	skipped = append(skipped, superseded...)
-	slices.Sort(skipped)
+	set, err := coverage.Load(root, sources, newest)
 	return set, skipped, err
 }
 
