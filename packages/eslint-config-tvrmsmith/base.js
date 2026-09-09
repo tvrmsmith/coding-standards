@@ -131,9 +131,20 @@ export function createBase({ extraRestrictedSyntax = [] } = {}) {
     {
       name: 'tvrmsmith/base/assertion-intent',
       files: testFiles,
-      plugins: { jest },
+      plugins: { jest, tvrmsmith },
       settings: assertionIntentSettings,
       rules: {
+        // A2's residue: the one high-frequency shape the jest rules below cannot see.
+        // `expect(users.every(isActive)).toBe(true)` reduces the collection to a bit
+        // before the matcher runs, so the failure names neither the element nor its
+        // value. Measured, not guessed, by `measure-a2-residue.mjs`: it is the most
+        // frequent uncovered A2 shape at the adoption target, in a repo where
+        // `prefer-to-contain` reports nothing at all.
+        //
+        // warn, matching A1: the fix is a restructure and which one depends on what the
+        // test means, so the rule proposes rather than corrects.
+        'tvrmsmith/no-quantifier-assertion': 'warn',
+
         // A2 — the matcher should name the expectation. These four rewrite one call into
         // a more specific one with the same meaning, so error: mechanical, autofixable,
         // one right answer.
