@@ -10,12 +10,11 @@
 // counts, and the exit code is 0 pass, 1 tool error, 2 threshold exceeded.
 //
 // Any error that is not typed as a report.Failure writes its cause to stderr,
-// leaves stdout empty, and exits 1. ADR 0008 sanctions that shape for a failure
-// upstream of the document: a command line the gate refuses to guess at, not
-// being in a git repo at all, or a run whose arguments never parsed and so
-// never chose a repository to examine.
+// leaves stdout empty, and exits 1. ADR 0008 sanctions that shape for one
+// failure only, a malformed command line, which "exits 1 with empty stdout and
+// no typed code, because argv failed before the run had a shape to report".
 //
-// Two of those errors land downstream of the document instead, failing to stat
+// Two errors take that shape downstream of the document instead, failing to stat
 // a changed file and failing to read the working directory a --coverage path
 // resolves against, and that shape is a known deviation from the contract
 // rather than part of it. Both happen after the changed methods are counted, so
