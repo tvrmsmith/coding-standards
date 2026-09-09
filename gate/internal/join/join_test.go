@@ -19,16 +19,16 @@ import (
 // coverage_stale message is what a dropped sort would silently get wrong.
 func TestChangedReturnsSpansInAscendingOrder(t *testing.T) {
 	files := []srcpath.Path{"src/d.cs", "src/c.cs", "src/b.cs", "src/a.cs"}
-	extracted := extract.Result{Claimed: map[srcpath.Path]bool{}}
+	var spans []extract.Span
 	touched := map[srcpath.Path][]int{}
 	for _, file := range files {
-		extracted.Spans = append(extracted.Spans,
+		spans = append(spans,
 			extract.Span{File: file, Name: "Second", StartLine: 10, EndLine: 15},
 			extract.Span{File: file, Name: "First", StartLine: 1, EndLine: 5},
 		)
-		extracted.Claimed[file] = true
 		touched[file] = []int{11, 2}
 	}
+	extracted := extract.NewResult(spans, files)
 
 	changed, outside := join.Changed(extracted, touched)
 
@@ -47,27 +47,49 @@ func TestChangedReturnsSpansInAscendingOrder(t *testing.T) {
 	}
 }
 
-// TestInFilesDropsASpanInAFileNobodyNamed pins the filter itself. In
-// production extract.collect already refuses any echoed span whose path was
-// not handed in, so every span InFiles sees is in its list and deleting the
-// filter would leave the black-box suite green while --files silently measured
-// whatever an extractor chose to volunteer.
-func TestInFilesDropsASpanInAFileNobodyNamed(t *testing.T) {
-	const named = srcpath.Path("src/named.cs")
-	const volunteered = srcpath.Path("src/volunteered.cs")
-	extracted := extract.Result{
-		Claimed: map[srcpath.Path]bool{named: true},
-		Spans: []extract.Span{
-			{File: volunteered, Name: "Volunteered", StartLine: 1, EndLine: 5},
-			{File: named, Name: "Named", StartLine: 1, EndLine: 5},
-		},
+// TestInFilesMeasuresEveryExtractedSpanInAscendingOrder pins --files' half of
+// the ADR 0003 rule: with no touched line to narrow against, every span the
+// extractor found is changed, nested spans included, in the same ascending
+// order Changed promises.
+func TestInFilesMeasuresEveryExtractedSpanInAscendingOrder(t *testing.T) {
+	extracted := extract.NewResult([]extract.Span{
+		{File: "src/b.cs", Name: "Outer", StartLine: 1, EndLine: 20},
+		{File: "src/a.cs", Name: "Second", StartLine: 30, EndLine: 40},
+		{File: "src/b.cs", Name: "Local", StartLine: 5, EndLine: 8},
+		{File: "src/a.cs", Name: "First", StartLine: 1, EndLine: 10},
+	}, []srcpath.Path{"src/b.cs", "src/a.cs"})
+
+	changed := join.InFiles(extracted)
+
+	want := []string{"src/a.cs:1", "src/a.cs:30", "src/b.cs:1", "src/b.cs:5"}
+	if got := labels(changed); !slices.Equal(got, want) {
+		t.Errorf("InFiles returned spans out of order\ngot:  %s\nwant: %s",
+			strings.Join(got, " "), strings.Join(want, " "))
+	}
+}
+
+// TestChangedSkipsATouchedFileNoExtractorClaimed pins the other half of
+// Changed's doc comment: a line in a file no extractor handles is outside the
+// measurement, not outside a span, so it never inflates outsideSpans. Three
+// touched README lines exercise that a whole unclaimed file, not just a
+// single stray line, is excluded rather than counted.
+func TestChangedSkipsATouchedFileNoExtractorClaimed(t *testing.T) {
+	extracted := extract.NewResult([]extract.Span{
+		{File: "src/a.cs", Name: "First", StartLine: 1, EndLine: 10},
+	}, []srcpath.Path{"src/a.cs"})
+	touched := map[srcpath.Path][]int{
+		"src/a.cs":  {5},
+		"README.md": {1, 2, 3},
 	}
 
-	changed := join.InFiles(extracted, []srcpath.Path{named})
+	changed, outside := join.Changed(extracted, touched)
 
-	want := []string{"src/named.cs:1"}
+	if outside != 0 {
+		t.Fatalf("touched lines outside every span: got %d, want 0", outside)
+	}
+	want := []string{"src/a.cs:1"}
 	if got := labels(changed); !slices.Equal(got, want) {
-		t.Errorf("InFiles returned spans outside the named files\ngot:  %s\nwant: %s",
+		t.Errorf("Changed returned unexpected spans\ngot:  %s\nwant: %s",
 			strings.Join(got, " "), strings.Join(want, " "))
 	}
 }

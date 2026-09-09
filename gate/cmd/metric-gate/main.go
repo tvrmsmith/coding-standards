@@ -189,7 +189,10 @@ func selectDiff(repo gitscope.Repo, sc scope.Scope) (selection, error) {
 	}
 
 	if base.Staged {
-		dirty, err := stagedDirty(repo, claimedFiles(extracted))
+		// A --staged run checks the claimed files for divergence, not the
+		// diff's own file list: a dirty staged Markdown file the diff never
+		// claimed cannot be misattributed, so it does not refuse the run.
+		dirty, err := stagedDirty(repo, extracted.ClaimedPaths())
 		if err != nil {
 			return failing(selected, err)
 		}
@@ -265,22 +268,19 @@ func selectFiles(repo gitscope.Repo, names []string) (selection, error) {
 	// ADR 0005's amendment predicted --files as a second producer of
 	// skipped_paths: a named file no extractor claims is neither measured
 	// nor an error, so it is listed rather than silently dropped.
-	selected.SkippedPaths = unclaimedPaths(resolved, extracted)
+	selected.SkippedPaths = pathStrings(extracted.Unclaimed(resolved))
 	selected.Extracted = extracted
-	selected.Changed = join.InFiles(extracted, resolved)
+	selected.Changed = join.InFiles(extracted)
 	return selected, nil
 }
 
-// unclaimedPaths lists which of resolved no extractor claimed, sorted.
-func unclaimedPaths(resolved []srcpath.Path, extracted extract.Result) []string {
-	var skipped []string
-	for _, path := range resolved {
-		if !extracted.Claimed[path] {
-			skipped = append(skipped, path.String())
-		}
+// pathStrings renders paths as the plain strings SkippedPaths holds.
+func pathStrings(paths []srcpath.Path) []string {
+	names := make([]string, 0, len(paths))
+	for _, path := range paths {
+		names = append(names, path.String())
 	}
-	slices.Sort(skipped)
-	return skipped
+	return names
 }
 
 // resolveBase picks the git resolution matching sc.Mode. --files never
@@ -294,14 +294,6 @@ func resolveBase(repo gitscope.Repo, sc scope.Scope) (gitscope.Base, error) {
 	default:
 		return repo.ResolveBase()
 	}
-}
-
-// claimedFiles lists the files extract.Extract claimed, sorted, which is
-// what a --staged run checks for divergence: a dirty staged Markdown file
-// the diff never claimed cannot be misattributed, so it does not refuse the
-// run.
-func claimedFiles(extracted extract.Result) []srcpath.Path {
-	return slices.Sorted(maps.Keys(extracted.Claimed))
 }
 
 // stagedDirty renders the refusal when any of paths is staged in one state and
