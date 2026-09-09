@@ -460,7 +460,7 @@ func TestStagedMeasuresNothingForAPureMoveStagedOnItsOwn(t *testing.T) {
 	f.write(origin, csharpFile(20))
 	f.commitAll("initial")
 	f.git("mv", origin, moved)
-	// ADR 0003's rule that a rename with no content change touches nothing
+	// ADR 0007's rule that a rename with no content change touches nothing
 	// holds over the index too, so the pre-commit hook this scope exists for
 	// does not demand coverage for every method in a file the developer only
 	// moved. The tree is clean, so the cached and uncached listings agree here
@@ -637,7 +637,7 @@ func TestSinceReportsADiffGitRefusesToPrintInTheDocument(t *testing.T) {
 	f.commitAll("initial")
 	f.git("branch", "release")
 	// The ref and the merge base both resolve, so the document exists and
-	// ADR 0005 requires it on stdout under this scope too. The diff then reads
+	// ADR 0008 requires it on stdout under this scope too. The diff then reads
 	// the old side's blob, which is gone, so git exits 128 before printing a
 	// patch. Returned untyped instead, the run would exit 1 with an empty
 	// stdout an agent cannot tell from a crash.
@@ -965,7 +965,7 @@ func TestFilesListsANamedSkipAheadOfOneCoverageDiscoveryFound(t *testing.T) {
 	singleFileCoverageAndStub(t, f)
 	f.denyRead("TestResults/locked")
 
-	// Both producers of skipped_paths at once, which is the order ADR 0005
+	// Both producers of skipped_paths at once, which is the order ADR 0008
 	// fixes: the paths the developer named, then whatever coverage discovery
 	// could not read. "TestResults/locked" sorts ahead of "docs/notes.md", so
 	// a merge that sorted the two or appended them the other way round goes
@@ -1102,7 +1102,7 @@ func TestFilesNamingOnlyUnhandledPathsPassesWithoutReachingCoverage(t *testing.T
 	f.stub = stubConfig{Extensions: []string{".cs"}}
 
 	// No extractor claims the one named path, so the changed set is empty and
-	// ADR 0003 exits 0 pass before any input is resolved. The locked directory
+	// ADR 0007 exits 0 pass before any input is resolved. The locked directory
 	// is what makes that visible: coverage discovery would list it in
 	// skipped_paths, so a document carrying only the named path proves the
 	// early exit ran ahead of discovery.

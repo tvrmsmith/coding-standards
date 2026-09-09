@@ -447,8 +447,8 @@ func TestEncode_TableFloatCellCarriesTheRoundingPastTheDecimalPoint(t *testing.T
 }
 
 // TestEncode_ADR0005WorkedExample is the fixed-bytes contract from
-// ADR 0005 ("The machine document is the only output"), as amended
-// after the spec §2 ruling on Column.Precision (round, then render
+// ADR 0008 ("The machine document is the only output"), corrected for
+// the spec §2 ruling on Column.Precision (round, then render
 // canonically; no padded trailing zeros). Every byte here comes from
 // that document, not from re-deriving the expected value in this test.
 func TestEncode_ADR0005WorkedExample(t *testing.T) {

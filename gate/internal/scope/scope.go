@@ -47,7 +47,7 @@ type Scope struct {
 
 // UsageError is a command line the gate refuses to guess at. Its Error()
 // renders the usage block below the specific problem, which is the whole of
-// what stderr prints for a usage mistake (ADR 0005: no document exists yet).
+// what stderr prints for a usage mistake (ADR 0008: no document exists yet).
 type UsageError struct{ Problem string }
 
 func (e *UsageError) Error() string {
