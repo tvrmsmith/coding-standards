@@ -3196,9 +3196,6 @@ func TestOriginHeadOutranksOriginMainWhenTheRemoteDefaultBranchIsNotMain(t *test
 	// has moved on to "second" alongside local main. Diffing from origin/HEAD
 	// therefore carries both edits, two changed methods; diffing from
 	// origin/main would carry only the working-tree edit to line 62, one.
-	// TestOriginHeadOutranksLocalMainAsTheDiffBase separates origin/HEAD only
-	// from local main and only by ref name, so it would not catch ResolveBase
-	// preferring origin/main's count over origin/HEAD's; this fixture would.
 	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/HEAD"),
 		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
@@ -3224,9 +3221,9 @@ func TestOriginMainOutranksOriginMasterWhenBothRemoteBranchesExist(t *testing.T)
 	// origin/main sits at "initial" while origin/master has moved on to
 	// "second", so diffing from origin/main carries both edits, two changed
 	// methods, and diffing from origin/master would carry only the
-	// working-tree edit to line 62, one. That count, not just the base label,
-	// is what pins origin/main ahead of origin/master in BaseCandidates:
-	// swapping the two entries turns this case red.
+	// working-tree edit to line 62, one. The count separates the two rungs,
+	// so the case turns on which one ResolveBase picks and not on the label
+	// alone.
 	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/main"),
 		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
@@ -3252,10 +3249,9 @@ func TestOriginMasterOutranksLocalMainWhenBothExist(t *testing.T) {
 	// resolves and the walk reaches origin/master, back at "initial", before
 	// local main, which is HEAD's own branch at "second". Diffing from
 	// origin/master carries both edits, two changed methods; diffing from main
-	// would carry only the working-tree edit to line 62, one. That is the
-	// origin/master-to-main pair, the third of BaseCandidates' four adjacent
-	// pairs: swapping those two entries turns this case red on the count as
-	// well as the label.
+	// would carry only the working-tree edit to line 62, one. The count
+	// separates the two rungs, so the case turns on which one ResolveBase
+	// picks and not on the label alone.
 	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/master"),
 		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
@@ -3279,8 +3275,9 @@ func TestLocalMainOutranksLocalMasterWhenBothBranchesExist(t *testing.T) {
 	// No remote, so the walk reaches the two local rungs. main is HEAD's own
 	// branch at "second", so diffing from it carries only the working-tree
 	// edit, one changed method; master is still back at "initial", so diffing
-	// from it would carry both edits, two. Swapping the local entries in
-	// BaseCandidates turns this case red on the count as well as the label.
+	// from it would carry both edits, two. The count separates the two rungs,
+	// so the case turns on which one ResolveBase picks and not on the label
+	// alone.
 	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
@@ -3293,6 +3290,7 @@ func TestOriginMasterResolvesOnAMasterDefaultBranch(t *testing.T) {
 	// No setOriginHead: origin/HEAD is absent, so the walk reaches origin/master.
 	f.touchLine(orderService, 42)
 	f.commitAll("second")
+	f.requireDistinctCommits("origin/master", "master")
 	f.touchLine(orderService, 62)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: append(spanCoverage(42, 10, 1), spanCoverage(61, 3, 2)...)}))
@@ -3301,13 +3299,12 @@ func TestOriginMasterResolvesOnAMasterDefaultBranch(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// HEAD's own branch is master here, so origin/master at "initial" and
-	// local master at "second" separate: diffing from origin/master carries
-	// both edits, two changed methods, and diffing from local master would
-	// carry only the working-tree edit to line 62, one. That is what this
-	// fixture pins. TestOriginMasterOutranksLocalMainWhenBothExist also
-	// resolves origin/master, but against a local main rather than a local
-	// master.
+	// HEAD's own branch is master, so origin/master sits at "initial" while
+	// local master has moved on to "second". Diffing from origin/master
+	// carries both edits, two changed methods; diffing from local master would
+	// carry only the working-tree edit to line 62, one. The count separates
+	// the two rungs, so the case turns on which one ResolveBase picks and not
+	// on the label alone.
 	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/master"),
 		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
@@ -3324,9 +3321,8 @@ func TestLocalMasterResolvesWhenNoRemoteExists(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// No remote exists, so origin/master, which TestOriginMasterResolvesOnAMasterDefaultBranch
-	// leaves outranking local master, cannot hide a typo in the local master
-	// entry of BaseCandidates either: this is the only fixture that reaches it.
+	// No remote exists, so no origin candidate resolves and local master is
+	// the only ref the run can reach for a base at all.
 	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("master"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
@@ -3347,13 +3343,10 @@ func TestRemoteMainWithUnrelatedHistoryFallsThroughToLocalMain(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// origin/main exists but shares no history with HEAD, so its merge-base
-	// fails; ResolveBase's continue drops it rather than returning it as a
-	// found base. If that check were deleted, the run would either fail to
-	// read the diff or measure an empty one against origin/main's own tree,
-	// not the single working-tree edit this golden pins; the case's local main
-	// label together with that one changed method is what proves the walk fell
-	// all the way through instead.
+	// origin/main resolves but shares no history with HEAD, so its merge-base
+	// fails and ResolveBase skips it. The local main label together with the
+	// one changed method from the working-tree edit is what shows the walk
+	// fell through to the next candidate that does share history.
 	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
