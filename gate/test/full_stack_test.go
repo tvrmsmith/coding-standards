@@ -1,6 +1,7 @@
 package gate_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,18 +19,73 @@ const pointsFixture = "../../dotnet/tests/Tvrmsmith.MetricGate.CSharp.Tests/fixt
 // the stub.
 const dotnetProject = "../../dotnet/src/Tvrmsmith.MetricGate.CSharp"
 
-// reasonShort is why TestFullStackDrivesTheRealDotnetExtractor skips under -short.
+// envRequireDotnet names the variable CI sets to forbid every skip route, so
+// the one case that drives the real extractor cannot lapse into a green skip.
+const envRequireDotnet = "METRIC_GATE_REQUIRE_DOTNET"
+
+// reasonShort is why TestFullStackDrivesTheRealDotnetExtractor skips under
+// -short, or fails there when METRIC_GATE_REQUIRE_DOTNET forbids the skip.
 const reasonShort = "full-stack case packs and installs a dotnet tool, skipped with -short"
 
-// reasonNoSDK is why TestFullStackDrivesTheRealDotnetExtractor skips without a usable .NET SDK.
+// reasonNoSDK is why TestFullStackDrivesTheRealDotnetExtractor skips without a
+// usable .NET SDK, or fails when METRIC_GATE_REQUIRE_DOTNET forbids the skip.
 const reasonNoSDK = "no usable .NET SDK: dotnet --version failed"
+
+// requireDotnet reads a raw METRIC_GATE_REQUIRE_DOTNET value. It takes the
+// string instead of reading the environment so every value has a test row
+// without a case mutating process state. Only "1" and the unset empty string
+// parse. Anything else, "true" and "0" included, is an error rather than a
+// quiet off switch, because a value nobody meant would otherwise return this
+// case to skipping while CI stayed green.
+func requireDotnet(raw string) (bool, error) {
+	switch raw {
+	case "1":
+		return true, nil
+	case "":
+		return false, nil
+	default:
+		return false, fmt.Errorf("%s=%q is not a value this suite accepts, and \"1\" is the only value that enables enforcement", envRequireDotnet, raw)
+	}
+}
+
+// TestRequireDotnetAcceptsOnlyTheDocumentedValues pins the two values
+// requireDotnet accepts and the near misses it has to reject.
+func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
+	cases := []struct {
+		raw     string
+		require bool
+		wantErr bool
+	}{
+		{"1", true, false},
+		{"", false, false},
+		{"0", false, true},
+		{"true", false, true},
+		{"TRUE", false, true},
+		{"yes", false, true},
+		{" 1", false, true},
+	}
+
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("%s=%q", envRequireDotnet, c.raw), func(t *testing.T) {
+			require, err := requireDotnet(c.raw)
+			if require != c.require {
+				t.Errorf("require = %v, want %v", require, c.require)
+			}
+			if (err != nil) != c.wantErr {
+				t.Errorf("err = %v, want error %v", err, c.wantErr)
+			}
+		})
+	}
+}
 
 // dotnetSkipReason decides whether TestFullStackDrivesTheRealDotnetExtractor
 // may skip and, if so, whether it is actually allowed to. require reflects
 // METRIC_GATE_REQUIRE_DOTNET=1, which CI sets so a missing SDK fails the run
 // instead of silently skipping the only case that exercises the real
 // extractor. short is checked before sdkOK, so a -short run always reports
-// the -short reason even when the SDK is also missing.
+// the -short reason even when the SDK is also missing. That ordering also
+// lets the caller pass sdkOK true under -short without probing for dotnet,
+// because the value cannot reach the result.
 func dotnetSkipReason(short, sdkOK, require bool) (reason string, fatal bool) {
 	switch {
 	case short:
@@ -88,11 +144,17 @@ func TestDotnetSkipReasonRefusesToSkipWhenRequired(t *testing.T) {
 // staleness rule. Collecting real coverage means running dotnet test, which is
 // issue 21's work and not this case's.
 func TestFullStackDrivesTheRealDotnetExtractor(t *testing.T) {
-	sdkOK := exec.Command("dotnet", "--version").Run() == nil
-	require := os.Getenv("METRIC_GATE_REQUIRE_DOTNET") == "1"
-	if reason, fatal := dotnetSkipReason(testing.Short(), sdkOK, require); reason != "" {
+	require, err := requireDotnet(os.Getenv(envRequireDotnet))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A -short run cannot use the probe's answer, so it never pays for the
+	// subprocess and the first-run initialization dotnet may do behind it.
+	short := testing.Short()
+	sdkOK := short || exec.Command("dotnet", "--version").Run() == nil
+	if reason, fatal := dotnetSkipReason(short, sdkOK, require); reason != "" {
 		if fatal {
-			t.Fatalf("METRIC_GATE_REQUIRE_DOTNET=1 forbids skipping: %s", reason)
+			t.Fatalf("%s=1 forbids skipping: %s", envRequireDotnet, reason)
 		}
 		t.Skip(reason)
 	}
