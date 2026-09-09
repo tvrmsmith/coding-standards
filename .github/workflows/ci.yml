@@ -87,14 +87,14 @@ jobs:
       # unexercised forever. The explicit -timeout replaces Go's default 10
       # minutes per binary, which the gate package can now approach. What
       # dominates its cost is not the number of cases but that the enforcement
-      # tests re-run this binary as a child process once per scenario arm, and
-      # every child re-runs TestMain, which shells out to go build twice before
-      # the case it was asked for even starts; on top of that the full-stack
-      # case packs the tool and installs it against an empty NUGET_PACKAGES
-      # directory. Measured at 175s locally on a warm cache with nothing to
-      # restore, so 20m leaves room for a cold NuGet restore. Under the default
-      # a slow restore surfaces as an opaque panic instead.
-      - run: go test ./... -count=1 -timeout 20m
+      # tests re-run this binary as a child process, and every child re-runs
+      # TestMain, which shells out to go build twice before the case it was
+      # asked for even starts; on top of that the full-stack case packs the
+      # tool and installs it against an empty NUGET_PACKAGES directory.
+      # Measured at 164s locally on a warm cache with nothing to restore, so
+      # 12m leaves room for a cold NuGet restore on a slower runner. Under the
+      # default a slow restore surfaces as an opaque panic instead.
+      - run: go test ./... -count=1 -timeout 12m
         working-directory: gate
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         env:

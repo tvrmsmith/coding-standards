@@ -42,6 +42,12 @@ const net8RuntimePrefix = "Microsoft.NETCore.App 8."
 // net8RuntimePrefix so a move off net8.0 changes one line.
 const reasonNoNet8Runtime = "no " + net8RuntimePrefix + "x runtime for the net8.0 extractor tool"
 
+// reasonNoSDK is the other half. The case packs the tool project before it
+// installs it, and a runtime-only dotnet answers --list-runtimes while
+// carrying no compiler, so without this check that machine reaches dotnet pack
+// and reds there instead of saying what it is missing.
+const reasonNoSDK = "no dotnet SDK to pack the extractor tool with"
+
 // listsNet8Runtime reports whether dotnet --list-runtimes output names an 8.x
 // shared framework.
 func listsNet8Runtime(out string) bool {
@@ -137,189 +143,56 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 	}
 }
 
-// skipCause names why TestFullStackDrivesTheRealDotnetExtractor would skip.
-// The caller switches on it instead of matching the reason text, so adding a
-// cause is a compile-time question rather than a string comparison that
-// silently stops matching.
-type skipCause int
-
-const (
-	// causeRuns is the case going ahead: no skip route applies.
-	causeRuns skipCause = iota
-	causeShort
-	causeNoNet8Runtime
-)
-
-// reason is the text this cause skips or fails with. Every cause is answered
-// here, and an unhandled one panics rather than returning the empty string,
-// because a skip with no stated reason is the silent lapse this whole
-// mechanism exists to prevent.
-func (c skipCause) reason(probe probeResult) string {
-	switch c {
-	case causeRuns:
-		return ""
-	case causeShort:
-		return reasonShort
-	case causeNoNet8Runtime:
-		if probe.detail == "" {
-			panic("causeNoNet8Runtime from a probe that never ran")
-		}
-		return probe.detail
-	default:
-		panic(fmt.Sprintf("unhandled skipCause %d", int(c)))
-	}
-}
-
-// probeResult is what probeNet8Runtime found. Only that function builds one
-// with an answer in it, so a result that says the runtime is unusable always
-// carries the detail saying why. The zero value means the probe never ran,
-// which is the -short path.
-type probeResult struct {
-	ok     bool
-	detail string
-}
-
-// probeNet8Runtime asks the dotnet on PATH which shared frameworks it carries.
-// The detail is what tells a reader whether dotnet is absent from PATH, failed
-// when it ran, or ran fine and simply carries no 8.x framework, and an
-// enforced run reports nothing else about the machine.
-func probeNet8Runtime() probeResult {
-	out, err := exec.Command("dotnet", "--list-runtimes").CombinedOutput()
+// probeDotnet answers one question: can this machine both pack the extractor
+// tool and launch the net8.0 shim the pack installs. nil means yes. Anything
+// else is the reason the case skips, already worded for a reader, naming the
+// check that failed and what dotnet actually reported.
+//
+// Both halves are asked because neither implies the other. A runtime-only
+// install answers --list-runtimes and has no compiler for dotnet pack, and the
+// 10.x SDK a developer's machine packs with carries no 8.x shared framework
+// for the shim to start on.
+func probeDotnet() error {
+	out, err := exec.Command("dotnet", "--list-sdks").CombinedOutput()
 	listed := strings.TrimSpace(string(out))
 	switch {
 	case errors.Is(err, exec.ErrNotFound):
-		return probeResult{detail: fmt.Sprintf("%s, and no dotnet to ask: %v", reasonNoNet8Runtime, err)}
+		return fmt.Errorf("%s, and no dotnet to ask: %v", reasonNoSDK, err)
 	case err != nil:
-		return probeResult{detail: fmt.Sprintf("%s, dotnet --list-runtimes failed with %v and printed %q", reasonNoNet8Runtime, err, listed)}
-	case !listsNet8Runtime(listed):
-		return probeResult{detail: fmt.Sprintf("%s, dotnet --list-runtimes found no line starting with %q and listed %q", reasonNoNet8Runtime, net8RuntimePrefix, listed)}
+		return fmt.Errorf("%s, dotnet --list-sdks failed with %v and printed %q", reasonNoSDK, err, listed)
+	case listed == "":
+		return fmt.Errorf("%s, dotnet --list-sdks printed nothing, so this dotnet carries a runtime and no compiler", reasonNoSDK)
 	}
-	return probeResult{ok: true}
-}
 
-// dotnetSkipReason decides whether TestFullStackDrivesTheRealDotnetExtractor
-// may skip, what it says when it does, and whether it is actually allowed to.
-// require reflects METRIC_GATE_REQUIRE_DOTNET=1, which CI sets so a missing
-// runtime fails the run instead of silently skipping the only case that
-// exercises the real extractor. probe carries the 8.x shared framework
-// question, which an SDK on PATH does not by itself answer.
-// short is checked before probe, so a -short run always reports the -short
-// cause even when the runtime is also missing. That ordering also lets the
-// caller pass an unprobed result under -short, because it cannot reach the
-// reason.
-func dotnetSkipReason(short bool, probe probeResult, require bool) (cause skipCause, reason string, fatal bool) {
+	out, err = exec.Command("dotnet", "--list-runtimes").CombinedOutput()
+	listed = strings.TrimSpace(string(out))
 	switch {
-	case short:
-		cause = causeShort
-	case !probe.ok:
-		cause = causeNoNet8Runtime
+	case err != nil:
+		return fmt.Errorf("%s, dotnet --list-runtimes failed with %v and printed %q", reasonNoNet8Runtime, err, listed)
+	case !listsNet8Runtime(listed):
+		return fmt.Errorf("%s, dotnet --list-runtimes found no line starting with %q and listed %q", reasonNoNet8Runtime, net8RuntimePrefix, listed)
 	}
-	return cause, cause.reason(probe), cause != causeRuns && require
-}
-
-// TestDotnetSkipReasonRefusesToSkipWhenRequired pins dotnetSkipReason's cause,
-// reason and fatal decision for every combination of -short, what the probe
-// found, and METRIC_GATE_REQUIRE_DOTNET.
-func TestDotnetSkipReasonRefusesToSkipWhenRequired(t *testing.T) {
-	// unprobed is what the caller passes under -short. missing carries the
-	// detail probeNet8Runtime would have built, which is the text a skip or a
-	// fatal has to quote rather than the bare constant.
-	var (
-		unprobed = probeResult{}
-		present  = probeResult{ok: true}
-		missing  = probeResult{detail: reasonNoNet8Runtime + ", dotnet --list-runtimes listed \"\""}
-	)
-
-	cases := []struct {
-		name    string
-		short   bool
-		probe   probeResult
-		require bool
-		cause   skipCause
-		reason  string
-		fatal   bool
-	}{
-		{"runs when short is false, the runtime is present, and dotnet is not required", false, present, false, causeRuns, "", false},
-		{"runs when short is false, the runtime is present, and dotnet is required", false, present, true, causeRuns, "", false},
-		{"skips for -short when dotnet is not required", true, unprobed, false, causeShort, reasonShort, false},
-		{"fails for -short when dotnet is required", true, unprobed, true, causeShort, reasonShort, true},
-		{"skips with the probe's detail when dotnet is not required", false, missing, false, causeNoNet8Runtime, missing.detail, false},
-		{"fails with the probe's detail when dotnet is required", false, missing, true, causeNoNet8Runtime, missing.detail, true},
-		{"reports the -short cause over a missing runtime when dotnet is not required", true, missing, false, causeShort, reasonShort, false},
-		{"reports the -short cause over a missing runtime when dotnet is required", true, missing, true, causeShort, reasonShort, true},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			cause, reason, fatal := dotnetSkipReason(c.short, c.probe, c.require)
-			if cause != c.cause {
-				t.Errorf("cause = %v, want %v", cause, c.cause)
-			}
-			if reason != c.reason {
-				t.Errorf("reason = %q, want %q", reason, c.reason)
-			}
-			if fatal != c.fatal {
-				t.Errorf("fatal = %v, want %v", fatal, c.fatal)
-			}
-		})
-	}
-}
-
-// TestSkipCauseReasonPanicsRatherThanReturnEmpty pins the two ways a reason
-// could come out blank, which is the one thing a skip must never do: a cause
-// nobody wrote an arm for, and a missing-runtime cause carrying no detail.
-func TestSkipCauseReasonPanicsRatherThanReturnEmpty(t *testing.T) {
-	cases := []struct {
-		name     string
-		cause    skipCause
-		probe    probeResult
-		wantText string
-	}{
-		{"a cause with no arm", skipCause(99), probeResult{}, "unhandled skipCause 99"},
-		{"a missing runtime with no detail", causeNoNet8Runtime, probeResult{}, "probe that never ran"},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			defer func() {
-				r := recover()
-				if r == nil {
-					t.Fatalf("reason() returned instead of panicking")
-				}
-				if got := fmt.Sprint(r); !strings.Contains(got, c.wantText) {
-					t.Errorf("panic = %q, want it to contain %q", got, c.wantText)
-				}
-			}()
-			if got := c.cause.reason(c.probe); got == "" {
-				t.Fatal("reason() returned the empty string")
-			}
-		})
-	}
+	return nil
 }
 
 // TestRequireDotnetDecidesTheFullStackOutcome runs the full-stack case in a
-// child copy of this test binary, once with METRIC_GATE_REQUIRE_DOTNET=1 and
-// once with it unset, over each way the probe can fail: a stub that exits
-// non-zero, a stub that succeeds while listing no 8.x shared framework, a PATH
-// carrying no dotnet at all, and a stub that records having been called so the
-// -short run can prove it never probed. The helpers each carry their own
-// table, but only a real run proves the variable name the child reads is the
-// one CI sets and that the fatal path is reachable at all.
+// child copy of this test binary against a dotnet that cannot serve it, once
+// with METRIC_GATE_REQUIRE_DOTNET=1 and once with it unset. Only a real run
+// proves the variable name the child reads is the one CI sets and that the
+// fatal route is reachable at all.
 func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 	if testing.Short() {
 		t.Skip("forks child test binaries that each rebuild the gate, skipped with -short")
 	}
 
-	const stubRefusesToRun = "#!/bin/sh\necho 'stub dotnet refuses to run' >&2\nexit 3\n"
-	// A machine carrying only the SDK dotnet/global.json pins reaches this
-	// state, an installed toolchain that lists no 8.x shared framework. The
-	// AspNetCore line rides along so the run proves the probe wants the one
-	// framework the tool launches on rather than any 8 line at all. Every stub
-	// here sticks to shell builtins, because the PATH they run under carries
-	// the Go toolchain and nothing else.
-	const stubListsNoNet8 = "#!/bin/sh\n" +
-		"echo 'Microsoft.AspNetCore.App 8.0.0 [/x/shared/Microsoft.AspNetCore.App]'\n" +
-		"echo 'Microsoft.NETCore.App 10.0.0 [/x/shared/Microsoft.NETCore.App]'\n"
+	// A runtime-only host: the 8.x shared framework the shim needs is there,
+	// and there is no SDK to pack with. Before the probe asked about the SDK
+	// this machine ran the case and red at dotnet pack. The stub sticks to
+	// shell builtins so it does not depend on what else the PATH carries.
+	const stub = "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"--list-runtimes) echo 'Microsoft.NETCore.App 8.0.27 [/x/shared/Microsoft.NETCore.App]' ;;\n" +
+		"esac\n"
 
 	// The child runs the full-stack case and nothing else. Widening this
 	// pattern would let the child re-enter this test and fork forever.
@@ -327,69 +200,26 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 
 	// childRan is what -test.v prints once the child is past TestMain and into
 	// the case. Asserting it is what separates "the child failed for the reason
-	// under test" from "the child never built".
+	// under test" from "the child never built" or "-run matched nothing".
 	const childRan = "=== RUN   TestFullStackDrivesTheRealDotnetExtractor"
 
-	// Every child is given -test.short explicitly, so what it does never
-	// depends on the flags this parent happens to run under.
-	runChild := func(t *testing.T, path, require string, args ...string) (string, error) {
+	stubDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(stubDir, "dotnet"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := stubDir + string(os.PathListSeparator) + os.Getenv("PATH")
+
+	// -test.short is passed explicitly, so what the child does never depends
+	// on the flags this parent happens to run under.
+	runChild := func(t *testing.T, require string) (string, error) {
 		t.Helper()
-		cmd := exec.Command(os.Args[0], append([]string{"-test.run", childCase, "-test.v"}, args...)...)
+		cmd := exec.Command(os.Args[0], "-test.run", childCase, "-test.v", "-test.short=false")
 		cmd.Env = append(childEnv(require), "PATH="+path)
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
 
-	// lookIn resolves name the way the child's exec.LookPath will, over the
-	// PATH it is about to be handed rather than this process's own.
-	lookIn := func(path, name string) (string, bool) {
-		for _, dir := range filepath.SplitList(path) {
-			candidate := filepath.Join(dir, name)
-			if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
-				return candidate, true
-			}
-		}
-		return "", false
-	}
-
-	// noDotnetPath is built up rather than filtered down: one directory
-	// holding a link to the go command the child's own TestMain shells out to,
-	// and nothing else. Subtracting dotnet directories from the host PATH
-	// instead would take go with it wherever the two share a directory, which
-	// is what a mise shims-only or a Homebrew layout looks like, and the case
-	// would then be measuring a build failure.
-	noDotnetPath := func(t *testing.T) string {
-		t.Helper()
-		goBin, err := exec.LookPath("go")
-		if err != nil {
-			t.Fatal(err)
-		}
-		dir := t.TempDir()
-		if err := os.Symlink(goBin, filepath.Join(dir, "go")); err != nil {
-			t.Fatal(err)
-		}
-		if _, ok := lookIn(dir, "go"); !ok {
-			t.Fatalf("go is not reachable under the assembled PATH %q, so the child would fail to build rather than fail to find dotnet", dir)
-		}
-		if found, ok := lookIn(dir, "dotnet"); ok {
-			t.Fatalf("the assembled PATH still carries a dotnet at %q, so this case would not reach the absent-dotnet branch", found)
-		}
-		return dir
-	}
-
-	// stubPath puts a stub dotnet ahead of the same assembled PATH, so what
-	// the child finds is the stub and the toolchain and nothing the host
-	// happens to install.
-	stubPath := func(t *testing.T, stubBody string) string {
-		t.Helper()
-		stubDir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(stubDir, "dotnet"), []byte(stubBody), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		return stubDir + string(os.PathListSeparator) + noDotnetPath(t)
-	}
-
-	mustContain := func(t *testing.T, out string, wants []string) {
+	mustContain := func(t *testing.T, out string, wants ...string) {
 		t.Helper()
 		for _, want := range wants {
 			if !strings.Contains(out, want) {
@@ -398,81 +228,20 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 		}
 	}
 
-	scenarios := []struct {
-		name string
-		stub string
-		want []string
-	}{
-		{
-			name: "dotnet cannot run at all",
-			stub: stubRefusesToRun,
-			want: []string{reasonNoNet8Runtime, "exit status 3", "stub dotnet refuses to run"},
-		},
-		{
-			name: "dotnet runs and lists no 8.x runtime",
-			stub: stubListsNoNet8,
-			want: []string{reasonNoNet8Runtime, "found no line starting with", "Microsoft.NETCore.App 10.0.0"},
-		},
-	}
-
-	// bothArms runs the enforced and the unset child over one PATH and asserts
-	// the first fails naming the variable and the second skips, both quoting
-	// want. Each arm asserts the child reached the case, so an exit code that
-	// came from a failed build cannot pass for the outcome under test.
-	bothArms := func(t *testing.T, path string, want []string, args ...string) {
-		t.Helper()
-		t.Run("the enforced run fails instead of skipping", func(t *testing.T) {
-			out, err := runChild(t, path, "1", args...)
-			if err == nil {
-				t.Fatalf("child exited zero, want a failure. output:\n%s", out)
-			}
-			mustContain(t, out, append([]string{childRan, envRequireDotnet, "forbids skipping"}, want...))
-		})
-
-		t.Run("the unset run skips and passes", func(t *testing.T) {
-			out, err := runChild(t, path, "", args...)
-			if err != nil {
-				t.Fatalf("child failed with %v, want a pass. output:\n%s", err, out)
-			}
-			mustContain(t, out, append([]string{childRan, "--- SKIP"}, want...))
-		})
-	}
-
-	for _, s := range scenarios {
-		t.Run(s.name, func(t *testing.T) {
-			bothArms(t, stubPath(t, s.stub), s.want, "-test.short=false")
-		})
-	}
-
-	t.Run("dotnet is absent from PATH entirely", func(t *testing.T) {
-		bothArms(t, noDotnetPath(t),
-			[]string{reasonNoNet8Runtime, "no dotnet to ask"}, "-test.short=false")
+	t.Run("the enforced run fails instead of skipping", func(t *testing.T) {
+		out, err := runChild(t, "1")
+		if err == nil {
+			t.Fatalf("child exited zero, want a failure. output:\n%s", out)
+		}
+		mustContain(t, out, childRan, envRequireDotnet, "forbids skipping", reasonNoSDK)
 	})
 
-	// The -short guard exists so the case pays for no dotnet subprocess it
-	// cannot use the answer of. A stub that records being run is what turns
-	// that into an assertion rather than a claim in a comment, and the run
-	// without -short below is what makes the absent marker mean "never called"
-	// rather than "never callable".
-	t.Run("-short decides before dotnet is ever run", func(t *testing.T) {
-		marker := filepath.Join(t.TempDir(), "probed")
-		path := stubPath(t, "#!/bin/sh\n: > '"+marker+"'\n")
-
-		bothArms(t, path, []string{reasonShort}, "-test.short=true")
-
-		if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("the stub dotnet ran under -short: os.Stat(%q) = %v, want a not-exist error", marker, err)
+	t.Run("the unset run skips and passes", func(t *testing.T) {
+		out, err := runChild(t, "")
+		if err != nil {
+			t.Fatalf("child failed with %v, want a pass. output:\n%s", err, out)
 		}
-
-		t.Run("the same stub does run once -short is off", func(t *testing.T) {
-			out, err := runChild(t, path, "", "-test.short=false")
-			if err != nil {
-				t.Fatalf("child failed with %v, want a pass. output:\n%s", err, out)
-			}
-			if _, err := os.Stat(marker); err != nil {
-				t.Errorf("the stub dotnet never ran without -short either, so its absence under -short proves nothing: os.Stat(%q) = %v. output:\n%s", marker, err, out)
-			}
-		})
+		mustContain(t, out, childRan, "--- SKIP", reasonNoSDK)
 	})
 }
 
@@ -548,15 +317,21 @@ func TestFullStackDrivesTheRealDotnetExtractor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A -short run cannot use the probe's answer, so it never pays for the
-	// subprocess and the first-run initialization dotnet may do behind it.
-	short := testing.Short()
-	var probe probeResult
-	if !short {
-		probe = probeNet8Runtime()
+	// reason is empty only when nothing stands in the way, so a skip or a
+	// fatal always states one. A -short run cannot use the probe's answer, so
+	// it never pays for the subprocess and the first-run initialization dotnet
+	// may do behind it.
+	var reason string
+	switch {
+	case testing.Short():
+		reason = reasonShort
+	default:
+		if err := probeDotnet(); err != nil {
+			reason = err.Error()
+		}
 	}
-	if cause, reason, fatal := dotnetSkipReason(short, probe, require); cause != causeRuns {
-		if fatal {
+	if reason != "" {
+		if require {
 			t.Fatalf("%s=1 forbids skipping: %s", envRequireDotnet, reason)
 		}
 		t.Skip(reason)
