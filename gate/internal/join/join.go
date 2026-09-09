@@ -29,7 +29,7 @@ func Changed(extracted extract.Result, touched map[srcpath.Path][]int) (changed 
 	byFile := groupByFile(extracted.Spans)
 	inside := map[extract.Span]bool{}
 	for _, file := range sortedFiles(touched) {
-		if !extracted.Claimed[file] {
+		if !extracted.Claims(file) {
 			continue
 		}
 		for _, line := range touched[file] {
@@ -50,23 +50,22 @@ func Changed(extracted extract.Result, touched map[srcpath.Path][]int) (changed 
 	return changed, outsideSpans
 }
 
-// InFiles returns every span an extractor found in one of files. This is the
-// --files rule: the flag carries no line information, so ADR 0003 makes
-// every method in a listed file changed, and the smallest-containing-span
-// narrowing that Changed applies has nothing to narrow against. Nested spans
-// are all returned, since with no touched line there is nothing to
-// attribute to the smallest container.
-func InFiles(extracted extract.Result, files []srcpath.Path) []extract.Span {
-	want := map[srcpath.Path]bool{}
-	for _, file := range files {
-		want[file] = true
-	}
-	var changed []extract.Span
-	for _, span := range extracted.Spans {
-		if want[span.File] {
-			changed = append(changed, span)
-		}
-	}
+// InFiles returns every span extracted holds. This is the --files rule: the
+// flag carries no line information, so ADR 0003 makes every method in a
+// listed file changed, nested spans included, since with no touched line
+// there is nothing to attribute to the smallest container the way Changed's
+// narrowing would.
+//
+// It takes no file list because there is nothing left to filter against.
+// extract.collect already refuses any span whose file it was not handed,
+// exiting 1 with extractor_path_mismatch, so every span reaching extracted
+// came from a file the caller named. A filter here could only ever drop
+// nothing on a passing run and hide a regression in that check on a failing
+// one, silently, which is the failure mode this codebase makes loud
+// everywhere else. The invariant has one owner, collect, and one failure
+// mode, loud.
+func InFiles(extracted extract.Result) []extract.Span {
+	changed := slices.Clone(extracted.Spans)
 	sortSpans(changed)
 	return changed
 }
