@@ -863,3 +863,29 @@ func (f *fixture) setOriginHead() {
 	f.t.Helper()
 	f.git("remote", "set-head", "origin", "--auto")
 }
+
+// pushOrphanHistoryToOrigin builds a commit with no parent, so it shares no
+// history with whatever HEAD names, and force-pushes it to origin's branch,
+// which is how a case makes refs/remotes/origin/<branch> a candidate that
+// exists but merge-base cannot relate to HEAD (issue 35). It leaves the
+// fixture back on the branch it started on, fetches so the remote-tracking ref
+// is refreshed from what was actually pushed rather than trusted from the push
+// output, and fails the case if that ref still shares history with HEAD.
+func (f *fixture) pushOrphanHistoryToOrigin(branch string) {
+	f.t.Helper()
+	current := f.git("symbolic-ref", "--short", "HEAD")
+	f.git("checkout", "--quiet", "--orphan", "unrelated-history")
+	f.git("rm", "--quiet", "-rf", ".")
+	f.write("unrelated.txt", "shares no history with "+current+"\n")
+	f.commitAll("unrelated history")
+	f.git("push", "--quiet", "--force", "origin", "unrelated-history:"+branch)
+	f.git("checkout", "--quiet", current)
+	f.git("fetch", "--quiet", "origin")
+
+	cmd := exec.Command("git", "merge-base", "HEAD", "origin/"+branch)
+	cmd.Dir = f.root
+	cmd.Env = append(os.Environ(), gitEnv...)
+	if err := cmd.Run(); err == nil {
+		f.t.Fatalf("origin/%s still shares history with HEAD after the orphan push", branch)
+	}
+}
