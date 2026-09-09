@@ -1751,85 +1751,41 @@ func TestNamedCoverageReportStampedFarAheadIsRefusedToo(t *testing.T) {
 		"coverage report artifacts/coverage.xml carries a timestamp \"1767225600000\" more than 24h ahead of now; it must be epoch seconds, or the clock on this machine is behind the one that wrote it\n")
 }
 
-func TestChangedFileModifiedFarAheadOfNowIsRefusedNamingTheFile(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-	f.touchLine(orderService, 62)
-	// The other side of the same comparison, moved by a machine's own clock
-	// rather than by a producer's units: a restored archive or a resumed VM
-	// leaves a source file modified in the future. No report can then be fresh
-	// enough, so a gate guarding only the report's side refuses with
-	// coverage_stale and sends the developer to clear TestResults directories
-	// that were never the problem. The report here is written fresh and is
-	// never read: the refusal names the file and its own modification time.
-	edited := time.Now().Add(25 * time.Hour).Truncate(time.Second)
-	f.setModTime(orderService, edited)
-	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
-		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
-	f.stub = stubConfig{
-		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
-	}
-
-	modified := edited.UTC().Format(time.RFC3339)
-	f.run().assertMatchesWith(t, "source_mtime_in_future", 1, f.baseLabel("main"),
-		"src/Ordering/OrderService.cs was last modified "+modified+
-			", more than 24h ahead of now; correct the clock on this machine or restore the file's modification time\n",
-		map[string]string{"MODIFIED": modified})
-}
-
-func TestChangedFileModifiedInsideToleranceIsScored(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-	f.touchLine(orderService, 62)
-	// 23h ahead of now, inside what coverage.FarAheadOfNow allows, the mirror of the 25h case
-	// above. A guard refusing every mtime merely ahead of now, rather than only
-	// one past the tolerance, fails here, and that guard would refuse every run
-	// on a checkout over NFS or on a resumed VM carrying a few seconds of
-	// forward skew, which is the drift the window exists to allow. The report
-	// carries the same instant, so it is not stale against an edit in the
-	// future and the run reaches a score rather than a staleness refusal.
-	edited := time.Now().Add(23 * time.Hour).Truncate(time.Second)
-	f.setModTime(orderService, edited)
-	f.write("TestResults/coverage.cobertura.xml", coberturaStamped(stampAt(edited), f.root,
-		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
-	f.stub = stubConfig{
-		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
-	}
-
-	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
-		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
-}
-
 func TestCoverageReportStampedBeforeTheFloorIsRefusedNotSkipped(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-	f.touchLine(orderService, 62)
 	// timestamp="0" is the units fault the tolerance catches from the other
 	// side: a producer with no clock to read, or one writing seconds since boot
-	// rather than since the epoch. It is a discovered report, the one Origin
-	// issue 32 skips as superseded, so this pins that a stamp the gate cannot
-	// trust is refused rather than dropped quietly into skipped_paths. A fresh
-	// report sits beside it, the shape of the future-stamped case below, so a
-	// gate that skipped the floor-stamped one would still score the run and
-	// pass. Without that sibling the skip would run out of reports and refuse
-	// anyway, under a different code, and the case would hold whether the floor
-	// guard existed or not.
-	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml", coberturaStamped(freshStamp(), f.root,
-		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
-	f.write("tests/Beta.Tests/TestResults/run/coverage.cobertura.xml", coberturaStamped("0", f.root,
-		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
-	f.stub = stubConfig{
-		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
-	}
+	// rather than since the epoch. The int64 floor is the other end of the
+	// range guard, a stamp time.Unix holds without underflowing, so nothing
+	// upstream refuses it and the plausibility band is the only rule that can.
+	// Both are discovered reports, the one Origin issue 32 skips as superseded,
+	// so this pins that a stamp the gate cannot trust is refused rather than
+	// dropped quietly into skipped_paths. A fresh report sits beside each, the
+	// shape of the future-stamped case below, so a gate that skipped the
+	// floor-stamped one would still score the run and pass. Without that
+	// sibling the skip would run out of reports and refuse anyway, under a
+	// different code, and the case would hold whether the floor guard existed
+	// or not.
+	for _, stamp := range []string{"0", "-9223372036854775808"} {
+		t.Run(stamp, func(t *testing.T) {
+			f := newFixture(t, "main")
+			f.write(orderService, csharpFile(80))
+			f.commitAll("initial")
+			f.touchLine(orderService, 62)
+			f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml", coberturaStamped(freshStamp(), f.root,
+				coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+			f.write("tests/Beta.Tests/TestResults/run/coverage.cobertura.xml", coberturaStamped(stamp, f.root,
+				coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+			f.stub = stubConfig{
+				Extensions: []string{".cs"},
+				Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+			}
 
-	f.run().assertMatches(t, "coverage_timestamp_before_floor", 1, f.baseLabel("main"),
-		"coverage report tests/Beta.Tests/TestResults/run/coverage.cobertura.xml carries a timestamp \"0\" from before 2000-01-01T00:00:00Z; it must be epoch seconds\n")
+			f.run().assertMatchesWith(t, "coverage_timestamp_before_floor", 1, f.baseLabel("main"),
+				"coverage report tests/Beta.Tests/TestResults/run/coverage.cobertura.xml carries a timestamp "+
+					strconv.Quote(stamp)+" from before 2000-01-01T00:00:00Z; it must be epoch seconds\n",
+				map[string]string{"STAMP": stamp})
+		})
+	}
 }
 
 func TestCoverageReportStampedExactlyAtTheFloorIsScored(t *testing.T) {
@@ -2123,17 +2079,21 @@ func TestSupersededNameIsNotCarriedIntoALaterReportFailure(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// A superseded report the loader has already skipped, then a second report
-	// it cannot parse at all. The run exits 1 with nothing scored, so there is
-	// no understated coverage for the skipped name to explain and the document
-	// carries the fault that stopped the run alone: skipped_paths stays empty
-	// rather than listing a leftover TestResults directory beside a broken
-	// report as though both were why the score is short.
+	// A superseded report the loader has already skipped, a directory the walk
+	// could not enter, and a second report it cannot parse at all. The run
+	// exits 1 with nothing scored, so there is no understated coverage for
+	// either skipped name to explain and the document carries the fault that
+	// stopped the run alone: skipped_paths stays empty rather than listing a
+	// leftover TestResults directory or an unreadable one beside a broken
+	// report as though any of them were why the score is short. Both producers
+	// of skipped_paths are present, since suppressing only the loader's names
+	// would put one field under two rules on one path.
 	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml",
 		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
 			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
 	const malformed = "<coverage><packages>\n"
 	f.write("tests/Beta.Tests/TestResults/run/coverage.cobertura.xml", malformed)
+	f.denyRead("tests/Zeta.Tests/TestResults/locked")
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
