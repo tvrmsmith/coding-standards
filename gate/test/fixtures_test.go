@@ -897,7 +897,7 @@ func (f *fixture) requireDistinctCommits(a, b string) {
 // helper must run on a clean tree and before the case stamps its coverage
 // report: `git rm -rf .` drops uncommitted edits to tracked files, and the
 // checkout back bumps every tracked file's mtime, which would leave the report
-// older than the code it describes and trip the coverage_stale rule. Both
+// older than the code it describes and trip the staleness rule. Both
 // preconditions are checked rather than left to the doc.
 func (f *fixture) pushOrphanHistoryToOrigin(branch string) {
 	f.t.Helper()
@@ -928,8 +928,11 @@ func (f *fixture) pushOrphanHistoryToOrigin(branch string) {
 		f.t.Fatalf("origin/%s still shares history with HEAD after the orphan push", branch)
 	}
 	// Exit 1 is git answering "no common ancestor"; every other exit code is
-	// git failing to answer at all, which is the same distinction gitscope
-	// draws and would otherwise let a broken fixture read as a working one.
+	// git failing to answer at all, so only exit 1 confirms the helper really
+	// produced unrelated history. The distinction is the helper's own, drawn
+	// here so a broken fixture cannot read as a working one; ResolveBase drops
+	// any merge-base failure alike, and that quiet fall-through is what the
+	// caller pins. gitscope draws it in ResolveRef and noMatch.
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
 		f.t.Fatalf("merge-base HEAD origin/%s failed to answer: %v\n%s",

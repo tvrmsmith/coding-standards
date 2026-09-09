@@ -3252,9 +3252,10 @@ func TestOriginMasterOutranksLocalMainWhenBothExist(t *testing.T) {
 	// resolves and the walk reaches origin/master, back at "initial", before
 	// local main, which is HEAD's own branch at "second". Diffing from
 	// origin/master carries both edits, two changed methods; diffing from main
-	// would carry only the working-tree edit to line 62, one. That is the last
-	// adjacent pair of BaseCandidates: swapping origin/master and main turns
-	// this case red on the count as well as the label.
+	// would carry only the working-tree edit to line 62, one. That is the
+	// origin/master-to-main pair, the third of BaseCandidates' four adjacent
+	// pairs: swapping those two entries turns this case red on the count as
+	// well as the label.
 	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/master"),
 		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
@@ -3300,9 +3301,13 @@ func TestOriginMasterResolvesOnAMasterDefaultBranch(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// origin/master never resolves in any other case in this suite, so a typo
-	// in that entry of BaseCandidates would survive the whole suite green;
-	// this fixture is the one that would go red if it did.
+	// HEAD's own branch is master here, so origin/master at "initial" and
+	// local master at "second" separate: diffing from origin/master carries
+	// both edits, two changed methods, and diffing from local master would
+	// carry only the working-tree edit to line 62, one. That is what this
+	// fixture pins. TestOriginMasterOutranksLocalMainWhenBothExist also
+	// resolves origin/master, but against a local main rather than a local
+	// master.
 	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/master"),
 		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
