@@ -1571,6 +1571,218 @@ export const wire = () => {
     compliant: `export const locate = (cb: (p: unknown) => void) => cb(undefined)`,
   },
 
+  /*
+   * ---- sonarjs: web framework configuration ----
+   *
+   * These samples are shaped by what the rules can see, not by taste. Sonar's Express
+   * helper finds the app by matching `<id> = express()` literally, so every sample
+   * instantiates one; it is named `server` because `SOURCE_PREAMBLE` already declares an
+   * `app`. The imports are never resolved — the rules read the import statement to
+   * qualify a name and stop there — so nothing here has to be installed.
+   *
+   * `sonarjs/x-powered-by` reports once per file on any app that does not visibly protect
+   * itself, which means it fires on most of the violating samples below as a bystander.
+   * That is harmless: a case is matched on its own rule id.
+   */
+
+  // Response headers helmet sets, switched back off.
+  {
+    rule: 'sonarjs/content-security-policy',
+    scope: 'source',
+    violating: `import express from 'express'
+import helmet from 'helmet'
+const server = express()
+server.use(helmet({ contentSecurityPolicy: false }))`,
+    compliant: `import express from 'express'
+import helmet from 'helmet'
+const server = express()
+server.use(helmet({ contentSecurityPolicy: true }))`,
+  },
+  {
+    rule: 'sonarjs/no-mime-sniff',
+    scope: 'source',
+    violating: `import express from 'express'
+import helmet from 'helmet'
+const server = express()
+server.use(helmet({ noSniff: false }))`,
+    compliant: `import express from 'express'
+import helmet from 'helmet'
+const server = express()
+server.use(helmet({ noSniff: true }))`,
+  },
+  {
+    rule: 'sonarjs/no-referrer-policy',
+    scope: 'source',
+    // The unsafe set is exactly '', 'unsafe-url' and 'no-referrer-when-downgrade'.
+    violating: `import express from 'express'
+import helmet from 'helmet'
+const server = express()
+server.use(helmet.referrerPolicy({ policy: 'unsafe-url' }))`,
+    compliant: `import express from 'express'
+import helmet from 'helmet'
+const server = express()
+server.use(helmet.referrerPolicy({ policy: 'no-referrer' }))`,
+  },
+  {
+    rule: 'sonarjs/strict-transport-security',
+    scope: 'source',
+    // Sonar's floor is 15552000 seconds, 180 days.
+    violating: `import express from 'express'
+import helmet from 'helmet'
+const server = express()
+server.use(helmet.hsts({ maxAge: 3600 }))`,
+    compliant: `import express from 'express'
+import helmet from 'helmet'
+const server = express()
+server.use(helmet.hsts({ maxAge: 31536000, includeSubDomains: true }))`,
+  },
+  {
+    rule: 'sonarjs/x-powered-by',
+    scope: 'source',
+    // Reported on the whole file, at `Program:exit`, so the violating sample is an app
+    // with nothing wrong on any single line.
+    violating: `import express from 'express'
+const server = express()
+server.get('/health', (_req, res) => res.send('ok'))`,
+    compliant: `import express from 'express'
+const server = express()
+server.disable('x-powered-by')
+server.get('/health', (_req, res) => res.send('ok'))`,
+  },
+
+  // Session and cookie flags.
+  {
+    rule: 'sonarjs/insecure-cookie',
+    scope: 'source',
+    violating: `import session from 'express-session'
+export const store = session({ secret: 'unused', cookie: { secure: false } })`,
+    compliant: `import session from 'express-session'
+export const store = session({ secret: 'unused', cookie: { secure: true, httpOnly: true } })`,
+  },
+  {
+    rule: 'sonarjs/cookie-no-httponly',
+    scope: 'source',
+    violating: `import session from 'express-session'
+export const store = session({ secret: 'unused', cookie: { secure: true, httpOnly: false } })`,
+    compliant: `import session from 'express-session'
+export const store = session({ secret: 'unused', cookie: { secure: true, httpOnly: true } })`,
+  },
+  {
+    rule: 'sonarjs/no-session-cookies-on-static-assets',
+    scope: 'source',
+    // Ordering is the whole defect: the two samples differ only in which `use` runs first.
+    violating: `import express from 'express'
+import session from 'express-session'
+import helmet from 'helmet'
+const server = express()
+server.use(helmet())
+server.use(session({ secret: 'unused' }))
+server.use(express.static('public'))`,
+    compliant: `import express from 'express'
+import session from 'express-session'
+import helmet from 'helmet'
+const server = express()
+server.use(helmet())
+server.use(express.static('public'))
+server.use(session({ secret: 'unused' }))`,
+  },
+  {
+    rule: 'sonarjs/session-regeneration',
+    scope: 'source',
+    // The rule reads the third argument of the route call and requires a
+    // `FunctionExpression` there; an arrow function is invisible to it.
+    violating: `import express from 'express'
+import passport from 'passport'
+import helmet from 'helmet'
+const server = express()
+server.use(helmet())
+server.post('/login', passport.authenticate('local'), function (req, res) {
+  res.redirect('/home')
+})`,
+    compliant: `import express from 'express'
+import passport from 'passport'
+import helmet from 'helmet'
+const server = express()
+server.use(helmet())
+server.post('/login', passport.authenticate('local'), function (req, res) {
+  req.session.regenerate(function () {
+    res.redirect('/home')
+  })
+})`,
+  },
+
+  // Who is allowed to call the app, and with what.
+  {
+    rule: 'sonarjs/cors',
+    scope: 'source',
+    // Only the form with no `origin` reports: bare `cors()` reflects whatever origin asks.
+    violating: `import express from 'express'
+import cors from 'cors'
+import helmet from 'helmet'
+const server = express()
+server.use(helmet())
+server.use(cors())`,
+    compliant: `import express from 'express'
+import cors from 'cors'
+import helmet from 'helmet'
+const server = express()
+server.use(helmet())
+server.use(cors({ origin: 'https://app.example.com' }))`,
+  },
+  {
+    rule: 'sonarjs/csrf',
+    scope: 'source',
+    // GET, HEAD and OPTIONS are the only methods it accepts in `ignoreMethods`.
+    violating: `import csurf from 'csurf'
+export const protection = csurf({ ignoreMethods: ['GET', 'POST'] })`,
+    compliant: `import csurf from 'csurf'
+export const protection = csurf({ ignoreMethods: ['GET', 'HEAD', 'OPTIONS'] })`,
+  },
+
+  // Uploads and static serving.
+  {
+    rule: 'sonarjs/content-length',
+    scope: 'source',
+    violating: `import multer from 'multer'
+export const upload = multer({ dest: '/tmp/uploads' })`,
+    compliant: `import multer from 'multer'
+export const upload = multer({ dest: '/tmp/uploads', limits: { fileSize: 1000000 } })`,
+  },
+  {
+    rule: 'sonarjs/file-uploads',
+    scope: 'source',
+    // `diskStorage` with no `destination` writes to the OS temp directory.
+    violating: `import multer from 'multer'
+export const upload = multer({
+  storage: multer.diskStorage({ filename: (_r, f, cb) => cb(null, f.originalname) }),
+  limits: { fileSize: 1000000 },
+})`,
+    compliant: `import multer from 'multer'
+export const upload = multer({
+  storage: multer.diskStorage({
+    destination: '/var/uploads',
+    filename: (_r, f, cb) => cb(null, f.originalname),
+  }),
+  limits: { fileSize: 1000000 },
+})`,
+  },
+  {
+    rule: 'sonarjs/hidden-files',
+    scope: 'source',
+    violating: `import serveStatic from 'serve-static'
+export const statics = serveStatic('/public', { dotfiles: 'allow' })`,
+    compliant: `import serveStatic from 'serve-static'
+export const statics = serveStatic('/public', { dotfiles: 'ignore' })`,
+  },
+  {
+    rule: 'sonarjs/no-ip-forward',
+    scope: 'source',
+    violating: `import { createProxyMiddleware } from 'http-proxy-middleware'
+export const proxy = createProxyMiddleware({ target: 'https://api.example.com', xfwd: true })`,
+    compliant: `import { createProxyMiddleware } from 'http-proxy-middleware'
+export const proxy = createProxyMiddleware({ target: 'https://api.example.com', xfwd: false })`,
+  },
+
   // ---- sonarjs: test integrity ----
   {
     // Both this rule and the next gate on a recognised runner: they read the import list and
