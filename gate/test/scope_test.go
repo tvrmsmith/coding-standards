@@ -749,7 +749,7 @@ func TestStagedNamesEveryDirtyFileInOneMessage(t *testing.T) {
 	// gate's to score, so a message naming one of them sends the developer
 	// back for a second run to find the other. What this pins is the ", " join.
 	// The order the two names come out in is dirtyMessage's own sort, which
-	// this case cannot tell from the sort claimedFiles already did upstream, so
+	// this case cannot tell from the sort ClaimedPaths already did upstream, so
 	// the unit case beside dirtyMessage is what holds that rule.
 	f.touchLine(orderService, 62)
 	f.touchLine(otherService, 12)

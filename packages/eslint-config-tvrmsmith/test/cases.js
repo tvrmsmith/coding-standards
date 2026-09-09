@@ -147,6 +147,14 @@ export const cases = [
 
   // ---- base: A2, assertions should communicate meaning (non-DOM half) ----
   {
+    // The A2 residue rule. The compliant form filters to the offending elements, so the
+    // matcher still has them to print.
+    rule: 'tvrmsmith/no-quantifier-assertion',
+    scope: 'test',
+    violating: `it('a', () => { expect(users.every((u) => u.active)).toBe(true) })`,
+    compliant: `it('a', () => { expect(users.filter((u) => !u.active)).toEqual([]) })`,
+  },
+  {
     rule: 'jest/prefer-to-be',
     scope: 'test',
     violating: `it('a', () => { expect(getUser().age).toEqual(36) })`,
