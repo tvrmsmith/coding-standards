@@ -15,8 +15,8 @@
 // no typed code, because argv failed before the run had a shape to report".
 //
 // Four other errors take that shape, and 0008 sanctions none of them. Failing
-// to open a git repository lands upstream of the document, before there is a
-// base or a scope to report. Failing to read the working directory while
+// to open a git repository lands upstream of the document, before a base is
+// resolved. Failing to read the working directory while
 // resolving a relative --files name lands after that and before any method is
 // counted. Failing to stat a changed file and failing to read the working
 // directory a --coverage path resolves against land after the changed methods
