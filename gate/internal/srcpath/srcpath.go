@@ -238,11 +238,11 @@ func (r Root) named(name string) (Path, error) {
 	if !inside {
 		return "", &UnresolvedError{Name: name, Reason: "is outside the repo root"}
 	}
+	// EvalSymlinks already resolved this path, so absence here is a delete
+	// racing the two syscalls rather than a name the developer mistyped, and it
+	// reads as the filesystem failure it is.
 	info, err := os.Stat(resolved)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return "", &UnresolvedError{Name: name, Reason: "does not exist"}
-		}
 		return "", unreadable(name, err)
 	}
 	if info.IsDir() {

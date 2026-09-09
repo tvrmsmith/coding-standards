@@ -96,9 +96,10 @@ func (b Base) Label() string { return b.Ref + "@" + b.Commit[:7] }
 // NoBaseError reports that the run has no commit to diff against: none of
 // ADR 0003's candidates resolved, --since named a ref that does not exist, or
 // --staged found no HEAD to diff the index against. The message points at
-// --since, issue 14's flag, per ADR 0003's Consequences, except when --since
-// is itself what failed or the branch has no commit, where naming it again
-// would tell the caller nothing new.
+// --since, issue 14's flag, per ADR 0003's Consequences, except when the
+// branch has no commit or --since is itself what failed, whether the ref did
+// not resolve or it resolved and shares no history with HEAD. Naming the flag
+// again in any of those tells the caller nothing new.
 type NoBaseError struct {
 	// Ref is the ref --since named. It is empty when the default candidates
 	// are what failed, and empty whenever NoCommits is true, which ResolveRef
@@ -168,17 +169,11 @@ func (r Repo) ResolveBase() (Base, error) {
 // `git checkout --orphan` reports the diff as unparseable for a run that never
 // reached a diff, when what the repo has is no commit on this branch.
 func (r Repo) ResolveRef(ref string) (Base, error) {
-	if _, err := r.git("rev-parse", "--verify", "--quiet", ref+"^{commit}"); err != nil {
-		if noMatch(err) {
-			return Base{}, NoBaseError{Ref: ref}
-		}
-		return Base{}, unreadableDiff(err)
+	if _, err := r.verifyCommit(ref+"^{commit}", NoBaseError{Ref: ref}); err != nil {
+		return Base{}, err
 	}
-	if _, err := r.git("rev-parse", "--verify", "--quiet", "HEAD"); err != nil {
-		if noMatch(err) {
-			return Base{}, NoBaseError{NoCommits: true}
-		}
-		return Base{}, unreadableDiff(err)
+	if _, err := r.verifyCommit("HEAD", NoBaseError{NoCommits: true}); err != nil {
+		return Base{}, err
 	}
 	mergeBase, err := r.git("merge-base", "HEAD", ref)
 	if err != nil {
@@ -194,14 +189,31 @@ func (r Repo) ResolveRef(ref string) (Base, error) {
 // against. It draws the same line ResolveRef does: exit 1 is a branch with no
 // commit on it, and anything else is git failing to read the one it has.
 func (r Repo) ResolveStaged() (Base, error) {
-	commit, err := r.git("rev-parse", "--verify", "--quiet", "HEAD")
+	commit, err := r.verifyCommit("HEAD", NoBaseError{NoCommits: true})
+	if err != nil {
+		return Base{}, err
+	}
+	return Base{Ref: "HEAD", Commit: commit, Staged: true}, nil
+}
+
+// verifyCommit resolves rev to a commit id, answering absent when git exits 1
+// and an unreadable diff on every other exit code.
+//
+// The three calls share this rather than spelling the same two arms out each
+// time. ResolveRef's HEAD check is the reason it is worth sharing: no fixture
+// makes git read a named ref and then fail to answer about HEAD at all, since
+// every damaged HEAD real git will produce is either exit 1 or a repository it
+// refuses to open at all, so a second copy of the unreadable arm there could
+// not be reached by a test.
+func (r Repo) verifyCommit(rev string, absent NoBaseError) (string, error) {
+	out, err := r.git("rev-parse", "--verify", "--quiet", rev)
 	if err != nil {
 		if noMatch(err) {
-			return Base{}, NoBaseError{NoCommits: true}
+			return "", absent
 		}
-		return Base{}, unreadableDiff(err)
+		return "", unreadableDiff(err)
 	}
-	return Base{Ref: "HEAD", Commit: strings.TrimSpace(commit), Staged: true}, nil
+	return strings.TrimSpace(out), nil
 }
 
 // TouchedLines returns the new-side lines of `git diff -w -U0 --no-renames
@@ -531,24 +543,50 @@ func (r Repo) pureMoves(base Base, drivers []string) ([]srcpath.Path, error) {
 	}
 	digests := map[srcpath.Path][sha256.Size]byte{}
 	claimants := map[[sha256.Size]byte]int{}
-	for _, path := range added {
-		body, err := os.ReadFile(r.root.Abs(path))
+	for _, add := range added {
+		body, err := r.addedContent(base, add)
 		if err != nil {
 			continue
 		}
 		digest := squashedDigest(body)
-		digests[path] = digest
+		digests[add.Path] = digest
 		claimants[digest]++
 	}
 	var moves []srcpath.Path
-	for _, path := range added {
-		digest, read := digests[path]
+	for _, add := range added {
+		digest, read := digests[add.Path]
 		if !read || carried[digest] == 0 || claimants[digest] > carried[digest] {
 			continue
 		}
-		moves = append(moves, path)
+		moves = append(moves, add.Path)
 	}
 	return moves, nil
+}
+
+// addedContent reads the new side of an added path, from the same snapshot the
+// deleted side comes out of.
+//
+// Under --staged that is the index blob the raw record names rather than the
+// file on disk. Read off disk, a path moved, edited, staged, and then restored
+// on disk to its pre-move text digests equal to the deleted blob, so the gate
+// calls it a pure move and drops it from the diff. It is then never handed to
+// an extractor, never claimed, and so never among the paths the staged_file_dirty
+// guard is asked about, and the run passes on exactly the divergence that guard
+// exists to refuse.
+func (r Repo) addedContent(base Base, add addedFile) ([]byte, error) {
+	if base.Staged {
+		body, err := r.git("cat-file", "blob", add.Blob)
+		return []byte(body), err
+	}
+	return os.ReadFile(r.root.Abs(add.Path))
+}
+
+// addedFile is one path a diff added, with the object id of its new-side
+// content. The id is all zeros for a working-tree diff, where the new side is
+// the file on disk and no object holds it.
+type addedFile struct {
+	Path srcpath.Path
+	Blob string
 }
 
 // squashedDigest digests body in the form `git diff -w` compares it in: every
@@ -568,10 +606,10 @@ func squashedDigest(body []byte) [sha256.Size]byte {
 const gitlinkMode = "160000"
 
 // parseRawAddsAndDeletes reads `git diff --raw -z` records, returning the
-// paths the diff added and the old-side blob ids it deleted. A record is the
-// metadata field ":<mode> <mode> <src> <dst> <status>" followed by the path,
-// both NUL-terminated.
-func parseRawAddsAndDeletes(raw string) (added []srcpath.Path, deleted []string, err error) {
+// paths the diff added with their new-side blob ids and the old-side blob ids
+// it deleted. A record is the metadata field ":<mode> <mode> <src> <dst>
+// <status>" followed by the path, both NUL-terminated.
+func parseRawAddsAndDeletes(raw string) (added []addedFile, deleted []string, err error) {
 	records := strings.Split(strings.TrimSuffix(raw, "\x00"), "\x00")
 	if len(records) == 1 && records[0] == "" {
 		return nil, nil, nil
@@ -584,13 +622,13 @@ func parseRawAddsAndDeletes(raw string) (added []srcpath.Path, deleted []string,
 		if len(fields) != 5 {
 			return nil, nil, fmt.Errorf("git diff --raw record is malformed: %q", records[i])
 		}
-		oldMode, newMode, src, status := strings.TrimPrefix(fields[0], ":"), fields[1], fields[2], fields[4]
+		oldMode, newMode, src, dst, status := strings.TrimPrefix(fields[0], ":"), fields[1], fields[2], fields[3], fields[4]
 		switch status {
 		case "A":
 			if newMode == gitlinkMode {
 				continue
 			}
-			added = append(added, srcpath.FromSlash(records[i+1]))
+			added = append(added, addedFile{Path: srcpath.FromSlash(records[i+1]), Blob: dst})
 		case "D":
 			if oldMode == gitlinkMode {
 				continue
@@ -847,6 +885,10 @@ type gitError struct {
 }
 
 func (e *gitError) Error() string {
+	// Nothing was captured when the process never ran, exec.ErrNotFound for a
+	// missing git or a blanked driver binary git tried to launch, and a
+	// trailing ": " would leave the reader looking for a complaint that was
+	// never made.
 	if e.stderr == "" {
 		return fmt.Sprintf("git %s: %v", strings.Join(e.args, " "), e.err)
 	}

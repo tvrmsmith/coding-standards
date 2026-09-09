@@ -182,8 +182,9 @@ func (m Metric) WorstScore() float64 {
 type Document struct {
 	// Scope is the token naming which scope the run used (ADR 0005), one per
 	// mode: merge-base, staged, since, files. It carries scope's own type so
-	// the four-token set stays the compiler's to enforce, which is what the
-	// removed `const Scope = "merge-base"` used to do.
+	// the four tokens are spelled in one place, the package that parses the
+	// flags they name, rather than again here as the removed
+	// `const Scope = "merge-base"` did.
 	Scope scope.Mode
 	// Base is the resolved "<ref>@<sha>" label, or nil when resolution is
 	// what failed.

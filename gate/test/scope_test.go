@@ -16,35 +16,86 @@ const usage = "\n\nusage: metric-gate [--staged | --since <ref> | --files <path>
 	"  --files <path>...  every method in each named file\n" +
 	"  --coverage <path>  read this report instead of discovering one; repeatable\n"
 
-func TestUnknownArgumentIsAUsageErrorNotExitTwo(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
+// TestScopeUsageErrors covers every command line the scope flags refuse.
+//
+// A usage error is decided before the gate opens the repo, so the fixture
+// carries no commit, no source, no report and no extractor config: nothing
+// about the tree can change any of these answers, and the argv is the whole of
+// what each case is about.
+func TestScopeUsageErrors(t *testing.T) {
+	cases := map[string]struct {
+		argv    []string
+		problem string
+	}{
+		"an unknown flag": {
+			argv:    []string{"--bogus"},
+			problem: "unknown argument '--bogus'",
+		},
+		"a positional argument": {
+			argv:    []string{orderService},
+			problem: "unexpected argument '" + orderService + "'; there are no positional arguments",
+		},
+		"two scope flags": {
+			argv:    []string{"--since", "main", "--staged"},
+			problem: "--staged and --since name two scopes; pass one",
+		},
+		// --files arriving second on a command line that already named a
+		// scope. The message that says where the paths go belongs to a
+		// repeated --files alone, and this line really does name two scopes.
+		"a scope flag after a different one": {
+			argv:    []string{"--staged", "--files", orderService},
+			problem: "--files and --staged name two scopes; pass one",
+		},
+		// A second --staged names no second scope, but the message treats the
+		// command line as the developer wrote it rather than deciding they
+		// meant one flag, which is the same call the two-flag cases make.
+		"the same scope flag twice": {
+			argv:    []string{"--staged", "--staged"},
+			problem: "--staged and --staged name two scopes; pass one",
+		},
+		// --files is variadic rather than repeatable, so a second one names
+		// one scope and gets the message saying where the paths go.
+		"a repeated --files": {
+			argv:    []string{"--files", orderService, "--files", otherService},
+			problem: "--files takes every path in one list, as in 'metric-gate --files a.cs b.cs'",
+		},
+		"--since with nothing after it": {
+			argv:    []string{"--since"},
+			problem: "--since needs a ref",
+		},
+		"--since followed by another flag": {
+			argv:    []string{"--since", "--staged"},
+			problem: "--since needs a ref",
+		},
+		// What an unset shell variable expands to. Taken as a ref it would
+		// reach the developer as the default-candidates message telling them
+		// to pass the flag they just passed.
+		"--since with an empty ref": {
+			argv:    []string{"--since", ""},
+			problem: "--since needs a ref",
+		},
+		"--files with nothing after it": {
+			argv:    []string{"--files"},
+			problem: "--files needs at least one path",
+		},
+		"--files followed by another scope flag": {
+			argv:    []string{"--files", "--staged"},
+			problem: "--files needs at least one path",
+		},
+		// An empty argument does not start with '-', so the slurp takes it,
+		// and joined onto the working directory it names the working directory.
+		"--files with an empty path": {
+			argv:    []string{"--files", ""},
+			problem: "--files was handed an empty path",
+		},
+	}
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, "main")
 
-	result := f.runArgs("--bogus")
-
-	assertUsageError(t, result, "metric-gate: unknown argument '--bogus'"+usage)
-}
-
-func TestPositionalArgumentIsAUsageError(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-
-	result := f.runArgs(orderService)
-
-	assertUsageError(t, result,
-		"metric-gate: unexpected argument '"+orderService+"'; there are no positional arguments"+usage)
-}
-
-func TestTwoScopesAtOnceIsAUsageError(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-
-	result := f.runArgs("--since", "main", "--staged")
-
-	assertUsageError(t, result, "metric-gate: --staged and --since name two scopes; pass one"+usage)
+			assertUsageError(t, f.runArgs(tt.argv...), "metric-gate: "+tt.problem+usage)
+		})
+	}
 }
 
 func TestSinceMeasuresEveryMethodChangedAcrossTheWholeBranch(t *testing.T) {
@@ -239,58 +290,6 @@ func TestFilesListsAFileNoExtractorHandlesAsSkippedRatherThanMeasured(t *testing
 		"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
 }
 
-func TestSinceWithNoRefIsAUsageError(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-
-	result := f.runArgs("--since")
-
-	assertUsageError(t, result, "metric-gate: --since needs a ref"+usage)
-}
-
-func TestSinceFollowedByAnotherFlagIsAUsageError(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-
-	result := f.runArgs("--since", "--staged")
-
-	assertUsageError(t, result, "metric-gate: --since needs a ref"+usage)
-}
-
-func TestFilesWithNoPathIsAUsageError(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-
-	result := f.runArgs("--files")
-
-	assertUsageError(t, result, "metric-gate: --files needs at least one path"+usage)
-}
-
-func TestFilesFollowedByAnotherScopeFlagIsAUsageError(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-
-	result := f.runArgs("--files", "--staged")
-
-	assertUsageError(t, result, "metric-gate: --files needs at least one path"+usage)
-}
-
-func TestRepeatedFilesFlagSaysWhereThePathsGo(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.write(otherService, csharpFile(30))
-	f.commitAll("initial")
-
-	result := f.runArgs("--files", orderService, "--files", otherService)
-
-	assertUsageError(t, result,
-		"metric-gate: --files takes every path in one list, as in 'metric-gate --files a.cs b.cs'"+usage)
-}
-
 func TestStagedBeforeTheFirstCommitFailsWithNoBase(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
@@ -375,18 +374,6 @@ func TestFilesResolvesARelativePathAgainstTheWorkingDirectory(t *testing.T) {
 			"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
 }
 
-func TestFilesWithAnEmptyPathIsAUsageError(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-
-	// An empty argument does not start with '-', so the slurp takes it, and
-	// joined onto the working directory it names the working directory.
-	result := f.runArgs("--files", "")
-
-	assertUsageError(t, result, "metric-gate: --files was handed an empty path"+usage)
-}
-
 func TestStagedMeasuresNothingForAPureMoveStagedOnItsOwn(t *testing.T) {
 	const origin = "src/Ordering/Origin.cs"
 	const moved = "src/Ordering/Moved.cs"
@@ -412,7 +399,12 @@ func TestStagedMeasuresNothingForAPureMoveStagedOnItsOwn(t *testing.T) {
 		"no changed methods, nothing to measure\n")
 }
 
-func TestARunWithScopeFlagsDoesNotChangeTheScopeOfTheNextRun(t *testing.T) {
+// TestAFilesRunLeavesNothingBehindThatChangesTheNextRun runs --files and then
+// a bare command line over the same repo. --files writes no state, so the
+// second run has to resolve the merge base and measure only the touched
+// method; a scope that wrote anything to the tree or the git config would show
+// up here as the wrong scope line and the wrong row count.
+func TestAFilesRunLeavesNothingBehindThatChangesTheNextRun(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -424,10 +416,6 @@ func TestARunWithScopeFlagsDoesNotChangeTheScopeOfTheNextRun(t *testing.T) {
 	f.runArgs("--files", orderService).assertMatches(t, "files_single_file", 0, "",
 		"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
 
-	// Bare argv after a flagged run, so the document names the merge-base
-	// scope and only the touched method. A flag left behind on the fixture
-	// would put --files here instead, and both the scope line and the row
-	// count would go red.
 	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
@@ -497,29 +485,6 @@ func TestSinceARefSharingNoHistoryWithHeadSaysSo(t *testing.T) {
 
 	f.runArgs("--since", "unrelated").assertMatches(t, "since_unrelated_histories", 1, "",
 		"no diff base: HEAD and unrelated share no common ancestor\n")
-}
-
-func TestSinceWithAnEmptyRefIsAUsageError(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-
-	result := f.runArgs("--since", "")
-
-	assertUsageError(t, result, "metric-gate: --since needs a ref"+usage)
-}
-
-func TestAScopeFlagAfterADifferentOneNamesBothScopes(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-
-	// --files arriving second on a command line that already named a scope. The
-	// message that says where the paths go belongs to a repeated --files alone,
-	// and this line really does name two scopes.
-	result := f.runArgs("--staged", "--files", orderService)
-
-	assertUsageError(t, result, "metric-gate: --files and --staged name two scopes; pass one"+usage)
 }
 
 func TestSinceOnABranchWithNoCommitSaysTheBranchHasNone(t *testing.T) {
@@ -638,6 +603,76 @@ func TestStagedKeepsTheExtractorsCauseWhenTheDirtyFileIsOneNoExtractorReads(t *t
 
 	f.runArgs("--staged").assertMatches(t, "staged_extractor_failed", 1, f.headLabel(),
 		"csharp extractor exited 3\n")
+}
+
+func TestStagedReportsADivergenceCheckGitCannotRunInTheDocument(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.git("add", orderService)
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+	// The staged diff compares the index against a commit, so it reads objects
+	// alone and succeeds, and the extractor answers from its canned config
+	// without opening anything. The divergence check is the one command that
+	// has to read the working-tree copy, and with the file unreadable it exits
+	// 128 instead of naming the file. Returned untyped, the run would exit 1
+	// with an empty stdout an agent cannot tell from a crash.
+	f.denyReadFile(orderService)
+	cause := f.divergenceStderr(orderService)
+
+	f.runArgs("--staged").assertMatchesWith(t, "staged_divergence_unreadable", 1, f.headLabel(),
+		"could not read the diff: "+cause+"\n",
+		map[string]string{"CAUSE": toonEscaped(cause)})
+}
+
+func TestStagedKeepsTheExtractorsCauseWhenTheDivergenceCheckCannotRun(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.git("add", orderService)
+	// The extractor dies and the divergence check the fallback would ask
+	// instead cannot run either, because the same file is unreadable. With no
+	// answer of its own to substitute, the fallback leaves standing the one
+	// cause the gate did establish rather than replacing it with a refusal it
+	// never proved.
+	f.stub = stubConfig{Extensions: []string{".cs"}, ExitCode: 3}
+	f.denyReadFile(orderService)
+
+	f.runArgs("--staged").assertMatches(t, "staged_extractor_failed", 1, f.headLabel(),
+		"csharp extractor exited 3\n")
+}
+
+func TestStagedRefusesAMoveWhoseIndexContentTheWorkingTreeNoLongerHolds(t *testing.T) {
+	const origin = "src/Ordering/Origin.cs"
+	const moved = "src/Ordering/Moved.cs"
+	edited := span{File: moved, Name: "Moved.Edited", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(origin, csharpFile(20))
+	f.commitAll("initial")
+	before := f.read(origin)
+	f.git("mv", origin, moved)
+	f.touchLine(moved, 7)
+	f.git("add", moved)
+	// The index now holds the edit and the working tree holds the pre-move
+	// text again, which is the divergence --staged exists to refuse. Compared
+	// against the working-tree copy the added side digests equal to the deleted
+	// blob, so the gate calls the pair a pure move, drops Moved.cs from the
+	// diff, and never hands it to an extractor, and the run passes on the file
+	// the guard was written for.
+	f.write(moved, before)
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(moved), []span{edited}),
+	}
+
+	f.runArgs("--staged").assertMatches(t, "staged_moved_file_dirty", 1, f.headLabel(),
+		"refusing to score "+moved+": staged in one state and on disk in another\n")
 }
 
 func TestStagedNamesEveryDirtyFileInOneMessage(t *testing.T) {
@@ -1009,9 +1044,10 @@ func TestSinceReportsAMergeBaseGitCannotWalkAsAnUnreadableDiff(t *testing.T) {
 	// touches the missing object. Left to fall through to the exit-1 arm this
 	// would come back as two histories sharing no commit, sending the
 	// developer after a branch relationship that is not the problem.
+	cause := f.gitStderr("merge-base", "HEAD", "other")
+
 	f.runArgs("--since", "other").assertMatchesWith(t, "since_merge_base_unreadable", 1, "",
-		"could not read the diff: "+f.gitStderr("merge-base", "HEAD", "other")+"\n",
-		map[string]string{"CAUSE": f.gitStderr("merge-base", "HEAD", "other")})
+		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": cause})
 }
 
 func TestStagedReportsAHeadGitCannotReadAsAnUnreadableDiff(t *testing.T) {
@@ -1042,19 +1078,6 @@ func TestFilesKeepsTheExtractorsCauseWhenExtractionDies(t *testing.T) {
 	// the list of what no extractor claimed is built after extraction returns.
 	f.runArgs("--files", orderService).assertMatches(t, "files_extractor_failed", 1, "",
 		"csharp extractor exited 3\n")
-}
-
-func TestTheSameScopeFlagTwiceNamesTwoScopes(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-
-	// A second --staged names no second scope, but the message treats the
-	// command line as the developer wrote it rather than deciding they meant
-	// one flag, which is the same call the two-different-flags case makes.
-	result := f.runArgs("--staged", "--staged")
-
-	assertUsageError(t, result, "metric-gate: --staged and --staged name two scopes; pass one"+usage)
 }
 
 func TestStagedTakesANamedCoverageReport(t *testing.T) {
