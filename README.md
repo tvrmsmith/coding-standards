@@ -87,9 +87,9 @@ Everything else is off the shelf. These three have no off-the-shelf equivalent:
 3. `no-assertion-escape-cast` — Roslyn only (`TVRM0003`). Bans `((object)x).Should()`.
 
 The off-the-shelf layer around them is already curated: `packages/eslint-config-tvrmsmith` for
-TypeScript, and for C# both FluentAssertions.Analyzers `FAA0001`–`FAA0004` and most of the built-in
-`CAxxxx` rules the SDK ships disabled (see `dotnet/README.md` — the FluentAssertions pairing is
-version-sensitive and mixing it with AwesomeAssertions fails *silently*, and the `CA` set is
+TypeScript, and for C# both AwesomeAssertions.Analyzers `FAA0001`–`FAA0004` and most of the built-in
+`CAxxxx` rules the SDK ships disabled (see `dotnet/README.md` — the analyzer pairing is
+version-sensitive and mixing it with FluentAssertions fails *silently*, and the `CA` set is
 generated from the SDK's own rule metadata rather than a pinned list).
 
 TypeScript also registers `eslint-plugin-jest`, for the A2 and A5 assertion rules and for a slice

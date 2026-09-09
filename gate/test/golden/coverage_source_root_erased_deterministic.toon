@@ -1,0 +1,11 @@
+status: error
+tool: metric-gate/0.1.0
+spec: toon/4.1.1
+scope: merge-base
+base: {{BASE}}
+changed_methods: 1
+touched_lines_outside_spans: 0
+skipped_paths: []
+error:
+  code: coverage_source_root_erased
+  message: coverage report TestResults/coverage.cobertura.xml carries no source root, erased by DeterministicReport=true; collect coverage with DeterministicReport=false

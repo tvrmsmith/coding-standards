@@ -3,12 +3,16 @@ package gate_test
 import (
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf16"
 )
 
@@ -181,12 +185,108 @@ func spanCoverage(start, count, covered int) []coverageLine {
 
 // cobertura renders a coverage report in coverlet's shape, with the source
 // root in <sources> and each class's filename relative to it, which is the
-// pairing ADR 0004 resolves paths from.
+// pairing ADR 0004 resolves paths from. It stamps the report at the moment the
+// case builds it, which is the moment coverlet would have written it, leaving
+// coberturaStamped as the way a case asks for a stale one.
 func cobertura(sourceRoot string, classes ...coverageClass) string {
+	return renderCobertura(freshStamp(), []string{sourceRoot}, classes...)
+}
+
+// coberturaStamped is cobertura carrying the given root timestamp attribute,
+// which is the producer's own clock and the value the staleness rule reads.
+// An empty stamp omits the attribute, which is the report the rule cannot
+// judge.
+func coberturaStamped(stamp, sourceRoot string, classes ...coverageClass) string {
+	return renderCobertura(stamp, []string{sourceRoot}, classes...)
+}
+
+// freshStamp is the current second, as a Cobertura timestamp attribute spells
+// it. The real clock rather than any slack ahead of it, so no case comes to
+// depend on the gate accepting a report claiming to have been produced in the
+// future, which is the tolerance issue 30 exists to take away. Every case
+// writes its report after the sources it describes, and equal seconds is not
+// stale, so the current second is already fresh everywhere.
+func freshStamp() string {
+	return stampAt(time.Now())
+}
+
+// stampAt renders an instant as a Cobertura timestamp attribute spells it.
+func stampAt(at time.Time) string {
+	return strconv.FormatInt(at.Unix(), 10)
+}
+
+// editStamp is the whole second the file at rel was last modified, shifted by
+// offset, as a Cobertura timestamp attribute spells it. The staleness rule
+// compares whole seconds on both sides, so a case that means to sit exactly on
+// that boundary has to read the source's own mtime rather than trust how fast
+// it ran.
+func (f *fixture) editStamp(rel string, offset time.Duration) string {
+	f.t.Helper()
+	return stampAt(f.modTime(rel).Add(offset))
+}
+
+// modTime is the truncated modification time of the file at rel.
+func (f *fixture) modTime(rel string) time.Time {
+	f.t.Helper()
+	info, err := os.Stat(filepath.Join(f.root, filepath.FromSlash(rel)))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return info.ModTime().Truncate(time.Second)
+}
+
+// setModTime sets the modification time of the file at rel to at, which is how
+// a case pins either the exact ordering of two edits or an exact tie between
+// them, neither of which the filesystem's own stamping can be asked for.
+func (f *fixture) setModTime(rel string, at time.Time) {
+	f.t.Helper()
+	if err := os.Chtimes(filepath.Join(f.root, filepath.FromSlash(rel)), at, at); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// coberturaNoSources is cobertura with <sources/> empty, so every class
+// filename stands alone. That document reads as an erased source root only
+// when the filenames carry the /_/ placeholder DeterministicReport=true writes
+// (issue 16, coverage_source_root_erased). Relative filenames with no <source>
+// beside them are a different failure: nothing anchors them, so they build no
+// candidate and the report is named as placing no class inside the root, code
+// coverage_outside_repo in the shape the coverage_outside_repo_unanchored
+// golden holds (issue 16). Absolute filenames carry their own root and are the
+// legitimate coverlet shape.
+// UseSourceLink=true is a different document again, keeping one <source> that
+// is empty, so a case for it calls cobertura("").
+func coberturaNoSources(classes ...coverageClass) string {
+	return renderCobertura(freshStamp(), nil, classes...)
+}
+
+// renderCobertura is the document builder, taking the timestamp attribute and
+// the <source> list directly. A case naming more than one source is a class
+// with two in-root candidates (issue 16, file_ambiguous) or a report split
+// across two checkouts. An empty stamp omits the timestamp attribute
+// altogether, which is as close as this builder gets to the unjudgeable
+// report: encoding/xml decodes an absent attribute and timestamp="" to the
+// same empty string, so the gate cannot tell the two apart and neither
+// spelling is worth a case of its own. Every case that is not about staleness
+// passes freshStamp(), since issue 15 refuses a report older than the source
+// it describes and a fixed stamp would make every fixture stale.
+func renderCobertura(stamp string, sources []string, classes ...coverageClass) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>` + "\n")
-	b.WriteString(`<coverage line-rate="0" version="1.9" timestamp="1767225600">` + "\n")
-	fmt.Fprintf(&b, "  <sources><source>%s</source></sources>\n", sourceRoot)
+	timestampAttr := ""
+	if stamp != "" {
+		timestampAttr = fmt.Sprintf(` timestamp="%s"`, xmlAttribute(stamp))
+	}
+	fmt.Fprintf(&b, `<coverage line-rate="0" version="1.9"%s>`+"\n", timestampAttr)
+	if len(sources) == 0 {
+		b.WriteString("  <sources/>\n")
+	} else {
+		b.WriteString("  <sources>")
+		for _, source := range sources {
+			fmt.Fprintf(&b, "<source>%s</source>", source)
+		}
+		b.WriteString("</sources>\n")
+	}
 	b.WriteString("  <packages><package name=\"Ordering\"><classes>\n")
 	for _, class := range classes {
 		name := xmlAttribute(class.filename)
@@ -210,6 +310,94 @@ func xmlAttribute(value string) string {
 	return b.String()
 }
 
+// writeAbsolute puts content at an absolute path outside the fixture,
+// creating parents, which is how a case builds the source tree of a second
+// checkout that is not the git repo under test (issue 16,
+// coverage_outside_repo).
+func writeAbsolute(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// outsideRepoStderr is the coverage_outside_repo diagnostic as it reaches
+// stderr, so the several cases that reach it name the two machine-specific
+// paths once, in the same shape as the golden's holes.
+func outsideRepoStderr(example, root string) string {
+	return fmt.Sprintf("coverage report TestResults/coverage.cobertura.xml placed no class inside the repo root; "+
+		"example path %s, repo root %s\n", example, root)
+}
+
+// outsideRepoUnanchoredStderr is the same diagnostic for a report whose first
+// candidate no <source> anchored, where the quoted path is relative and the
+// message has to say so rather than leaving it to read as a path inside the
+// repo.
+func outsideRepoUnanchoredStderr(example, root string) string {
+	return fmt.Sprintf("coverage report TestResults/coverage.cobertura.xml placed no class inside the repo root; "+
+		"example path %s, which no <source> anchored to an absolute path, repo root %s\n", example, root)
+}
+
+// namedOutsideRepoStderr is the coverage_outside_repo diagnostic for a case
+// carrying more than one report, where outsideRepoStderr's hardcoded single
+// path is no longer enough: the message has to say which report failed, not
+// just that one did.
+func namedOutsideRepoStderr(report, example, root string) string {
+	return fmt.Sprintf("coverage report %s placed no class inside the repo root; example path %s, repo root %s\n", report, example, root)
+}
+
+// symlinkedDir creates link as a symlink to target, both absolute, and returns
+// link. A case uses it to put a resolving indirection in a candidate's path,
+// which is how the resolved reading of a path is told from the as-built one.
+func symlinkedDir(t *testing.T, target, link string) string {
+	t.Helper()
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("the filesystem does not allow symlinks: %v", err)
+	}
+	return link
+}
+
+// caseInsensitiveFilesystem reports whether dir's filesystem matches names
+// case insensitively, which decides whether a case-only path difference is a
+// difference the resolver can be asked about at all.
+func caseInsensitiveFilesystem(t *testing.T, dir string) bool {
+	t.Helper()
+	probe := filepath.Join(dir, "case-probe")
+	if err := os.WriteFile(probe, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(probe)
+	_, err := os.Stat(filepath.Join(dir, "CASE-PROBE"))
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, fs.ErrNotExist):
+		return false
+	}
+	t.Fatalf("probing %s for case sensitivity returned %v, which answers neither way", dir, err)
+	return false
+}
+
+// resolvedPath is filepath.EvalSymlinks for a directory a case knows exists,
+// used to take the indirection out of a temp root once, up front, so the paths
+// a case builds under it are already the ones the gate will compare and a
+// golden's {{EXAMPLE}}/{{ROOT}} hole is filled by joining rather than by
+// running the gate's own resolver over the answer.
+func resolvedPath(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.ToSlash(resolved)
+}
+
 // denyRead creates a directory at rel that the process cannot read, so the
 // coverage walk hits a permission error on it. Root ignores the mode, so a
 // case relying on this skips there.
@@ -226,6 +414,53 @@ func (f *fixture) denyRead(rel string) {
 		f.t.Fatal(err)
 	}
 	f.t.Cleanup(func() { os.Chmod(full, 0o755) })
+}
+
+// denyReadFile makes the file at rel unreadable, so reading the report fails
+// on the file itself rather than on its contents. Root ignores the mode, so a
+// case relying on this skips there.
+func (f *fixture) denyReadFile(rel string) {
+	f.t.Helper()
+	if os.Geteuid() == 0 {
+		f.t.Skip("running as root, which reads a mode 0 file anyway")
+	}
+	full := filepath.Join(f.root, filepath.FromSlash(rel))
+	if err := os.Chmod(full, 0o000); err != nil {
+		f.t.Fatal(err)
+	}
+	f.t.Cleanup(func() { os.Chmod(full, 0o644) })
+}
+
+// readCause is the cause the gate renders when it cannot read the file at rel:
+// the failing operation, then the operating system's own wording for the same
+// failed read, stripped of the absolute path the way parseCause strips it. The
+// wording belongs to the OS, "Access is denied." rather than "permission
+// denied" on Windows, so a case pins the sentence the gate owns around the hole
+// and asks the OS for the rest.
+func (f *fixture) readCause(rel string) string {
+	f.t.Helper()
+	_, err := os.ReadFile(filepath.Join(f.root, filepath.FromSlash(rel)))
+	var pathErr *fs.PathError
+	if !errors.As(err, &pathErr) {
+		f.t.Fatalf("reading %s returned %v, which the case needs to be a path error", rel, err)
+	}
+	return pathErr.Op + ": " + pathErr.Err.Error()
+}
+
+// xmlUnmarshalCause is the cause the gate renders for a report that is not
+// valid XML: encoding/xml's own error for the same bytes, which the gate only
+// passes through and this repo does not own the wording of. It unmarshals into
+// an empty struct rather than the gate's own report type, which is unexported,
+// so it holds only for an error the decoder raises before it looks at the
+// target at all, a syntax error. A well-formed document whose types do not fit
+// would need the real target and is not what any case here feeds it.
+func xmlUnmarshalCause(t *testing.T, body string) string {
+	t.Helper()
+	err := xml.Unmarshal([]byte(body), &struct{}{})
+	if err == nil {
+		t.Fatalf("encoding/xml accepted %q, which the case needs to be malformed", body)
+	}
+	return err.Error()
 }
 
 // failedToParse marks the named file as one the extractor could not parse.
@@ -461,4 +696,27 @@ func externalDiffScript(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// addOrigin creates a second, bare repository under a temp dir of its own and
+// wires it in as the fixture's `origin`, pushing branch to it so
+// refs/remotes/origin/<branch> exists afterward. The remote is initialised
+// with the same default branch name so its own HEAD, which setOriginHead
+// reads, names something real. Pushing alone leaves
+// refs/remotes/origin/HEAD unset, which is what makes the no-set-head case
+// distinct from this one.
+func (f *fixture) addOrigin(branch string) {
+	f.t.Helper()
+	remote := filepath.Join(f.t.TempDir(), "origin.git")
+	f.git("init", "--bare", "--quiet", "-b", branch, remote)
+	f.git("remote", "add", "origin", remote)
+	f.git("push", "--quiet", "origin", branch)
+}
+
+// setOriginHead points refs/remotes/origin/HEAD at the remote's own default
+// branch, asking the remote rather than guessing, which is what a real clone
+// leaves behind and a bare push on its own does not.
+func (f *fixture) setOriginHead() {
+	f.t.Helper()
+	f.git("remote", "set-head", "origin", "--auto")
 }

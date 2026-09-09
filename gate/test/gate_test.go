@@ -1,11 +1,14 @@
 package gate_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // orderService is the source file most cases touch. Its spans are canned by
@@ -18,6 +21,18 @@ var (
 	placeAsync = span{File: orderService, Name: "OrderService.PlaceAsync", StartLine: 41, EndLine: 58, Complexity: 9}
 	cancel     = span{File: orderService, Name: "OrderService.Cancel", StartLine: 60, EndLine: 64, Complexity: 3}
 )
+
+// orderFile is a second source file, for a case that needs two changed files
+// at once, with one canned span of its own.
+const orderFile = "src/Ordering/Order.cs"
+
+var orderTotal = span{File: orderFile, Name: "Order.Total", StartLine: 60, EndLine: 64, Complexity: 3}
+
+// pricingFile is a third source file, sorting after both of the others, for
+// the case that needs the tie-break winner to sit between two losers.
+const pricingFile = "src/Pricing/Pricing.cs"
+
+var pricingQuote = span{File: pricingFile, Name: "Pricing.Quote", StartLine: 60, EndLine: 64, Complexity: 3}
 
 func TestDocsOnlyChangePassesWithNoCoverageReportPresent(t *testing.T) {
 	f := newFixture(t, "main")
@@ -813,7 +828,7 @@ func TestChangedMethodWithNoCoverageReportAnywhereFails(t *testing.T) {
 	}
 
 	f.run().assertMatches(t, "coverage_missing", 1, f.baseLabel("main"),
-		"CRAP requires a coverage report, none found\n")
+		"CRAP requires a coverage report, none found matching **/TestResults/**/coverage.cobertura.xml under the repo root\n")
 }
 
 func TestRepoWithNoResolvableDiffBaseNamesEveryRefAndPointsAtTheFlag(t *testing.T) {
@@ -904,14 +919,45 @@ func TestCoverageReportThatIsNotValidXMLFails(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	f.write("TestResults/fixed/coverage.cobertura.xml", "<coverage><packages>\n")
+	const malformed = "<coverage><packages>\n"
+	f.write("TestResults/fixed/coverage.cobertura.xml", malformed)
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	f.run().assertMatches(t, "coverage_unparseable", 1, f.baseLabel("main"),
-		"could not parse coverage report TestResults/fixed/coverage.cobertura.xml\n")
+	// The cause is carried into the message, so a read error and a malformed
+	// document do not reach the reader as the same sentence. The cause itself
+	// is encoding/xml's wording, so the case asks the same parser for it
+	// rather than pinning a sentence this repo does not own.
+	cause := xmlUnmarshalCause(t, malformed)
+	f.run().assertMatchesWith(t, "coverage_unparseable", 1, f.baseLabel("main"),
+		"could not parse coverage report TestResults/fixed/coverage.cobertura.xml; "+cause+"\n",
+		map[string]string{"CAUSE": cause})
+}
+
+func TestCoverageReportTheGateCannotReadFailsNamingTheCauseOnly(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/fixed/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.denyReadFile("TestResults/fixed/coverage.cobertura.xml")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// The read error carries the absolute path the process opened, which the
+	// message has already named repo-relative, so only the cause is carried
+	// into it and the document stays free of machine-specific paths. The cause
+	// is the operating system's wording, so the case reads the same denied file
+	// for it rather than pinning "permission denied" on every platform.
+	cause := f.readCause("TestResults/fixed/coverage.cobertura.xml")
+	f.run().assertMatchesWith(t, "coverage_unreadable", 1, f.baseLabel("main"),
+		"could not parse coverage report TestResults/fixed/coverage.cobertura.xml; "+cause+"\n",
+		map[string]string{"CAUSE": cause})
 }
 
 func TestMoveWithAnExtraCopyMeasuresBothAddedPaths(t *testing.T) {
@@ -1324,28 +1370,6 @@ func TestAnAddedLineThatLooksLikeAFileHeaderDoesNotStealLaterHunks(t *testing.T)
 		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
 
-func TestTwoCoverageReportsAreUnionedRatherThanOverwritten(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-	f.touchLine(orderService, 62)
-	// Two test projects each list all three of Cancel's lines and each hits a
-	// different one, so a hit anywhere is a hit and two of three are covered.
-	// Neither report alone reaches that, whichever order the walk reads them
-	// in, so letting the later one overwrite the earlier scores one of three.
-	f.write("TestResults/unit/coverage.cobertura.xml", cobertura(f.root,
-		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 4}, {number: 62, hits: 0}, {number: 63, hits: 0}}}))
-	f.write("TestResults/integration/coverage.cobertura.xml", cobertura(f.root,
-		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 0}, {number: 62, hits: 1}, {number: 63, hits: 0}}}))
-	f.stub = stubConfig{
-		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
-	}
-
-	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
-		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
-}
-
 func TestCoverageReportOutsideAResultsDirectoryIsNotFound(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
@@ -1362,7 +1386,7 @@ func TestCoverageReportOutsideAResultsDirectoryIsNotFound(t *testing.T) {
 	}
 
 	f.run().assertMatches(t, "coverage_missing", 1, f.baseLabel("main"),
-		"CRAP requires a coverage report, none found\n")
+		"CRAP requires a coverage report, none found matching **/TestResults/**/coverage.cobertura.xml under the repo root\n")
 }
 
 func TestTwoOverloadsDeclaredOnOneLineAreBothScored(t *testing.T) {
@@ -1560,7 +1584,1514 @@ func TestMissingCoverageFailureStillReportsThePathsTheWalkCouldNotRead(t *testin
 	}
 
 	f.run().assertMatches(t, "coverage_missing_with_skipped_path", 1, f.baseLabel("main"),
-		"CRAP requires a coverage report, none found\n")
+		"CRAP requires a coverage report, none found matching **/TestResults/**/coverage.cobertura.xml under the repo root\n")
+}
+
+func TestLibraryCoveredByTwoTestProjectsIsScoredOnTheUnion(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// spanCoverage cannot express two reports that each hit a different subset
+	// of Cancel's three lines, so the coverage lines are written out inline.
+	// The unit report alone leaves Cancel at one line of three, scoring 5.67,
+	// and the integration report alone at two of three, scoring 3.33, so the
+	// golden's 3.00 is the union and nothing else.
+	//
+	// The reports sit in per-project TestResults directories, the layout
+	// `dotnet test` writes when it is not given --results-directory. Where
+	// they sit makes no difference to the union; only that both are consumed
+	// does.
+	f.write("tests/Unit.Tests/TestResults/run/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 1}, {number: 62, hits: 0}, {number: 63, hits: 0}}}))
+	f.write("tests/Integration.Tests/TestResults/run/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 0}, {number: 62, hits: 1}, {number: 63, hits: 1}}}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "two_projects_union", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.00\n")
+}
+
+func TestCoverageReportOlderThanTheCodeItDescribesIsRefused(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// A year behind the source's own mtime, derived from it rather than fixed,
+	// so the case cannot be turned green by the machine's clock.
+	f.write("TestResults/coverage.cobertura.xml", coberturaStamped(f.editStamp(orderService, -365*24*time.Hour), f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// No crap table appears: no method is scored against a report the run
+	// refused.
+	f.run().assertMatches(t, "coverage_stale", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml was written before src/Ordering/OrderService.cs was last edited; clear stale TestResults directories and re-run the tests\n")
+}
+
+func TestNamedCoverageReportIsUsedAndDiscoveryIsIgnored(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// Discoverable, and it holds a fourth instrumentable line the named report
+	// has never heard of. Consulting discovery instead of the named report
+	// scores Cancel 12.00, and consulting both unions to two lines of four and
+	// scores it 4.13. Only replacement scores it 3.33. Covering the same lines
+	// here would leave the two indistinguishable, since the union of a covered
+	// line and an uncovered one is covered either way.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 4, 0)}))
+	// Named, outside any TestResults directory so discovery cannot reach it.
+	f.write("artifacts/coverage.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.runWithArgs("--coverage", "artifacts/coverage.xml").assertMatches(t, "named_coverage_report", 0,
+		f.baseLabel("main"), "0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestNamingAReportSkipsDiscoveryEntirely(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("artifacts/coverage.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	// Two traps, both load-bearing setup rather than leftovers. The stale
+	// discoverable report is refused as coverage_stale by any run that reaches
+	// discovery, so only a run that skips the walk can reach the golden. The
+	// unreadable directory is what makes the golden's empty skipped_paths mean
+	// no walk happened rather than a walk that read everything.
+	f.write("TestResults/run/coverage.cobertura.xml",
+		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.denyRead("TestResults/locked")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.runWithArgs("--coverage", "artifacts/coverage.xml").assertMatches(t, "named_coverage_report", 0,
+		f.baseLabel("main"), "0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestNamedReportReachedThroughASymlinkIsNamedRepoRelative(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("artifacts/coverage.xml",
+		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// The typed path reaches a directory inside the repo through a symlink
+	// beside it. Relativizing what the developer typed rather than what it
+	// resolves to would name the report link/coverage.xml, a spelling no other
+	// diagnostic in the document uses for the same file.
+	symlinkedDir(t, filepath.Join(f.root, "artifacts"), filepath.Join(f.root, "link"))
+	f.runWithArgs("--coverage", "link/coverage.xml").assertMatches(
+		t, "named_coverage_stale", 1, f.baseLabel("main"),
+		"coverage report artifacts/coverage.xml was written before src/Ordering/OrderService.cs was last edited; "+
+			"regenerate artifacts/coverage.xml or point --coverage at a current report\n")
+}
+
+func TestStaleReportIsRefusedAheadOfItsErasedSourceRoot(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// A report that is both stale and carries the DeterministicReport=true
+	// placeholder. Staleness runs ahead of resolution, so the report is refused
+	// for its age; a run that resolved first would send the developer to fix
+	// the MSBuild property on a report they are about to regenerate anyway.
+	f.write("TestResults/coverage.cobertura.xml",
+		renderCobertura(f.editStamp(orderService, -time.Second), nil,
+			coverageClass{filename: "/_/src/Ordering/OrderService.cs", lines: spanCoverage(61, 3, 3)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_stale", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml was written before src/Ordering/OrderService.cs was last edited; clear stale TestResults directories and re-run the tests\n")
+}
+
+func TestCoverageReportWithNoTimestampIsRefused(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", coberturaStamped("", f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_untimestamped", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml carries no timestamp, so it cannot be judged against the code it describes\n")
+}
+
+func TestCoverageReportWithAnUnreadableTimestampIsRefused(t *testing.T) {
+	// Producers other than coverlet write the attribute in a different
+	// representation, so the developer meeting this has a timestamp in front of
+	// them and needs to be told to rewrite it rather than that it is missing.
+	// Neither spelling is a base-10 integer, and reading either as one would
+	// judge the report against the Unix epoch instead.
+	stamps := map[string]string{
+		"ISO-8601 instant":   "2026-01-01T00:00:00Z",
+		"fractional seconds": "1767225600.123",
+	}
+	for name, stamp := range stamps {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, "main")
+			f.write(orderService, csharpFile(80))
+			f.commitAll("initial")
+			f.touchLine(orderService, 62)
+			f.write("TestResults/coverage.cobertura.xml", coberturaStamped(stamp, f.root,
+				coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+			f.stub = stubConfig{
+				Extensions: []string{".cs"},
+				Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+			}
+
+			f.run().assertMatchesWith(t, "coverage_timestamp_not_epoch_seconds", 1, f.baseLabel("main"),
+				"coverage report TestResults/coverage.cobertura.xml carries an unreadable timestamp "+
+					strconv.Quote(stamp)+"; it must be epoch seconds\n",
+				map[string]string{"STAMP": stamp})
+		})
+	}
+}
+
+func TestStalenessIsJudgedOnEveryDiscoveredReportNotJustTheFirst(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// Discovery consumes reports in Name order, so the stale one here is the
+	// second the loader reaches. A run that judged only the first would merge
+	// this one and score the method against a report predating the edit, which
+	// is the leftover-TestResults case the remedy sentence is written for.
+	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml",
+		coberturaStamped(freshStamp(), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
+	f.write("tests/Beta.Tests/TestResults/run/coverage.cobertura.xml",
+		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_stale_second_report", 1, f.baseLabel("main"),
+		"coverage report tests/Beta.Tests/TestResults/run/coverage.cobertura.xml was written before "+
+			"src/Ordering/OrderService.cs was last edited; clear stale TestResults directories and re-run the tests\n")
+}
+
+func TestStalenessIsJudgedOnEveryNamedReportNotJustTheFirst(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("artifacts/unit.xml", coberturaStamped(freshStamp(), f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
+	f.write("artifacts/integration.xml", coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// The remedy names the report the developer passed, since clearing
+	// TestResults would not replace a file they generated themselves.
+	f.runWithArgs("--coverage", "artifacts/unit.xml", "--coverage", "artifacts/integration.xml").assertMatches(
+		t, "named_coverage_stale_second", 1, f.baseLabel("main"),
+		"coverage report artifacts/integration.xml was written before src/Ordering/OrderService.cs was last edited; "+
+			"regenerate artifacts/integration.xml or point --coverage at a current report\n")
+}
+
+func TestNamedReportOutsideTheRepoIsRead(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// A CI job that collects coverage into a workspace directory beside the
+	// checkout, rather than under it. Its <sources> still anchors every class
+	// inside the repo, so the lines it records are scored like any other
+	// report's.
+	typed := filepath.Join(t.TempDir(), "coverage.xml")
+	writeAbsolute(t, typed, coberturaStamped(freshStamp(), f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 4, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.runWithArgs("--coverage", typed).assertMatches(t, "named_report_outside_repo", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 4.13\n")
+}
+
+func TestStaleNamedReportOutsideTheRepoIsNamedAbsolutely(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The same out-of-repo report, one second stale. It has no repo-relative
+	// form, so the refusal names it by the absolute path the containment test
+	// weighed, which is the one spelling a document carrying no working
+	// directory can be resolved against.
+	typed := filepath.Join(t.TempDir(), "coverage.xml")
+	writeAbsolute(t, typed, coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 4, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	named := resolvedPath(t, typed)
+	f.runWithArgs("--coverage", typed).assertMatchesWith(t, "named_report_outside_repo_stale", 1,
+		f.baseLabel("main"),
+		"coverage report "+named+" was written before src/Ordering/OrderService.cs was last edited; "+
+			"regenerate "+named+" or point --coverage at a current report\n",
+		map[string]string{"REPORT": named})
+}
+
+func TestRelativeNamedReportOutsideTheRepoIsNamedAbsolutely(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The developer runs the gate from a subdirectory and points --coverage at
+	// a sibling of the checkout by a path relative to where they stand. The
+	// document carries no working directory, so quoting what they typed would
+	// hand a consumer a name it cannot resolve, and the same file named from
+	// the repo root would print a different string.
+	outside := filepath.Join(t.TempDir(), "coverage.xml")
+	writeAbsolute(t, outside, coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 4, 2)}))
+	workdir := filepath.Join(f.root, "src")
+	typed, err := filepath.Rel(workdir, outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	named := resolvedPath(t, outside)
+	f.runFromWithArgs("src", "--coverage", typed).assertMatchesWith(t, "named_report_outside_repo_stale", 1,
+		f.baseLabel("main"),
+		"coverage report "+named+" was written before src/Ordering/OrderService.cs was last edited; "+
+			"regenerate "+named+" or point --coverage at a current report\n",
+		map[string]string{"REPORT": named})
+}
+
+func TestNamedReportOutsideTheRepoIsNamedPastItsSymlink(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// Two spellings of one out-of-repo report, the link and its target. The
+	// document names the same file the same way whichever one reaches
+	// --coverage, so the refusal quotes the target rather than the link the
+	// developer walked in through.
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	link := symlinkedDir(t, real, filepath.Join(dir, "link"))
+	writeAbsolute(t, filepath.Join(real, "coverage.xml"),
+		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 4, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	named := filepath.ToSlash(filepath.Join(resolvedPath(t, real), "coverage.xml"))
+	f.runWithArgs("--coverage", filepath.Join(link, "coverage.xml")).assertMatchesWith(
+		t, "named_report_outside_repo_stale", 1, f.baseLabel("main"),
+		"coverage report "+named+" was written before src/Ordering/OrderService.cs was last edited; "+
+			"regenerate "+named+" or point --coverage at a current report\n",
+		map[string]string{"REPORT": named})
+}
+
+func TestReportStampedAtTheSecondTheSourceWasEditedIsFresh(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The Cobertura timestamp attribute has second resolution and cannot
+	// express anything finer, so equal seconds is not stale. Stamping the
+	// report at exactly the source's truncated mtime pins that boundary
+	// instead of leaving it to how fast the case ran. The half second the
+	// fixture puts on the mtime is what makes the truncation load-bearing: a
+	// gate that compared untruncated times would read the source as newer than
+	// the report, and this case would go red on any filesystem rather than only
+	// on one whose own stamping happened to carry nanoseconds.
+	f.setModTime(orderService, f.modTime(orderService).Add(500*time.Millisecond))
+	f.write("TestResults/coverage.cobertura.xml", coberturaStamped(f.editStamp(orderService, 0), f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_at_edit_second", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 5.67\n")
+}
+
+func TestReportStampedOneSecondBeforeTheEditIsStale(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// One second the other side of the boundary the case above sits on.
+	f.write("TestResults/coverage.cobertura.xml",
+		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_stale", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml was written before src/Ordering/OrderService.cs was last edited; clear stale TestResults directories and re-run the tests\n")
+}
+
+func TestStalenessJudgesTheReportAgainstTheNewestChangedFile(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write(orderFile, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.touchLine(orderFile, 62)
+	// Order.cs is the older edit and OrderService.cs the newer, forced rather
+	// than left to a filesystem that stamps both within one second. The report
+	// sits between them, so it is fresh for one changed file and stale for the
+	// other: only the greatest mtime refuses it, and the message names that
+	// file.
+	edited := f.modTime(orderService)
+	f.setModTime(orderFile, edited.Add(-10*time.Second))
+	f.setModTime(orderService, edited)
+	f.write("TestResults/coverage.cobertura.xml",
+		coberturaStamped(stampAt(edited.Add(-5*time.Second)), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)},
+			coverageClass{filename: orderFile, lines: spanCoverage(61, 3, 3)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService, orderFile), []span{cancel, orderTotal}),
+	}
+
+	f.run().assertMatches(t, "coverage_stale_newest_file", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml was written before src/Ordering/OrderService.cs was last edited; clear stale TestResults directories and re-run the tests\n")
+}
+
+func TestChangedFilesEditedInTheSameSecondNameTheSmallestPath(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write(orderFile, csharpFile(80))
+	f.write(pricingFile, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.touchLine(orderFile, 62)
+	f.touchLine(pricingFile, 62)
+	// Equal mtimes, so no file is newer and the answer rests entirely on the
+	// order the newest-edit scan walks them in. join.Changed drains its spans
+	// out of a Go map before sorting them, so without that sort the order is
+	// arbitrary and the message names whichever file the runtime happened to
+	// yield first. Order.cs, the smallest path, is the only stable answer.
+	edited := f.modTime(orderService)
+	for _, file := range []string{orderService, orderFile, pricingFile} {
+		f.setModTime(file, edited)
+	}
+	f.write("TestResults/coverage.cobertura.xml",
+		coberturaStamped(stampAt(edited.Add(-time.Second)), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)},
+			coverageClass{filename: orderFile, lines: spanCoverage(61, 3, 3)},
+			coverageClass{filename: pricingFile, lines: spanCoverage(61, 3, 3)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout: extractorOutput(t, parsed(pricingFile, orderFile, orderService),
+			[]span{pricingQuote, orderTotal, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_stale_tie_break", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml was written before src/Ordering/Order.cs was last edited; clear stale TestResults directories and re-run the tests\n")
+}
+
+func TestCoverageFlagRepeatedUnionsEveryNamedReport(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// Two named reports each hitting a different subset of Cancel's lines, so
+	// only consuming both reaches two of three. Both spellings of the flag are
+	// exercised here, since one parse site now serves them.
+	f.write("artifacts/unit.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 1}, {number: 62, hits: 0}, {number: 63, hits: 0}}}))
+	f.write("artifacts/integration.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 0}, {number: 62, hits: 1}, {number: 63, hits: 0}}}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.runWithArgs("--coverage", "artifacts/unit.xml", "--coverage=artifacts/integration.xml").assertMatches(
+		t, "repeated_coverage_flag", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestAbsoluteNamedReportIsNamedRepoRelativeInTheDocument(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("artifacts/coverage.xml",
+		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// ADR 0004: a human-typed path resolves against the process cwd, then
+	// relativizes for the name the document carries.
+	f.runWithArgs("--coverage", filepath.Join(f.root, "artifacts", "coverage.xml")).assertMatches(
+		t, "named_coverage_stale", 1, f.baseLabel("main"),
+		"coverage report artifacts/coverage.xml was written before src/Ordering/OrderService.cs was last edited; "+
+			"regenerate artifacts/coverage.xml or point --coverage at a current report\n")
+}
+
+func TestRelativeNamedReportResolvesAgainstTheWorkingDirectory(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write("tests/placeholder.txt", "")
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("artifacts/from-subdir.xml",
+		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// ADR 0004: the path resolves against the process cwd, which here is a
+	// subdirectory rather than the repo root. Joining against the root instead
+	// lands outside the repo, where there is no report to read at all.
+	f.runFromWithArgs("tests", "--coverage", "../artifacts/from-subdir.xml").assertMatches(
+		t, "named_relative_stale", 1, f.baseLabel("main"),
+		"coverage report artifacts/from-subdir.xml was written before src/Ordering/OrderService.cs was last edited; "+
+			"regenerate artifacts/from-subdir.xml or point --coverage at a current report\n")
+}
+
+func TestNamedReportThatIsNotOnDiskIsRefusedAsUnparseable(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// A path the developer typed that names nothing is a report the gate
+	// cannot read, not a repo with no coverage, so it fails as unparseable and
+	// quotes the spelling they typed rather than the missing-report search
+	// location.
+	f.runWithArgs("--coverage", "artifacts/typo.xml").assertMatches(
+		t, "named_report_absent", 1, f.baseLabel("main"),
+		"could not parse coverage report artifacts/typo.xml; open: no such file or directory\n")
+}
+
+func TestAbsentNamedReportUnderASymlinkedRootIsStillNamedRepoRelative(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// The absolute path names nothing, so there is no report to resolve
+	// symlinks through, and it reaches the repo through one: /tmp and /var are
+	// symlinks on macOS, so this is the ordinary shape of an absolute path a
+	// developer types there. Relativizing it unresolved against the resolved
+	// root escapes for the indirection alone, and ADR 0004 has the document
+	// naming paths repo-relative whenever they have that form.
+	link := symlinkedDir(t, f.root, filepath.Join(t.TempDir(), "link"))
+	f.runWithArgs("--coverage", filepath.Join(link, "artifacts", "typo.xml")).assertMatches(
+		t, "named_report_absent", 1, f.baseLabel("main"),
+		"could not parse coverage report artifacts/typo.xml; open: no such file or directory\n")
+}
+
+func TestAChangedFileMissingFromTheWorkingTreeCurrentlyStopsTheRunOutsideTheDocument(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.git("checkout", "--quiet", "-b", "feature")
+	f.touchLine(orderService, 62)
+	f.commitAll("edit Cancel on the branch")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// A sparse checkout: the file is tracked and its edit is in the diff, so
+	// the changed method is known, but nothing of it is on disk for the
+	// staleness rule to read an mtime off.
+	f.git("update-index", "--skip-worktree", orderService)
+	absent := filepath.Join(f.root, filepath.FromSlash(orderService))
+	if err := os.Remove(absent); err != nil {
+		t.Fatal(err)
+	}
+	_, statErr := os.Stat(filepath.Join(resolvedPath(t, f.root), filepath.FromSlash(orderService)))
+	if statErr == nil {
+		t.Fatalf("%s is still readable, which the case needs it not to be", orderService)
+	}
+
+	// This is the shape the run has today, not the shape it should have: ADR
+	// 0005 sanctions a documentless exit 1 only for a failure upstream of the
+	// document, and this one lands after the changed methods are counted. Issue
+	// 31 gives the failure a typed code, and moves it inside the document; this
+	// case goes red the day it does, which is what it is here for.
+	result := f.runWithArgs()
+	if result.exitCode != 1 || result.stdout != "" {
+		t.Errorf("gate exited %d with stdout %q, want exit 1 and nothing on stdout", result.exitCode, result.stdout)
+	}
+	if want := "stat " + orderService + ": " + statErr.Error() + "\n"; result.stderr != want {
+		t.Errorf("stderr = %q, want %q", result.stderr, want)
+	}
+}
+
+func TestUnknownArgumentIsAUsageError(t *testing.T) {
+	f := newFixture(t, "main")
+
+	// A usage error is decided before the gate opens the repo, so the fixture
+	// carries no commit, no source, no report and no extractor config: nothing
+	// about the tree can change the answer.
+	assertUsageError(t, f.runWithArgs("--nope"),
+		"unknown argument: --nope\nusage: metric-gate [--coverage <path>]...\n")
+}
+
+func TestCoverageFlagWithNoPathIsAUsageError(t *testing.T) {
+	const want = "--coverage needs a path\nusage: metric-gate [--coverage <path>]...\n"
+	spellings := map[string][]string{
+		"nothing follows the flag": {"--coverage"},
+		"empty joined value":       {"--coverage="},
+		// An unset shell variable expands to this, and it must not reach the
+		// reader as a report naming nothing.
+		"empty separate value": {"--coverage", ""},
+	}
+	for name, args := range spellings {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, "main")
+
+			assertUsageError(t, f.runWithArgs(args...), want)
+		})
+	}
+}
+
+func TestCoverageFlagGivenAnotherFlagIsAUsageError(t *testing.T) {
+	// A mistyped flag after --coverage would otherwise be swallowed as a report
+	// path and reach the developer as a coverage diagnostic inside a document,
+	// which reads as "the gate ran and your coverage is wrong" rather than
+	// "the command line is wrong". No producer names a report with two leading
+	// dashes, so the flag spelling is the one worth refusing.
+	spellings := map[string][]string{
+		"separate value": {"--coverage", "--nope"},
+		"joined value":   {"--coverage=--nope"},
+	}
+	for name, args := range spellings {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, "main")
+
+			assertUsageError(t, f.runWithArgs(args...),
+				"--coverage needs a path, not the flag --nope\nusage: metric-gate [--coverage <path>]...\n")
+		})
+	}
+}
+
+// assertUsageError checks the shape ADR 0005 gives a failure upstream of the
+// document: exit 1, nothing on stdout, and the cause plus the usage line on
+// stderr.
+func assertUsageError(t *testing.T, result runResult, stderr string) {
+	t.Helper()
+	if result.exitCode == 1 && result.stdout == "" && result.stderr == stderr {
+		return
+	}
+	t.Errorf("exit code: got %d, want 1\nstdout: got %q, want %q\nstderr: got %q, want %q",
+		result.exitCode, result.stdout, "", result.stderr, stderr)
+}
+
+// The cases below are issue 16: the three exit-1 diagnostics ADR 0004's
+// 2026-09-03 amendment defers there, plus regression coverage for the
+// resolution rules the tracer already satisfied before this issue landed.
+
+func TestNestedSolutionLayoutScoresCorrectly(t *testing.T) {
+	const nested = "src/Services/Ordering/Api/OrderService.cs"
+	place := span{File: nested, Name: "OrderService.PlaceAsync", StartLine: 41, EndLine: 58, Complexity: 9}
+	cancelNested := span{File: nested, Name: "OrderService.Cancel", StartLine: 60, EndLine: 64, Complexity: 3}
+
+	f := newFixture(t, "main")
+	f.write(nested, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(nested, 45)
+	f.touchLine(nested, 62)
+	// <source> is the repo root itself, several directories above the class,
+	// which is the shape a nested solution's coverlet run actually produces.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: nested, lines: append(spanCoverage(42, 10, 10), spanCoverage(61, 3, 3)...)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(nested), []span{place, cancelNested}),
+	}
+
+	f.run().assertMatches(t, "nested_solution_layout", 0, f.baseLabel("main"),
+		"0 of 2 changed methods over CRAP threshold 30, worst score 9.00\n")
+}
+
+func TestReportBuiltInAnotherCheckoutFailsNamingTheMismatch(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+
+	// A second checkout of the same source tree, entirely outside this
+	// fixture's repo root. Coverlet's <source> names it faithfully; nothing
+	// about the report is malformed, it was just measured against a different
+	// working tree than the one being gated. The temp root is resolved once, so
+	// the expected path below is built by joining rather than by running the
+	// gate's own resolver over the answer.
+	otherCheckout := resolvedPath(t, t.TempDir())
+	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
+	writeAbsolute(t, classPath, csharpFile(80))
+	f.write("TestResults/coverage.cobertura.xml", cobertura(otherCheckout,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	example := filepath.ToSlash(classPath)
+	root := resolvedPath(t, f.root)
+	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
+		outsideRepoStderr(example, root),
+		map[string]string{"EXAMPLE": example, "ROOT": root})
+}
+
+func TestNamedReportBuiltInAnotherCheckoutIsQuotedAbsolutely(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+
+	// The same wrong-checkout report as the case above, reaching the gate on
+	// --coverage from outside the repo instead of through discovery. The
+	// resolution diagnostics take the report's display name, so this is where
+	// the absolute spelling has to survive. Relativizing an out-of-repo path
+	// would quote a ../ chain climbing out of the root, which names no file the
+	// developer can look at.
+	otherCheckout := resolvedPath(t, t.TempDir())
+	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
+	writeAbsolute(t, classPath, csharpFile(80))
+	typed := filepath.Join(t.TempDir(), "coverage.xml")
+	writeAbsolute(t, typed, cobertura(otherCheckout,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	example := filepath.ToSlash(classPath)
+	root := resolvedPath(t, f.root)
+	named := resolvedPath(t, typed)
+	f.runWithArgs("--coverage", typed).assertMatchesWith(t, "named_report_outside_repo_wrong_checkout", 1,
+		f.baseLabel("main"),
+		fmt.Sprintf("coverage report %s placed no class inside the repo root; example path %s, repo root %s\n",
+			named, example, root),
+		map[string]string{"REPORT": named, "EXAMPLE": example, "ROOT": root})
+}
+
+// TestForeignReportBesideAHealthyOneFailsNamingTheForeignOne pins issue 16's
+// per-report failure against the multi-report shape none of the existing
+// fixtures exercise. Discovery sorts reports, so "good" loads before "stale"
+// and "zz-good" sorts after it, so the foreign report is neither the first
+// nor the last of the three. Naming it rules out an implementation that names
+// whichever report it saw first as well as one that names the last, rather
+// than passing by accident of there being only one report to name. The
+// healthy reports each cover two of Cancel's three lines, which scores 3.33
+// and passes on its own, so the failure document also pins that healthy
+// coverage is discarded rather than merged in alongside the report that
+// failed.
+func TestForeignReportBesideAHealthyOneFailsNamingTheForeignOne(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+
+	f.write("TestResults/good/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+
+	otherCheckout := resolvedPath(t, t.TempDir())
+	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
+	writeAbsolute(t, classPath, csharpFile(80))
+	f.write("TestResults/stale/coverage.cobertura.xml", cobertura(otherCheckout,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+
+	f.write("TestResults/zz-good/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	example := filepath.ToSlash(classPath)
+	root := resolvedPath(t, f.root)
+	const foreign = "TestResults/stale/coverage.cobertura.xml"
+	f.run().assertMatchesWith(t, "coverage_outside_repo_beside_healthy", 1, f.baseLabel("main"),
+		namedOutsideRepoStderr(foreign, example, root),
+		map[string]string{"EXAMPLE": example, "ROOT": root})
+}
+
+func TestClassWithNoFilenameDoesNotSuppressTheOutsideRepoDiagnostic(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+
+	// The same other-checkout report, plus a malformed class carrying no
+	// filename and a second <source> inside the repo root. Joining nothing
+	// onto that source names src/ itself, a directory that resolves inside the
+	// root, so an empty filename has to contribute no evidence rather than
+	// stand in for a class that resolved. The real class resolves under
+	// neither src/ nor anything else in this repo.
+	otherCheckout := resolvedPath(t, t.TempDir())
+	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
+	writeAbsolute(t, classPath, csharpFile(80))
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
+		[]string{otherCheckout, filepath.Join(f.root, "src")},
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)},
+		coverageClass{filename: "", lines: spanCoverage(1, 1, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	example := filepath.ToSlash(classPath)
+	root := resolvedPath(t, f.root)
+	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
+		outsideRepoStderr(example, root),
+		map[string]string{"EXAMPLE": example, "ROOT": root})
+}
+
+func TestReportReachedThroughASymlinkQuotesThePathItResolvedTo(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+
+	// The report's <source> reaches a second checkout through a symlink, so
+	// the path the join builds and the path it resolves to differ by more than
+	// whatever indirection the temp directory happens to carry. The diagnostic
+	// quotes the resolved one, which is the path the gate actually compared
+	// against the repo root, and the expectation below is written out rather
+	// than recomputed with the resolver the gate uses.
+	base := resolvedPath(t, t.TempDir())
+	checkout := filepath.Join(base, "checkout")
+	classPath := filepath.Join(checkout, filepath.FromSlash(orderService))
+	writeAbsolute(t, classPath, csharpFile(80))
+	link := symlinkedDir(t, checkout, filepath.Join(base, "link"))
+	f.write("TestResults/coverage.cobertura.xml", cobertura(link,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	example := filepath.ToSlash(classPath)
+	root := resolvedPath(t, f.root)
+	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
+		outsideRepoStderr(example, root),
+		map[string]string{"EXAMPLE": example, "ROOT": root})
+}
+
+func TestClassFilenameNamingNoFileDoesNotSuppressTheOutsideRepoDiagnostic(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+
+	// Four directory-shaped filenames, none carved out by spelling: each one
+	// joins onto a <source> like any other filename and is refused for what it
+	// resolves to. "." names the in-root <source> directory itself, ".." the
+	// directory above it, "../.." the repo root off the deepest <source> here,
+	// and "/" resolves to the filesystem root, outside. Reading any of them as
+	// a placed class would let one malformed element stand in for the real
+	// class, which resolved in another checkout entirely, and suppress the
+	// diagnostic. The lines each one carries would score a file, so a
+	// regression here is a wrong number rather than a missing one.
+	otherCheckout := resolvedPath(t, t.TempDir())
+	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
+	writeAbsolute(t, classPath, csharpFile(80))
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
+		[]string{otherCheckout, filepath.Join(f.root, "src"), filepath.Join(f.root, "src", "Ordering")},
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)},
+		coverageClass{filename: ".", lines: spanCoverage(1, 1, 1)},
+		coverageClass{filename: "..", lines: spanCoverage(1, 1, 1)},
+		coverageClass{filename: "/", lines: spanCoverage(1, 1, 1)},
+		coverageClass{filename: "../..", lines: spanCoverage(1, 1, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	example := filepath.ToSlash(classPath)
+	root := resolvedPath(t, f.root)
+	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
+		outsideRepoStderr(example, root),
+		map[string]string{"EXAMPLE": example, "ROOT": root})
+}
+
+func TestClassFilenameClimbingBackIntoTheRootScores(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// A filename that starts with ".." but names a real file once joined: the
+	// <source> is the class's own directory and the filename climbs out of it
+	// and back in. It is not the ".." case, it names a file, and reading the
+	// two leading characters rather than what the join resolves to would drop
+	// every class a multi-project solution writes this way.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(filepath.Join(f.root, "src", "Ordering"),
+		coverageClass{filename: "../Ordering/OrderService.cs", lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestTwoClassesOnOneFileInOneReportAreUnioned(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// coverlet writes one <class> per class, so a file holding two of them
+	// appears twice in the same report, each element listing only its own
+	// lines. Cancel's three lines are split across the pair, so letting the
+	// second element replace the first rather than fold into it would score
+	// the method on one line instead of three.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 4}, {number: 62, hits: 0}}},
+		coverageClass{filename: orderService, lines: []coverageLine{{number: 63, hits: 1}}}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestReportMeasuredAgainstAContainerMountFailsNamingTheMismatch(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+
+	// dotnet test ran in a container with the repo bind-mounted, and the gate
+	// runs on the host where that mount does not exist. This is the <source>
+	// coverlet actually writes on Unix, "/", with the whole mount path carried
+	// in the filename, so no candidate resolves anywhere at all and the report
+	// still has to be named rather than presenting as unattributable methods.
+	mounted := filepath.Join(t.TempDir(), "srv", "repo", filepath.FromSlash(orderService))
+	f.write("TestResults/coverage.cobertura.xml", cobertura("/",
+		coverageClass{
+			filename: strings.TrimPrefix(filepath.ToSlash(mounted), "/"),
+			lines:    spanCoverage(61, 3, 2),
+		}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	example := filepath.ToSlash(mounted)
+	root := resolvedPath(t, f.root)
+	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
+		outsideRepoStderr(example, root),
+		map[string]string{"EXAMPLE": example, "ROOT": root})
+}
+
+func TestRelativeSourceIsRefusedRatherThanResolvedAgainstTheWorkingDirectory(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// A <source> that is not absolute, joined onto a relative filename, names
+	// exactly the file the gate would score if it resolved candidates against
+	// its own working directory, which is the repo root. ADR 0004 resolves
+	// nothing that way, because the report would then be scored from a path it
+	// never named, so the report places nothing and is named instead.
+	f.write("TestResults/coverage.cobertura.xml", cobertura("src",
+		coverageClass{filename: "Ordering/OrderService.cs", lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// The candidate is relative, so the message marks it as anchored nowhere
+	// rather than quoting a string the reader would take for a resolved path
+	// inside this repo.
+	example := "src/Ordering/OrderService.cs"
+	root := resolvedPath(t, f.root)
+	f.run().assertMatchesWith(t, "coverage_outside_repo_unanchored", 1, f.baseLabel("main"),
+		outsideRepoUnanchoredStderr(example, root),
+		map[string]string{"EXAMPLE": example, "ROOT": root})
+}
+
+func TestReportWithNoSourcesAndRelativeFilenamesFailsNamingTheMismatch(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// <sources/> beside a relative filename leaves nothing to anchor the class
+	// to, so the join builds no candidate at all. That places no class inside
+	// the root just as surely as a candidate landing elsewhere does, and the
+	// report has to be named rather than scoring an empty set and dying
+	// downstream as a wall of unknown methods.
+	f.write("TestResults/coverage.cobertura.xml", coberturaNoSources(
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	root := resolvedPath(t, f.root)
+	f.run().assertMatchesWith(t, "coverage_outside_repo_unanchored", 1, f.baseLabel("main"),
+		outsideRepoUnanchoredStderr(orderService, root),
+		map[string]string{"EXAMPLE": orderService, "ROOT": root})
+}
+
+func TestReportWhoseEveryClassCarriesNoFilenameFailsSayingSo(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// Every class is malformed the one way that yields no candidate and no
+	// path to quote either. The report still placed nothing, so it still
+	// fails, and the message says there was nothing to compare rather than
+	// quoting an empty path as though it were one.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: "", lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	root := resolvedPath(t, f.root)
+	f.run().assertMatchesWith(t, "coverage_outside_repo_no_filename", 1, f.baseLabel("main"),
+		fmt.Sprintf("coverage report TestResults/coverage.cobertura.xml placed no class inside the repo root; "+
+			"no class carries a filename to compare, repo root %s\n", root),
+		map[string]string{"ROOT": root})
+}
+
+func TestDeterministicReportEmptyingSourcesFailsNamingTheProperty(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// DeterministicReport=true rewrites every filename under the /_/
+	// placeholder and empties <sources>, so there is no root left to join
+	// against.
+	f.write("TestResults/coverage.cobertura.xml", coberturaNoSources(
+		coverageClass{filename: "/_/src/Ordering/OrderService.cs", lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_source_root_erased_deterministic", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml carries no source root, erased by "+
+			"DeterministicReport=true; collect coverage with DeterministicReport=false\n")
+}
+
+func TestUseSourceLinkFailsNamingTheProperty(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// UseSourceLink=true emits one empty <source> and the raw source-link
+	// document key, a URL, as the filename.
+	f.write("TestResults/coverage.cobertura.xml", cobertura("",
+		coverageClass{
+			filename: "https://raw.githubusercontent.com/org/repo/deadbeef/src/Ordering/OrderService.cs",
+			lines:    spanCoverage(61, 3, 2),
+		}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_source_root_erased_sourcelink", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml carries a source link document key rather than a "+
+			"path, erased by UseSourceLink=true; collect coverage with UseSourceLink=false\n")
+}
+
+func TestUseSourceLinkWithASchemelessDocumentKeyFailsNamingTheProperty(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The document key need not be a URL, and this one reads as an ordinary
+	// repo-relative path. The empty <source> is the half of the shape that
+	// still gives it away, and without reading it the run would degrade to the
+	// wall of unknown methods the diagnostic exists to replace.
+	f.write("TestResults/coverage.cobertura.xml", cobertura("",
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_source_root_erased_sourcelink", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml carries a source link document key rather than a "+
+			"path, erased by UseSourceLink=true; collect coverage with UseSourceLink=false\n")
+}
+
+func TestUseSourceLinkDocumentKeyBesideARealSourceRootFailsNamingTheProperty(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// A URL document key in a report that still carries an ordinary source
+	// root, so the blank <source> half of the shape is absent and the key
+	// itself is the only thing that gives it away.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{
+			filename: "https://raw.githubusercontent.com/org/repo/deadbeef/src/Ordering/OrderService.cs",
+			lines:    spanCoverage(61, 3, 2),
+		}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_source_root_erased_sourcelink", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml carries a source link document key rather than a "+
+			"path, erased by UseSourceLink=true; collect coverage with UseSourceLink=false\n")
+}
+
+func TestWhitespaceOnlySourceReadsAsBlankAndNamesTheProperty(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The UseSourceLink=true shape as a formatter leaves it, with a space
+	// between the <source> tags rather than nothing. A source root of
+	// whitespace is no source root, and the two readers of the document, the
+	// join and the erased-root check, have to agree on that; otherwise the run
+	// blames the checkout while telling the reader to turn off UseSourceLink,
+	// or the reverse.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(" ",
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_source_root_erased_sourcelink", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml carries a source link document key rather than a "+
+			"path, erased by UseSourceLink=true; collect coverage with UseSourceLink=false\n")
+}
+
+func TestWhitespacePaddedSourceRootStillAnchorsTheJoin(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The other half of the same formatter's output: a real source root with
+	// whitespace either side of it. Trimming has to happen where the document
+	// is read, not only where the erased-root check looks, or the join carries
+	// the padding into every candidate and the report resolves nothing.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(" "+f.root+" ",
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestBlankSourceWithAnAbsoluteFilenameScores(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// One blank <source> beside a filename that is already an absolute path.
+	// The filename carries its own root, so this is the coverlet shape ADR 0004
+	// names and not UseSourceLink=true: joining the blank source onto it leaves
+	// it unchanged, and it places inside the repo root.
+	f.write("TestResults/coverage.cobertura.xml", cobertura("",
+		coverageClass{
+			filename: filepath.Join(f.root, filepath.FromSlash(orderService)),
+			lines:    spanCoverage(61, 3, 2),
+		}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestReportCarryingBothErasedShapesNamesDeterministicReport(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// Both erased shapes in one report, the source-link key first. The
+	// property named is DeterministicReport whatever order the classes are in,
+	// because it is the one that erased <sources> for the whole document.
+	f.write("TestResults/coverage.cobertura.xml", coberturaNoSources(
+		coverageClass{
+			filename: "https://raw.githubusercontent.com/org/repo/deadbeef/src/Ordering/OrderService.cs",
+			lines:    spanCoverage(61, 3, 2),
+		},
+		coverageClass{filename: "/_/src/Ordering/Other.cs", lines: spanCoverage(1, 1, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_source_root_erased_deterministic", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml carries no source root, erased by "+
+			"DeterministicReport=true; collect coverage with DeterministicReport=false\n")
+}
+
+func TestNumberedDeterministicPlaceholderFailsNamingTheProperty(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// MSBuild numbers the placeholder per source root, so a project with a
+	// second root, from a submodule or a source package, carries /_1/ rather
+	// than /_/. The remedy is the same property, and without matching the
+	// numbered form the path is merely absolute on Unix and the run would
+	// blame the checkout instead.
+	f.write("TestResults/coverage.cobertura.xml", coberturaNoSources(
+		coverageClass{filename: "/_1/src/Ordering/OrderService.cs", lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_source_root_erased_deterministic", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml carries no source root, erased by "+
+			"DeterministicReport=true; collect coverage with DeterministicReport=false\n")
+}
+
+func TestErasedSourceRootIsNamedAheadOfAnAmbiguousClass(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	// Order.cs exists under both sources, so on its own it is ambiguous.
+	f.write("src/a/Order.cs", csharpFile(20))
+	f.write("src/b/Order.cs", csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// One erased filename beside the ambiguous class. The erased root voids
+	// the whole document before any candidate is built, so the reader is told
+	// which property to turn off rather than shown a contradiction that is a
+	// consequence of it.
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
+		[]string{filepath.Join(f.root, "src", "a"), filepath.Join(f.root, "src", "b")},
+		coverageClass{filename: "Order.cs", lines: spanCoverage(1, 1, 1)},
+		coverageClass{filename: "/_/src/Ordering/OrderService.cs", lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_source_root_erased_deterministic", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml carries no source root, erased by "+
+			"DeterministicReport=true; collect coverage with DeterministicReport=false\n")
+}
+
+func TestAmbiguousClassIsNamedAheadOfTheReportPlacingNothingInside(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write("src/a/Order.cs", csharpFile(20))
+	f.write("src/b/Order.cs", csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The first class in document order places nowhere, from a source outside
+	// the repo, and the second contradicts itself. The class-level check runs
+	// as each class is read, so the contradiction is named rather than the
+	// report-level verdict that is decided only after the last class.
+	otherCheckout := t.TempDir()
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
+		[]string{otherCheckout, filepath.Join(f.root, "src", "a"), filepath.Join(f.root, "src", "b")},
+		coverageClass{filename: "obsolete/Old.cs", lines: spanCoverage(1, 1, 1)},
+		coverageClass{filename: "Order.cs", lines: spanCoverage(1, 1, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "file_ambiguous", 1, f.baseLabel("main"),
+		"class Order.cs in coverage report TestResults/coverage.cobertura.xml resolved to more than one path "+
+			"inside the repo root, src/a/Order.cs and src/b/Order.cs\n")
+}
+
+func TestCaseOnlyPathDifferenceIsRefusedRatherThanGuessed(t *testing.T) {
+	const other = "src/Ordering/Other.cs"
+	vanish := span{File: other, Name: "Other.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	if !caseInsensitiveFilesystem(t, f.root) {
+		t.Skip("the filesystem is case sensitive, so the wrong-case candidate never resolves and the case is a duplicate of the unresolvable one")
+	}
+	f.write(orderService, csharpFile(80))
+	f.write(other, csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.touchLine(other, 7)
+	// The wrong-case candidate resolves here, to a path whose case is not
+	// OrderService.cs's own, so refusing it rather than folding case is what
+	// leaves Cancel unknown. Other.cs is correctly cased, so the report still
+	// places a class inside the root.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: "src/Ordering/orderservice.cs", lines: spanCoverage(61, 3, 2)},
+		coverageClass{filename: other, lines: spanCoverage(6, 4, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService, other), []span{cancel, vanish}),
+	}
+
+	f.run().assertMatches(t, "case_only_path_difference", 1, f.baseLabel("main"),
+		"1 changed method could not be attributed to a coverage report\n"+
+			"0 of 2 changed methods over CRAP threshold 30, worst score 10.75\n")
+}
+
+func TestClassYieldingTwoCandidatesInsideRepoRootFailsNamingBoth(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	// Order.cs exists twice inside the repo root, under the two <source>
+	// directories the report lists for the one class.
+	f.write("src/a/Order.cs", csharpFile(20))
+	f.write("src/b/Order.cs", csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The sources are listed b before a, so the message's sorted order is not
+	// the order the candidates arrive in.
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
+		[]string{filepath.Join(f.root, "src", "b"), filepath.Join(f.root, "src", "a")},
+		coverageClass{filename: "Order.cs", lines: spanCoverage(1, 1, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// Both source paths are already repo-relative, so unlike the
+	// coverage_outside_repo case the message needs no machine-specific hole.
+	f.run().assertMatches(t, "file_ambiguous", 1, f.baseLabel("main"),
+		"class Order.cs in coverage report TestResults/coverage.cobertura.xml resolved to more than one path "+
+			"inside the repo root, src/a/Order.cs and src/b/Order.cs\n")
+}
+
+func TestClassYieldingThreeCandidatesInsideRepoRootFailsNamingAllOfThem(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	// Order.cs exists three times inside the repo root, one copy per <source>.
+	f.write("src/a/Order.cs", csharpFile(20))
+	f.write("src/b/Order.cs", csharpFile(20))
+	f.write("src/c/Order.cs", csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// A contradiction the reader has to resolve by hand, so the message names
+	// every path the class resolved to. Quoting the first two would leave the
+	// reader deleting one copy and hitting the same failure again.
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
+		[]string{
+			filepath.Join(f.root, "src", "c"),
+			filepath.Join(f.root, "src", "a"),
+			filepath.Join(f.root, "src", "b"),
+		},
+		coverageClass{filename: "Order.cs", lines: spanCoverage(1, 1, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "file_ambiguous_three_paths", 1, f.baseLabel("main"),
+		"class Order.cs in coverage report TestResults/coverage.cobertura.xml resolved to more than one path "+
+			"inside the repo root, src/a/Order.cs, src/b/Order.cs and src/c/Order.cs\n")
+}
+
+func TestReportPathOutsideRepoIsIgnoredInSilence(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+
+	// A leftover class describing a file this repo has never had, sourced from
+	// a tree entirely outside the root. The gate ignores it in silence rather
+	// than tripping the zero-classes-inside-root diagnostic, because Cancel
+	// already resolved inside the root from the report's other source.
+	otherCheckout := t.TempDir()
+	writeAbsolute(t, filepath.Join(otherCheckout, "obsolete", "Old.cs"), csharpFile(5))
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
+		[]string{f.root, otherCheckout},
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)},
+		coverageClass{filename: "obsolete/Old.cs", lines: spanCoverage(1, 1, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestReportPathNoLongerOnDiskIsIgnoredRatherThanFatal(t *testing.T) {
+	const deletedFile = "src/Ordering/Deleted.cs"
+
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write(deletedFile, csharpFile(10))
+	f.commitAll("initial")
+	// A report describes a moment in the past (ADR 0004): a class naming a
+	// file removed since the test run must stay a silent ignore now that the
+	// report is checked for more than the join alone.
+	f.git("rm", "--quiet", deletedFile)
+	f.commitAll("delete the file the coverage report still names")
+	f.touchLine(orderService, 62)
+
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)},
+		coverageClass{filename: deletedFile, lines: spanCoverage(1, 1, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestReportWhoseEveryClassIsGoneFromDiskFailsNamingTheMismatch(t *testing.T) {
+	const deletedFile = "src/Ordering/Deleted.cs"
+
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write(deletedFile, csharpFile(10))
+	f.commitAll("initial")
+	// Every class the report names is gone, which is the shape a report left
+	// behind in a gitignored TestResults/ takes after a branch switch. ADR 0004
+	// fails a report that places no class inside the root whatever became of
+	// the candidates, and the message hands the reader the path to look at, so
+	// a stale report is diagnosed as one rather than as a wall of methods
+	// nothing could be attributed to.
+	f.git("rm", "--quiet", deletedFile)
+	f.commitAll("delete the only file the coverage report names")
+	f.touchLine(orderService, 62)
+
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: deletedFile, lines: spanCoverage(1, 1, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{cancel}),
+	}
+
+	// The candidate no longer resolves, so the example is the path as the join
+	// built it, unresolved, beside a repo root that is resolved.
+	example := filepath.ToSlash(filepath.Join(f.root, filepath.FromSlash(deletedFile)))
+	root := resolvedPath(t, f.root)
+	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
+		outsideRepoStderr(example, root),
+		map[string]string{"EXAMPLE": example, "ROOT": root})
+}
+
+func TestReportCarryingNoClassesDoesNotTripTheOutsideRepoDiagnostic(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// A report with a source root and no <class> at all resolved nothing, so
+	// there is nothing that could have been outside the repo and no path the
+	// diagnostic could quote. The run still fails, on the pre-existing
+	// unknown_changed_method path.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{cancel}),
+	}
+
+	f.run().assertMatches(t, "report_with_no_classes", 1, f.baseLabel("main"),
+		"1 changed method could not be attributed to a coverage report\n"+
+			"0 of 1 changed methods over CRAP threshold 30, worst score 0.00\n")
+}
+
+func TestReportListingTheSameSourceTwiceIsNotAmbiguous(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// Both <source> elements yield the same candidate for the one class, so
+	// the class resolves to one path and file_ambiguous must not fire.
+	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
+		[]string{f.root, f.root},
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestAbsoluteClassFilenameWithNoSourcesScores(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// Coverlet emits an absolute filename and no source root when no computed
+	// source root prefixes the document (ADR 0004). The filename alone is the
+	// candidate, and it lands inside the root.
+	f.write("TestResults/coverage.cobertura.xml", coberturaNoSources(
+		coverageClass{
+			filename: filepath.Join(f.root, filepath.FromSlash(orderService)),
+			lines:    spanCoverage(61, 3, 2),
+		}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
 func TestRunOutsideAGitRepoWritesNoDocumentAndExitsOne(t *testing.T) {
@@ -1592,4 +3123,50 @@ func inRepo(t *testing.T, dir string) bool {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), gitEnv...)
 	return cmd.Run() == nil
+}
+
+func TestOriginHeadOutranksLocalMainAsTheDiffBase(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.addOrigin("main")
+	f.setOriginHead()
+	f.touchLine(orderService, 42)
+	f.commitAll("second")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: append(spanCoverage(42, 10, 1), spanCoverage(61, 3, 2)...)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// origin/HEAD sits at "initial", local main has moved on to "second", and
+	// ResolveBase must stop at the first candidate that resolves rather than
+	// the last. Diffing from origin/HEAD carries both the committed edit to
+	// line 42 and the working-tree edit to line 62, two changed methods; from
+	// local main only the second survives.
+	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/HEAD"),
+		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
+}
+
+func TestOriginMainOutranksLocalMainWhenNoOriginHeadExists(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.addOrigin("main")
+	// No setOriginHead: a push alone never creates refs/remotes/origin/HEAD,
+	// which is the shape of a fetch that never ran `remote set-head`.
+	f.touchLine(orderService, 42)
+	f.commitAll("second")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: append(spanCoverage(42, 10, 1), spanCoverage(61, 3, 2)...)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/main"),
+		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
 }

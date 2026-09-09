@@ -1,5 +1,5 @@
 using System.Linq;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Tvrmsmith.MetricGate.CSharp.Tests;
@@ -136,20 +136,29 @@ public class ExtractionTests
 
     /// <summary>
     /// The signature spelling <c>MethodSpanResult</c> documents, so an extractor for another
-    /// language can match it. Modifiers in order, the source spelling of the type, generic arity as
-    /// a backtick count, and never a parameter name.
+    /// language can match it. Every modifier that list names, in declaration order, the source
+    /// spelling of the type, generic arity as a backtick count, and never a parameter name, a
+    /// parameter attribute or a default value.
     /// </summary>
     [Fact]
     public void ASignatureSpellsModifiersSourceTypesAndGenericArityButNeverParameterNames()
     {
         var (_, result) = ExtractorRun.Run("fixtures/Overloads.cs");
 
-        result.Spans.Should().Contain(span => span.Name == "Overloads.G")
-            .Which.Signature.Should().Be("(ref int, out string, params int[])");
-        result.Spans.Should().Contain(span => span.Name == "Overloads.H")
-            .Which.Signature.Should().Be("(Dictionary<string, int>, int[]?, (int x, string y))");
-        result.Spans.Should().Contain(span => span.Name == "Overloads.I")
-            .Which.Signature.Should().Be("`1(T)");
+        var spelled = new[]
+        {
+            "Overloads.G", "Overloads.H", "Overloads.I<T>", "Overloads.J", "Overloads.K",
+            "OverloadsExtensions.L",
+        };
+        result.Spans.Where(span => spelled.Contains(span.Name)).Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Overloads.G", Signature = "(ref int, out string, params int[])" },
+            new { Name = "Overloads.H", Signature = "(Dictionary<string, int>, int[]?, (int x, string y))" },
+            new { Name = "Overloads.I<T>", Signature = "`1(T)" },
+            new { Name = "Overloads.J", Signature = "(in int, ref readonly int, scoped System.Span<int>)" },
+            new { Name = "Overloads.K", Signature = "(string, int)" },
+            new { Name = "OverloadsExtensions.L", Signature = "(this Overloads, in int)" },
+        }, o => o.WithStrictOrdering());
     }
 
     /// <summary>
@@ -229,11 +238,14 @@ public class ExtractionTests
     }
 
     /// <summary>
-    /// Every construct <c>ComplexityWalker</c>'s contract enumerates, one per method, so a
+    /// Every construct <c>docs/csharp-decision-points.md</c> enumerates, one per method, so a
     /// construct that stops scoring fails under its own name. A construct dropped from the walker
     /// while it stays in the doc, or added to the walker while the doc says it is out of scope,
-    /// has to move a number here. The last three are the contract's stated non-points, and a
-    /// guard rides its case label, so <c>CaseGuard</c> is the only one carrying two points.
+    /// has to move a number here. <c>DefaultLabel</c> through <c>BitwiseOrOperator</c> are the
+    /// constructs that document says score nothing; four of them, <c>DefaultLabel</c>,
+    /// <c>ConditionalAccess</c>, <c>BitwiseAndOperator</c> and <c>BitwiseOrOperator</c>, are deltas
+    /// where Roslyn does score. A guard rides its case label, which is why <c>CaseGuard</c> and
+    /// <c>CatchFilter</c> carry two points on top of the base.
     /// </summary>
     [Fact]
     public void EveryEnumeratedConstructScoresExactlyThePointsTheContractGivesIt()
@@ -248,6 +260,7 @@ public class ExtractionTests
             new { Name = "Enumerated.Do", Complexity = 2 },
             new { Name = "Enumerated.For", Complexity = 2 },
             new { Name = "Enumerated.Foreach", Complexity = 2 },
+            new { Name = "Enumerated.DeconstructingForeach", Complexity = 2 },
             new { Name = "Enumerated.CaseLabel", Complexity = 2 },
             new { Name = "Enumerated.CasePatternLabel", Complexity = 2 },
             new { Name = "Enumerated.CaseGuard", Complexity = 3 },
@@ -263,22 +276,13 @@ public class ExtractionTests
             new { Name = "Enumerated.DefaultLabel", Complexity = 1 },
             new { Name = "Enumerated.NotPattern", Complexity = 1 },
             new { Name = "Enumerated.CoalesceAssign", Complexity = 1 },
-            new { Name = "Enumerated.Folded", Complexity = 2 },
+            new { Name = "Enumerated.Goto", Complexity = 1 },
+            new { Name = "Enumerated.ConditionalAccess", Complexity = 1 },
+            new { Name = "Enumerated.BitwiseAndOperator", Complexity = 1 },
+            new { Name = "Enumerated.BitwiseOrOperator", Complexity = 1 },
+            new { Name = "Enumerated.Folded", Complexity = 1 },
+            new { Name = "Enumerated.Folded.Inner", Complexity = 2 },
         }, o => o.WithStrictOrdering());
-    }
-
-    /// <summary>
-    /// A local function is not a span of its own, and the decision points inside it fold into the
-    /// method that declares it, which is what keeps a method from hiding its branches in one.
-    /// </summary>
-    [Fact]
-    public void ALocalFunctionIsNoSpanOfItsOwnAndItsBranchesFoldIntoItsMethod()
-    {
-        var (_, result) = ExtractorRun.Run("fixtures/Enumerated.cs");
-
-        result.Spans.Should().ContainSingle(span => span.Name.StartsWith("Enumerated.Folded"))
-            .Which.Complexity.Should().Be(2);
-        result.Spans.Should().NotContain(span => span.Name.Contains("Inner"));
     }
 
     [Fact]
@@ -311,5 +315,369 @@ public class ExtractionTests
             new { File = "fixtures/\0.cs", Status = "failed" },
         });
         result.Spans.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Every declaration kind that carries a body or an expression body gets a span, named
+    /// metadata style: constructors as <c>.ctor</c>/<c>.cctor</c>, the finalizer as
+    /// <c>Finalize</c>, accessors prefixed by their kind, and operators by their metadata name,
+    /// which is arity-sensitive for <c>+</c> and <c>-</c> and takes a <c>Checked</c> infix when
+    /// the declaration is <c>checked</c>. An explicit interface implementation carries the
+    /// interface it implements between the type and the member, so two of them cannot collide.
+    /// An auto-property accessor gets a span too, spanning its own line, even though it carries
+    /// neither a body nor an expression body. Every conversion operator on a type shares one
+    /// metadata name, so its signature carries the target type and the last two, written on one
+    /// line, stay distinguishable.
+    /// </summary>
+    [Fact]
+    public void EveryMemberKindThatCarriesLinesGetsASpanNamedMetadataStyle()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Widened.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Widened..cctor", Signature = "()", StartLine = 20, EndLine = 23, Complexity = 1 },
+            new { Name = "Widened..ctor", Signature = "(int)", StartLine = 25, EndLine = 31, Complexity = 2 },
+            new { Name = "Widened.Finalize", Signature = "()", StartLine = 33, EndLine = 36, Complexity = 1 },
+            new { Name = "Widened.get_Id", Signature = "()", StartLine = 38, EndLine = 38, Complexity = 1 },
+            new { Name = "Widened.set_Id", Signature = "()", StartLine = 38, EndLine = 38, Complexity = 1 },
+            new { Name = "Widened.get_Started", Signature = "()", StartLine = 40, EndLine = 40, Complexity = 1 },
+            new { Name = "Widened.init_Started", Signature = "()", StartLine = 40, EndLine = 40, Complexity = 1 },
+            new { Name = "Widened.get_Count", Signature = "()", StartLine = 44, EndLine = 52, Complexity = 2 },
+            new { Name = "Widened.set_Count", Signature = "()", StartLine = 53, EndLine = 53, Complexity = 1 },
+            new { Name = "Widened.get_Total", Signature = "()", StartLine = 56, EndLine = 56, Complexity = 1 },
+            new { Name = "Widened.get_Item", Signature = "(int)", StartLine = 58, EndLine = 58, Complexity = 2 },
+            new { Name = "Widened.get_Item", Signature = "(string)", StartLine = 62, EndLine = 65, Complexity = 1 },
+            new { Name = "Widened.set_Item", Signature = "(string)", StartLine = 67, EndLine = 70, Complexity = 1 },
+            new { Name = "Widened.add_Changed", Signature = "()", StartLine = 75, EndLine = 81, Complexity = 2 },
+            new { Name = "Widened.remove_Changed", Signature = "()", StartLine = 82, EndLine = 82, Complexity = 1 },
+            new { Name = "Widened.IShifted.get_Described", Signature = "()", StartLine = 85, EndLine = 85, Complexity = 1 },
+            new { Name = "Widened.IShifted.Describe", Signature = "()", StartLine = 87, EndLine = 87, Complexity = 1 },
+            new { Name = "Widened.op_Addition", Signature = "(Widened, Widened)", StartLine = 89, EndLine = 89, Complexity = 1 },
+            new { Name = "Widened.op_CheckedAddition", Signature = "(Widened, Widened)", StartLine = 91, EndLine = 91, Complexity = 1 },
+            new { Name = "Widened.op_UnaryPlus", Signature = "(Widened)", StartLine = 93, EndLine = 93, Complexity = 1 },
+            new { Name = "Widened.op_UnaryNegation", Signature = "(Widened)", StartLine = 95, EndLine = 95, Complexity = 1 },
+            new { Name = "Widened.op_Subtraction", Signature = "(Widened, Widened)", StartLine = 97, EndLine = 97, Complexity = 1 },
+            new { Name = "Widened.op_Implicit", Signature = "(Widened):int", StartLine = 99, EndLine = 99, Complexity = 1 },
+            new { Name = "Widened.op_Explicit", Signature = "(Widened):long", StartLine = 101, EndLine = 101, Complexity = 1 },
+            new { Name = "Widened.op_CheckedExplicit", Signature = "(Widened):short", StartLine = 103, EndLine = 103, Complexity = 1 },
+            new { Name = "Widened.op_Explicit", Signature = "(Widened):byte", StartLine = 106, EndLine = 106, Complexity = 1 },
+            new { Name = "Widened.op_Explicit", Signature = "(Widened):sbyte", StartLine = 106, EndLine = 106, Complexity = 1 },
+        }, o => o.WithStrictOrdering());
+    }
+
+    /// <summary>
+    /// The compiler synthesizes a body for an auto-property accessor, and that is the whole reason
+    /// one gets a span. So a partial property's defining half, which promises an accessor rather
+    /// than declaring one, gets none while its implementing half gets exactly one pair, whether it
+    /// writes accessor bodies or stays an auto-property with an initializer. The file has to report
+    /// <c>parsed</c> for any of that to be reachable, since a partial property is C# 13 and an
+    /// older parser would call the whole file unparseable and emit nothing.
+    /// A <c>static</c> auto-property on an interface gets a pair too, even though
+    /// its bodyless neighbour gets neither.
+    ///
+    /// <para>Which half is which is read off the declaration, never off the order the two halves
+    /// appear in. <c>Half</c> and <c>Whole</c> declare the promise first, <c>Early</c> declares its
+    /// implementing half first, and its rows land on line 15 rather than line 30, so a rule keyed
+    /// on declaration order fails here.</para>
+    /// </summary>
+    [Fact]
+    public void OnlyAnAutoAccessorTheCompilerFillsInGetsASpan()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Synthesized.cs");
+
+        exitCode.Should().Be(0);
+        result.Files.Should().BeEquivalentTo(new[]
+        {
+            new { File = "fixtures/Synthesized.cs", Status = "parsed" },
+        });
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Held.get_Early", Signature = "()", StartLine = 15, EndLine = 15, Complexity = 1 },
+            new { Name = "Held.set_Early", Signature = "()", StartLine = 15, EndLine = 15, Complexity = 1 },
+            new { Name = "Held.get_Half", Signature = "()", StartLine = 24, EndLine = 24, Complexity = 1 },
+            new { Name = "Held.set_Half", Signature = "()", StartLine = 25, EndLine = 25, Complexity = 1 },
+            new { Name = "Held.get_Whole", Signature = "()", StartLine = 28, EndLine = 28, Complexity = 1 },
+            new { Name = "Held.set_Whole", Signature = "()", StartLine = 28, EndLine = 28, Complexity = 1 },
+            new { Name = "ICounted.get_Counter", Signature = "()", StartLine = 35, EndLine = 35, Complexity = 1 },
+            new { Name = "ICounted.set_Counter", Signature = "()", StartLine = 35, EndLine = 35, Complexity = 1 },
+        }, o => o.WithStrictOrdering());
+    }
+
+    /// <summary>
+    /// A local function declared where no member encloses it, which is what top-level statements
+    /// produce, is still a span. It takes its bare local name, and the run reports the file the
+    /// same way it reports any other, rather than dying with no JSON at all. The global statements
+    /// around it are the documented deferral: they belong to a synthesized <c>&lt;Main&gt;$</c>
+    /// with no declaration syntax, so the branch on the file's last <c>if</c> is scored nowhere and
+    /// the file yields that one span and no other.
+    /// </summary>
+    [Fact]
+    public void ALocalFunctionWithNoEnclosingSpanTakesItsBareNameAndGlobalStatementsGetNone()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/TopLevel.cs");
+
+        exitCode.Should().Be(0);
+        result.Files.Should().BeEquivalentTo(new[]
+        {
+            new { File = "fixtures/TopLevel.cs", Status = "parsed" },
+        });
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Helper", Signature = "(int)@1", StartLine = 5, EndLine = 11, Complexity = 2 },
+        });
+    }
+
+    /// <summary>
+    /// Two sibling scopes declaring the same local name with the same parameters on one line agree
+    /// on name, parameter list and line range, so without the start column in the signature they
+    /// would be one span reported twice and the gate would abort the run on valid C#. Each is still
+    /// scored on its own, which is why the two complexities differ.
+    /// </summary>
+    [Fact]
+    public void TwoSameNamedLocalFunctionsOnOneLineAreTwoSpansToldApartByTheirColumns()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Siblings.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Siblings.Twice", Signature = "(int)", StartLine = 8, EndLine = 13, Complexity = 1 },
+            new { Name = "Siblings.Twice.L", Signature = "(int)@11", StartLine = 10, EndLine = 10, Complexity = 2 },
+            new { Name = "Siblings.Twice.L", Signature = "(int)@57", StartLine = 10, EndLine = 10, Complexity = 1 },
+        }, o => o.WithStrictOrdering());
+    }
+
+    /// <summary>
+    /// The C# 14 ceiling that <c>docs/csharp-decision-points.md</c> names, pinned from below so it
+    /// cannot drop without a test saying so. <c>Recent.cs</c> holds C# 13 syntax, an
+    /// <c>allows ref struct</c> constraint and an <c>\e</c> escape; <c>Beyond.cs</c> holds a C# 14
+    /// <c>extension</c> block. Both need the <c>Microsoft.CodeAnalysis.CSharp</c> reference at
+    /// 5.x and the parse pinned to the highest language version that reference exposes, so a
+    /// downgrade of either turns the affected file into a failed row with no spans rather than
+    /// passing quietly.
+    /// </summary>
+    /// <remarks>
+    /// The extension block contributes no name segment of its own, so its accessor reads
+    /// <c>Beyond.get_IsLong</c> under the declaring static class. A doubled dot there would collide
+    /// with the <c>..ctor</c> spelling; <c>QualifiedName</c> drops the empty identifier to avoid it.
+    /// An operator declared in an extension block is named off its parameter list alone, since the
+    /// receiver is not an operand, so the one-parameter form is unary plus and the two-parameter
+    /// form is subtraction. It is also <c>static</c>, so no receiver joins its signature.
+    /// </remarks>
+    [Fact]
+    public void TheParserAcceptsEverythingUpToTheDocumentedCSharp14Ceiling()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Recent.cs", "fixtures/Beyond.cs");
+
+        exitCode.Should().Be(0);
+        result.Files.Should().BeEquivalentTo(new[]
+        {
+            new { File = "fixtures/Recent.cs", Status = "parsed" },
+            new { File = "fixtures/Beyond.cs", Status = "parsed" },
+        }, o => o.WithStrictOrdering());
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Recent.Pick<T>", Signature = "`1(T, bool)", StartLine = 9, EndLine = 9, Complexity = 2 },
+            new { Name = "Recent.Reset", Signature = "()", StartLine = 11, EndLine = 11, Complexity = 1 },
+            new { Name = "Beyond.get_IsLong", Signature = "(string)", StartLine = 11, EndLine = 11, Complexity = 1 },
+            new { Name = "Beyond.op_UnaryPlus", Signature = "(string)", StartLine = 20, EndLine = 20, Complexity = 1 },
+            new { Name = "Beyond.op_Subtraction", Signature = "(string, string)", StartLine = 22, EndLine = 22, Complexity = 1 },
+        }, o => o.WithStrictOrdering());
+    }
+
+    /// <summary>
+    /// Two <c>extension</c> blocks in one static class can declare the same member name, and
+    /// neither contributes a name segment, so both members qualify to the same string. Written on
+    /// one line, as <c>OneLine</c> writes them, their line ranges agree too, so the receiver
+    /// parameter the compiler emits as the member's first argument is the only coordinate left.
+    /// Without it the gate would see one span reported twice and abort the run on valid C#.
+    /// </summary>
+    [Fact]
+    public void TwoExtensionBlocksDeclaringTheSameMemberAreTwoSpansToldApartByTheirReceivers()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/TwoExtensions.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Multi.get_IsLong", Signature = "(string)", StartLine = 12, EndLine = 12, Complexity = 1 },
+            new { Name = "Multi.get_IsLong", Signature = "(int)", StartLine = 17, EndLine = 17, Complexity = 1 },
+            new { Name = "OneLine.Big", Signature = "(string)", StartLine = 23, EndLine = 23, Complexity = 1 },
+            new { Name = "OneLine.Big", Signature = "(int)", StartLine = 23, EndLine = 23, Complexity = 1 },
+        }, o => o.WithStrictOrdering());
+    }
+
+    /// <summary>
+    /// Every operator token C# lets a type overload, named the way the emitted metadata names it,
+    /// asserted in one comparison so a typo or a swapped pair in the table shows as the one row it
+    /// moved. The name is the string the gate joins a span to its coverage row on, so a wrong one
+    /// detaches a member silently rather than erroring. <c>++</c> and <c>--</c> name a different
+    /// member depending on arity: at one parameter they are the classic static
+    /// <c>op_Increment</c>/<c>op_Decrement</c>, at zero they are C# 14's instance compound form,
+    /// <c>op_IncrementAssignment</c>/<c>op_DecrementAssignment</c>.
+    /// </summary>
+    [Fact]
+    public void EveryOverloadableOperatorTakesItsEmittedMetadataName()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Operators.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Select(span => span.Name).Should().BeEquivalentTo(new[]
+        {
+            "Ops.op_Multiply",
+            "Ops.op_Division",
+            "Ops.op_Modulus",
+            "Ops.op_BitwiseAnd",
+            "Ops.op_BitwiseOr",
+            "Ops.op_ExclusiveOr",
+            "Ops.op_LeftShift",
+            "Ops.op_RightShift",
+            "Ops.op_UnsignedRightShift",
+            "Ops.op_Equality",
+            "Ops.op_Inequality",
+            "Ops.op_LessThan",
+            "Ops.op_GreaterThan",
+            "Ops.op_LessThanOrEqual",
+            "Ops.op_GreaterThanOrEqual",
+            "Ops.op_LogicalNot",
+            "Ops.op_OnesComplement",
+            "Ops.op_Increment",
+            "Ops.op_Decrement",
+            "Ops.op_True",
+            "Ops.op_False",
+            "Compounds.op_AdditionAssignment",
+            "Compounds.op_SubtractionAssignment",
+            "Compounds.op_MultiplicationAssignment",
+            "Compounds.op_DivisionAssignment",
+            "Compounds.op_ModulusAssignment",
+            "Compounds.op_BitwiseAndAssignment",
+            "Compounds.op_BitwiseOrAssignment",
+            "Compounds.op_ExclusiveOrAssignment",
+            "Compounds.op_LeftShiftAssignment",
+            "Compounds.op_RightShiftAssignment",
+            "Compounds.op_UnsignedRightShiftAssignment",
+            "Compounds.op_IncrementAssignment",
+            "Compounds.op_DecrementAssignment",
+        }, o => o.WithStrictOrdering());
+    }
+
+    /// <summary>
+    /// A record and a record struct qualify their members the way a class does, so the support is
+    /// pinned rather than left to fall out of <c>RecordDeclarationSyntax</c> deriving from
+    /// <c>TypeDeclarationSyntax</c>. A positional record's parameter list is a primary constructor
+    /// and still gets no span.
+    /// </summary>
+    [Fact]
+    public void ARecordQualifiesItsMembersTheWayAClassDoes()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Records.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Line.get_IsLong", Signature = "()", StartLine = 9, EndLine = 9, Complexity = 1 },
+            new { Name = "Line.Doubled", Signature = "()", StartLine = 11, EndLine = 19, Complexity = 2 },
+            new { Name = "Point.get_X", Signature = "()", StartLine = 24, EndLine = 24, Complexity = 1 },
+            new { Name = "Point.set_X", Signature = "()", StartLine = 24, EndLine = 24, Complexity = 1 },
+            new { Name = "Point.Away", Signature = "()", StartLine = 26, EndLine = 26, Complexity = 1 },
+        }, o => o.WithStrictOrdering());
+    }
+
+    /// <summary>
+    /// An interface member with no default implementation, an abstract member or auto-property, an
+    /// extern member or auto-property, a field-like event, a bodyless partial method and a primary
+    /// constructor on a record or a class carry no lines a developer can branch in, so none of them
+    /// gets a span, and the file still parses. An <c>extern</c> local function is the same case, so
+    /// the only span the whole file yields is the ordinary method declaring it.
+    /// </summary>
+    [Fact]
+    public void ADeclarationCarryingNoBodyGetsNoSpanAndTheFileStillParses()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Bodyless.cs");
+
+        exitCode.Should().Be(0);
+        result.Files.Should().BeEquivalentTo(new[]
+        {
+            new { File = "fixtures/Bodyless.cs", Status = "parsed" },
+        });
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Holder.Hold", Signature = "()", StartLine = 43, EndLine = 46, Complexity = 1 },
+        });
+    }
+
+    /// <summary>
+    /// A lambda's branches score against the method holding it, so <c>WithLambda</c>'s <c>&amp;&amp;</c>
+    /// counts against the method itself. A local function is its own span, so <c>WithLocal</c> does
+    /// not absorb <c>Running</c>'s branches, and a local function declared inside a lambda still
+    /// takes the name of the span holding the lambda, not the lambda itself. Nesting a local
+    /// function inside another appends again and keeps each one's branches to itself, and a local
+    /// function inside a field-initializer lambda has no enclosing span to prefix, so it takes its
+    /// bare local name. A generic local function carries its type parameters in its name and its
+    /// arity in its signature, the way a generic method does.
+    /// </summary>
+    [Fact]
+    public void ALambdaFoldsIntoItsMethodWhileALocalFunctionIsItsOwnSpan()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Nesting.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Nesting.WithLambda", Signature = "(int[])", StartLine = 9, EndLine = 13, Complexity = 2 },
+            new { Name = "Nesting.WithLocal", Signature = "(int[])", StartLine = 15, EndLine = 34, Complexity = 2 },
+            new { Name = "Nesting.WithLocal.Running", Signature = "(int)@9", StartLine = 17, EndLine = 25, Complexity = 2 },
+            new { Name = "Nesting.LocalInsideLambda", Signature = "(int[])", StartLine = 36, EndLine = 43, Complexity = 1 },
+            new { Name = "Nesting.LocalInsideLambda.Twice", Signature = "(int)@13", StartLine = 40, EndLine = 40, Complexity = 2 },
+            new { Name = "Nesting.get_Accessed", Signature = "()", StartLine = 47, EndLine = 60, Complexity = 1 },
+            new { Name = "Nesting.get_Accessed.Sign", Signature = "(int)@13", StartLine = 49, EndLine = 57, Complexity = 2 },
+            new { Name = "Nesting.ThreeDeep", Signature = "(int)", StartLine = 63, EndLine = 96, Complexity = 1 },
+            new { Name = "Nesting.ThreeDeep.Outer", Signature = "(int)@9", StartLine = 65, EndLine = 93, Complexity = 2 },
+            new { Name = "Nesting.ThreeDeep.Outer.Middle", Signature = "(int)@13", StartLine = 67, EndLine = 85, Complexity = 2 },
+            new { Name = "Nesting.ThreeDeep.Outer.Middle.Innermost", Signature = "(int)@17", StartLine = 69, EndLine = 77, Complexity = 2 },
+            new { Name = "Detached", Signature = "(int)@9", StartLine = 102, EndLine = 108, Complexity = 2 },
+            new { Name = "Nesting.WithGenericLocal", Signature = "(int)", StartLine = 115, EndLine = 120, Complexity = 1 },
+            new { Name = "Nesting.WithGenericLocal.Map<T>", Signature = "`1(T)@9", StartLine = 117, EndLine = 117, Complexity = 1 },
+        }, o => o.WithStrictOrdering());
+    }
+
+    /// <summary>
+    /// An async method and an iterator are scored on the lines they are written on, and a local
+    /// function declared inside an async method is still its own span.
+    /// </summary>
+    [Fact]
+    public void AnAsyncMethodAndAnIteratorAreScoredOnTheirOwnSourceLines()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Asynchrony.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Asynchrony.LoadAsync", Signature = "(int)", StartLine = 10, EndLine = 19, Complexity = 2 },
+            new { Name = "Asynchrony.Evens", Signature = "(int[])", StartLine = 21, EndLine = 30, Complexity = 3 },
+            new { Name = "Asynchrony.StreamAsync", Signature = "(int[])", StartLine = 32, EndLine = 39, Complexity = 2 },
+            new { Name = "Asynchrony.RunAsync", Signature = "()", StartLine = 41, EndLine = 52, Complexity = 1 },
+            new { Name = "Asynchrony.RunAsync.InnerAsync", Signature = "(int)@9", StartLine = 43, EndLine = 49, Complexity = 2 },
+        }, o => o.WithStrictOrdering());
+    }
+
+    /// <summary>
+    /// A generic method's qualified name carries its own type parameters, and a method on a
+    /// generic type carries the type's parameters too, both comma-space separated.
+    /// </summary>
+    [Fact]
+    public void AGenericMethodsQualifiedNameCarriesItsTypeParameters()
+    {
+        var (exitCode, result) = ExtractorRun.Run("fixtures/Generics.cs");
+
+        exitCode.Should().Be(0);
+        result.Spans.Should().BeEquivalentTo(new[]
+        {
+            new { Name = "Generics<TKey, TValue>.Map<TA, TB>", Signature = "`2(TA, TB)", StartLine = 9, EndLine = 9, Complexity = 1 },
+            new { Name = "Generics<TKey, TValue>.Single<T>", Signature = "`1(T)", StartLine = 11, EndLine = 11, Complexity = 1 },
+            new { Name = "Generics<TKey, TValue>.Plain", Signature = "(int)", StartLine = 13, EndLine = 13, Complexity = 1 },
+        }, o => o.WithStrictOrdering());
     }
 }

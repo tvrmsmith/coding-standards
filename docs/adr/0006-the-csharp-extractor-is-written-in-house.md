@@ -81,6 +81,19 @@ extractor cannot yet produce, and with no local-function span the containing met
 lines, which is the absorption [ADR 0001](0001-crap-gate-topology.md) calls out. Recorded so a reader meets a dated
 deferral rather than reading either as a defect.
 
+**Amended 2026-09-03.** [Issue 18](https://github.com/tvrmsmith/coding-standards/issues/18) landed, and
+it retires both named consequences of the "Amended 2026-09-03" deferral paragraph above: the walker now
+walks constructors, accessors, and local functions alongside methods, so [ADR 0005](0005-the-machine-document-is-the-only-output.md)'s
+worked document's `Order.get_Id` row is producible, and a local function is its own span rather than
+being absorbed into its container's line count. The decision-point rules, including the switch
+expression arm and pattern combinator points the earlier amendment named and every rule this widened
+walker adds, live in [`docs/csharp-decision-points.md`](../csharp-decision-points.md), not here. An ADR
+is append-only, and a reference table that gets edited as constructs are added or reconsidered needs a
+home that isn't. The span rule that document states, a declaration gets a row when it carries a body or
+an expression body and none when it carries neither, is keyed on body-or-expression-body rather than on
+declaration kind because a body is exactly what gives a declaration lines to attribute complexity and
+coverage to; a declaration without one has nothing for a span to measure.
+
 [ADR 0001](0001-crap-gate-topology.md) decided that complexity comes from a source-level AST walker.
 [Issue 4](https://github.com/tvrmsmith/coding-standards/issues/4) named `ComplexityRipper` as the tool filling
 that role for .NET today. This ADR replaces the tool, not the decision, and ADR 0001 needs no amendment because it
@@ -138,3 +151,17 @@ would oblige every future extractor author to find an encoder for their language
 argv because a large rename can exceed `ARG_MAX`, and that failure is rare enough to escape testing.
 `--capabilities` is asked of the located binary rather than recorded in the gate's table, because ADR 0003 made
 the extension list the extractor's obligation and a table that disagrees with the binary is a silent misroute.
+
+**Amended 2026-09-04.** "Spelled however that language spells a parameter list" is superseded as a description of
+`signature`, though not as a decision. Scoring the constructs real code is written in turned up four collisions a
+parameter list alone cannot break: two same-named local functions on one line, two conversion operators differing
+only in target type (both named `op_Explicit`), two members of C# 14 `extension` blocks on one line, and generic
+arity. The field therefore carries a backtick arity prefix, a local function's start column, a conversion's target
+type and an extension block's receiver, none of which is a parameter. The obligation is unchanged and is still the
+whole of what another language owes: stable across runs, and different for any two declarations the gate would
+otherwise read as one span reported twice.
+
+The format itself is deliberately recorded in exactly one place, the C# extractor's `MethodSpanResult` doc comment.
+Three copies of the phrase "the parameter spelling" had accumulated, in this ADR, in [ADR 0001](0001-crap-gate-topology.md)
+and in the gate's `Span` struct, and all three went stale together the moment the format widened, because each
+restated the format instead of pointing at it. Prose that names the owner cannot rot that way.

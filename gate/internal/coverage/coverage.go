@@ -1,17 +1,28 @@
-// Package coverage discovers Cobertura reports, parses them, and answers
-// which lines of a source file are instrumentable and which of those were
-// hit. It resolves report paths by ADR 0004's one rule and ignores, rather
-// than fails on, a path it cannot place inside the repo.
+// Package coverage discovers Cobertura reports, or takes the ones the
+// developer named on the command line instead, parses them, and answers which
+// lines of a source file are instrumentable and which of those were hit. A
+// report it cannot trust, one older than the code it describes or one whose
+// own timestamp it cannot read, is refused rather than merged, because
+// coverage silently dropped reaches the score as untested code.
+// It resolves report paths by ADR 0004's one rule, and the rule cuts two
+// ways: one path it cannot place inside the repo is a silent ignore, while a
+// report with an erased source root, a class contradicting itself, or no class
+// placed inside the root fails the run with a typed code.
 package coverage
 
 import (
+	"cmp"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/report"
 	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
@@ -21,8 +32,76 @@ import (
 const ReportName = "coverage.cobertura.xml"
 
 // resultsDir is the directory component a report has to sit under to be
-// discovered, matching the glob **/TestResults/**/coverage.cobertura.xml.
+// discovered, at any depth below the repo root.
 const resultsDir = "TestResults"
+
+// Glob is the pattern discovery matches, relative to the repo root. The
+// missing-report failure names it, so a developer who ran the tests
+// somewhere else can see where the gate looked. It is composed from the two
+// constants discovery actually tests, so a rename cannot leave the message
+// quoting a pattern the walk no longer matches.
+const Glob = "**/" + resultsDir + "/**/" + ReportName
+
+// Source is one coverage report the gate will read, and the name the
+// document gives it.
+type Source struct {
+	// Abs is where the report sits on disk.
+	Abs string
+	// Name is how a failure names the report: repo-relative whenever the
+	// report resolves inside the repo, and the resolved absolute path for a
+	// named one that does not, which has no repo-relative form. namedAs
+	// records why the absolute form beats the developer's own spelling there.
+	Name string
+	// Origin is how the report reached the gate, which decides the remedy a
+	// refusal offers.
+	Origin Origin
+}
+
+// Origin distinguishes the two ways a report reaches the gate, because the
+// developer's next step differs between them: a discovered report is one of
+// several a directory may hold, while a named one is the single file they
+// pointed at.
+type Origin int
+
+const (
+	// originUnset is the zero value, so a Source built without an Origin
+	// cannot silently pass for either of the two real ones.
+	originUnset Origin = iota
+	Discovered
+	NamedOnCommandLine
+)
+
+// staleRemedy closes the stale-report message with the step that clears it.
+// `dotnet test` leaves every previous run's TestResults directory on disk, so
+// a discovered report the gate refused is most often one the developer has
+// already replaced and does not know is still there. Clearing that directory
+// does nothing for a report they named themselves, which nothing but a fresh
+// run over that same path replaces. A Source carrying no Origin closes the
+// message with nothing at all: the reader still learns which report was refused
+// and why, which is the part the gate knows, and a remedy it cannot determine
+// is worse guessed than omitted. Refusing loudly instead is not available here
+// either, since an unrecovered panic exits 2 and ADR 0005 spends that code on
+// "threshold exceeded", so the one unreachable arm would tell CI the code
+// failed the gate.
+func (s Source) staleRemedy() string {
+	switch s.Origin {
+	case NamedOnCommandLine:
+		return "; regenerate " + s.Name + " or point --coverage at a current report"
+	case Discovered:
+		return "; clear stale TestResults directories and re-run the tests"
+	default:
+		return ""
+	}
+}
+
+// Newest is the freshest edit among the files that contributed a changed
+// method, which is what a report has to be at least as new as.
+type Newest struct {
+	File srcpath.Path
+	// At is truncated to whole seconds, since a Cobertura timestamp has
+	// second resolution and cannot express anything finer.
+	At time.Time
+}
 
 // Lines is one source file's instrumentable lines, each mapped to whether any
 // report recorded a hit on it.
@@ -33,11 +112,11 @@ type Lines map[int]bool
 // changed method in it unknown rather than untested.
 type Set map[srcpath.Path]Lines
 
-// Discover lists the Cobertura reports under the repo root, in a fixed order,
-// beside the paths the walk could not read. A skipped path is a report the
-// walk may not have seen, so the document carries it under `skipped_paths`
-// rather than leaving understated coverage unexplained.
-func Discover(root srcpath.Root) (reports []srcpath.Path, skipped []string, err error) {
+// Discover lists the Cobertura reports under the repo root, in a fixed order
+// by Name, beside the paths the walk could not read. A skipped path is a
+// report the walk may not have seen, so the document carries it under
+// `skipped_paths` rather than leaving understated coverage unexplained.
+func Discover(root srcpath.Root) (sources []Source, skipped []string, err error) {
 	err = filepath.WalkDir(root.Dir(), func(path string, entry fs.DirEntry, err error) error {
 		// One unreadable directory somewhere under the repo root must not
 		// abort discovery: that would exit 1 with no document at all, where
@@ -61,20 +140,91 @@ func Discover(root srcpath.Root) (reports []srcpath.Path, skipped []string, err 
 		}
 		rel, err := filepath.Rel(root.Dir(), path)
 		if err != nil {
+			skipped = append(skipped, relative(root, path))
 			return nil
 		}
 		if !underResultsDir(rel) {
 			return nil
 		}
-		reports = append(reports, srcpath.FromSlash(filepath.ToSlash(rel)))
+		sources = append(sources, Source{Abs: path, Name: filepath.ToSlash(rel), Origin: Discovered})
 		return nil
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("discovering coverage reports: %w", err)
 	}
-	slices.Sort(reports)
+	slices.SortFunc(sources, func(a, b Source) int { return strings.Compare(a.Name, b.Name) })
 	slices.Sort(skipped)
-	return reports, skipped, nil
+	return sources, skipped, nil
+}
+
+// Named resolves each developer-typed path against cwd when it is relative,
+// then relativizes it for the Name the document carries, which is ADR 0004's
+// one rule for a human-typed path. A named path may live anywhere, inside the
+// repo or outside it, and one outside has no repo-relative form, so it is named
+// by its absolute path.
+func Named(root srcpath.Root, cwd string, paths []string) []Source {
+	sources := make([]Source, 0, len(paths))
+	for _, path := range paths {
+		abs := path
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(cwd, abs)
+		}
+		sources = append(sources, Source{Abs: abs, Name: namedAs(root, abs), Origin: NamedOnCommandLine})
+	}
+	return sources
+}
+
+// namedAs renders a named report the way the document names paths. It
+// relativizes the resolved reading of the path against the resolved root, so a
+// path reached through a symlink is named repo-relative rather than escaping
+// the root. A path naming nothing on disk resolves as far as it exists, since
+// the root itself is very often reached through a symlink (/tmp and /var on
+// macOS) and comparing an unresolved path against the resolved root would
+// escape for the indirection rather than for where the path actually is. A
+// path that is genuinely outside the repo has no repo-relative form, so it is
+// named by the same resolved absolute path the containment test just weighed.
+// The developer's own spelling was rejected for that case: the document carries
+// no working directory (ADR 0005), so a relative name reaches a consumer that
+// cannot resolve it, and the same report named from two directories would print
+// two strings.
+//
+// It answers "is this inside the repo" itself, where srcpath's package doc
+// claims that question for srcpath alone. srcpath.Root.Place cannot answer it
+// here, since Place requires a regular file and the whole point of namedAs is
+// to name a path that may be nothing. So separator handling and
+// case-insensitive filesystems now have two answers, and correcting one leaves
+// the other as it was, so a named report would be relativized where the other
+// call site keeps the typed spelling, or the reverse. relative()
+// below is a third spelling, with no escape guard at all. Issue 36 unifies all
+// three behind an existence-agnostic sibling of Place, which is a change to
+// srcpath and not to a branch about staleness.
+func namedAs(root srcpath.Root, abs string) string {
+	resolved := resolveExisting(abs)
+	rel, err := filepath.Rel(root.Dir(), resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return filepath.ToSlash(resolved)
+	}
+	return filepath.ToSlash(rel)
+}
+
+// resolveExisting resolves the symlinks of the deepest ancestor of abs that is
+// on disk and rejoins the components below it as they were typed. A path that
+// exists whole resolves whole, and one naming nothing still comes back rooted
+// where it really sits rather than behind whatever link led there. Only a
+// component that is not there is climbed past: a symlink loop or an ancestor
+// the process may not search is a real fault, and climbing over it would rename
+// a report that does sit inside the repo into one the document names as though
+// it sat outside.
+func resolveExisting(abs string) string {
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err == nil {
+		return resolved
+	}
+	parent := filepath.Dir(abs)
+	if !errors.Is(err, fs.ErrNotExist) || parent == abs {
+		return abs
+	}
+	return filepath.Join(resolveExisting(parent), filepath.Base(abs))
 }
 
 // relative renders a walked path the way the document names paths, falling
@@ -99,30 +249,76 @@ func underResultsDir(rel string) bool {
 	return false
 }
 
-// Load reads every report and unions them: a line is instrumentable when any
-// report lists it, and covered when any report records a non-zero hit.
-func Load(root srcpath.Root, reports []srcpath.Path) (Set, error) {
+// Load reads every source in order and unions them into one set: a line is
+// instrumentable when any report lists it, and covered when any report
+// records a non-zero hit. Before a report merges, it has to read, unmarshal,
+// carry a timestamp, and be no older than newest.At; failing any of those
+// stops the run rather than dropping the report, because a stale report
+// silently dropped is exactly the untested code the rule exists to catch.
+// An empty newest.At (the zero time) can never trip the staleness rule.
+func Load(root srcpath.Root, sources []Source, newest Newest) (Set, error) {
 	set := Set{}
-	for _, path := range reports {
-		parsed, err := parseReport(root.Abs(path))
+	for _, source := range sources {
+		parsed, err := parseReport(source.Abs)
 		if err != nil {
 			return nil, &report.Failure{
 				Code:    report.CodeCoverageUnparseable,
-				Message: "could not parse coverage report " + path.String(),
+				Message: fmt.Sprintf("could not parse coverage report %s; %s", source.Name, parseCause(err)),
 			}
 		}
-		parsed.mergeInto(set, root)
+		at, err := parsed.timestamp()
+		if err != nil {
+			return nil, &report.Failure{
+				Code:    report.CodeCoverageUnparseable,
+				Message: "coverage report " + source.Name + " " + err.Error(),
+			}
+		}
+		// Staleness is checked before the merge, not after it, so a refused
+		// report never contributes a line even transiently.
+		if at.Before(newest.At) {
+			return nil, &report.Failure{
+				Code: report.CodeCoverageStale,
+				Message: "coverage report " + source.Name + " was written before " +
+					newest.File.String() + " was last edited" + source.staleRemedy(),
+			}
+		}
+		if err := parsed.mergeInto(set, root, source.Name); err != nil {
+			return nil, err
+		}
 	}
 	return set, nil
 }
 
 // coberturaReport is the subset of the Cobertura schema the gate reads. Only
-// <sources>, each class's filename, and each line's number and hits matter;
-// ADR 0001 rejects taking complexity from the report.
+// <timestamp>, <sources>, each class's filename, and each line's number and
+// hits matter; ADR 0001 rejects taking complexity from the report.
 type coberturaReport struct {
-	XMLName xml.Name         `xml:"coverage"`
-	Sources []string         `xml:"sources>source"`
-	Classes []coberturaClass `xml:"packages>package>classes>class"`
+	XMLName   xml.Name         `xml:"coverage"`
+	Timestamp string           `xml:"timestamp,attr"`
+	Sources   []string         `xml:"sources>source"`
+	Classes   []coberturaClass `xml:"packages>package>classes>class"`
+}
+
+// timestamp reads the report's own clock, which is what the staleness rule
+// judges rather than any timestamp of the file on disk. The error is the
+// reason the rule cannot run, worded for the refusal message and split by
+// shape because the two shapes need different fixes: an attribute that is
+// absent has to be written, while any value ParseInt cannot read as base-10
+// seconds, another representation of an instant or plain garbage alike, is
+// already there and is a value to rewrite rather than one to add. The
+// offending value is quoted so the developer
+// sees what the gate read rather than what they meant. Resolving the verdict
+// and its reason in one place is what stops a further rejection shape from
+// refusing under one wording and explaining itself with another.
+func (r coberturaReport) timestamp() (time.Time, error) {
+	if r.Timestamp == "" {
+		return time.Time{}, errors.New("carries no timestamp, so it cannot be judged against the code it describes")
+	}
+	seconds, err := strconv.ParseInt(r.Timestamp, 10, 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("carries an unreadable timestamp %q; it must be epoch seconds", r.Timestamp)
+	}
+	return time.Unix(seconds, 0), nil
 }
 
 type coberturaClass struct {
@@ -135,7 +331,10 @@ type coberturaLine struct {
 	Hits   int `xml:"hits,attr"`
 }
 
-// parseReport reads one Cobertura document off disk.
+// parseReport reads one Cobertura document off disk. Each <source> is trimmed
+// as it is read, so a source root that is only the whitespace an XML formatter
+// left between the tags is blank to every reader of the document, the join and
+// the erased-root check alike.
 func parseReport(path string) (coberturaReport, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -145,43 +344,249 @@ func parseReport(path string) (coberturaReport, error) {
 	if err := xml.Unmarshal(body, &parsed); err != nil {
 		return coberturaReport{}, err
 	}
+	for i, source := range parsed.Sources {
+		parsed.Sources[i] = strings.TrimSpace(source)
+	}
 	return parsed, nil
 }
 
+// parseCause renders a parse failure without the absolute path os attaches to
+// a read error, which the message already names repo-relative. The operation
+// stays, because "open: permission denied" and "read: permission denied" are
+// different faults under the same wording and the reader cannot tell them
+// apart from the bare errno text.
+func parseCause(err error) string {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Op + ": " + pathErr.Err.Error()
+	}
+	return err.Error()
+}
+
+// erasedSourceRootPlaceholder matches the placeholder DeterministicReport=true rewrites
+// every class filename under once it erases <sources>. MSBuild numbers the
+// placeholder per source root, so the first is /_/ and any further one, which
+// a submodule or a source package adds, is /_1/, /_2/ and so on.
+var erasedSourceRootPlaceholder = regexp.MustCompile(`^/_[0-9]*/`)
+
+// sourceLinkScheme matches a filename UseSourceLink=true emits in place of a
+// path: the raw source-link document key, which ADR 0004 records as one that
+// can be a URL. A key carrying no scheme looks like an ordinary relative path,
+// so it is the empty <source> beside it that gives the shape away.
+var sourceLinkScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
+
 // mergeInto resolves each class to a source path and folds its lines into the
-// set. Resolution runs per report, with that report's own <sources>.
-func (r coberturaReport) mergeInto(set Set, root srcpath.Root) {
+// set. Resolution runs per report, with that report's own <sources>. ADR
+// 0004's 2026-09-04 amendment (issue 16) adds three checks ahead of the join,
+// in precedence order: an erased source root voids the whole report before
+// any candidate is built, a class resolving to more than one path inside the
+// root contradicts itself, and a report that lands no class inside the root at
+// all was measured against other source than the source being gated. Any one
+// candidate resolving nowhere, or resolving outside the root, stays the silent
+// ignore ADR 0004 already decided; it is only a report with nothing left that
+// fails. A class the join can build no candidate from at all, a blank filename
+// or a relative one with no <source> to anchor it, counts as landing nowhere
+// like any other, so a report made only of those fails too. Only a report
+// carrying no <class> element is silent, which is ADR 0004's one carve-out.
+// The classes fold into a set of this report's own, unioned into the caller's
+// only once every check has passed, so a report that fails leaves nothing of
+// itself behind.
+func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath string) error {
+	if failure := r.erasedSourceRoot(reportPath); failure != nil {
+		return failure
+	}
+
+	merged := Set{}
+	example := ""
 	for _, class := range r.Classes {
-		path, ok := r.resolve(class.Filename, root)
-		if !ok {
+		distinct, first := placeCandidates(r.candidates(class.Filename), root)
+		if example == "" {
+			example = cmp.Or(first, class.Filename)
+		}
+		if len(distinct) > 1 {
+			return &report.Failure{
+				Code: report.CodeFileAmbiguous,
+				Message: fmt.Sprintf(
+					"class %s in coverage report %s resolved to more than one path inside the repo root, %s",
+					class.Filename, reportPath, joinPaths(distinct)),
+			}
+		}
+		if len(distinct) == 0 {
 			continue
 		}
-		lines, ok := set[path]
+		path := distinct[0]
+		lines, ok := merged[path]
 		if !ok {
 			lines = Lines{}
-			set[path] = lines
+			merged[path] = lines
 		}
 		for _, line := range class.Lines {
 			lines[line.Number] = lines[line.Number] || line.Hits > 0
 		}
 	}
+
+	if len(merged) == 0 && len(r.Classes) > 0 {
+		return outsideRepoFailure(example, reportPath, root)
+	}
+	set.union(merged)
+	return nil
 }
 
-// resolve turns a class filename into a source path per ADR 0004: each
-// <source> joined to the filename, plus the filename itself when it is
-// already absolute, resolved through symlinks and relativized against the
-// repo root. A candidate that will not resolve, or resolves outside the repo,
-// is ignored rather than fatal, because a report describes a moment in the
-// past.
-func (r coberturaReport) resolve(filename string, root srcpath.Root) (srcpath.Path, bool) {
-	for _, source := range r.Sources {
-		candidate := filepath.Join(source, filepath.FromSlash(filename))
-		if path, ok := root.Resolve(candidate); ok {
-			return path, true
+// union folds another report's resolved lines in, a line staying covered once
+// any report recorded a hit on it.
+func (s Set) union(other Set) {
+	for path, lines := range other {
+		existing, ok := s[path]
+		if !ok {
+			existing = Lines{}
+			s[path] = existing
+		}
+		for number, covered := range lines {
+			existing[number] = existing[number] || covered
 		}
 	}
-	if filepath.IsAbs(filename) {
-		return root.Resolve(filepath.FromSlash(filename))
+}
+
+// joinPaths renders the paths one diagnostic quotes as a readable list, so a
+// class contradicting itself three ways names all three rather than the first
+// two. Its one caller reaches it only for a class that resolved to more than
+// one path, so it takes at least two.
+func joinPaths(paths []srcpath.Path) string {
+	rendered := make([]string, 0, len(paths))
+	for _, path := range paths {
+		rendered = append(rendered, path.String())
 	}
-	return "", false
+	return strings.Join(rendered[:len(rendered)-1], ", ") + " and " + rendered[len(rendered)-1]
+}
+
+// erasedSourceRoot checks the two shapes MSBuild produces when the source
+// root that would otherwise anchor every class filename has been rewritten
+// away, ahead of any resolution attempt: cheaper, and the candidates built
+// from either shape would only mislead. DeterministicReport is tested over
+// every class first, so it wins over UseSourceLink in a report carrying both
+// shapes whatever order the classes appear in.
+func (r coberturaReport) erasedSourceRoot(reportPath string) *report.Failure {
+	for _, class := range r.Classes {
+		if erasedSourceRootPlaceholder.MatchString(class.Filename) {
+			return &report.Failure{
+				Code: report.CodeCoverageSourceRootErased,
+				Message: fmt.Sprintf(
+					"coverage report %s carries no source root, erased by DeterministicReport=true; collect coverage with DeterministicReport=false",
+					reportPath),
+			}
+		}
+	}
+	if r.sourceLinked() {
+		return &report.Failure{
+			Code: report.CodeCoverageSourceRootErased,
+			Message: fmt.Sprintf(
+				"coverage report %s carries a source link document key rather than a path, erased by UseSourceLink=true; collect coverage with UseSourceLink=false",
+				reportPath),
+		}
+	}
+	return nil
+}
+
+// sourceLinked reports whether the classes carry source-link document keys
+// rather than paths. ADR 0004 names two halves of that shape and either one
+// settles it: UseSourceLink=true writes the source root out as one blank
+// <source>, and the key it leaves in the filename can be a URL but need not
+// be, so a schemeless key is caught by the blank source beside it. A blank
+// source alone is not enough, because an absolute filename carries its own
+// root and is the legitimate shape coverlet writes when no computed source
+// root prefixes the document; so is a report with no <source> at all.
+func (r coberturaReport) sourceLinked() bool {
+	if slices.ContainsFunc(r.Classes, func(class coberturaClass) bool {
+		return sourceLinkScheme.MatchString(class.Filename)
+	}) {
+		return true
+	}
+	if len(r.Sources) == 0 {
+		return false
+	}
+	if slices.ContainsFunc(r.Sources, func(source string) bool { return source != "" }) {
+		return false
+	}
+	return slices.ContainsFunc(r.Classes, func(class coberturaClass) bool {
+		return !filepath.IsAbs(class.Filename)
+	})
+}
+
+// candidates lists every path ADR 0004 derives from one class filename. A
+// filename that is already absolute carries its own root and is its own only
+// candidate: joining a <source> onto it would name a path no report ever
+// carried, /src/src/app/Order.cs off <source> /src, and the outside-repo
+// diagnostic quotes the first candidate. A relative filename is joined to each
+// <source>, and the join is absolute only when the <source> it started from
+// was. An empty filename is the one spelling carved out here, because a class
+// carrying no filename gives the reader no path to be shown at all and the
+// join would otherwise quote the <source> itself as though the report had
+// named it. Every other directory-shaped spelling, ".", "..", "../.." or a
+// bare directory name, is joined like any other and refused by srcpath.Place
+// for what it resolves to, so one such class cannot stand in for a whole
+// report's worth of classes that placed nothing.
+func (r coberturaReport) candidates(filename string) []string {
+	if filename == "" {
+		return nil
+	}
+	if filepath.IsAbs(filename) {
+		return []string{filepath.FromSlash(filename)}
+	}
+	candidates := make([]string, 0, len(r.Sources))
+	for _, source := range r.Sources {
+		candidates = append(candidates, filepath.Join(source, filepath.FromSlash(filename)))
+	}
+	return candidates
+}
+
+// placeCandidates resolves every candidate, returning the distinct paths that
+// landed inside the root, sorted so a diagnostic quoting them does not depend
+// on <source> order, and the reading of the first candidate in document order,
+// whether it landed or not. More than one distinct path is what makes a class
+// ambiguous; ADR 0004 reasons this can only happen when the reasoning behind
+// "one repo root, one drive letter" is wrong. The first candidate is returned
+// because it is what the outside-repo diagnostic quotes, and a class that
+// placed nowhere still has a path worth showing the reader.
+func placeCandidates(candidates []string, root srcpath.Root) (distinct []srcpath.Path, first string) {
+	seen := map[srcpath.Path]bool{}
+	for i, candidate := range candidates {
+		placed := root.Place(candidate)
+		if i == 0 {
+			first = placed.Resolved()
+		}
+		path, inside := placed.Inside()
+		if inside && !seen[path] {
+			seen[path] = true
+			distinct = append(distinct, path)
+		}
+	}
+	slices.Sort(distinct)
+	return distinct, first
+}
+
+// outsideRepoFailure names the wrong-tree case, where no class in the report
+// placed inside the root. The example is the first candidate of the first class
+// in document order carrying a filename, symlink-resolved when it resolved and
+// as the join built it when it did not, so the reader sees a path the gate
+// compared and can tell a report from another checkout, a container mount, or a
+// test run whose files are gone apart by looking at it. It is called "example
+// path" rather than "example resolved path" for that reason. A candidate no
+// <source> anchored is not absolute and names nothing on disk, so the message
+// says so rather than quoting a relative string the reader would read as a path
+// inside the repo. A report whose classes carry no filename to join builds no
+// candidate at all, and says that instead.
+func outsideRepoFailure(example string, reportPath string, root srcpath.Root) *report.Failure {
+	compared := "example path " + example
+	switch {
+	case example == "":
+		compared = "no class carries a filename to compare"
+	case !filepath.IsAbs(filepath.FromSlash(example)):
+		compared = "example path " + example + ", which no <source> anchored to an absolute path"
+	}
+	return &report.Failure{
+		Code: report.CodeCoverageOutsideRepo,
+		Message: fmt.Sprintf(
+			"coverage report %s placed no class inside the repo root; %s, repo root %s",
+			reportPath, compared, filepath.ToSlash(root.Dir())),
+	}
 }
