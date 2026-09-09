@@ -864,6 +864,18 @@ func (f *fixture) setOriginHead() {
 	f.git("remote", "set-head", "origin", "--auto")
 }
 
+// requireDistinctCommits fails the case unless the two refs name different
+// commits. A case pinning one BaseCandidates rung ahead of another separates
+// them by the changed-method count its golden carries, and that count only
+// separates them while the two refs sit at different commits: a setup that
+// let them converge would go on passing while proving nothing about the order.
+func (f *fixture) requireDistinctCommits(a, b string) {
+	f.t.Helper()
+	if f.git("rev-parse", a) == f.git("rev-parse", b) {
+		f.t.Fatalf("%s and %s are the same commit, so the case cannot separate the two rungs", a, b)
+	}
+}
+
 // pushOrphanHistoryToOrigin builds a commit with no parent, so it shares no
 // history with whatever HEAD names, and force-pushes it to origin's branch,
 // which is how a case makes refs/remotes/origin/<branch> a candidate that
@@ -874,16 +886,27 @@ func (f *fixture) setOriginHead() {
 // with HEAD.
 //
 // The fetch runs with remote.origin.followRemoteHEAD=never, because from git
-// 2.47 a plain fetch writes refs/remotes/origin/HEAD, and a case that means to
+// 2.48 a plain fetch writes refs/remotes/origin/HEAD, and a case that means to
 // reach the origin/<branch> rung would silently be pinning the origin/HEAD one
 // instead, differently on different runners.
 //
 // The orphan commit stages one explicit path rather than the whole tree, so a
-// case may call this helper before or after it writes its own fixture files: a
-// `git add -A` here would sweep untracked files onto the orphan branch and the
-// checkout back would then delete them from the working tree.
+// case's untracked files survive the round trip: a `git add -A` here would
+// sweep them onto the orphan branch and the checkout back would then delete
+// them from the working tree. Nothing else about the tree survives, so the
+// helper must run on a clean tree and before the case stamps its coverage
+// report: `git rm -rf .` drops uncommitted edits to tracked files, and the
+// checkout back bumps every tracked file's mtime, which would leave the report
+// older than the code it describes and trip the coverage_stale rule. Both
+// preconditions are checked rather than left to the doc.
 func (f *fixture) pushOrphanHistoryToOrigin(branch string) {
 	f.t.Helper()
+	if dirty := f.git("status", "--porcelain", "--untracked-files=no"); dirty != "" {
+		f.t.Fatalf("pushOrphanHistoryToOrigin needs a clean tree, because `git rm -rf .` drops uncommitted edits:\n%s", dirty)
+	}
+	if _, err := os.Stat(filepath.Join(f.root, "TestResults")); err == nil {
+		f.t.Fatal("pushOrphanHistoryToOrigin must run before the case stamps its coverage report, because the checkout back bumps every tracked file's mtime")
+	}
 	current := f.git("symbolic-ref", "--short", "HEAD")
 	f.git("checkout", "--quiet", "--orphan", "unrelated-history")
 	f.git("rm", "--quiet", "-rf", ".")
