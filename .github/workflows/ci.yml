@@ -43,14 +43,28 @@ jobs:
           cache-dependency-path: |
             gate/go.mod
             gate/go.sum
+      - uses: actions/setup-dotnet@v4
+        id: setup-dotnet
+        with:
+          # The SDK version lives in dotnet/global.json so the runner and a
+          # developer's machine cannot disagree about it. 8.0.x is named here
+          # because it supplies the runtime the net8.0 test assemblies execute
+          # on, which no project file states.
+          global-json-file: dotnet/global.json
+          dotnet-version: 8.0.x
       - run: go vet ./...
         working-directory: gate
       # A vet finding is not a reason to withhold the test result, so the tests
-      # run anyway. They still need the toolchain, so a failed setup skips them
-      # rather than reporting a second broken thing.
+      # run anyway. They still need both toolchains, so a failed setup skips
+      # them rather than reporting a second broken thing. METRIC_GATE_REQUIRE_DOTNET
+      # turns a missing SDK into a test failure instead of a skip, because one
+      # case here packs and installs the real dotnet extractor and a silent
+      # skip would let that path go unexercised forever.
       - run: go test ./... -count=1
         working-directory: gate
-        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' && steps.setup-dotnet.outcome == 'success' }}
+        env:
+          METRIC_GATE_REQUIRE_DOTNET: "1"
 
   dotnet:
     name: extractor and analyzers (dotnet)

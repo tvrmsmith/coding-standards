@@ -18,6 +18,63 @@ const pointsFixture = "../../dotnet/tests/Tvrmsmith.MetricGate.CSharp.Tests/fixt
 // the stub.
 const dotnetProject = "../../dotnet/src/Tvrmsmith.MetricGate.CSharp"
 
+// reasonShort is why TestFullStackDrivesTheRealDotnetExtractor skips under -short.
+const reasonShort = "full-stack case packs and installs a dotnet tool, skipped with -short"
+
+// reasonNoSDK is why TestFullStackDrivesTheRealDotnetExtractor skips without a usable .NET SDK.
+const reasonNoSDK = "no usable .NET SDK: dotnet --version failed"
+
+// dotnetSkipReason decides whether TestFullStackDrivesTheRealDotnetExtractor
+// may skip and, if so, whether it is actually allowed to. require reflects
+// METRIC_GATE_REQUIRE_DOTNET=1, which CI sets so a missing SDK fails the run
+// instead of silently skipping the only case that exercises the real
+// extractor. short is checked before sdkOK, so a -short run always reports
+// the -short reason even when the SDK is also missing.
+func dotnetSkipReason(short, sdkOK, require bool) (reason string, fatal bool) {
+	switch {
+	case short:
+		reason = reasonShort
+	case !sdkOK:
+		reason = reasonNoSDK
+	}
+	return reason, reason != "" && require
+}
+
+// TestDotnetSkipReasonRefusesToSkipWhenRequired pins dotnetSkipReason's
+// reason and fatal decision for every combination of -short, SDK
+// availability, and METRIC_GATE_REQUIRE_DOTNET.
+func TestDotnetSkipReasonRefusesToSkipWhenRequired(t *testing.T) {
+	cases := []struct {
+		name    string
+		short   bool
+		sdkOK   bool
+		require bool
+		reason  string
+		fatal   bool
+	}{
+		{"runs when short is false, sdk is ok, and dotnet is not required", false, true, false, "", false},
+		{"runs when short is false, sdk is ok, and dotnet is required", false, true, true, "", false},
+		{"skips for -short when dotnet is not required", true, true, false, reasonShort, false},
+		{"fails for -short when dotnet is required", true, true, true, reasonShort, true},
+		{"skips for a missing sdk when dotnet is not required", false, false, false, reasonNoSDK, false},
+		{"fails for a missing sdk when dotnet is required", false, false, true, reasonNoSDK, true},
+		{"reports the -short reason over a missing sdk when dotnet is not required", true, false, false, reasonShort, false},
+		{"reports the -short reason over a missing sdk when dotnet is required", true, false, true, reasonShort, true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			reason, fatal := dotnetSkipReason(c.short, c.sdkOK, c.require)
+			if reason != c.reason {
+				t.Errorf("reason = %q, want %q", reason, c.reason)
+			}
+			if fatal != c.fatal {
+				t.Errorf("fatal = %v, want %v", fatal, c.fatal)
+			}
+		})
+	}
+}
+
 // TestFullStackDrivesTheRealDotnetExtractor is the only case in the suite
 // that runs the real dotnet tool extractor end to end instead of the stub.
 // Its fixture and golden are pinned to match fail_single_method's numbers, so
@@ -31,11 +88,13 @@ const dotnetProject = "../../dotnet/src/Tvrmsmith.MetricGate.CSharp"
 // staleness rule. Collecting real coverage means running dotnet test, which is
 // issue 21's work and not this case's.
 func TestFullStackDrivesTheRealDotnetExtractor(t *testing.T) {
-	if testing.Short() {
-		t.Skip("full-stack case packs and installs a dotnet tool, skipped with -short")
-	}
-	if err := exec.Command("dotnet", "--version").Run(); err != nil {
-		t.Skip("no usable .NET SDK: dotnet --version failed")
+	sdkOK := exec.Command("dotnet", "--version").Run() == nil
+	require := os.Getenv("METRIC_GATE_REQUIRE_DOTNET") == "1"
+	if reason, fatal := dotnetSkipReason(testing.Short(), sdkOK, require); reason != "" {
+		if fatal {
+			t.Fatalf("METRIC_GATE_REQUIRE_DOTNET=1 forbids skipping: %s", reason)
+		}
+		t.Skip(reason)
 	}
 
 	fullStackBinDir := installRealExtractor(t)
