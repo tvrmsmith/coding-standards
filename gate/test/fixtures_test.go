@@ -863,3 +863,79 @@ func (f *fixture) setOriginHead() {
 	f.t.Helper()
 	f.git("remote", "set-head", "origin", "--auto")
 }
+
+// requireDistinctCommits fails the case unless the two refs name different
+// commits. A case pinning one BaseCandidates rung ahead of another separates
+// them by the changed-method count its golden carries, and that count only
+// separates them while the two refs sit at different commits: a setup that
+// let them converge would go on passing while proving nothing about the order.
+func (f *fixture) requireDistinctCommits(a, b string) {
+	f.t.Helper()
+	if f.git("rev-parse", a) == f.git("rev-parse", b) {
+		f.t.Fatalf("%s and %s are the same commit, so the case cannot separate the two rungs", a, b)
+	}
+}
+
+// pushOrphanHistoryToOrigin builds a commit with no parent, so it shares no
+// history with whatever HEAD names, and force-pushes it to origin's branch,
+// which is how a case makes refs/remotes/origin/<branch> a candidate that
+// exists but merge-base cannot relate to HEAD (issue 35). It leaves the
+// fixture back on the branch it started on, fetches so the remote-tracking ref
+// is refreshed from what was actually pushed rather than trusted from the push
+// output, and fails the case if that ref is missing or still shares history
+// with HEAD.
+//
+// The fetch runs with remote.origin.followRemoteHEAD=never, because from git
+// 2.48 a plain fetch writes refs/remotes/origin/HEAD, and a case that means to
+// reach the origin/<branch> rung would silently be pinning the origin/HEAD one
+// instead, differently on different runners.
+//
+// The orphan commit stages one explicit path rather than the whole tree, so a
+// case's untracked files survive the round trip: a `git add -A` here would
+// sweep them onto the orphan branch and the checkout back would then delete
+// them from the working tree. Nothing else about the tree survives, so the
+// helper must run on a clean tree and before the case stamps its coverage
+// report: `git rm -rf .` drops uncommitted edits to tracked files, and the
+// checkout back bumps every tracked file's mtime, which would leave the report
+// older than the code it describes and trip the staleness rule. Both
+// preconditions are checked rather than left to the doc.
+func (f *fixture) pushOrphanHistoryToOrigin(branch string) {
+	f.t.Helper()
+	if dirty := f.git("status", "--porcelain", "--untracked-files=no"); dirty != "" {
+		f.t.Fatalf("pushOrphanHistoryToOrigin needs a clean tree, because `git rm -rf .` drops uncommitted edits:\n%s", dirty)
+	}
+	if _, err := os.Stat(filepath.Join(f.root, "TestResults")); err == nil {
+		f.t.Fatal("pushOrphanHistoryToOrigin must run before the case stamps its coverage report, because the checkout back bumps every tracked file's mtime")
+	}
+	current := f.git("symbolic-ref", "--short", "HEAD")
+	f.git("checkout", "--quiet", "--orphan", "unrelated-history")
+	f.git("rm", "--quiet", "-rf", ".")
+	f.write("unrelated.txt", "shares no history with "+current+"\n")
+	f.git("add", "--", "unrelated.txt")
+	f.git("commit", "--quiet", "-m", "unrelated history")
+	f.git("push", "--quiet", "--force", "origin", "unrelated-history:"+branch)
+	f.git("checkout", "--quiet", current)
+	f.git("-c", "remote.origin.followRemoteHEAD=never", "fetch", "--quiet", "origin")
+
+	f.git("rev-parse", "--verify", "--quiet", "origin/"+branch+"^{commit}")
+	cmd := exec.Command("git", "merge-base", "HEAD", "origin/"+branch)
+	cmd.Dir = f.root
+	cmd.Env = append(os.Environ(), gitEnv...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		f.t.Fatalf("origin/%s still shares history with HEAD after the orphan push", branch)
+	}
+	// Exit 1 is git answering "no common ancestor"; every other exit code is
+	// git failing to answer at all, so only exit 1 confirms the helper really
+	// produced unrelated history. The distinction is the helper's own, drawn
+	// here so a broken fixture cannot read as a working one; ResolveBase drops
+	// any merge-base failure alike, and that quiet fall-through is what the
+	// caller pins. gitscope draws it in ResolveRef and noMatch.
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		f.t.Fatalf("merge-base HEAD origin/%s failed to answer: %v\n%s",
+			branch, err, strings.TrimSpace(stderr.String()))
+	}
+}
