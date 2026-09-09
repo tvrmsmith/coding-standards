@@ -51,8 +51,8 @@ dotnet_diagnostic.FAA0004.severity = warning
 ##
 ## Tvrmsmith custom analyzers
 ##
-## The three guidelines the enforcement mapping found no off-the-shelf home
-## for. All three already default to warning in their DiagnosticDescriptor; they are restated
+## The guidelines the enforcement mapping found no off-the-shelf home
+## for. All of them already default to warning in their DiagnosticDescriptor; they are restated
 ## here so the severity of every rule this package is responsible for is readable in one place,
 ## and so raising or lowering one is a config edit rather than a rebuild.
 ##
@@ -69,6 +69,14 @@ dotnet_diagnostic.TVRM0002.severity = warning
 # TVRM0003 no-assertion-escape-cast — enforcement home for C2. The judgment half of that
 # guideline, C1 (which target to assert on instead), stays review-only in the skill text.
 dotnet_diagnostic.TVRM0003.severity = warning
+
+# TVRM0004 no-assertion-without-matcher — enforcement home for one of the three shapes under A5.
+dotnet_diagnostic.TVRM0004.severity = warning
+
+# TVRM0005 no-dropped-async-assertion — the second A5 shape, in the synchronous test bodies
+# CS4014 cannot reach. The third shape, an assertion inside a branch, stays review-only: measured
+# against the adoption target it is dominated by legitimate idioms.
+dotnet_diagnostic.TVRM0005.severity = warning
 
 # --- BEGIN generated: built-in CA severities (node dotnet/generate-ca-severities.mjs) ---
 #

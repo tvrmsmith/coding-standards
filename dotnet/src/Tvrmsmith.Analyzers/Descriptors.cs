@@ -3,10 +3,10 @@ using Microsoft.CodeAnalysis;
 namespace Tvrmsmith.Analyzers;
 
 /// <summary>
-/// The diagnostic descriptors for the three custom rules from the enforcement mapping.
+/// The diagnostic descriptors for the custom rules from the enforcement mapping.
 /// </summary>
 /// <remarks>
-/// All three default to <see cref="DiagnosticSeverity.Warning"/> and none of them is ever an
+/// All of them default to <see cref="DiagnosticSeverity.Warning"/> and none is ever an
 /// error. Adoption is machine-local against code other people wrote and are not being asked to
 /// change; an error would break their builds on their machines.
 /// </remarks>
@@ -45,7 +45,7 @@ internal static class Descriptors
             + "expectation in the message, and '?.' skips the assertion chain entirely, passing the "
             + "test. Only the receiver chain feeding .Should() is flagged: a suppression in a setup "
             + "precondition, such as Client.BaseAddress! inside an expected value, is legitimate.",
-        helpLinkUri: SkillReferences + "dotnet-awesome-assertions.md#null-safety-in-assertions--custom-rule");
+        helpLinkUri: SkillReferences + "dotnet-awesome-assertions.md#null-safety-in-assertions-custom-rule");
 
     /// <summary>TVRM0003 — <c>no-assertion-escape-cast</c>.</summary>
     public static readonly DiagnosticDescriptor NoAssertionEscapeCast = new(
@@ -60,5 +60,35 @@ internal static class Descriptors
             + "that lacks BeEquivalentTo, casting to object to reach ObjectAssertions throws away the "
             + "type the framework deliberately gave you and produces failure messages about an "
             + "object. Assert on the inner DTO, and check transport-level concerns separately.",
-        helpLinkUri: SkillReferences + "dotnet-atlas.md#never-object-cast-to-escape-the-custom-type--custom-rule");
+        helpLinkUri: SkillReferences + "dotnet-atlas.md#never-object-cast-to-escape-the-custom-type-custom-rule");
+
+    /// <summary>TVRM0004 — <c>no-assertion-without-matcher</c>.</summary>
+    public static readonly DiagnosticDescriptor NoAssertionWithoutMatcher = new(
+        id: DiagnosticIds.NoAssertionWithoutMatcher,
+        title: "Assertion has no matcher",
+        messageFormat: "'{0}.Should()' checks nothing without a matcher after it",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description:
+            "Should() on its own builds an assertions object and discards it. Nothing is compared, "
+            + "the test passes, and the suite reports coverage of a case it never checked. An "
+            + "assertion that never runs is worse than a missing one, because a missing one is "
+            + "visible.",
+        helpLinkUri: SkillReferences + "dotnet-awesome-assertions.md#assertions-must-actually-execute-custom-rule");
+
+    /// <summary>TVRM0005 — <c>no-dropped-async-assertion</c>.</summary>
+    public static readonly DiagnosticDescriptor NoDroppedAsyncAssertion = new(
+        id: DiagnosticIds.NoDroppedAsyncAssertion,
+        title: "Async assertion is never awaited",
+        messageFormat: "'{0}' returns a Task nobody awaits, so the assertion may not run before the test ends",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description:
+            "An async matcher returns a Task that carries the result. Dropping it ends the test "
+            + "before the assertion resolves, and a failure surfaces as an unobserved exception or "
+            + "not at all. The compiler's CS4014 catches this inside an async method; this rule "
+            + "covers the synchronous test body it cannot see.",
+        helpLinkUri: SkillReferences + "dotnet-awesome-assertions.md#assertions-must-actually-execute-custom-rule");
 }

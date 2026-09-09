@@ -75,9 +75,9 @@ harness/                             # machine-local adoption harness: editor la
 The plugin loader ignores `packages/`, `dotnet/` and `gate/` — it reads only `.claude-plugin/` and
 `skills/`.
 
-## The three custom rules (v1)
+## The custom rules (v1)
 
-Everything else is off the shelf. These three have no off-the-shelf equivalent:
+Everything else is off the shelf. These have no off-the-shelf equivalent:
 
 1. `combine-assertions-on-same-object` — Roslyn (`TVRM0001`) **and** ESLint. The ESLint half is
    [written](packages/eslint-plugin-tvrmsmith/docs/rules/combine-assertions-on-same-object.md)
@@ -85,6 +85,11 @@ Everything else is off the shelf. These three have no off-the-shelf equivalent:
 2. `no-suppression-before-assertion` — Roslyn only (`TVRM0002`). TypeScript is covered by
    `@typescript-eslint/no-non-null-assertion` plus a `no-restricted-syntax` selector.
 3. `no-assertion-escape-cast` — Roslyn only (`TVRM0003`). Bans `((object)x).Should()`.
+4. `no-assertion-without-matcher` — Roslyn only (`TVRM0004`). Catches `x.Should();` with nothing
+   after it. TypeScript is covered by `jest/valid-expect`.
+5. `no-dropped-async-assertion` — Roslyn only (`TVRM0005`). Catches an awaitable assertion nobody
+   awaits, in the synchronous test bodies the compiler's CS4014 cannot reach. TypeScript is covered
+   by `jest/valid-expect` too.
 
 The off-the-shelf layer around them is already curated: `packages/eslint-config-tvrmsmith` for
 TypeScript, and for C# both AwesomeAssertions.Analyzers `FAA0001`–`FAA0004` and most of the built-in

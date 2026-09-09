@@ -2,7 +2,7 @@
 
 Two projects, both Roslyn.
 
-`Tvrmsmith.Analyzers` — the C# half of the lint layer: the three custom Roslyn analyzers, plus
+`Tvrmsmith.Analyzers` — the C# half of the lint layer: the custom Roslyn analyzers, plus
 curated severities for the off-the-shelf analyzers they sit alongside. Everything below the Layout
 section is about this one.
 
@@ -22,12 +22,14 @@ The Claude Code plugin loader ignores this directory.
 Directory.Build.props                        # pinned versions, the artifacts path
 src/Tvrmsmith.Analyzers/
   Tvrmsmith.Analyzers.csproj
-  DiagnosticIds.cs                           # TVRM0001-0003
+  DiagnosticIds.cs                           # the TVRM ids
   Descriptors.cs                             # titles, messages, severities, help links
   AssertionSyntax.cs                         # shared .Should() and receiver-chain recognition
   CombineAssertionsOnSameObjectAnalyzer.cs   # TVRM0001
   NoSuppressionBeforeAssertionAnalyzer.cs    # TVRM0002
   NoAssertionEscapeCastAnalyzer.cs           # TVRM0003
+  NoAssertionWithoutMatcherAnalyzer.cs       # TVRM0004
+  NoDroppedAsyncAssertionAnalyzer.cs         # TVRM0005
   AnalyzerReleases.{Shipped,Unshipped}.md
   config/Tvrmsmith.Analyzers.globalconfig    # the curated severities
   build/Tvrmsmith.Analyzers.props            # nupkg auto-import, for the published package
@@ -39,6 +41,7 @@ src/Tvrmsmith.MetricGate.CSharp/
   MethodSpanCollector.cs                     # the spans, with the signature spelling the gate keys on
   ComplexityWalker.cs                        # the cyclomatic decision points
   CapabilitiesResult.cs, ExtractionResult.cs, FileStatusResult.cs, MethodSpanResult.cs
+tools/MeasureA5/                             # buckets a target repo's assertions; the A5 measurement
 tests/Tvrmsmith.Analyzers.Tests/             # the analyzers, against a real compilation
 tests/Tvrmsmith.MetricGate.CSharp.Tests/     # the extractor, over fixtures/, through the real process
 tests/Consumer/                              # stands in for a consuming repo
@@ -46,18 +49,20 @@ tests/verify-severities.sh                   # proves the analyzers and severiti
 artifacts/local/                             # generated; the stable path consumers point at
 ```
 
-## The three custom analyzers
+## The custom analyzers
 
-The guidelines the enforcement mapping found no off-the-shelf home for. All
-three are C#-only, all three default to **warning** and none is ever an error: this runs
-machine-locally against code other people wrote and are not being asked to change. None ships a
-code fix — for all three the correct rewrite needs a judgement call the analyzer cannot make.
+The guidelines the enforcement mapping found no off-the-shelf home for. All of them are C#-only,
+all default to **warning** and none is ever an error: this runs machine-locally against code other
+people wrote and are not being asked to change. None ships a code fix, because in every case the
+correct rewrite needs a judgement call the analyzer cannot make.
 
 | ID | Rule | Flags |
 |---|---|---|
 | `TVRM0001` | `combine-assertions-on-same-object` | consecutive assertions picking apart one object, and `HaveCount` followed by indexing into the same collection |
 | `TVRM0002` | `no-suppression-before-assertion` | `!` or `?.` in the receiver chain feeding `.Should()` |
 | `TVRM0003` | `no-assertion-escape-cast` | a cast to `object` whose only purpose is to reach `ObjectAssertions` |
+| `TVRM0004` | `no-assertion-without-matcher` | `x.Should();` as a whole statement, with no matcher after it |
+| `TVRM0005` | `no-dropped-async-assertion` | an awaitable assertion statement in a synchronous body, where CS4014 cannot see it |
 
 Two scoping decisions carry most of the precision, and both are load-bearing:
 
@@ -78,6 +83,23 @@ file-wide search for `!` would catch it.
 
 `TVRM0003` deliberately stops at the mechanical half of its guideline. *Which* target to assert
 on instead is judgement, and stays **[review-only]** in the skill text.
+
+**`TVRM0004` and `TVRM0005` take two of the three shapes under *Assertions Must Actually Execute*,
+and the third is deliberately left out.** That third shape, an assertion inside an `if`, was
+measured against the adoption target: it is common, and it is dominated by idioms that are not
+violations — both branches asserting, a deliberate failure reporter whose subject is the very thing
+the condition tested, and the parameterized-test pattern that asserts unconditionally and then
+refines by case. No syntactic test separates those from a real skipped assertion, so it stays
+**[review-only]**. `TVRM0005` stops at the enclosing `async` method for the opposite reason: the
+compiler already reports CS4014 there, and a second diagnostic on the same line is pure noise.
+
+`tools/MeasureA5` is how the split above was decided rather than argued. It parses a target repo
+with Roslyn and counts each shape, including the sub-buckets that separate the legitimate
+conditional-assertion idioms from the rest.
+
+```bash
+dotnet run --project tools/MeasureA5 -- <repo-root> [--sample N]
+```
 
 ## Curated severities
 
@@ -149,12 +171,12 @@ shape it must flag, and the compliant rewrite plus the near-misses it must stay 
 references neither analyzer package, the way a consuming repo would — three times:
 
 1. **baseline**, no injection → zero `FAA` diagnostics. Keeps the control honest.
-2. **injected** via `CustomAfterMicrosoftCommonProps` → `FAA0001`, `FAA0002` and
-   `TVRM0001`–`TVRM0003` as *warnings*, no `NU1008`/`NU1010`. For the `FAA` ids severity is the
+2. **injected** via `CustomAfterMicrosoftCommonProps` → every id in the script's `injected_ids`
+   list as a *warning*, no `NU1008`/`NU1010`. For the `FAA` ids severity is the
    load-bearing assertion: both ship as `Info`, so `warning FAA0001` can only mean the
    `.globalconfig` was applied, not merely that the DLL loaded. The `TVRM` ids are already
    warnings in their own descriptors, so what they prove is delivery.
-3. **packaged**, consuming the nupkg from a temp feed → the same five warnings. Package layout
+3. **packaged**, consuming the nupkg from a temp feed → the same warnings. Package layout
    fails quietly when it fails (a dependency carrying `exclude="Analyzers"` restores clean and
    emits nothing), so it gets consumed for real rather than inspected. Each run packs a unique
    `0.1.0-verify.<epoch>` version, because NuGet caches by id/version and a rebuilt `0.1.0` would
@@ -241,7 +263,7 @@ Injection must never fail a build that succeeded without it, and a repo that set
 `Tvrmsmith.Analyzers.Local.props` also sets:
 
 ```
-WarningsNotAsErrors += TVRM0001-3;FAA0001-4;<every enabled CA id>;AD0001;CS8032;CS8034;CS9057
+WarningsNotAsErrors += <every TVRM id>;<every FAA id>;<every enabled CA id>;AD0001;CS8032;CS8034;CS9057
 ```
 
 ### Three files, one list

@@ -32,7 +32,7 @@ using (new AssertionScope())
 Use `AssertionScope` when checking both status and body, since these are genuinely separate
 assertions that can't be combined — see the scoping guidance in the parent skill.
 
-## Never `(object)`-Cast to Escape the Custom Type
+## Never `(object)`-Cast to Escape the Custom Type (custom rule)
 
 A cast to `object` whose sole purpose is to reach the general `ObjectAssertions` overload.
 
