@@ -195,47 +195,77 @@ func TestDotnetSkipReasonRefusesToSkipWhenRequired(t *testing.T) {
 // carry their own table, but only a real run proves the variable name the
 // child reads is the one CI sets and that the fatal path is reachable at all.
 func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
-	stubDir := t.TempDir()
-	stub := filepath.Join(stubDir, "dotnet")
-	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho 'stub dotnet refuses to run' >&2\nexit 3\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	const stubRefusesToRun = "#!/bin/sh\necho 'stub dotnet refuses to run' >&2\nexit 3\n"
+	// A machine carrying only the SDK dotnet/global.json pins reaches this
+	// state, an installed toolchain that lists no 8.x shared framework. The
+	// AspNetCore line rides along so the run proves the probe wants the one
+	// framework the tool launches on rather than any 8 line at all.
+	const stubListsNoNet8 = "#!/bin/sh\ncat <<'EOF'\n" +
+		"Microsoft.AspNetCore.App 8.0.0 [/x/shared/Microsoft.AspNetCore.App]\n" +
+		"Microsoft.NETCore.App 10.0.0 [/x/shared/Microsoft.NETCore.App]\n" +
+		"EOF\n"
 
 	// The child runs the full-stack case and nothing else. Widening this
 	// pattern would let the child re-enter this test and fork forever.
 	const childCase = "^TestFullStackDrivesTheRealDotnetExtractor$"
 
-	runChild := func(t *testing.T, require string) (string, error) {
+	runChild := func(t *testing.T, stubBody, require string) (string, error) {
 		t.Helper()
+		stubDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(stubDir, "dotnet"), []byte(stubBody), 0o755); err != nil {
+			t.Fatal(err)
+		}
 		cmd := exec.Command(os.Args[0], "-test.run", childCase, "-test.v")
 		cmd.Env = append(childEnv(require), "PATH="+stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
 
-	t.Run("the enforced run fails instead of skipping", func(t *testing.T) {
-		out, err := runChild(t, "1")
-		if err == nil {
-			t.Fatalf("child exited zero, want a failure. output:\n%s", out)
-		}
-		for _, want := range []string{envRequireDotnet, "forbids skipping", reasonNoSDK} {
+	mustContain := func(t *testing.T, out string, wants []string) {
+		t.Helper()
+		for _, want := range wants {
 			if !strings.Contains(out, want) {
 				t.Errorf("child output does not contain %q. output:\n%s", want, out)
 			}
 		}
-	})
+	}
 
-	t.Run("the unset run skips and passes", func(t *testing.T) {
-		out, err := runChild(t, "")
-		if err != nil {
-			t.Fatalf("child failed with %v, want a pass. output:\n%s", err, out)
-		}
-		for _, want := range []string{"--- SKIP", reasonNoSDK} {
-			if !strings.Contains(out, want) {
-				t.Errorf("child output does not contain %q. output:\n%s", want, out)
-			}
-		}
-	})
+	scenarios := []struct {
+		name string
+		stub string
+		want []string
+	}{
+		{
+			name: "dotnet cannot run at all",
+			stub: stubRefusesToRun,
+			want: []string{reasonNoSDK, "exit status 3"},
+		},
+		{
+			name: "dotnet runs and lists no 8.x runtime",
+			stub: stubListsNoNet8,
+			want: []string{reasonNoSDK, "found no line starting with", "Microsoft.NETCore.App 10.0.0"},
+		},
+	}
+
+	for _, s := range scenarios {
+		t.Run(s.name, func(t *testing.T) {
+			t.Run("the enforced run fails instead of skipping", func(t *testing.T) {
+				out, err := runChild(t, s.stub, "1")
+				if err == nil {
+					t.Fatalf("child exited zero, want a failure. output:\n%s", out)
+				}
+				mustContain(t, out, append([]string{envRequireDotnet, "forbids skipping"}, s.want...))
+			})
+
+			t.Run("the unset run skips and passes", func(t *testing.T) {
+				out, err := runChild(t, s.stub, "")
+				if err != nil {
+					t.Fatalf("child failed with %v, want a pass. output:\n%s", err, out)
+				}
+				mustContain(t, out, append([]string{"--- SKIP"}, s.want...))
+			})
+		})
+	}
 }
 
 // childEnv copies this process's environment with METRIC_GATE_REQUIRE_DOTNET
