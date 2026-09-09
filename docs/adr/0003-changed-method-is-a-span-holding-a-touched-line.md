@@ -29,6 +29,18 @@ then dropped exactly one of that pair, but which one fell out of `git diff --raw
 turns on a filename is the opposite of what `--no-renames` was chosen to buy. Counting decides both cases without
 picking a winner, and nothing in the gate depends on diff order.
 
+**Amended 2026-09-09.** The pure-move drop is refined twice by
+[issue 14](https://github.com/tvrmsmith/coding-standards/issues/14), and neither refinement changes the counting
+rule above. First, **which copy the added side is read from now depends on the scope**. Under `--staged` the gate
+reads it with `git cat-file blob :<path>`, the index content, matching the side the deleted path is read from.
+Comparing an index blob against a working-tree file put the two halves of the digest comparison in different
+snapshots, and a rename staged and then edited on disk back to its old text was classed a pure move, dropped from
+the changed set, and so never reached the staged-and-dirty refusal at all. Every other scope still reads the added
+side from the working tree, which is the copy those scopes measure. Second, **an added path the gate cannot read
+suppresses the drop for the whole run**. Under the earlier per-path skip an unreadable add left its digest
+uncounted, so a readable sibling carrying the same digest looked accounted for by a deleted file and was dropped
+unmeasured. The counting rule stands as written; it simply cannot be applied to a count the gate knows is short.
+
 **Amended 2026-09-02.** The gate pins the git settings its parsers depend on rather than inheriting them, because
 every one of them turns a real change into `changed_methods: 0`, exit 0, which is a silent pass and the worst
 outcome a blocking gate has. Three mechanisms reach the diff and each takes a different answer. Ambient config such
