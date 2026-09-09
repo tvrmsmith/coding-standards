@@ -24,7 +24,10 @@ const Threshold = 30
 // message names the metric rather than the file.
 var DeclaredInputs = []string{"coverage"}
 
-// The two fix instructions and their absence, as ADR 0008 types them.
+// The two fix instructions and their absence. ADR 0008 requires action to be a
+// typed cell rather than prose; the raise_coverage, split_method and none
+// spelling is in ADR 0005, the superseded record 0008 consolidates, which the
+// ADR README keeps on disk for its history.
 const (
 	ActionSplitMethod   = "split_method"
 	ActionRaiseCoverage = "raise_coverage"

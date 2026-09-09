@@ -2553,10 +2553,12 @@ func TestAChangedFileMissingFromTheWorkingTreeCurrentlyStopsTheRunOutsideTheDocu
 		t.Fatalf("%s is still readable, which the case needs it not to be", orderService)
 	}
 
-	// This is the shape the run has today, not the shape it should have: ADR
-	// 0008 sanctions a documentless exit 1 only for a failure upstream of the
-	// document, and this one lands after the changed methods are counted. Issue
-	// 31 gives the failure a typed code, and moves it inside the document; this
+	// This is the shape the run has today, not the shape it should have. ADR
+	// 0008 carves one case out of its one-TOON-document rule, a malformed
+	// command line, and a changed file the gate cannot stat is not that one, so
+	// the empty stdout below is a known deviation this case pins rather than a
+	// rule 0008 grants. It lands after the changed methods are counted. Issue 31
+	// gives the failure a typed code, and moves it inside the document; this
 	// case goes red the day it does, which is what it is here for.
 	result := f.runWithArgs()
 	if result.exitCode != 1 || result.stdout != "" {
@@ -2589,9 +2591,9 @@ func TestCoverageFlagTakesAValueBeginningWithOneDashAsAPath(t *testing.T) {
 		f.baseLabel("main"), "0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
-// assertUsageError checks the shape ADR 0008 gives a failure upstream of the
-// document: exit 1, nothing on stdout, and the cause plus the usage line on
-// stderr.
+// assertUsageError checks the shape ADR 0008 gives the one failure it carves
+// out of the one-TOON-document rule, a malformed command line: exit 1, nothing
+// on stdout, and the cause plus the usage line on stderr.
 func assertUsageError(t *testing.T, result runResult, stderr string) {
 	t.Helper()
 	if result.exitCode == 1 && result.stdout == "" && result.stderr == stderr {
