@@ -79,34 +79,32 @@ const (
 )
 
 // staleRemedy closes the stale-report message with the step that clears it.
-// `dotnet test` leaves every previous run's TestResults directory on disk, so
-// a discovered report the gate refused is most often one the developer has
-// already replaced and does not know is still there. Clearing that directory
-// does nothing for a report they named themselves, which nothing but a fresh
-// run over that same path replaces. A Source carrying no Origin closes the
-// message with nothing at all: the reader still learns which report was refused
-// and why, which is the part the gate knows, and a remedy it cannot determine
-// is worse guessed than omitted. Refusing loudly instead is not available here
-// either, since an unrecovered panic exits 2 and ADR 0005 spends that code on
-// "threshold exceeded", so the one unreachable arm would tell CI the code
-// failed the gate.
+// Only a named report reaches here. A stale discovered one is skipped into
+// skipped_paths and never refuses on its own, so the arm that once answered for
+// it was dead code claiming a path the caller cannot take. What a named report
+// needs is a fresh run over that same path, which nothing else replaces. A
+// Source carrying no Origin closes the message with nothing at all. The reader
+// still learns which report was refused and why, which is the part the gate
+// knows, and a remedy it cannot determine is worse guessed than omitted.
+// Refusing loudly instead is not available here either, since an unrecovered
+// panic exits 2 and ADR 0005 spends that code on "threshold exceeded", so the
+// one unreachable arm would tell CI the code failed the gate.
 func (s Source) staleRemedy() string {
 	switch s.Origin {
 	case NamedOnCommandLine:
 		return "; regenerate " + s.Name + " or point --coverage at a current report"
-	case Discovered:
-		return discoveredStaleRemedy
 	default:
 		return ""
 	}
 }
 
-// discoveredStaleRemedy is the step that clears a stale discovered report, in
-// one place because two messages close with it: the refusal of a single named
-// report's discovered sibling above, and allSupersededFailure below, which has
-// only Names left by the time it runs and no Source to ask. Copying the clause
-// into both was rejected: a reword would then have to be made twice, and the
-// two coverage_stale messages would drift apart the once it was not.
+// discoveredStaleRemedy is the step that clears a stale discovered report. It
+// has one consumer, allSupersededFailure below, which runs when every
+// discovered report was superseded and has only Names left by then, no Source
+// to ask. It stays a named constant rather than a literal in that message
+// because `dotnet test` leaves every previous run's TestResults directory on
+// disk, and the wording of that clearing step is the part of the message most
+// likely to be reworded.
 const discoveredStaleRemedy = "; clear stale TestResults directories and re-run the tests"
 
 // Newest is the freshest edit among the files that contributed a changed
@@ -448,25 +446,27 @@ func (r coberturaReport) timestamp() (time.Time, error) {
 		return time.Time{}, errors.New("carries no timestamp, so it cannot be judged against the code it describes")
 	}
 	seconds, err := strconv.ParseInt(r.Timestamp, 10, 64)
-	if err != nil || seconds > maxEpochSeconds || seconds < minEpochSeconds {
+	if err != nil || seconds > maxEpochSeconds {
 		return time.Time{}, fmt.Errorf("carries an unreadable timestamp %q; it must be epoch seconds", r.Timestamp)
 	}
 	return time.Unix(seconds, 0), nil
 }
 
-// The band time.Unix can hold without the internal seconds field it builds
-// wrapping. Go stores the value offset by the seconds between year 1 and 1970,
-// so a stamp within a few tens of billions of MaxInt64 wraps into the distant
-// past, and a report carrying one would then be judged older than the code and
-// skipped as superseded rather than refused, which is exactly the untrustworthy
-// stamp the tolerance rule above exists to refuse. No real producer reaches
-// here: epoch milliseconds and even nanoseconds stay far inside the band, so
+// The highest stamp time.Unix can hold without the internal seconds field it
+// builds wrapping. Go stores the value offset by the seconds between year 1 and
+// 1970, so a stamp within a few tens of billions of MaxInt64 wraps into the
+// distant past, and a report carrying one would then be judged older than the
+// code and skipped as superseded rather than refused, which is exactly the
+// untrustworthy stamp the tolerance rule above exists to refuse. Only that end
+// wraps. Adding a positive offset to a stamp near MinInt64 cannot underflow,
+// and the instant it names lands below earliestPlausibleStamp, which refuses it
+// there with the message that fits it. No real producer reaches either end,
+// since epoch milliseconds and even nanoseconds stay far inside the band, so
 // this is the guard against a hand-written or corrupted value rather than
 // against a units bug.
 const (
 	secondsFromYearOneToEpoch = (1969*365 + 1969/4 - 1969/100 + 1969/400) * 24 * 60 * 60
 	maxEpochSeconds           = math.MaxInt64 - secondsFromYearOneToEpoch
-	minEpochSeconds           = math.MinInt64 + secondsFromYearOneToEpoch
 )
 
 type coberturaClass struct {
