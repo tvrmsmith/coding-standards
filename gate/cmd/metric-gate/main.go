@@ -181,22 +181,9 @@ func selectDiff(repo gitscope.Repo, sc scope.Scope) (selection, error) {
 	files := changedFiles(touched)
 	extracted, err := extract.Extract(repo.Root(), files)
 	if err != nil {
-		// The widest divergence, a file staged and then deleted from disk,
-		// reaches the extractor as a path with nothing to read and comes back
-		// as the extractor's own failure. Nothing was claimed, so the ordinary
-		// check below cannot see it, and a caller branching on the code would
-		// be told its source does not parse. The paths the gate could hand to an
-		// extractor by the static extension table answer that here. They are
-		// asked about rather than the whole diff, because a dirty staged
-		// Markdown file the extractor never saw would otherwise replace the
-		// extractor's own cause with one about a file nothing was going to read.
-		// A divergence check that cannot run leaves the extractor's cause
-		// standing, since it is the one the gate did establish.
-		if base.Staged {
-			if dirty, dirtyErr := stagedDirty(repo, extract.Routable(files)); dirtyErr == nil && dirty != nil {
-				selected.Failure = dirty
-				return selected, nil
-			}
+		if dirty := dirtyBehindExtraction(repo, base, files); dirty != nil {
+			selected.Failure = dirty
+			return selected, nil
 		}
 		return failing(selected, err)
 	}
@@ -215,6 +202,31 @@ func selectDiff(repo gitscope.Repo, sc scope.Scope) (selection, error) {
 	selected.Extracted = extracted
 	selected.Changed, selected.TouchedLinesOutsideSpans = join.Changed(extracted, touched)
 	return selected, nil
+}
+
+// dirtyBehindExtraction is the staged_file_dirty refusal hiding behind an
+// extraction that failed, and nil whenever the extractor's own cause is the
+// one to keep.
+//
+// The widest divergence, a file staged and then deleted from disk, reaches the
+// extractor as a path with nothing to read and comes back as the extractor's
+// own failure. Nothing was claimed, so selectDiff's ordinary check cannot see
+// it, and a caller branching on the code would be told its source does not
+// parse. The paths the gate could hand to an extractor by the static extension
+// table answer that here. They are asked about rather than the whole diff,
+// because a dirty staged Markdown file the extractor never saw would otherwise
+// replace the extractor's own cause with one about a file nothing was going to
+// read. A divergence check that cannot run answers nil for the same reason: the
+// extractor's cause is the one the gate did establish.
+func dirtyBehindExtraction(repo gitscope.Repo, base gitscope.Base, files []srcpath.Path) *report.Failure {
+	if !base.Staged {
+		return nil
+	}
+	dirty, err := stagedDirty(repo, extract.Routable(files))
+	if err != nil {
+		return nil
+	}
+	return dirty
 }
 
 // selectFiles resolves names, --files' argument list, into a selection. This

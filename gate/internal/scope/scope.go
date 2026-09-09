@@ -90,7 +90,10 @@ func flagName(m Mode) string {
 // spelled like a flag is refused there too: no producer writes a report whose
 // name begins with two dashes, and a mistyped flag read as a path would reach
 // the developer as a coverage diagnostic inside a document rather than as the
-// usage error it is.
+// usage error it is. The refusal is the two-dash spelling alone, narrower than
+// the one --since and --files make: a value beginning with a single dash is
+// taken as a path, since the gate's own flags are all long ones and a report
+// really can be named that way.
 func Parse(args []string) (Scope, error) {
 	var sc Scope
 	sc.Mode = ModeMergeBase
@@ -124,23 +127,13 @@ func Parse(args []string) (Scope, error) {
 			if sc.Mode != ModeMergeBase {
 				return Scope{}, conflict(ModeFiles, sc.Mode)
 			}
-			var files []string
-			for i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				i++
-				// An empty argument does not start with '-', so the slurp
-				// takes it, and it names no file. Resolved it is the working
-				// directory itself, so the run would exit 1 saying an empty
-				// name is a directory and the reader would see a message
-				// naming nothing.
-				if args[i] == "" {
-					return Scope{}, &UsageError{Problem: "--files was handed an empty path"}
-				}
-				files = append(files, args[i])
+			files, next, err := slurpFiles(args, i+1)
+			if err != nil {
+				return Scope{}, err
 			}
-			if len(files) == 0 {
-				return Scope{}, &UsageError{Problem: "--files needs at least one path"}
-			}
-			sc.Mode, sc.Files = ModeFiles, files
+			// next is the first argument the slurp did not take, and the
+			// loop's own i++ is what lands on it.
+			sc.Mode, sc.Files, i = ModeFiles, files, next-1
 
 		case arg == "--coverage", strings.HasPrefix(arg, "--coverage="):
 			value, joined := strings.CutPrefix(arg, "--coverage=")
@@ -167,6 +160,31 @@ func Parse(args []string) (Scope, error) {
 		}
 	}
 	return sc, nil
+}
+
+// slurpFiles takes --files' variadic argument list out of args starting at
+// from, and returns it with the index of the first argument it did not take.
+//
+// The slurp stops at any argument beginning with '-', so `--files a.cs
+// --staged` is caught as two scopes rather than measuring a file named
+// --staged.
+func slurpFiles(args []string, from int) (files []string, next int, err error) {
+	next = from
+	for next < len(args) && !strings.HasPrefix(args[next], "-") {
+		// An empty argument does not start with '-', so the slurp takes it,
+		// and it names no file. Resolved it is the working directory itself,
+		// so the run would exit 1 saying an empty name is a directory and the
+		// reader would see a message naming nothing.
+		if args[next] == "" {
+			return nil, 0, &UsageError{Problem: "--files was handed an empty path"}
+		}
+		files = append(files, args[next])
+		next++
+	}
+	if len(files) == 0 {
+		return nil, 0, &UsageError{Problem: "--files needs at least one path"}
+	}
+	return files, next, nil
 }
 
 // conflict reports two scope flags named on the same command line, the one

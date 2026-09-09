@@ -782,6 +782,25 @@ func (f *fixture) gitStderr(args ...string) string {
 	return strings.TrimSpace(stderr.String())
 }
 
+// divergenceStderr is what git prints when the index-to-working-tree
+// comparison a --staged run makes over rel fails. The flags mirror
+// gitscope.DivergentFromIndex's own invocation, so the sentence a case pins is
+// the one the gate quotes back.
+func (f *fixture) divergenceStderr(rel string) string {
+	f.t.Helper()
+	return f.gitStderr("-c", "core.fileMode=false", "diff", "--no-color", "--no-ext-diff",
+		"--no-textconv", "--text", "--src-prefix=a/", "--dst-prefix=b/",
+		"-w", "--numstat", "-z", "--no-renames", "--", ":(literal)"+rel)
+}
+
+// toonEscaped renders text the way a TOON string field escapes it, which is
+// what a golden's hole holds when the cause it stands for carries a quote or a
+// newline. git's own complaint about a file it cannot open carries both.
+func toonEscaped(text string) string {
+	quoted := strconv.Quote(text)
+	return quoted[1 : len(quoted)-1]
+}
+
 // corruptPackedRefs packs every ref and appends a line git cannot read, so
 // reading any ref, HEAD included, fails rather than answering no.
 //
