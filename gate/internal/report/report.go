@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/tvrmsmith/coding-standards/gate/internal/scope"
 	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
 	"github.com/tvrmsmith/coding-standards/gate/internal/toon"
 )
@@ -16,10 +17,6 @@ import (
 // Version is the gate's own version, pinned in the document header beside
 // the spec version so a reader knows what produced the document.
 const Version = "0.1.0"
-
-// Scope is the only diff scope this gate has. ADR 0005 makes it a document
-// field; the flags that would vary it are other issues' work.
-const Scope = "merge-base"
 
 // The typed error codes for the exit-1 causes this gate can reach. An agent
 // branches on these rather than parsing the message.
@@ -36,6 +33,28 @@ const (
 	CodeCoverageUnparseable           = "coverage_unparseable"
 	CodeCoverageStale                 = "coverage_stale"
 	CodeUnknownChangedMethod          = "unknown_changed_method"
+	// CodeStagedFileDirty is a --staged run refusing a file staged in one
+	// state and on disk in another, which the join could otherwise attribute
+	// to the wrong content (issue 14). The check asks only about files an
+	// extractor claimed, except when extraction itself fails and claims
+	// nothing, where it asks about the paths the gate could hand to an
+	// extractor by the static extension table, so a file staged and then
+	// deleted from disk is named for what it is rather than blamed on the
+	// extractor. A dirty path no extractor would have read never reaches this
+	// code under either rule.
+	CodeStagedFileDirty = "staged_file_dirty"
+	// CodeFileUnresolved is a --files path the gate could not place on a
+	// source file (issue 14). The path does not exist, it resolves above the
+	// repo root, it has no reading relative to the root at all, which is a
+	// second drive letter on Windows rather than a location above the root, it
+	// resolves inside the root but names a directory, it names some other thing
+	// that is not a regular file, the tree holds the file under a spelling other
+	// than the one typed, which a case-insensitive filesystem resolves to a path
+	// no coverage report is keyed by, or the filesystem refused to answer about
+	// the path at all, which carries the operating system's own words. Every
+	// one of them lands here, so no refusal about a named path escapes the
+	// document.
+	CodeFileUnresolved = "file_unresolved"
 	// The three coverage-path causes ADR 0004's 2026-09-03 amendment defers to
 	// issue 16: a source root MSBuild erased, a class resolving to two paths
 	// inside the repo root, and a report resolving only outside it.
@@ -161,6 +180,12 @@ func (m Metric) WorstScore() float64 {
 
 // Document is one whole gate run's output.
 type Document struct {
+	// Scope is the token naming which scope the run used (ADR 0005), one per
+	// mode: merge-base, staged, since, files. It carries scope's own type so
+	// the four tokens are spelled in one place, the package that parses the
+	// flags they name, rather than again here as the removed
+	// `const Scope = "merge-base"` did.
+	Scope scope.Mode
 	// Base is the resolved "<ref>@<sha>" label, or nil when resolution is
 	// what failed.
 	Base                     *string
@@ -227,7 +252,7 @@ func (d Document) Stdout() ([]byte, error) {
 		{Key: "status", Value: d.Status()},
 		{Key: "tool", Value: "metric-gate/" + Version},
 		{Key: "spec", Value: "toon/" + toon.SpecVersion},
-		{Key: "scope", Value: Scope},
+		{Key: "scope", Value: string(d.Scope)},
 		{Key: "base", Value: nullable(d.Base)},
 		{Key: "changed_methods", Value: d.ChangedMethods},
 		{Key: "touched_lines_outside_spans", Value: d.TouchedLinesOutsideSpans},

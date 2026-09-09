@@ -103,6 +103,47 @@ land inside the repo root, the git-worktree and container cases. The full list i
 code is a contract change and belongs in this list on the same commit, which is the 2026-09-03 rule restated
 against the list that now governs.
 
+**Amended 2026-09-04.** [Issue 14](https://github.com/tvrmsmith/coding-standards/issues/14) fills in the `scope`
+field's remaining values and adds two codes.
+
+The four tokens are `merge-base` for the default, and `staged`, `since` and `files` for the flags that override
+it, each named for the flag rather than for what it resolves to, which is the spelling
+`lint-changed-dotnet.sh` already uses. `merge-base` keeps the exception the 2026-09-02 amendment gave it, since no
+flag spells the default and there is nothing to name it after. Under `--files` there is no commit to diff against,
+so `base` is `null` and `touched_lines_outside_spans` is `0`; a file list carries no line information, so ADR 0003
+makes every method in a listed file changed and neither field has anything to say.
+
+The enumeration is **sixteen** codes, and this list supersedes every count above. `staged_file_dirty` is a
+`--staged` run refusing a file staged in one state and on disk in another: the index reports the line numbers and
+the extractor parses the disk copy, so scoring it would attribute coverage to the wrong text, which ADR 0003 makes
+exit 1 rather than a warning. `file_unresolved` is a `--files` path the gate cannot place inside the repo root,
+because it does not exist or because it resolves above the root, and its message names the path as the developer
+typed it rather than as the gate resolved it. Both are upstream of the join, so both emit `status: error` with an
+`error` block and no table. The full list is `no_diff_base`, `diff_unparseable`, `extractor_failed`,
+`extractor_path_mismatch`, `extractor_capabilities_mismatch`, `extractor_duplicate_span`,
+`extractor_invalid_span`, `parse_failed`, `coverage_missing`, `coverage_unparseable`,
+`coverage_source_root_erased`, `file_ambiguous`, `coverage_outside_repo`, `staged_file_dirty`, `file_unresolved`,
+and `unknown_changed_method`.
+
+The second `skipped_paths` producer the 2026-09-02 amendment predicted arrives here. A path named on `--files` that
+resolves inside the repo but that no extractor claims is neither measured nor an error, so it is listed rather than
+dropped in silence, and the named paths sort ahead of whatever coverage discovery could not read. The field still
+never gates.
+
+**Amended 2026-09-05.** `file_unresolved` has more causes than the two the 2026-09-04 amendment named. A `--files`
+path earns it when it does not exist, when it resolves above the repo root, when it resolves inside the root but
+names a directory rather than a regular file, when it names a file the tree holds under a different spelling, which
+a case-insensitive filesystem otherwise resolves to a path no coverage report is keyed by, and when the filesystem
+refuses to answer at all, which carries the underlying cause rather than escaping the document. The gate refuses all
+of them rather than matching approximately, which is the rule CONTEXT.md's source path already states.
+`staged_file_dirty` is narrower than that amendment said: the divergence check asks only about files an extractor
+claimed, so a file staged in one state and dirty on disk in another does not refuse the run when nothing scored it,
+because a file the gate never measured is one it cannot misattribute. The exception is a `--staged` run whose
+extraction fails, which checks divergence before reporting the extractor's own failure, so a staged file deleted
+from disk is named for what it is. `--files` is variadic and not repeatable, so a second `--files` is a usage error
+and issue 11's "(repeatable)" spelling does not hold for it. The enumeration stays at **sixteen** codes and the list
+above stands unchanged.
+
 **Amended 2026-09-05.** The enumeration is **fifteen** codes, and this list supersedes every count above. One
 joined with [issue 15](https://github.com/tvrmsmith/coding-standards/issues/15), which closes the deferral the
 2026-09-03 amendment recorded: the gate now reads the report's own `timestamp` attribute and stats every file
@@ -141,6 +182,49 @@ error to stderr, and exits with the existing tool-error 1. The document reports 
 examined, and a run whose arguments never parsed never chose one to examine, so there is nothing for a document
 to describe. No typed code covers it and the enumeration stays at fifteen, because the codes name what the gate
 found in a repository and this run has no repository.
+
+**Amended 2026-09-07.** Two corrections to the 2026-09-05 amendment on `file_unresolved` above, neither of them a
+change of decision. First, `file_unresolved` covers every non-regular inode, not the directory case alone. The gate
+says "is a directory, not a file" for a directory and "is not a regular file" for a fifo, socket or device node, so
+a `--files` path naming any of them is refused under the same code. Second, the extraction-failure exception for
+`staged_file_dirty` asks only about the paths the extractor was handed and failed on, not about every path in the
+diff, so an unrelated dirty staged file no longer replaces the extractor's own cause. A file staged and then
+deleted from disk is still named for what it is, because that path is one the extractor was handed.
+
+**Amended 2026-09-09.** The two counts stated on 2026-09-05 crossed. The issue 14 amendment says **sixteen**,
+counting `staged_file_dirty` and `file_unresolved`; the issue 15 amendment says **fifteen**, counting
+`coverage_stale`; each was written against a list the other had not landed yet, and each claims to supersede every
+count above it. The union is **seventeen**, which supersedes both, and the Consequences section below still says
+"fourteen exit-1 causes" because it predates all three. The full list is `no_diff_base`, `diff_unparseable`,
+`extractor_failed`, `extractor_path_mismatch`, `extractor_capabilities_mismatch`, `extractor_duplicate_span`,
+`extractor_invalid_span`, `parse_failed`, `coverage_missing`, `coverage_unparseable`, `coverage_stale`,
+`coverage_source_root_erased`, `file_ambiguous`, `coverage_outside_repo`, `staged_file_dirty`, `file_unresolved`,
+and `unknown_changed_method`. No code is added or removed here; only the count and the one list that governs are.
+
+**Amended 2026-09-09.** One parser owns argv. The 2026-09-05 amendment on issue 15 records that the binary can
+reject its own command line, and issue 14 adds the scope flags to the same command line, so `--staged`, `--since`,
+`--files` and `--coverage` are parsed in one place and one usage block lists all four. Two parsers, each rejecting
+the other's flags as unknown, cannot print a usage block that tells the truth. The exit-1-with-empty-stdout shape
+that amendment gives a malformed invocation is unchanged, and no typed code covers it, for the reason it gives:
+the codes name what the gate found in a repository and a run whose arguments never parsed never chose one.
+
+**Amended 2026-09-09.** The 2026-09-07 amendment above describes the `staged_file_dirty` extraction-failure
+exception as asking "only about the paths the extractor was handed and failed on". `Extract` fails atomically, so
+there is no per-path "failed on" to ask about, and the gate asks `extract.Routable` over the changed set, a
+membership test against the static extension table. Read the exception as: when extraction fails under `--staged`,
+the gate asks whether any routable changed path is staged in one state and dirty on disk in another, and reports
+`staged_file_dirty` in place of the extractor's own cause only when that check names such a path. An extractor
+failure with no divergent path keeps its own cause, which is the decision the 2026-09-07 paragraph intended and
+the wording missed.
+
+**Amended 2026-09-09.** The staged-and-dirty refusal is narrowed a third way, beside the claimed-files-only
+narrowing and the extraction-failure exception. The divergence check runs git with `-w` and with
+`-c core.fileMode=false`, so a file staged in one state and then reindented or chmod'd on disk is scored rather
+than refused. [ADR 0003](0003-changed-method-is-a-span-holding-a-touched-line.md) states the rule flatly, that a
+file staged in one state and dirty in another exits 1 naming those files. Read it with this narrowing: the refusal
+fires on a change that can move a line, not on one that changes only whitespace or the executable bit, because
+neither can shift a line number and the only reason to refuse is that the gate would otherwise score index content
+against working-tree line numbers.
 
 Three parts of that shape are decisions in their own right.
 

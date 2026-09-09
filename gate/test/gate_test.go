@@ -129,6 +129,34 @@ func TestTwoIdenticalFilesMovedTogetherReportNoChangedMethods(t *testing.T) {
 		"no changed methods, nothing to measure\n")
 }
 
+func TestAnAddNobodyCanReadLeavesEveryOtherAddMeasured(t *testing.T) {
+	const origin = "src/Ordering/Origin.cs"
+	const moved = "src/Ordering/Moved.cs"
+	vanish := span{File: moved, Name: "Moved.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(origin, csharpFile(20))
+	f.commitAll("initial")
+	f.git("mv", origin, moved)
+	// A second added path whose content the gate cannot read. Counted as one
+	// add fewer, the digest Origin.cs carried has a single claimant against a
+	// single delete, and Moved.cs reads as accounted for and is dropped
+	// unmeasured. The unreadable add could be carrying that content itself, so
+	// nothing here is a move and every method Moved.cs holds stays the gate's
+	// to score.
+	f.symlinkTo(filepath.Join(f.root, "gone.md"), "notes.md")
+	f.git("add", "notes.md")
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: moved, lines: spanCoverage(5, 3, 3)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(moved), []span{vanish}),
+	}
+
+	f.run().assertMatches(t, "unreadable_add_leaves_sibling_measured", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 4.00\n")
+}
+
 func TestMethodScoringExactlyAtTheThresholdPasses(t *testing.T) {
 	f := newFixture(t, "main")
 	boundaryFixture(t, f, 30)
@@ -2179,52 +2207,26 @@ func TestAChangedFileMissingFromTheWorkingTreeCurrentlyStopsTheRunOutsideTheDocu
 	}
 }
 
-func TestUnknownArgumentIsAUsageError(t *testing.T) {
+func TestCoverageFlagTakesAValueBeginningWithOneDashAsAPath(t *testing.T) {
+	// TestScopeUsageErrors refuses the two-dash spelling alone. The gate's own
+	// flags are all long ones, so a single dash names no flag it could be
+	// confused with, and a report really can be written under a name like this.
 	f := newFixture(t, "main")
-
-	// A usage error is decided before the gate opens the repo, so the fixture
-	// carries no commit, no source, no report and no extractor config: nothing
-	// about the tree can change the answer.
-	assertUsageError(t, f.runWithArgs("--nope"),
-		"unknown argument: --nope\nusage: metric-gate [--coverage <path>]...\n")
-}
-
-func TestCoverageFlagWithNoPathIsAUsageError(t *testing.T) {
-	const want = "--coverage needs a path\nusage: metric-gate [--coverage <path>]...\n"
-	spellings := map[string][]string{
-		"nothing follows the flag": {"--coverage"},
-		"empty joined value":       {"--coverage="},
-		// An unset shell variable expands to this, and it must not reach the
-		// reader as a report naming nothing.
-		"empty separate value": {"--coverage", ""},
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("-report.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
-	for name, args := range spellings {
-		t.Run(name, func(t *testing.T) {
-			f := newFixture(t, "main")
 
-			assertUsageError(t, f.runWithArgs(args...), want)
-		})
-	}
-}
-
-func TestCoverageFlagGivenAnotherFlagIsAUsageError(t *testing.T) {
-	// A mistyped flag after --coverage would otherwise be swallowed as a report
-	// path and reach the developer as a coverage diagnostic inside a document,
-	// which reads as "the gate ran and your coverage is wrong" rather than
-	// "the command line is wrong". No producer names a report with two leading
-	// dashes, so the flag spelling is the one worth refusing.
-	spellings := map[string][]string{
-		"separate value": {"--coverage", "--nope"},
-		"joined value":   {"--coverage=--nope"},
-	}
-	for name, args := range spellings {
-		t.Run(name, func(t *testing.T) {
-			f := newFixture(t, "main")
-
-			assertUsageError(t, f.runWithArgs(args...),
-				"--coverage needs a path, not the flag --nope\nusage: metric-gate [--coverage <path>]...\n")
-		})
-	}
+	// The scored row is what says the report was read: refused, the run would
+	// carry a usage error, and ignored, Cancel would score against no coverage
+	// at all.
+	f.runWithArgs("--coverage", "-report.xml").assertMatches(t, "named_coverage_report", 0,
+		f.baseLabel("main"), "0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
 // assertUsageError checks the shape ADR 0005 gives a failure upstream of the

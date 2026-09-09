@@ -67,7 +67,7 @@ dotnet/                              # NuGet
   tests/                             # analyzer and extractor tests, a stand-in consumer, the severity proof
 gate/                                # the metric gate: a Go binary, one TOON document on stdout
   cmd/metric-gate/
-  internal/                          # diff scope, coverage, join, CRAP, TOON encoder
+  internal/                          # scope selection, diff, coverage, join, CRAP, TOON encoder
   test/                              # black-box tests against the built binary, with goldens
 harness/                             # machine-local adoption harness: editor layer + pre-commit
 ```
