@@ -364,13 +364,7 @@ func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
 	if err != nil {
 		return nil, unreadableDiff(err)
 	}
-	pathspecs := make([]string, 0, len(paths))
-	for _, path := range paths {
-		pathspecs = append(pathspecs, ":(literal)"+string(path))
-	}
-	args := slices.Concat([]string{"-c", "core.fileMode=false"}, diffFlags,
-		[]string{"-w", "--numstat", "-z", "--no-renames", "--"}, pathspecs)
-	out, err := r.gitBlanking(drivers, args...)
+	out, err := r.gitBlanking(drivers, DivergenceArgs(paths)...)
 	if err != nil {
 		return nil, unreadableDiff(err)
 	}
@@ -385,6 +379,19 @@ func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
 		}
 	}
 	return divergent, nil
+}
+
+// DivergenceArgs is the whole argv DivergentFromIndex hands git for paths. It
+// is exported so the black-box suite can put the same question to git that the
+// gate puts, rather than restating the flags in a second place where one of
+// the two can drift.
+func DivergenceArgs(paths []srcpath.Path) []string {
+	pathspecs := make([]string, 0, len(paths))
+	for _, path := range paths {
+		pathspecs = append(pathspecs, ":(literal)"+string(path))
+	}
+	return slices.Concat([]string{"-c", "core.fileMode=false"}, diffFlags,
+		[]string{"-w", "--numstat", "-z", "--no-renames", "--"}, pathspecs)
 }
 
 // parseNumstatPaths reads the set of paths out of `--numstat -z` output. It is
@@ -504,10 +511,12 @@ func noMatch(err error) bool {
 //
 // Every unreadable side resolves towards measuring, which is the conservative
 // direction. An added path the gate cannot read stays measured, and so does
-// every add paired with a deleted object the gate cannot read: a `cat-file`
-// failure, which is what a blobless partial clone gives offline, drops that
-// object from the comparison rather than escaping and leaving the run with no
-// document at all.
+// every other add in that run: the unknown content could be the one a deleted
+// blob explains, so counting without it would leave a readable sibling looking
+// accounted for and drop a file nobody moved. An add paired with a deleted
+// object the gate cannot read stays measured too: a `cat-file` failure, which
+// is what a blobless partial clone gives offline, drops that object from the
+// comparison rather than escaping and leaving the run with no document at all.
 //
 // Ambiguity resolves by counting rather than by picking a winner. For each
 // content digest the diff compares how many paths were added carrying it
@@ -546,7 +555,7 @@ func (r Repo) pureMoves(base Base, drivers []string) ([]srcpath.Path, error) {
 	for _, add := range added {
 		body, err := r.addedContent(base, add)
 		if err != nil {
-			continue
+			return nil, nil
 		}
 		digest := squashedDigest(body)
 		digests[add.Path] = digest
@@ -554,8 +563,8 @@ func (r Repo) pureMoves(base Base, drivers []string) ([]srcpath.Path, error) {
 	}
 	var moves []srcpath.Path
 	for _, add := range added {
-		digest, read := digests[add.Path]
-		if !read || carried[digest] == 0 || claimants[digest] > carried[digest] {
+		digest := digests[add.Path]
+		if carried[digest] == 0 || claimants[digest] > carried[digest] {
 			continue
 		}
 		moves = append(moves, add.Path)

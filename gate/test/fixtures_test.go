@@ -15,6 +15,9 @@ import (
 	"testing"
 	"time"
 	"unicode/utf16"
+
+	"github.com/tvrmsmith/coding-standards/gate/internal/gitscope"
+	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
 )
 
 // csharpFile renders a C# source file of exactly lines lines. The stub
@@ -783,14 +786,12 @@ func (f *fixture) gitStderr(args ...string) string {
 }
 
 // divergenceStderr is what git prints when the index-to-working-tree
-// comparison a --staged run makes over rel fails. The flags mirror
-// gitscope.DivergentFromIndex's own invocation, so the sentence a case pins is
-// the one the gate quotes back.
+// comparison a --staged run makes over rel fails. The argv comes from the
+// production builder rather than a copy of it, so the sentence a case pins is
+// the one the gate quotes back even after the flags change.
 func (f *fixture) divergenceStderr(rel string) string {
 	f.t.Helper()
-	return f.gitStderr("-c", "core.fileMode=false", "diff", "--no-color", "--no-ext-diff",
-		"--no-textconv", "--text", "--src-prefix=a/", "--dst-prefix=b/",
-		"-w", "--numstat", "-z", "--no-renames", "--", ":(literal)"+rel)
+	return f.gitStderr(gitscope.DivergenceArgs([]srcpath.Path{srcpath.Path(rel)})...)
 }
 
 // toonEscaped renders text the way a TOON string field escapes it, which is

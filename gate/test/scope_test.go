@@ -780,7 +780,7 @@ func TestStagedRefusesAFileACleanFilterMakesLookUnmodified(t *testing.T) {
 	// index line numbers against text on disk that does not match them.
 	f.write(orderService, replaceLine(f.read(orderService), 45, "// line 45, hidden"))
 	if f.git("diff", "--name-only", "--", orderService) != "" {
-		t.Skip("the clean filter did not hide the edit here, so git reports the ordinary divergence and the case cannot be about the blanked driver")
+		t.Fatal("the clean filter did not hide the edit here, so git reports the ordinary divergence and the case cannot be about the blanked driver")
 	}
 
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
