@@ -1,5 +1,9 @@
 # The C# complexity extractor is written in-house, because no existing tool emits a method's end line
 
+**Superseded 2026-09-09 by [ADR 0009](0009-the-csharp-extractor-is-written-in-house.md).** The
+decision is unchanged. 0009 states it in one pass with the eight amendments below folded in; this
+file stays for the reasoning and the dated history, and is not the file to read for the live rule.
+
 The extractor for C# is a `dotnet tool` shipped with `metric-gate`. It reads source paths on stdin, one per line,
 parses each file with Roslyn's syntax parser alone, walks the method-like declarations, counts decision points for
 McCabe, and writes JSON on stdout carrying `{ file, name, startLine, endLine, complexity }` per span plus a
