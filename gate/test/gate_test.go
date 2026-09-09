@@ -643,7 +643,7 @@ func TestMethodMovedBetweenFilesWithItsBodyUnchangedIsMeasuredAtItsNewLocation(t
 	// fires and the method's body is byte-identical at its new home. git
 	// reports Origin's removal as a zero-length hunk touching line 9 alone,
 	// and Destination's insertion as lines 30 through 40.
-	f.moveLines(origin, 10, 20, destination, 29)
+	f.moveLinesBetween(origin, 10, 20, destination, 29)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: destination, lines: spanCoverage(31, 4, 1)}))
 	f.stub = stubConfig{
@@ -666,13 +666,11 @@ func TestMethodMovedWithinOneFileIsMeasuredAtItsNewLocation(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(shuffle, csharpFile(60))
 	f.commitAll("initial")
-	// moveLines rewrites src before it re-reads dst, so with one file the
-	// after argument counts lines in the shortened file. 34 there is old line
-	// 45, and the moved block lands at 35 through 45. git reports two hunks,
-	// a zero-length one touching line 9 alone where the block used to sit and
+	// The moved block lands at 35 through 45. git reports two hunks, a
+	// zero-length one touching line 9 alone where the block used to sit and
 	// an insertion covering lines 35 through 45. Line 9 falls inside no span,
 	// so the vacated position contributes exactly one diagnostic.
-	f.moveLines(shuffle, 10, 20, shuffle, 34)
+	f.moveLinesWithin(shuffle, 10, 20, 45)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: shuffle, lines: spanCoverage(36, 4, 1)}))
 	f.stub = stubConfig{
@@ -682,6 +680,46 @@ func TestMethodMovedWithinOneFileIsMeasuredAtItsNewLocation(t *testing.T) {
 
 	f.run().assertMatches(t, "moved_within_file", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 10.75\n")
+}
+
+// TestASourceFileReplacedByASymlinkContributesNoChangedMethods pins
+// --diff-filter=ACM against status T. `--no-renames` is already in the argv,
+// so a rename can never surface as status R, and T is the only other letter
+// ACM excludes that a live case can still produce: widening the letter set to
+// ACMD, or any other combination of A/C/M/D, still excludes T, so what this
+// case actually pins is the filter's presence, not its exact letters. A
+// symlink genuinely should not be measured as source, which is why the flag
+// stays pinned whole rather than narrowed to only the letters this suite
+// happens to exercise, the alternative issue 25 considered and rejected.
+func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderFile, csharpFile(80))
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	// Order.cs becomes a symlink to its sibling in the same directory, so the
+	// link is not dangling. Deletion cases miss this: git renders a deleted
+	// file's new side as `+++ /dev/null`, which carries no extension, so no
+	// extractor ever claims it, and only a live typechange exercises status T.
+	full := filepath.Join(f.root, filepath.FromSlash(orderFile))
+	if err := os.Remove(full); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("OrderService.cs", full); err != nil {
+		t.Skipf("the filesystem does not allow symlinks: %v", err)
+	}
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderFile), []span{orderTotal}),
+	}
+
+	// Under ACM, git reports Order.cs as status T and it never reaches the
+	// diff, so nothing is touched. Drop the filter and git emits a hunk whose
+	// new side is a real, claimed b/src/Ordering/Order.cs, touching line 1,
+	// which falls outside Order.Total's 60-64 span and turns
+	// touched_lines_outside_spans into 1, which is what would stop this golden
+	// from matching.
+	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
+		"no changed methods, nothing to measure\n")
 }
 
 // TestDeletingAMethodAttributesTheZeroLengthHunkToTheLineBeforeIt pins which
@@ -731,6 +769,9 @@ func TestEveryMethodInANewlyAddedFileIsMeasured(t *testing.T) {
 	// `git add` is required, not incidental. ADR 0003's tracked-paths-only
 	// amendment says touched lines come from tracked paths only, so an
 	// unstaged new file contributes nothing.
+	// TestANewFileNeverAddedToTheIndexContributesNoChangedMethods is the
+	// other half of the pair: it never adds its new file at all and pins the
+	// same rule from that side.
 	f.git("add", fresh)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: fresh, lines: append(spanCoverage(4, 4, 1), spanCoverage(11, 5, 1)...)}))
@@ -743,6 +784,48 @@ func TestEveryMethodInANewlyAddedFileIsMeasured(t *testing.T) {
 
 	f.run().assertMatches(t, "new_file", 2, f.baseLabel("main"),
 		"1 of 2 changed methods over CRAP threshold 30, worst score 50.47\n")
+}
+
+// TestANewFileNeverAddedToTheIndexContributesNoChangedMethods is the other
+// half of the pair above: Scratch.cs is written but never `git add`ed, so
+// ADR 0003's tracked-paths-only amendment says it contributes nothing, and the
+// changed set is OrderService.cs alone.
+//
+// The stub's stdout is canned and stays silent about Scratch.cs on purpose.
+// Issue 26 asks for an over-threshold span on the untracked file, but
+// extract.collect (gate/internal/extract/extract.go:408) exits 1 with
+// extractor_path_mismatch on a span for a path the gate never handed out.
+// Under correct behaviour the untracked file is never handed to the
+// extractor, so a canned span for it would red this case for the wrong
+// reason: union untracked files into the scope instead, and the gate hands
+// Scratch.cs to the extractor, which reports no parse status for a file the
+// stub was never told to claim, and the run exits 1 with an error document in
+// place of this golden. The StdinLog assertion below states the same rule
+// directly, by naming exactly what the extractor was handed.
+func TestANewFileNeverAddedToTheIndexContributesNoChangedMethods(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 45)
+	// Never `git add`ed. If untracked files were unioned into the scope this
+	// would be handed to the extractor alongside orderService.
+	f.write("src/Ordering/Scratch.cs", csharpFile(20))
+	// Eight of PlaceAsync's ten instrumentable lines are covered.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(42, 10, 8)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+	handed := filepath.Join(t.TempDir(), "handed")
+	f.stub.StdinLog = handed
+
+	f.run().assertMatches(t, "untracked_new_file", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 9.65\n")
+
+	if got := readFile(t, handed); got != orderService+"\n" {
+		t.Errorf("the extractor was handed %q, want the one line %q", got, orderService+"\n")
+	}
 }
 
 // TestRealCommitMixingEditMoveDeletionAdditionRenameAndReflow is the
@@ -798,7 +881,7 @@ func TestRealCommitMixingEditMoveDeletionAdditionRenameAndReflow(t *testing.T) {
 
 	f.touchLine(orderService, 45)
 	f.write(legacy, indented(csharpFile(60), "        "))
-	f.moveLines(origin, 10, 20, destination, 29)
+	f.moveLinesBetween(origin, 10, 20, destination, 29)
 	f.git("rm", "-q", doomed)
 	f.git("mv", stable, renamed)
 	f.write(fresh, csharpFile(20))

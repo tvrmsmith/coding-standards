@@ -91,14 +91,12 @@ func (f *fixture) deleteLines(rel string, from, to int) {
 	f.write(rel, strings.Join(append(append([]string{}, lines[:from-1]...), lines[to:]...), "\n"))
 }
 
-// moveLines cuts the one-based lines from..to (inclusive) out of the file at
-// src and inserts them into dst immediately after dst's line after. It copies
-// the lines verbatim, so they are byte-identical at their new home. Both src
-// and dst must already exist on disk, since the helper reads each one before
-// it rewrites it.
-// The helper rewrites src before it re-reads dst, so when src and dst name the
-// same file, after counts lines in the shortened file.
-func (f *fixture) moveLines(src string, from, to int, dst string, after int) {
+// moveLinesBetween cuts the one-based lines from..to (inclusive) out of the
+// file at src and inserts them into dst immediately after dst's line after.
+// It copies the lines verbatim, so they are byte-identical at their new home.
+// Both src and dst must already exist on disk, since the helper reads each
+// one before it rewrites it.
+func (f *fixture) moveLinesBetween(src string, from, to int, dst string, after int) {
 	f.t.Helper()
 	srcLines := strings.Split(f.read(src), "\n")
 	cut := slices.Clone(srcLines[from-1 : to])
@@ -106,6 +104,21 @@ func (f *fixture) moveLines(src string, from, to int, dst string, after int) {
 
 	dstLines := strings.Split(f.read(dst), "\n")
 	f.write(dst, strings.Join(slices.Insert(dstLines, after, cut...), "\n"))
+}
+
+// moveLinesWithin cuts the one-based lines from..to (inclusive) out of the
+// file at rel and reinserts them immediately after line after, both given in
+// the file's coordinates before the cut. It copies the lines verbatim, so
+// they are byte-identical at their new home.
+func (f *fixture) moveLinesWithin(rel string, from, to, after int) {
+	f.t.Helper()
+	lines := strings.Split(f.read(rel), "\n")
+	cut := slices.Clone(lines[from-1 : to])
+	lines = slices.Delete(lines, from-1, to)
+	if after > to {
+		after -= to - from + 1
+	}
+	f.write(rel, strings.Join(slices.Insert(lines, after, cut...), "\n"))
 }
 
 // insertBlankLine puts an empty line into the file at rel after the one-based
