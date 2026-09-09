@@ -2207,58 +2207,10 @@ func TestAChangedFileMissingFromTheWorkingTreeCurrentlyStopsTheRunOutsideTheDocu
 	}
 }
 
-func TestUnknownArgumentIsAUsageError(t *testing.T) {
-	f := newFixture(t, "main")
-
-	// A usage error is decided before the gate opens the repo, so the fixture
-	// carries no commit, no source, no report and no extractor config: nothing
-	// about the tree can change the answer.
-	assertUsageError(t, f.runWithArgs("--nope"),
-		"metric-gate: unknown argument '--nope'"+usage)
-}
-
-func TestCoverageFlagWithNoPathIsAUsageError(t *testing.T) {
-	const want = "metric-gate: --coverage needs a path" + usage
-	spellings := map[string][]string{
-		"nothing follows the flag": {"--coverage"},
-		"empty joined value":       {"--coverage="},
-		// An unset shell variable expands to this, and it must not reach the
-		// reader as a report naming nothing.
-		"empty separate value": {"--coverage", ""},
-	}
-	for name, args := range spellings {
-		t.Run(name, func(t *testing.T) {
-			f := newFixture(t, "main")
-
-			assertUsageError(t, f.runWithArgs(args...), want)
-		})
-	}
-}
-
-func TestCoverageFlagGivenAnotherFlagIsAUsageError(t *testing.T) {
-	// A mistyped flag after --coverage would otherwise be swallowed as a report
-	// path and reach the developer as a coverage diagnostic inside a document,
-	// which reads as "the gate ran and your coverage is wrong" rather than
-	// "the command line is wrong". No producer names a report with two leading
-	// dashes, so the flag spelling is the one worth refusing.
-	spellings := map[string][]string{
-		"separate value": {"--coverage", "--nope"},
-		"joined value":   {"--coverage=--nope"},
-	}
-	for name, args := range spellings {
-		t.Run(name, func(t *testing.T) {
-			f := newFixture(t, "main")
-
-			assertUsageError(t, f.runWithArgs(args...),
-				"metric-gate: --coverage needs a path, not the flag '--nope'"+usage)
-		})
-	}
-}
-
 func TestCoverageFlagTakesAValueBeginningWithOneDashAsAPath(t *testing.T) {
-	// The refusal above is the two-dash spelling alone. The gate's own flags
-	// are all long ones, so a single dash names no flag it could be confused
-	// with, and a report really can be written under a name like this.
+	// TestScopeUsageErrors refuses the two-dash spelling alone. The gate's own
+	// flags are all long ones, so a single dash names no flag it could be
+	// confused with, and a report really can be written under a name like this.
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")

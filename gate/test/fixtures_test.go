@@ -789,6 +789,12 @@ func (f *fixture) gitStderr(args ...string) string {
 // comparison a --staged run makes over rel fails. The argv comes from the
 // production builder rather than a copy of it, so the sentence a case pins is
 // the one the gate quotes back even after the flags change.
+//
+// That makes a case using this one pin "the gate quotes git verbatim" and not
+// "the gate asks git the right question": a wrong flag list moves the gate's
+// message and this expectation together. What guards the argv itself is
+// TestStagedRefusesAFileStagedInOneStateAndDirtyInAnother, which turns on the
+// comparison finding a real divergence.
 func (f *fixture) divergenceStderr(rel string) string {
 	f.t.Helper()
 	return f.gitStderr(gitscope.DivergenceArgs([]srcpath.Path{srcpath.Path(rel)})...)

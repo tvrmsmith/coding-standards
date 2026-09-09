@@ -219,6 +219,14 @@ func selectDiff(repo gitscope.Repo, sc scope.Scope) (selection, error) {
 // read. stagedDirty names no file when it could not ask git, and that answer
 // is the one to keep here for the same reason: the extractor's cause is the one
 // the gate did establish.
+//
+// The check spans every routable changed path rather than only the paths
+// extraction failed on, so a dirty staged source file unrelated to the crash
+// still overrides the extractor's cause. extract.Extract fails atomically, so
+// there is no per-path failure set to narrow to. Narrowing further would mean
+// parsing paths out of the extractor's cause text, which the ADR 0006
+// extractor contract does not promise, and the override would then stop
+// firing for every cause that carries no path.
 func dirtyBehindExtraction(repo gitscope.Repo, base gitscope.Base, files []srcpath.Path) *report.Failure {
 	if !base.Staged {
 		return nil

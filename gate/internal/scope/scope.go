@@ -61,18 +61,15 @@ const usage = `usage: metric-gate [--staged | --since <ref> | --files <path>...]
   --files <path>...  every method in each named file
   --coverage <path>  read this report instead of discovering one; repeatable`
 
-// flagName is the human name for a scope flag, used to report a conflict
-// between two of them.
-func flagName(m Mode) string {
-	switch m {
-	case ModeStaged:
-		return "--staged"
-	case ModeSince:
-		return "--since"
-	case ModeFiles:
-		return "--files"
-	}
-	return string(m)
+// flagNames is the human name for each scope flag, used to report a conflict
+// between two of them. ModeMergeBase is absent on purpose: no flag spells it,
+// and a conflict is always between two flags a developer typed. A fifth mode
+// added without an entry here renders as the empty string rather than as a
+// mode name pretending to be a flag.
+var flagNames = map[Mode]string{
+	ModeStaged: "--staged",
+	ModeSince:  "--since",
+	ModeFiles:  "--files",
 }
 
 // Parse reads argv without the program name. Bare argv is ModeMergeBase; any
@@ -127,13 +124,11 @@ func Parse(args []string) (Scope, error) {
 			if sc.Mode != ModeMergeBase {
 				return Scope{}, conflict(ModeFiles, sc.Mode)
 			}
-			files, next, err := slurpFiles(args, i+1)
+			files, err := slurpFiles(args, i+1)
 			if err != nil {
 				return Scope{}, err
 			}
-			// next is the first argument the slurp did not take, and the
-			// loop's own i++ is what lands on it.
-			sc.Mode, sc.Files, i = ModeFiles, files, next-1
+			sc.Mode, sc.Files, i = ModeFiles, files, i+len(files)
 
 		case arg == "--coverage", strings.HasPrefix(arg, "--coverage="):
 			value, joined := strings.CutPrefix(arg, "--coverage=")
@@ -163,28 +158,28 @@ func Parse(args []string) (Scope, error) {
 }
 
 // slurpFiles takes --files' variadic argument list out of args starting at
-// from, and returns it with the index of the first argument it did not take.
+// from. It appends exactly one entry per argument it consumes, so the caller
+// finds the first argument it did not take at from+len(files).
 //
 // The slurp stops at any argument beginning with '-', so `--files a.cs
 // --staged` is caught as two scopes rather than measuring a file named
 // --staged.
-func slurpFiles(args []string, from int) (files []string, next int, err error) {
-	next = from
-	for next < len(args) && !strings.HasPrefix(args[next], "-") {
+func slurpFiles(args []string, from int) ([]string, error) {
+	var files []string
+	for i := from; i < len(args) && !strings.HasPrefix(args[i], "-"); i++ {
 		// An empty argument does not start with '-', so the slurp takes it,
 		// and it names no file. Resolved it is the working directory itself,
 		// so the run would exit 1 saying an empty name is a directory and the
 		// reader would see a message naming nothing.
-		if args[next] == "" {
-			return nil, 0, &UsageError{Problem: "--files was handed an empty path"}
+		if args[i] == "" {
+			return nil, &UsageError{Problem: "--files was handed an empty path"}
 		}
-		files = append(files, args[next])
-		next++
+		files = append(files, args[i])
 	}
 	if len(files) == 0 {
-		return nil, 0, &UsageError{Problem: "--files needs at least one path"}
+		return nil, &UsageError{Problem: "--files needs at least one path"}
 	}
-	return files, next, nil
+	return files, nil
 }
 
 // conflict reports two scope flags named on the same command line, the one
@@ -197,5 +192,5 @@ func conflict(second, first Mode) error {
 	if second == ModeFiles && first == ModeFiles {
 		return &UsageError{Problem: "--files takes every path in one list, as in 'metric-gate --files a.cs b.cs'"}
 	}
-	return &UsageError{Problem: flagName(second) + " and " + flagName(first) + " name two scopes; pass one"}
+	return &UsageError{Problem: flagNames[second] + " and " + flagNames[first] + " name two scopes; pass one"}
 }
