@@ -2796,7 +2796,7 @@ func TestAChangedFileMissingFromTheWorkingTreeCurrentlyStopsTheRunOutsideTheDocu
 	}
 
 	// This is the shape the run has today, not the shape it should have: ADR
-	// 0005 sanctions a documentless exit 1 only for a failure upstream of the
+	// 0008 sanctions a documentless exit 1 only for a failure upstream of the
 	// document, and this one lands after the changed methods are counted. Issue
 	// 31 gives the failure a typed code, and moves it inside the document; this
 	// case goes red the day it does, which is what it is here for.

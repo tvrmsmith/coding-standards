@@ -96,10 +96,10 @@ func (b Base) Label() string { return b.Ref + "@" + b.Commit[:7] }
 // NoBaseError reports that the run has no commit to diff against: none of
 // ADR 0007's candidates resolved, --since named a ref that does not exist, or
 // --staged found no HEAD to diff the index against. The message points at
-// --since, issue 14's flag, per ADR 0007's Consequences, except when the
-// branch has no commit or --since is itself what failed, whether the ref did
-// not resolve or it resolved and shares no history with HEAD. Naming the flag
-// again in any of those tells the caller nothing new.
+// --since, issue 14's flag, per ADR 0007, except when the branch has no commit
+// or --since is itself what failed, whether the ref did not resolve or it
+// resolved and shares no history with HEAD. Naming the flag again in any of
+// those tells the caller nothing new.
 type NoBaseError struct {
 	// Ref is the ref --since named. It is empty when the default candidates
 	// are what failed, and empty whenever NoCommits is true, which every
@@ -325,11 +325,12 @@ func (r Repo) verifyRev(rev string) (string, error) {
 // moved between files being "measured at its new location rather than dropped
 // by `--diff-filter=ACM`".
 //
-// Decomposition alone would break ADR 0007's other sentence, that a file
-// renamed with no content change reports no touched lines, because the add
-// side of a pure `git mv` is the whole file. So an added path whose content,
-// whitespace ignored, is the only match for a path the same diff deleted is
-// dropped afterwards, and only a move that also edited the file is measured.
+// Decomposition alone would leave a pure `git mv` marking every method in the
+// moved file changed, because the add side is the whole file. So ADR 0007 also
+// says "the gate drops an added file whose content matches a deleted one" in
+// the same diff. An added path whose content, whitespace ignored, is the only
+// match for a path the same diff deleted is dropped afterwards, and only a move
+// that also edited the file is measured.
 //
 // Nothing gets out of here untyped. Base resolution has already succeeded, so
 // the document exists and ADR 0008's one-document rule binds: every cause below
