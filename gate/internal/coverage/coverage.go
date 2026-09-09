@@ -1,9 +1,14 @@
 // Package coverage discovers Cobertura reports, or takes the ones the
 // developer named on the command line instead, parses them, and answers which
 // lines of a source file are instrumentable and which of those were hit. A
-// report it cannot trust, one older than the code it describes or one whose
-// own timestamp it cannot read, is refused rather than merged, because
-// coverage silently dropped reaches the score as untested code.
+// report it cannot trust at all, one whose own timestamp it cannot read or
+// one stamped outside the band an honest producer's clock reaches, is refused
+// rather than merged, because coverage silently dropped reaches the score as
+// untested code. A report merely older than the code it describes is refused
+// the same way when a human named it, but one discovery found is instead
+// skipped as a report a fresher run has already superseded, since dotnet test
+// leaves every earlier run's TestResults directory on disk and the developer
+// never asked the gate to weigh it against the fresh one sitting beside it.
 // It resolves report paths by ADR 0004's one rule, and the rule cuts two
 // ways: one path it cannot place inside the repo is a silent ignore, while a
 // report with an erased source root, a class contradicting itself, or no class
@@ -16,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -72,27 +78,33 @@ const (
 )
 
 // staleRemedy closes the stale-report message with the step that clears it.
-// `dotnet test` leaves every previous run's TestResults directory on disk, so
-// a discovered report the gate refused is most often one the developer has
-// already replaced and does not know is still there. Clearing that directory
-// does nothing for a report they named themselves, which nothing but a fresh
-// run over that same path replaces. A Source carrying no Origin closes the
-// message with nothing at all: the reader still learns which report was refused
-// and why, which is the part the gate knows, and a remedy it cannot determine
-// is worse guessed than omitted. Refusing loudly instead is not available here
-// either, since an unrecovered panic exits 2 and ADR 0005 spends that code on
-// "threshold exceeded", so the one unreachable arm would tell CI the code
-// failed the gate.
+// Only a named report reaches here. A stale discovered one is skipped into
+// skipped_paths and never refuses on its own, so the arm that once answered for
+// it was dead code claiming a path the caller cannot take. What a named report
+// needs is a fresh run over that same path, which nothing else replaces. A
+// Source carrying no Origin closes the message with nothing at all. The reader
+// still learns which report was refused and why, which is the part the gate
+// knows, and a remedy it cannot determine is worse guessed than omitted.
+// Refusing loudly instead is not available here either, since an unrecovered
+// panic exits 2 and ADR 0005 spends that code on "threshold exceeded", so the
+// one unreachable arm would tell CI the code failed the gate.
 func (s Source) staleRemedy() string {
 	switch s.Origin {
 	case NamedOnCommandLine:
 		return "; regenerate " + s.Name + " or point --coverage at a current report"
-	case Discovered:
-		return "; clear stale TestResults directories and re-run the tests"
 	default:
 		return ""
 	}
 }
+
+// discoveredStaleRemedy is the step that clears a stale discovered report. It
+// has one consumer, allSupersededFailure below, which runs when every
+// discovered report was superseded and has only Names left by then, no Source
+// to ask. It stays a named constant rather than a literal in that message
+// because `dotnet test` leaves every previous run's TestResults directory on
+// disk, and the wording of that clearing step is the part of the message most
+// likely to be reworded.
+const discoveredStaleRemedy = "; clear stale TestResults directories and re-run the tests"
 
 // Newest is the freshest edit among the files that contributed a changed
 // method, which is what a report has to be at least as new as.
@@ -249,44 +261,143 @@ func underResultsDir(rel string) bool {
 	return false
 }
 
+// clockSkewTolerance is how far ahead of the gate's own clock an instant may
+// sit before the gate stops believing it, and toleranceLabel is how every
+// refusal quoting the window spells it. The two are retuned together, and the
+// label is written out rather than rendered from the constant because Go
+// spells this duration "24h0m0s" and trimming that back to "24h" is only
+// correct while the window is whole hours.
+//
+// An unsynchronised CI agent or a machine resumed from a suspended VM drifts
+// by hours, not days, so a day of slack still lets an honest producer's report
+// through. A producer that writes the timestamp attribute in epoch
+// milliseconds rather than seconds, coverage.py's Cobertura writer among
+// several Java ones, lands the parsed instant tens of thousands of years in
+// the future, which this window separates from an honest clock by an enormous
+// margin. The rule exists at all because without it, at.Before(newest.At) can
+// never be true for a timestamp that far out, so the staleness comparison
+// silently stops running and the report merges as though it had passed.
+const (
+	clockSkewTolerance = 24 * time.Hour
+	toleranceLabel     = "24h"
+)
+
+// farAheadOfNow reports whether at sits further ahead of now than the gate
+// tolerates, and farAheadOfNowClause is the fragment every refusal for it
+// closes with. They stay together so a retune of the window cannot leave a
+// refusal quoting the old one.
+func farAheadOfNow(at, now time.Time) bool {
+	return at.After(now.Add(clockSkewTolerance))
+}
+
+const farAheadOfNowClause = "more than " + toleranceLabel + " ahead of now"
+
+// earliestPlausibleStamp is the oldest instant a report may claim to have been
+// written at, 2000-01-01T00:00:00Z. No Cobertura producer predates it: the
+// format's own tooling is younger than that, and any checkout the gate scores
+// was tested by a run that happened after it. What lands below it is the same
+// units fault the tolerance catches from the other side, a producer writing
+// seconds since boot or since process start, or a zeroed or negative attribute
+// where the writer had no clock to read. Leaving the floor off was rejected
+// because such a stamp parses, holds, and sorts before every edit, so a
+// discovered report carrying one is skipped as superseded and its coverage
+// silently leaves the score, which is what the upper bound exists to prevent.
+const earliestPlausibleStamp = 946684800
+
 // Load reads every source in order and unions them into one set: a line is
 // instrumentable when any report lists it, and covered when any report
-// records a non-zero hit. Before a report merges, it has to read, unmarshal,
-// carry a timestamp, and be no older than newest.At; failing any of those
-// stops the run rather than dropping the report, because a stale report
-// silently dropped is exactly the untested code the rule exists to catch.
+// records a non-zero hit. now is a parameter rather than a call to time.Now()
+// here, so one run judges every report it loads against one instant rather
+// than against the clock as it advances through the loop, and a reader of this
+// signature sees which instant that is; a package-level clock would hide both.
+//
+// Before a report merges, it has to read, unmarshal, carry a readable
+// timestamp inside the plausible band, from earliestPlausibleStamp to
+// clockSkewTolerance ahead of now, and be no older than newest.At. Failing to
+// read, unmarshal or carry a readable timestamp stops the run rather than
+// dropping the report, because a bad report silently dropped is exactly the
+// untested code the staleness rule exists to catch. A timestamp outside the
+// band stops the run the same way whichever Origin the source carries and
+// whichever side it falls out on, since a report the gate cannot trust is not
+// one a fresher run superseded.
+//
+// A report merely older than newest.At is judged by Origin instead. One a
+// human named on --coverage still refuses the run: they chose it, and
+// clearing a TestResults directory produces nothing new in its place. One
+// Discovered is skipped rather than refused, its Name appended to the
+// returned []string, and it contributes no line, not even transiently,
+// because dotnet test leaves every earlier run's TestResults directory on
+// disk and a fresh report sitting beside it should not fail the run over a
+// leftover. A run where every source was skipped that way still refuses,
+// naming every one of them, since skipping all of them would otherwise pass
+// silently with nothing scored at all.
+//
+// A failure returns no skipped names, not even ones the loop had already
+// collected before it hit the failure. The run exits 1 with nothing scored, so
+// there is no understated coverage for a skipped name to explain, and the
+// document names the fault that stopped the run instead. Returning them
+// alongside was rejected for that: it would list a superseded report beside an
+// unrelated coverage_unparseable as though the two were both why the score is
+// short, when there is no score.
+//
 // An empty newest.At (the zero time) can never trip the staleness rule.
-func Load(root srcpath.Root, sources []Source, newest Newest) (Set, error) {
+func Load(root srcpath.Root, sources []Source, newest Newest, now time.Time) (Set, []string, error) {
 	set := Set{}
+	var skipped []string
 	for _, source := range sources {
 		parsed, err := parseReport(source.Abs)
 		if err != nil {
-			return nil, &report.Failure{
+			return nil, nil, &report.Failure{
 				Code:    report.CodeCoverageUnparseable,
 				Message: fmt.Sprintf("could not parse coverage report %s; %s", source.Name, parseCause(err)),
 			}
 		}
-		at, err := parsed.timestamp()
+		at, err := parsed.instant(now)
 		if err != nil {
-			return nil, &report.Failure{
+			return nil, nil, &report.Failure{
 				Code:    report.CodeCoverageUnparseable,
 				Message: "coverage report " + source.Name + " " + err.Error(),
 			}
 		}
-		// Staleness is checked before the merge, not after it, so a refused
-		// report never contributes a line even transiently.
+		// Staleness is checked before the merge, not after it, so a refused or
+		// skipped report never contributes a line even transiently.
 		if at.Before(newest.At) {
-			return nil, &report.Failure{
+			if source.Origin == Discovered {
+				skipped = append(skipped, source.Name)
+				continue
+			}
+			return nil, nil, &report.Failure{
 				Code: report.CodeCoverageStale,
 				Message: "coverage report " + source.Name + " was written before " +
 					newest.File.String() + " was last edited" + source.staleRemedy(),
 			}
 		}
 		if err := parsed.mergeInto(set, root, source.Name); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return set, nil
+	if len(skipped) > 0 && len(skipped) == len(sources) {
+		return nil, nil, allSupersededFailure(skipped, newest)
+	}
+	return set, skipped, nil
+}
+
+// allSupersededFailure refuses the run when every source Load saw was a
+// Discovered report skipped as superseded, leaving nothing to score. It closes
+// with discoveredStaleRemedy directly rather than calling Source.staleRemedy,
+// because every name it is given reached the skipped list through that one
+// origin and by the time the loop ends the Source itself is gone, only its
+// Name kept.
+func allSupersededFailure(skipped []string, newest Newest) *report.Failure {
+	noun, verb := "report", "was"
+	if len(skipped) > 1 {
+		noun, verb = "reports", "were"
+	}
+	return &report.Failure{
+		Code: report.CodeCoverageStale,
+		Message: fmt.Sprintf("coverage %s %s %s written before %s was last edited%s",
+			noun, joinNames(skipped), verb, newest.File.String(), discoveredStaleRemedy),
+	}
 }
 
 // coberturaReport is the subset of the Cobertura schema the gate reads. Only
@@ -299,27 +410,60 @@ type coberturaReport struct {
 	Classes   []coberturaClass `xml:"packages>package>classes>class"`
 }
 
-// timestamp reads the report's own clock, which is what the staleness rule
-// judges rather than any timestamp of the file on disk. The error is the
-// reason the rule cannot run, worded for the refusal message and split by
-// shape because the two shapes need different fixes: an attribute that is
-// absent has to be written, while any value ParseInt cannot read as base-10
-// seconds, another representation of an instant or plain garbage alike, is
-// already there and is a value to rewrite rather than one to add. The
-// offending value is quoted so the developer
-// sees what the gate read rather than what they meant. Resolving the verdict
-// and its reason in one place is what stops a further rejection shape from
-// refusing under one wording and explaining itself with another.
-func (r coberturaReport) timestamp() (time.Time, error) {
+// instant reads the report's own clock, which is what the staleness rule
+// judges rather than any timestamp of the file on disk, and answers only for a
+// stamp the gate is willing to trust: readable, no further ahead of now than
+// clockSkewTolerance, and no older than earliestPlausibleStamp. Every rejection
+// shape resolves here, both the verdict and the sentence explaining it, so a
+// further shape cannot refuse under one wording and explain itself with
+// another, and the caller never reads Timestamp back to word its own. The
+// error is the reason the staleness rule cannot run, worded for the refusal
+// message with the offending value quoted so the developer sees what the gate
+// read rather than what they meant, and split by shape because the shapes need
+// different fixes: an attribute that is absent has to be written, while any
+// value ParseInt cannot read as base-10 seconds, another representation of an
+// instant or plain garbage alike, is already there and is a value to rewrite
+// rather than one to add. A value ParseInt reads but time.Unix cannot hold
+// shares that wording, since it is the same fix, the attribute in front of the
+// developer is not epoch seconds. A stamp outside the plausible band names the
+// end it fell out of, since a clock a day behind the producer's and a stamp
+// from before the format existed are not the same fault.
+func (r coberturaReport) instant(now time.Time) (time.Time, error) {
 	if r.Timestamp == "" {
 		return time.Time{}, errors.New("carries no timestamp, so it cannot be judged against the code it describes")
 	}
 	seconds, err := strconv.ParseInt(r.Timestamp, 10, 64)
-	if err != nil {
+	if err != nil || seconds > maxEpochSeconds {
 		return time.Time{}, fmt.Errorf("carries an unreadable timestamp %q; it must be epoch seconds", r.Timestamp)
 	}
-	return time.Unix(seconds, 0), nil
+	at := time.Unix(seconds, 0)
+	if farAheadOfNow(at, now) {
+		return time.Time{}, fmt.Errorf("carries a timestamp %q %s; it must be epoch seconds, or the clock on this machine is behind the one that wrote it",
+			r.Timestamp, farAheadOfNowClause)
+	}
+	if seconds < earliestPlausibleStamp {
+		return time.Time{}, fmt.Errorf("carries a timestamp %q from before %s; it must be epoch seconds",
+			r.Timestamp, time.Unix(earliestPlausibleStamp, 0).UTC().Format(time.RFC3339))
+	}
+	return at, nil
 }
+
+// The highest stamp time.Unix can hold without the internal seconds field it
+// builds wrapping. Go stores the value offset by the seconds between year 1 and
+// 1970, so a stamp within a few tens of billions of MaxInt64 wraps into the
+// distant past, and a report carrying one would then be judged older than the
+// code and skipped as superseded rather than refused, which is exactly the
+// untrustworthy stamp the tolerance rule above exists to refuse. Only that end
+// wraps. Adding a positive offset to a stamp near MinInt64 cannot underflow,
+// and the instant it names lands below earliestPlausibleStamp, which refuses it
+// there with the message that fits it. No real producer reaches either end,
+// since epoch milliseconds and even nanoseconds stay far inside the band, so
+// this is the guard against a hand-written or corrupted value rather than
+// against a units bug.
+const (
+	secondsFromYearOneToEpoch = (1969*365 + 1969/4 - 1969/100 + 1969/400) * 24 * 60 * 60
+	maxEpochSeconds           = math.MaxInt64 - secondsFromYearOneToEpoch
+)
 
 type coberturaClass struct {
 	Filename string          `xml:"filename,attr"`
@@ -408,7 +552,7 @@ func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath string
 				Code: report.CodeFileAmbiguous,
 				Message: fmt.Sprintf(
 					"class %s in coverage report %s resolved to more than one path inside the repo root, %s",
-					class.Filename, reportPath, joinPaths(distinct)),
+					class.Filename, reportPath, joinNames(distinct)),
 			}
 		}
 		if len(distinct) == 0 {
@@ -447,14 +591,30 @@ func (s Set) union(other Set) {
 	}
 }
 
-// joinPaths renders the paths one diagnostic quotes as a readable list, so a
+// joinNames renders the names one diagnostic quotes as a readable list, so a
 // class contradicting itself three ways names all three rather than the first
-// two. Its one caller reaches it only for a class that resolved to more than
-// one path, so it takes at least two.
-func joinPaths(paths []srcpath.Path) string {
-	rendered := make([]string, 0, len(paths))
-	for _, path := range paths {
-		rendered = append(rendered, path.String())
+// two. It is generic over any ~string rather than srcpath.Path alone, so the
+// same rendering serves a file_ambiguous diagnostic and the all-superseded
+// coverage_stale one, which names []string report names that have no
+// srcpath.Path of their own, some of them (a report named on --coverage) not
+// even inside the repo. It is "names" rather than "paths" for exactly that:
+// what it joins is how the document names a thing, which is not always a path.
+// A single element returns alone rather than joining against nothing, which
+// the file_ambiguous caller never needs, since a class resolving to one path
+// is not ambiguous, but the coverage_stale caller does. Empty returns the
+// empty string rather than indexing off the end of the slice; no caller passes
+// it today, both being guarded, and a diagnostic quoting nothing is a worse
+// fault to hand a developer than a panic is to debug.
+func joinNames[T ~string](names []T) string {
+	if len(names) == 0 {
+		return ""
+	}
+	if len(names) == 1 {
+		return string(names[0])
+	}
+	rendered := make([]string, 0, len(names))
+	for _, name := range names {
+		rendered = append(rendered, string(name))
 	}
 	return strings.Join(rendered[:len(rendered)-1], ", ") + " and " + rendered[len(rendered)-1]
 }
