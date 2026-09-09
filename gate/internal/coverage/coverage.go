@@ -283,18 +283,15 @@ const (
 	toleranceLabel     = "24h"
 )
 
-// FarAheadOfNow reports whether at sits further ahead of now than the gate
-// tolerates, and FarAheadOfNowClause is the fragment every refusal for it
-// closes with. Both are exported because the staleness comparison has two
-// sides and the command owns the other one: it stats a changed file's mtime
-// before this package ever sees a report. Exporting the window itself was
-// rejected, since the caller would then rebuild the predicate and the clause
-// by hand and a retune here would have to be matched there.
-func FarAheadOfNow(at, now time.Time) bool {
+// farAheadOfNow reports whether at sits further ahead of now than the gate
+// tolerates, and farAheadOfNowClause is the fragment every refusal for it
+// closes with. They stay together so a retune of the window cannot leave a
+// refusal quoting the old one.
+func farAheadOfNow(at, now time.Time) bool {
 	return at.After(now.Add(clockSkewTolerance))
 }
 
-const FarAheadOfNowClause = "more than " + toleranceLabel + " ahead of now"
+const farAheadOfNowClause = "more than " + toleranceLabel + " ahead of now"
 
 // earliestPlausibleStamp is the oldest instant a report may claim to have been
 // written at, 2000-01-01T00:00:00Z. No Cobertura producer predates it: the
@@ -363,11 +360,11 @@ func Load(root srcpath.Root, sources []Source, newest Newest, now time.Time) (Se
 				Message: "coverage report " + source.Name + " " + err.Error(),
 			}
 		}
-		if FarAheadOfNow(at, now) {
+		if farAheadOfNow(at, now) {
 			return nil, nil, &report.Failure{
 				Code: report.CodeCoverageUnparseable,
 				Message: fmt.Sprintf("coverage report %s carries a timestamp %q %s; it must be epoch seconds, or the clock on this machine is behind the one that wrote it",
-					source.Name, parsed.Timestamp, FarAheadOfNowClause),
+					source.Name, parsed.Timestamp, farAheadOfNowClause),
 			}
 		}
 		if at.Unix() < earliestPlausibleStamp {

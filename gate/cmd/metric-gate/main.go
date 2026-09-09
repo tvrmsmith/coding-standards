@@ -334,16 +334,26 @@ func dirtyMessage(dirty []srcpath.Path) string {
 // skipped list of its own too, since a named report is the one Source.Origin
 // coverage.Load never skips as superseded. The newest edit is computed here,
 // behind the declared-input guard, so a metric asking for no coverage pays no
-// stat for one. The clock is read once here and passed down, so both sides of
-// the staleness comparison, a source file's mtime and a report's own stamp,
-// are judged against the same instant rather than against a clock that
-// advanced between them.
+// stat for one. The clock is read once here and passed down, so every report
+// in a run is judged against the same instant rather than against a clock that
+// advanced between them, which would let two reports stamped alike land on
+// opposite sides of the tolerance.
+//
+// A Load failure returns no skipped paths, discovery's own included. Nothing
+// was scored, so no skipped path explains a short score, and listing a
+// directory the walk could not enter beside an unrelated coverage_unparseable
+// reads as though both were why. That is the rule coverage.Load already
+// applies to the names it collects itself, and applying it to only one of the
+// two producers would put the same field under two rules on one path. The
+// missing-report failure above is the one exception, and it earns it: there
+// the unreadable paths are candidate reports, so they are the likeliest
+// explanation for finding none.
 func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (coverage.Set, []string, error) {
 	if !slices.Contains(crap.DeclaredInputs, inputCoverage) {
 		return nil, nil, nil
 	}
 	now := time.Now()
-	newest, err := newestEdit(root, changed, now)
+	newest, err := newestEdit(root, changed)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -367,6 +377,9 @@ func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (co
 		}
 	}
 	set, superseded, err := coverage.Load(root, sources, newest, now)
+	if err != nil {
+		return nil, nil, err
+	}
 	// discovery's own skips and Load's superseded skips are two different
 	// reasons a path is missing from the score, a walk that could not read a
 	// directory and a report a fresher run replaced, but skipped_paths does
@@ -374,7 +387,7 @@ func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (co
 	// two fields the document would have to carry separately.
 	skipped = append(skipped, superseded...)
 	slices.Sort(skipped)
-	return set, skipped, err
+	return set, skipped, nil
 }
 
 // newestEdit stats the working-tree file of every distinct span file among
@@ -383,22 +396,7 @@ func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (co
 // resolves to the lexicographically smallest path, and keeping the first file
 // seen is enough for that because join.Changed returns its spans in ascending
 // file order, which its doc comment promises and its own test holds it to.
-//
-// A file modified far enough ahead of now to fail coverage.FarAheadOfNow
-// stops the run here, naming that file and its own modification time. The
-// comparison coverage.Load runs has two sides and a bad clock, a restored
-// archive or a resumed VM moves this one: with newest.At in the future no
-// report can be fresh enough, so the run would otherwise die with
-// coverage_stale telling the developer to clear TestResults directories, which
-// will never fix it. It is the same window the report side is judged by, asked
-// of coverage rather than rebuilt here, so retuning the window or rewording
-// the clause cannot leave the two sides disagreeing. The window is all this
-// guard covers: skew inside it still moves newest.At ahead of every report and
-// still reaches the misleading remedy, which is the pre-existing behaviour
-// this narrows rather than removes. A report code was rejected for the
-// refusal: nothing is wrong with any report, and naming one would send the
-// developer to regenerate a file that is already current.
-func newestEdit(root srcpath.Root, changed []extract.Span, now time.Time) (coverage.Newest, error) {
+func newestEdit(root srcpath.Root, changed []extract.Span) (coverage.Newest, error) {
 	var newest coverage.Newest
 	seen := map[srcpath.Path]bool{}
 	for _, span := range changed {
@@ -411,13 +409,6 @@ func newestEdit(root srcpath.Root, changed []extract.Span, now time.Time) (cover
 			return coverage.Newest{}, fmt.Errorf("stat %s: %w", span.File, err)
 		}
 		at := info.ModTime().Truncate(time.Second)
-		if coverage.FarAheadOfNow(at, now) {
-			return coverage.Newest{}, &report.Failure{
-				Code: report.CodeSourceMtimeInFuture,
-				Message: fmt.Sprintf("%s was last modified %s, %s; correct the clock on this machine or restore the file's modification time",
-					span.File, at.UTC().Format(time.RFC3339), coverage.FarAheadOfNowClause),
-			}
-		}
 		if newest.File == "" || at.After(newest.At) {
 			newest = coverage.Newest{File: span.File, At: at}
 		}
