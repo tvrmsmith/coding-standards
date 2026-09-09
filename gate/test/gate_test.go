@@ -3334,7 +3334,13 @@ func TestRemoteMainWithUnrelatedHistoryFallsThroughToLocalMain(t *testing.T) {
 	f.addOrigin("main")
 	f.pushOrphanHistoryToOrigin("main")
 	// No setOriginHead: origin/HEAD is absent, so the walk reaches origin/main
-	// first.
+	// first. Asserted rather than assumed, because an origin/HEAD pointing at
+	// the same orphan commit would make the walk skip both rungs and still
+	// land on local main, leaving the case green while pinning a rung it does
+	// not name.
+	if head := f.git("for-each-ref", "--format=%(refname)", "refs/remotes/origin/HEAD"); head != "" {
+		t.Fatalf("refs/remotes/origin/HEAD exists (%s), so the case no longer reaches the origin/main rung", head)
+	}
 	f.touchLine(orderService, 62)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
