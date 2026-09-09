@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using AwesomeAssertions;
 using Xunit;
 
@@ -38,6 +39,26 @@ public class CustomRuleViolations
         var body = new ApiResponse<Page> { StatusCode = 200, Result = new Page { Number = 2 } };
 
         ((object)body).Should().BeEquivalentTo(new { StatusCode = 200 });
+    }
+
+    // TVRM0004 no-assertion-without-matcher.
+    [Fact]
+    public void AssertionWithNoMatcherAfterIt()
+    {
+        var page = new Page { Number = 2 };
+
+        page.Number.Should();
+    }
+
+    // TVRM0005 no-dropped-async-assertion. Synchronous body on purpose: inside an async method
+    // CS4014 would report it, and CS4014 is not on the WarningsNotAsErrors allowlist, so the
+    // TreatWarningsAsErrors section below would fail the build for a reason unrelated to delivery.
+    [Fact]
+    public void AsyncAssertionNobodyAwaits()
+    {
+        Func<Task> act = () => Task.FromException(new InvalidOperationException());
+
+        act.Should().ThrowAsync<InvalidOperationException>();
     }
 }
 

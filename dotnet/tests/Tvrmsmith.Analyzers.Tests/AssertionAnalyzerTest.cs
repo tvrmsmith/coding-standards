@@ -23,7 +23,7 @@ internal static class Expect
 /// consuming repo is expected to pin.
 /// </summary>
 /// <remarks>
-/// Binding against the real package rather than a stub is the point. All three analyzers gate on
+/// Binding against the real package rather than a stub is the point. Every analyzer here gates on
 /// <c>Should()</c> resolving to an extension method returning an <c>*Assertions</c> type, so a
 /// hand-rolled stub could make a test pass against a shape that never occurs.
 /// </remarks>
@@ -113,6 +113,7 @@ internal static class AssertionAnalyzerTest<TAnalyzer>
         #nullable enable
         using System;
         using System.Collections.Generic;
+        using System.Threading.Tasks;
         using AwesomeAssertions;
         using AwesomeAssertions.Execution;
         using Fixtures;

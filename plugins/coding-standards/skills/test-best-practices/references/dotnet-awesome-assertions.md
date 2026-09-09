@@ -102,7 +102,7 @@ using (new AssertionScope())
 
 Without the scope, only the first failure is reported and subsequent assertions are never evaluated.
 
-## Null Safety in Assertions
+## Null Safety in Assertions (custom rule)
 
 Never use `!` (null-forgiving) to dereference a potentially null value before asserting. Never use `?.` — it silently skips the assertion chain if the value is null, causing a false pass.
 
@@ -119,6 +119,34 @@ response.Headers.Location.Should().Be(
 ```
 
 Note: `Client.BaseAddress!` is acceptable because `BaseAddress` is set during test setup and is a precondition, not the value under test. This guideline is about the receiver chain feeding `.Should()`.
+
+## Assertions Must Actually Execute (custom rule)
+
+Two of the three shapes are analyzers here. The third is a review call.
+
+```csharp
+// BAD — TVRM0004. Builds an assertions object, compares nothing, test passes.
+result.Name.Should();
+
+// BAD — TVRM0005. Returns a Task nobody awaits, so the test ends before the assertion resolves.
+public void Rejects() => act.Should().ThrowAsync<InvalidOperationException>();
+
+// GOOD
+result.Name.Should().Be("Alice");
+public async Task Rejects() => await act.Should().ThrowAsync<InvalidOperationException>();
+```
+
+Inside an `async` method the compiler's CS4014 already reports the dropped Task, so TVRM0005
+stays quiet there and covers only the synchronous body CS4014 cannot see.
+
+The third shape, an assertion inside an `if` or a `catch`, is **[review-only]** in C#, though
+`jest/no-conditional-expect` enforces it on the TypeScript side. Measured against a large C# test
+suite it is common and mostly legitimate: both branches asserting, a deliberate
+failure reporter whose subject is the value the condition tested, and the parameterized-test
+pattern that asserts unconditionally and then refines by case. What to look for in review is the
+one that is none of those, a branch the test can skip entirely and still pass. Decide the expected
+value before the assertion and assert unconditionally. To assert that something threw, assert on
+the throwing call rather than inside a `catch`.
 
 ## Audit Trail Pattern
 

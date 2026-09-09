@@ -6,7 +6,7 @@
 # AwesomeAssertions.Analyzers and has Central Package Management on:
 #
 #   baseline  no CustomAfterMicrosoftCommonProps  -> zero FAA and zero TVRM diagnostics
-#   injected  with it                             -> FAA0001, FAA0002, TVRM0001-0003 as *warnings*
+#   injected  with it                             -> every id in injected_ids as a *warning*
 #
 # For the FAA ids the severity is the load-bearing part: both ship as Info, which never surfaces
 # in a build, so "warning FAA0001" can only mean the .globalconfig was applied and not merely
@@ -26,6 +26,10 @@ workdir="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$workdir"' EXIT
 
 fail() { printf '\nFAIL: %s\n' "$1" >&2; exit 1; }
+
+# The ids tests/Consumer is written to violate, asserted identically by all three delivery
+# sections below. One list, so adding a rule cannot be half-wired into the verification.
+injected_ids=(FAA0001 FAA0002 TVRM0001 TVRM0002 TVRM0003 TVRM0004 TVRM0005)
 
 # Single source of truth for the assertion-library version lives in Directory.Build.props.
 aa_version="$(sed -n 's/.*<AwesomeAssertionsVersion>\(.*\)<\/AwesomeAssertionsVersion>.*/\1/p' \
@@ -84,7 +88,7 @@ echo "==> Injected build (CustomAfterMicrosoftCommonProps)"
 rm -rf "$dotnet_root/tests/Consumer/obj" "$dotnet_root/tests/Consumer/bin"
 injected="$(CustomAfterMicrosoftCommonProps="$workdir/personal.props" build_consumer)"
 
-for id in FAA0001 FAA0002 TVRM0001 TVRM0002 TVRM0003; do
+for id in "${injected_ids[@]}"; do
   grep -q "warning $id" <<<"$injected" \
     || fail "expected '$id' at severity warning; got: $(grep -oE "(warning|info|error) $id" <<<"$injected" | sort -u | tr '\n' ' ')"
   echo "    $id: warning"
@@ -148,7 +152,7 @@ build_twae() {
 }
 
 twae_clean="$(build_twae)"
-for id in FAA0001 FAA0002 TVRM0001 TVRM0002 TVRM0003; do
+for id in "${injected_ids[@]}"; do
   grep -q "warning $id" <<<"$twae_clean" \
     || fail "TreatWarningsAsErrors: expected '$id' at severity warning; got: $(grep -oE "(warning|error) $id" <<<"$twae_clean" | sort -u | tr '\n' ' ')"
 done
@@ -156,7 +160,7 @@ grep -qE 'error (FAA|TVRM)[0-9]{4}' <<<"$twae_clean" \
   && fail "TreatWarningsAsErrors: an injected diagnostic became an error — WarningsNotAsErrors did not apply"
 grep -q 'Build succeeded' <<<"$twae_clean" \
   || fail "TreatWarningsAsErrors: injection broke a build that has no errors of its own"
-echo "    5 injected diagnostics stayed warnings, build succeeded"
+echo "    ${#injected_ids[@]} injected diagnostics stayed warnings, build succeeded"
 
 # The allowlist half. CS0219 (assigned but never used) is an ordinary warning the target repo
 # would fail on today; it must keep failing with the injection in place, or WarningsNotAsErrors
@@ -232,7 +236,7 @@ cat > "$pkgconsumer/PkgConsumer.csproj" <<EOF
 EOF
 
 packaged="$(dotnet build "$pkgconsumer/PkgConsumer.csproj" -c Debug --nologo --no-incremental "$scope_off" -v normal 2>&1 || true)"
-for id in FAA0001 FAA0002 TVRM0001 TVRM0002 TVRM0003; do
+for id in "${injected_ids[@]}"; do
   grep -q "warning $id" <<<"$packaged" \
     || fail "packaged consumption: expected '$id' at severity warning; got: $(grep -oE "(warning|info|error) $id" <<<"$packaged" | sort -u | tr '\n' ' ')"
   echo "    $id: warning"
@@ -312,4 +316,4 @@ grep -q 'warning FAA0001' <<<"$both" \
   || fail "TvrmsmithAnalyzersScopeToChanged=false did not restore the unmodified file's diagnostics"
 echo "    scoping off: the unmodified file reports again"
 
-printf '\nPASS: curated severities and the three custom analyzers apply through both the bare-DLL path and the nupkg, scoped to changed files.\n'
+printf '\nPASS: curated severities and every custom analyzer apply through both the bare-DLL path and the nupkg, scoped to changed files.\n'

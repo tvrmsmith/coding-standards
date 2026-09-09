@@ -24,4 +24,16 @@ public static class DiagnosticIds
     /// assertions type, e.g. <c>((object)x).Should()</c>.
     /// </summary>
     public const string NoAssertionEscapeCast = "TVRM0003";
+
+    /// <summary>
+    /// <c>no-assertion-without-matcher</c> — <c>x.Should();</c> as a whole statement. It builds
+    /// an assertions object, checks nothing, and leaves the suite green.
+    /// </summary>
+    public const string NoAssertionWithoutMatcher = "TVRM0004";
+
+    /// <summary>
+    /// <c>no-dropped-async-assertion</c> — an assertion whose Task nobody awaits, in a context
+    /// where the compiler's CS4014 cannot see it.
+    /// </summary>
+    public const string NoDroppedAsyncAssertion = "TVRM0005";
 }

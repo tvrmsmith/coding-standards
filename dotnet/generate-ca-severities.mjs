@@ -35,7 +35,17 @@ const props = join(dotnetRoot, 'src/Tvrmsmith.Analyzers/local/Tvrmsmith.Analyzer
 const scope = join(dotnetRoot, 'src/Tvrmsmith.Analyzers/local/tvrmsmith-scope-changed.sh')
 
 /** Ids this package owns, plus the four that exist only because we injected at all. */
-const ours = ['TVRM0001', 'TVRM0002', 'TVRM0003', 'FAA0001', 'FAA0002', 'FAA0003', 'FAA0004']
+const ours = [
+  'TVRM0001',
+  'TVRM0002',
+  'TVRM0003',
+  'TVRM0004',
+  'TVRM0005',
+  'FAA0001',
+  'FAA0002',
+  'FAA0003',
+  'FAA0004',
+]
 const injectionArtifacts = ['AD0001', 'CS8032', 'CS8034', 'CS9057']
 
 /**
