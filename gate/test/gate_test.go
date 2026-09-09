@@ -3712,9 +3712,9 @@ func TestRunOutsideAGitRepoWritesNoDocumentAndExitsOne(t *testing.T) {
 	// 0008 carves one case out of its one-TOON-document rule, a malformed
 	// command line, and running outside a git repo is not that one, so the empty
 	// stdout below is a known deviation this case pins rather than a rule 0008
-	// grants. The failure does land upstream of the document, with no base and
-	// no scope to report. git's own
-	// explanation is in git's own language, but the failing argv is not, and
+	// grants. The failure does land upstream of the document, before a base is
+	// resolved. git's own explanation is in git's own language, but the failing
+	// argv is not, and
 	// gitError.Error carries it, so naming the invocation that failed keeps the
 	// case specific without pinning it to English. A panic or an unrelated
 	// wrapped error would satisfy "exit 1 with something on stderr" and must not
