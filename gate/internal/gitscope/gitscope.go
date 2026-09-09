@@ -405,10 +405,7 @@ func DivergenceArgs(paths []srcpath.Path) []string {
 // refused rather than read as a path that happens to hold a tab.
 func parseNumstatPaths(out string) (map[srcpath.Path]bool, error) {
 	named := map[srcpath.Path]bool{}
-	for _, record := range strings.Split(strings.TrimSuffix(out, "\x00"), "\x00") {
-		if record == "" {
-			continue
-		}
+	for _, record := range nulRecords(out) {
 		fields := strings.SplitN(record, "\t", 3)
 		if len(fields) != 3 {
 			return nil, &report.Failure{
@@ -455,14 +452,22 @@ func (r Repo) filterDrivers() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var keys []string
-	for _, key := range strings.Split(strings.TrimSuffix(out, "\x00"), "\x00") {
-		if key == "" {
-			continue
+	return nulRecords(out), nil
+}
+
+// nulRecords splits the output of a `-z` git command into its records. Every
+// reader in this package goes through it, so a reader added later cannot
+// forget that a NUL-terminated stream ends in a trailing empty field and pick
+// up a phantom record. No git record any of these parsers accepts is empty, so
+// an empty one is dropped wherever it appears rather than only at the end.
+func nulRecords(out string) []string {
+	var records []string
+	for _, record := range strings.Split(out, "\x00") {
+		if record != "" {
+			records = append(records, record)
 		}
-		keys = append(keys, key)
 	}
-	return keys, nil
+	return records
 }
 
 // blankingEnv sets each key to the empty string through the GIT_CONFIG_COUNT
@@ -622,10 +627,7 @@ const gitlinkMode = "160000"
 // it deleted. A record is the metadata field ":<mode> <mode> <src> <dst>
 // <status>" followed by the path, both NUL-terminated.
 func parseRawAddsAndDeletes(raw string) (added []addedFile, deleted []string, err error) {
-	records := strings.Split(strings.TrimSuffix(raw, "\x00"), "\x00")
-	if len(records) == 1 && records[0] == "" {
-		return nil, nil, nil
-	}
+	records := nulRecords(raw)
 	if len(records)%2 != 0 {
 		return nil, nil, fmt.Errorf("git diff --raw emitted %d fields, want pairs", len(records))
 	}
