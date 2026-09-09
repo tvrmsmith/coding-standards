@@ -104,6 +104,39 @@ func Extract(root srcpath.Root, changed []srcpath.Path) (Result, error) {
 	return result, nil
 }
 
+// Routable lists which of changed the language table could hand to an
+// extractor, in the order it was given them.
+//
+// A caller only needs this after extraction failed. Result.Claimed is the
+// authority while a run succeeds, but a failed run claims nothing, and a caller
+// that has to say something about the files extraction was working on would
+// otherwise fall back to every path in the diff and name a Markdown file no
+// extractor would ever have read. That answer has to be the one worthRunning
+// gives, so both ask routes, and the order the languages are checked in does
+// not matter to an existence question.
+func Routable(changed []srcpath.Path) []srcpath.Path {
+	var routable []srcpath.Path
+	for _, path := range changed {
+		for _, lang := range languages {
+			if routes(lang, path) {
+				routable = append(routable, path)
+				break
+			}
+		}
+	}
+	return routable
+}
+
+// routes reports whether lang's table entry lists path's extension. It folds
+// case for the reason worthRunning gives, and it is one function because the
+// staged_file_dirty fallback holds Routable and worthRunning to the same
+// answer.
+func routes(lang language, path srcpath.Path) bool {
+	return slices.ContainsFunc(lang.extensions, func(ext string) bool {
+		return strings.EqualFold(ext, path.Ext())
+	})
+}
+
 // worthRunning lists the languages at least one changed path could belong to,
 // judged by the table's static extensions. This is the only use of that list:
 // once a binary is launched, its own --capabilities answer decides which paths
@@ -120,9 +153,7 @@ func worthRunning(changed []srcpath.Path) []string {
 	var worth []string
 	for _, name := range sortedLanguages() {
 		for _, path := range changed {
-			if slices.ContainsFunc(languages[name].extensions, func(ext string) bool {
-				return strings.EqualFold(ext, path.Ext())
-			}) {
+			if routes(languages[name], path) {
 				worth = append(worth, name)
 				break
 			}

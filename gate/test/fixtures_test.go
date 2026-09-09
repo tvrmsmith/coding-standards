@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -14,6 +15,9 @@ import (
 	"testing"
 	"time"
 	"unicode/utf16"
+
+	"github.com/tvrmsmith/coding-standards/gate/internal/gitscope"
+	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
 )
 
 // csharpFile renders a C# source file of exactly lines lines. The stub
@@ -104,6 +108,15 @@ func (f *fixture) moveLines(src string, from, to int, dst string, after int) {
 	f.write(dst, strings.Join(slices.Insert(dstLines, after, cut...), "\n"))
 }
 
+// insertBlankLine puts an empty line into the file at rel after the one-based
+// line after, which moves every line below it. It is the whitespace-only edit
+// `git diff -w` still reports, since -w ignores whitespace inside a line and
+// not a line the other side does not have at all.
+func (f *fixture) insertBlankLine(rel string, after int) {
+	f.t.Helper()
+	f.write(rel, strings.Join(slices.Insert(strings.Split(f.read(rel), "\n"), after, ""), "\n"))
+}
+
 // read returns the current content of the file at rel.
 func (f *fixture) read(rel string) string {
 	f.t.Helper()
@@ -120,6 +133,14 @@ func replaceLine(body string, n int, replacement string) string {
 	lines[n-1] = replacement
 	return strings.Join(lines, "\n")
 }
+
+// otherService and otherRun are a second file and its one span, used by the
+// --files cases, which need a file list longer than one. The span is not
+// called `other`, because gate_test.go already binds that name locally twice
+// and a package-level third meaning would shadow into both.
+const otherService = "src/Ordering/Other.cs"
+
+var otherRun = span{File: otherService, Name: "Other.Run", StartLine: 10, EndLine: 20, Complexity: 4}
 
 // span is one method the stub extractor reports.
 type span struct {
@@ -416,6 +437,66 @@ func (f *fixture) denyRead(rel string) {
 	f.t.Cleanup(func() { os.Chmod(full, 0o755) })
 }
 
+// denyReadKeepingEntry makes the existing directory at rel impossible to list
+// while leaving it possible to enter, which is mode 0o111. A path through it
+// still resolves and still stats, so this is what puts a --files name past
+// every check that only walks the path and in front of the one that reads the
+// directory to see how the tree spells its entries. Root ignores the mode, so a
+// case relying on this skips there.
+func (f *fixture) denyReadKeepingEntry(rel string) {
+	f.t.Helper()
+	if os.Geteuid() == 0 {
+		f.t.Skip("running as root, which lists a directory with no read bit anyway")
+	}
+	full := filepath.Join(f.root, filepath.FromSlash(rel))
+	if err := os.Chmod(full, 0o111); err != nil {
+		f.t.Fatal(err)
+	}
+	f.t.Cleanup(func() { os.Chmod(full, 0o755) })
+}
+
+// setExecutable turns the executable bit on for the file at rel, which is the
+// one index-to-working-tree difference that is not content. A filesystem that
+// does not carry the bit leaves the tree identical to the index and there is no
+// difference for the case to be about, so it skips there, asked of git rather
+// than guessed at from the operating system's name.
+func (f *fixture) setExecutable(rel string) {
+	f.t.Helper()
+	full := filepath.Join(f.root, filepath.FromSlash(rel))
+	info, err := os.Stat(full)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.Chmod(full, info.Mode()|0o111); err != nil {
+		f.t.Fatal(err)
+	}
+	if f.git("diff", "--name-only", "--", rel) == "" {
+		f.t.Skip("git does not record the executable bit here, so there is no mode-only difference to make")
+	}
+}
+
+// symlinkTo puts a symbolic link at the repo-relative rel pointing at the
+// absolute target, and skips the case on a filesystem that will not make one.
+func (f *fixture) symlinkTo(target, rel string) {
+	f.t.Helper()
+	full := filepath.Join(f.root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.Symlink(target, full); err != nil {
+		f.t.Skipf("the filesystem does not allow symlinks: %v", err)
+	}
+}
+
+// removeFile deletes rel from the working tree and leaves the index holding
+// it, which is the unstaged deletion half of a divergence between the two.
+func (f *fixture) removeFile(rel string) {
+	f.t.Helper()
+	if err := os.Remove(filepath.Join(f.root, filepath.FromSlash(rel))); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
 // denyReadFile makes the file at rel unreadable, so reading the report fails
 // on the file itself rather than on its contents. Root ignores the mode, so a
 // case relying on this skips there.
@@ -683,6 +764,68 @@ func constantTextconvScript(t *testing.T) string {
 func (f *fixture) removeLooseObject(sha string) {
 	f.t.Helper()
 	if err := os.Remove(filepath.Join(f.root, ".git", "objects", sha[:2], sha[2:])); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// gitStderr is what git prints when the command at args fails in the fixture.
+// A case whose document quotes git's own complaint asks git for the sentence
+// rather than freezing one release's wording into a golden, the way readCause
+// asks the operating system for its own.
+func (f *fixture) gitStderr(args ...string) string {
+	f.t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = f.root
+	cmd.Env = append(os.Environ(), gitEnv...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err == nil {
+		f.t.Fatalf("git %s succeeded, which the case needs to fail", strings.Join(args, " "))
+	}
+	return strings.TrimSpace(stderr.String())
+}
+
+// divergenceStderr is what git prints when the index-to-working-tree
+// comparison a --staged run makes over rel fails. The argv comes from the
+// production builder rather than a copy of it, so the sentence a case pins is
+// the one the gate quotes back even after the flags change.
+//
+// That makes a case using this one pin "the gate quotes git verbatim" and not
+// "the gate asks git the right question": a wrong flag list moves the gate's
+// message and this expectation together. What guards the argv itself is
+// TestStagedRefusesAFileStagedInOneStateAndDirtyInAnother, which turns on the
+// comparison finding a real divergence.
+func (f *fixture) divergenceStderr(rel string) string {
+	f.t.Helper()
+	return f.gitStderr(gitscope.DivergenceArgs([]srcpath.Path{srcpath.Path(rel)})...)
+}
+
+// toonEscaped renders text the way a TOON string field escapes it, which is
+// what a golden's hole holds when the cause it stands for carries a quote or a
+// newline. git's own complaint about a file it cannot open carries both.
+func toonEscaped(text string) string {
+	quoted := strconv.Quote(text)
+	return quoted[1 : len(quoted)-1]
+}
+
+// corruptPackedRefs packs every ref and appends a line git cannot read, so
+// reading any ref, HEAD included, fails rather than answering no.
+//
+// It is the ref store rather than one branch file because git reports every
+// damaged branch file, an empty one, junk in place of the sha, a name it
+// refuses, a symref loop, as the exit 1 that means no such ref. The store is
+// the only place a case can make the HEAD check fail to answer at all, which
+// is the difference the gate draws between a branch with no commit and a repo
+// it cannot read.
+func (f *fixture) corruptPackedRefs() {
+	f.t.Helper()
+	f.git("pack-refs", "--all")
+	path := filepath.Join(f.root, ".git", "packed-refs")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(body, "not a ref line\n"...), 0o644); err != nil {
 		f.t.Fatal(err)
 	}
 }

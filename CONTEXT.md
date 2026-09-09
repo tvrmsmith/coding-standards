@@ -98,6 +98,16 @@ measures; a method with no touched line is never measured, however badly it scor
 One touched line changes the whole method, because the metric is a per-method number. Where spans
 nest, only the smallest containing span is changed, matching the rule the join already uses.
 
+## Scope
+
+Which change a run measures. There are four: the merge base of the current work against the default
+branch, what a commit would contain, the branch point against a named ref, and an explicit list of
+files. A run has exactly one, naming two is a mistake rather than a preference, and the one it has is
+named in the output so a reader never has to infer it.
+
+The file list is the odd one, because it carries no touched lines. Every method in a listed file is
+changed there, which is a stated rule and not a consequence of the definition above.
+
 ## Extractor
 
 The language-specific half of the measurement. Reads source, produces one complexity number per

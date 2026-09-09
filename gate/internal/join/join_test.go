@@ -47,6 +47,31 @@ func TestChangedReturnsSpansInAscendingOrder(t *testing.T) {
 	}
 }
 
+// TestInFilesDropsASpanInAFileNobodyNamed pins the filter itself. In
+// production extract.collect already refuses any echoed span whose path was
+// not handed in, so every span InFiles sees is in its list and deleting the
+// filter would leave the black-box suite green while --files silently measured
+// whatever an extractor chose to volunteer.
+func TestInFilesDropsASpanInAFileNobodyNamed(t *testing.T) {
+	const named = srcpath.Path("src/named.cs")
+	const volunteered = srcpath.Path("src/volunteered.cs")
+	extracted := extract.Result{
+		Claimed: map[srcpath.Path]bool{named: true},
+		Spans: []extract.Span{
+			{File: volunteered, Name: "Volunteered", StartLine: 1, EndLine: 5},
+			{File: named, Name: "Named", StartLine: 1, EndLine: 5},
+		},
+	}
+
+	changed := join.InFiles(extracted, []srcpath.Path{named})
+
+	want := []string{"src/named.cs:1"}
+	if got := labels(changed); !slices.Equal(got, want) {
+		t.Errorf("InFiles returned spans outside the named files\ngot:  %s\nwant: %s",
+			strings.Join(got, " "), strings.Join(want, " "))
+	}
+}
+
 // labels renders each span as the file and start line the order is asserted
 // on, so a failure prints the sequence rather than a struct dump.
 func labels(spans []extract.Span) []string {

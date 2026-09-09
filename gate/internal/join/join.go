@@ -50,6 +50,27 @@ func Changed(extracted extract.Result, touched map[srcpath.Path][]int) (changed 
 	return changed, outsideSpans
 }
 
+// InFiles returns every span an extractor found in one of files. This is the
+// --files rule: the flag carries no line information, so ADR 0003 makes
+// every method in a listed file changed, and the smallest-containing-span
+// narrowing that Changed applies has nothing to narrow against. Nested spans
+// are all returned, since with no touched line there is nothing to
+// attribute to the smallest container.
+func InFiles(extracted extract.Result, files []srcpath.Path) []extract.Span {
+	want := map[srcpath.Path]bool{}
+	for _, file := range files {
+		want[file] = true
+	}
+	var changed []extract.Span
+	for _, span := range extracted.Spans {
+		if want[span.File] {
+			changed = append(changed, span)
+		}
+	}
+	sortSpans(changed)
+	return changed
+}
+
 // key identifies a span by file and line range, never by name, which is the
 // reading ADR 0001 rejects.
 type key struct {
