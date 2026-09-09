@@ -1,5 +1,9 @@
 # A changed method is a working-tree span holding at least one touched line
 
+**Superseded 2026-09-09 by [ADR 0007](0007-changed-method-is-a-span-holding-a-touched-line.md).** The
+decision is unchanged. 0007 states it in one pass with the eight amendments below folded in; this
+file stays for the reasoning and the dated history, and is not the file to read for the live rule.
+
 Scope is changed methods, and this is the whole definition. A **touched line** is any new-side line reported by `git diff -w -U0 --diff-filter=ACM`; a zero-length hunk, which is what a pure deletion produces, touches the line at its insertion point. A **changed method** is a method span in the working tree containing at least one touched line, and where spans nest, only the smallest containing span is changed. One touched line changes the whole method, because CRAP is a per-method number and there is no CRAP of three lines.
 
 Spans come only from the extractor parsing the working tree. The coverage report contributes lines and hits and never spans, so a method element in the report that the extractor did not emit is not a method as far as the gate is concerned.
@@ -28,6 +32,18 @@ copying the result to `src/Copy.cs` reported `changed_methods: 0` on a genuinely
 then dropped exactly one of that pair, but which one fell out of `git diff --raw` ordering, and a rule whose verdict
 turns on a filename is the opposite of what `--no-renames` was chosen to buy. Counting decides both cases without
 picking a winner, and nothing in the gate depends on diff order.
+
+**Amended 2026-09-09.** The pure-move drop is refined twice by
+[issue 14](https://github.com/tvrmsmith/coding-standards/issues/14), and neither refinement changes the counting
+rule above. First, **which copy the added side is read from now depends on the scope**. Under `--staged` the gate
+reads it with `git cat-file blob :<path>`, the index content, matching the side the deleted path is read from.
+Comparing an index blob against a working-tree file put the two halves of the digest comparison in different
+snapshots, and a rename staged and then edited on disk back to its old text was classed a pure move, dropped from
+the changed set, and so never reached the staged-and-dirty refusal at all. Every other scope still reads the added
+side from the working tree, which is the copy those scopes measure. Second, **an added path the gate cannot read
+suppresses the drop for the whole run**. Under the earlier per-path skip an unreadable add left its digest
+uncounted, so a readable sibling carrying the same digest looked accounted for by a deleted file and was dropped
+unmeasured. The counting rule stands as written; it simply cannot be applied to a count the gate knows is short.
 
 **Amended 2026-09-02.** The gate pins the git settings its parsers depend on rather than inheriting them, because
 every one of them turns a real change into `changed_methods: 0`, exit 0, which is a silent pass and the worst

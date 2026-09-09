@@ -46,6 +46,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -84,19 +85,51 @@ func (r Repo) Root() srcpath.Root { return r.root }
 type Base struct {
 	Ref    string
 	Commit string
+	// Staged makes the diff compare the index against Commit rather than the
+	// working tree.
+	Staged bool
 }
 
 // Label renders the base as the document's `base` field, "<ref>@<7-char sha>".
 func (b Base) Label() string { return b.Ref + "@" + b.Commit[:7] }
 
-// NoBaseError reports that none of ADR 0003's candidate refs resolved. The
-// message points at `--since`, issue 14's flag, per ADR 0003's Consequences:
-// a caller with no resolvable base needs a way to name one explicitly, and
-// the ADR already decided what that way is called.
-type NoBaseError struct{}
+// NoBaseError reports that the run has no commit to diff against: none of
+// ADR 0003's candidates resolved, --since named a ref that does not exist, or
+// --staged found no HEAD to diff the index against. The message points at
+// --since, issue 14's flag, per ADR 0003's Consequences, except when the
+// branch has no commit or --since is itself what failed, whether the ref did
+// not resolve or it resolved and shares no history with HEAD. Naming the flag
+// again in any of those tells the caller nothing new.
+type NoBaseError struct {
+	// Ref is the ref --since named. It is empty when the default candidates
+	// are what failed, and empty whenever NoCommits is true, which ResolveRef
+	// reports from its HEAD check and ResolveStaged from its only one.
+	Ref string
+	// NoCommits marks a branch git resolves no commit for, which is what
+	// --staged hits before the first commit and what a branch made with
+	// `git checkout --orphan` hits in a repo holding a full history. The
+	// message names the branch rather than the repo for that second case,
+	// where telling the developer the repo has no commits contradicts the log
+	// they can print.
+	NoCommits bool
+	// Unrelated marks the ref resolving while the merge base does not, which
+	// is a history sharing no commit with HEAD. It is carried because "does
+	// not name a commit" sends the developer hunting a typo that is not
+	// there.
+	Unrelated bool
+}
 
-func (NoBaseError) Error() string {
-	return "no diff base: tried " + strings.Join(BaseCandidates, ", ") + "; name one with --since <ref>"
+func (e NoBaseError) Error() string {
+	switch {
+	case e.NoCommits:
+		return "no diff base: this branch has no commit"
+	case e.Unrelated:
+		return "no diff base: HEAD and " + e.Ref + " share no common ancestor"
+	case e.Ref != "":
+		return "no diff base: --since " + e.Ref + " does not name a commit"
+	default:
+		return "no diff base: tried " + strings.Join(BaseCandidates, ", ") + "; name one with --since <ref>"
+	}
 }
 
 // ResolveBase walks BaseCandidates and returns the merge base of HEAD and
@@ -113,6 +146,74 @@ func (r Repo) ResolveBase() (Base, error) {
 		return Base{Ref: ref, Commit: strings.TrimSpace(mergeBase)}, nil
 	}
 	return Base{}, NoBaseError{}
+}
+
+// ResolveRef is ResolveBase against the one ref --since named, so the run
+// measures the branch point rather than the tip.
+//
+// Every invocation tells exit 1, which is git answering the question with no,
+// from every other exit code, which is git failing to answer it. A rev spec git
+// refuses to evaluate, `--since main@{9}` against a shorter reflog, or an object
+// store missing a commit the merge base has to walk, reported as a name that
+// does not exist would send the developer hunting a typo, so it comes back
+// typed as an unreadable diff instead.
+//
+// The merge base carries git's own words. The two `rev-parse --verify` checks
+// carry the failed command rather than a sentence, because `--quiet` is what
+// makes an absent ref exit 1 at all and it silences git on every other exit
+// code with it.
+//
+// HEAD is verified before the merge base is asked for, the same check
+// ResolveStaged makes, because merge-base against an unborn HEAD exits 128 with
+// "Not a valid object name HEAD". Left to fall through, a branch made with
+// `git checkout --orphan` reports the diff as unparseable for a run that never
+// reached a diff, when what the repo has is no commit on this branch.
+func (r Repo) ResolveRef(ref string) (Base, error) {
+	if _, err := r.verifyCommit(ref+"^{commit}", NoBaseError{Ref: ref}); err != nil {
+		return Base{}, err
+	}
+	if _, err := r.verifyCommit("HEAD", NoBaseError{NoCommits: true}); err != nil {
+		return Base{}, err
+	}
+	mergeBase, err := r.git("merge-base", "HEAD", ref)
+	if err != nil {
+		if noMatch(err) {
+			return Base{}, NoBaseError{Ref: ref, Unrelated: true}
+		}
+		return Base{}, unreadableDiff(err)
+	}
+	return Base{Ref: ref, Commit: strings.TrimSpace(mergeBase)}, nil
+}
+
+// ResolveStaged is HEAD, the commit `git diff --cached` compares the index
+// against. It draws the same line ResolveRef does: exit 1 is a branch with no
+// commit on it, and anything else is git failing to read the one it has.
+func (r Repo) ResolveStaged() (Base, error) {
+	commit, err := r.verifyCommit("HEAD", NoBaseError{NoCommits: true})
+	if err != nil {
+		return Base{}, err
+	}
+	return Base{Ref: "HEAD", Commit: commit, Staged: true}, nil
+}
+
+// verifyCommit resolves rev to a commit id, answering absent when git exits 1
+// and an unreadable diff on every other exit code.
+//
+// The three calls share this rather than spelling the same two arms out each
+// time. ResolveRef's HEAD check is the reason it is worth sharing: no fixture
+// makes git read a named ref and then fail to answer about HEAD at all, since
+// every damaged HEAD real git will produce is either exit 1 or a repository it
+// refuses to open at all, so a second copy of the unreadable arm there could
+// not be reached by a test.
+func (r Repo) verifyCommit(rev string, absent NoBaseError) (string, error) {
+	out, err := r.git("rev-parse", "--verify", "--quiet", rev)
+	if err != nil {
+		if noMatch(err) {
+			return "", absent
+		}
+		return "", unreadableDiff(err)
+	}
+	return strings.TrimSpace(out), nil
 }
 
 // TouchedLines returns the new-side lines of `git diff -w -U0 --no-renames
@@ -153,7 +254,8 @@ func (r Repo) touchedLines(base Base) (map[srcpath.Path][]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	patch, err := r.gitBlanking(drivers, append(diffFlags, "-w", "-U0", "--no-renames", "--diff-filter=ACM", base.Commit)...)
+	args := slices.Concat(diffFlags, []string{"-w", "-U0", "--no-renames", "--diff-filter=ACM"}, cachedFlag(base), []string{base.Commit})
+	patch, err := r.gitBlanking(drivers, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -169,6 +271,151 @@ func (r Repo) touchedLines(base Base) (map[srcpath.Path][]int, error) {
 		delete(touched, path)
 	}
 	return touched, nil
+}
+
+// cachedFlag is `--cached` when base.Staged, which is what turns a diff's
+// working-tree comparison into an index comparison. One diff code path
+// serves both ADR 0003's default scope and --staged this way, rather than a
+// second near-copy of TouchedLines and pureMoves.
+func cachedFlag(base Base) []string {
+	if base.Staged {
+		return []string{"--cached"}
+	}
+	return nil
+}
+
+// DivergentFromIndex lists the paths whose working-tree copy differs from
+// what is staged, keeping the order it was given. A --staged run asks this
+// only about the files it is about to score, since a dirty file the run
+// never claimed cannot be misattributed to the wrong content.
+//
+// The comparison runs under the same blanked filter drivers as TouchedLines,
+// and under the same flags, diffFlags plus the `-w` TouchedLines adds at its
+// own call site, because it has to answer the question the gate actually asks:
+// does the text the extractor read off disk match the index content the line
+// numbers came from. git's own answer runs the repository's clean driver over
+// the working tree, so a driver that normalises the edit away reports the two
+// sides as equal and the guard passes on exactly the divergence it exists to
+// refuse.
+//
+// `-w` is what keeps the guard's definition of changed the gate's own. Staging
+// a file and then letting an editor reindent the working copy shifts no line
+// and changes no complexity, so there is nothing to misattribute, and without
+// the flag git names the path and only re-staging clears the refusal. It cannot
+// hide a divergence that moves a line, since that is --ignore-blank-lines
+// rather than -w, and it cannot hide a content edit.
+//
+// The listing is `--numstat` rather than `--name-only` for `-w` to reach it at
+// all. git applies the whitespace options while it generates a patch, and
+// --name-only never generates one, so it names a reindented file whatever it is
+// asked to ignore. numstat counts the lines the same patch holds, and a
+// whitespace-only difference leaves git printing no record for the path.
+//
+// Every path travels as a `:(literal)` pathspec on one invocation, because git
+// reads a bare pathspec as a wildmatch pattern. `Order[1].cs` would name a
+// character class and match neither the file it spells nor anything else, so the
+// guard would pass on the very file it was asked about, and `[id].tsx` is the
+// ordinary Next.js route filename rather than an exotic one. Pathspecs compose,
+// so `--numstat -z` names the divergent subset directly and a commit touching
+// two hundred files costs one git rather than two hundred. core.quotePath is
+// pinned false, so the NUL-separated records come back as git spells them, and
+// with renames off each record is the two counts and the path under one NUL,
+// which is why the path is what follows the second tab rather than a record of
+// its own. A record without those two tabs is a shape this parser does not know,
+// so it is refused rather than read as a path that happens to hold a tab.
+//
+// In a repository whose clean driver transforms content, git-lfs or git-crypt
+// rather than the pass-through case above, this refuses more than the developer
+// edited. `git add` wrote the index blob through the filter and the blanked
+// comparison reads the working tree raw, so once a file's stat cache is
+// invalidated by a fresh clone, a checkout or a touch, the two sides differ for
+// a file nobody changed and no edit clears the refusal. The comparison is still
+// the honest one, since the extractor does read text the index line numbers did
+// not come from. The durable answer is having the extractor read the index blob
+// under --staged, which issue 14 leaves to a follow-up.
+//
+// `--no-renames` travels with the diffFlags for the reason TouchedLines and
+// pureMoves carry it, that one package cannot hold two definitions of what git
+// reports. An index-to-working-tree comparison has no added side for git to pair
+// a deletion with, since a path in the tree and not in the index is untracked
+// and no diff lists it, so the flag changes no answer today. It is what keeps
+// this call answering the same question if it is ever handed two commits, where
+// a pair git scored as a rename would come back under one name and leave the
+// other file unnamed in the refusal.
+//
+// `core.fileMode=false` goes on this invocation alone, because the executable
+// bit is not content. Staging a file and then running chmod +x on it leaves the
+// text the extractor reads exactly as the index line numbers describe, so there
+// is nothing to misattribute, and without the pin git names the path, the run
+// refuses with staged_file_dirty and no edit clears it. The pin cannot hide a
+// content divergence, since git still compares the blobs.
+//
+// Every failure is typed, so a missing filter binary lands in the document's
+// error block rather than exiting 1 with an empty stdout, which is the shape
+// TouchedLines already holds itself to on the same path.
+func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
+	// A short circuit that saves spawning git when there is nothing to ask it
+	// about. It changes no answer, since the trailing filter over paths returns
+	// an empty result for an empty slice whatever git prints.
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	drivers, err := r.filterDrivers()
+	if err != nil {
+		return nil, unreadableDiff(err)
+	}
+	out, err := r.gitBlanking(drivers, DivergenceArgs(paths)...)
+	if err != nil {
+		return nil, unreadableDiff(err)
+	}
+	named, err := parseNumstatPaths(out)
+	if err != nil {
+		return nil, err
+	}
+	var divergent []srcpath.Path
+	for _, path := range paths {
+		if named[path] {
+			divergent = append(divergent, path)
+		}
+	}
+	return divergent, nil
+}
+
+// DivergenceArgs is the whole argv DivergentFromIndex hands git for paths. It
+// is exported so the black-box suite can put the same question to git that the
+// gate puts, rather than restating the flags in a second place where one of
+// the two can drift.
+func DivergenceArgs(paths []srcpath.Path) []string {
+	pathspecs := make([]string, 0, len(paths))
+	for _, path := range paths {
+		pathspecs = append(pathspecs, ":(literal)"+string(path))
+	}
+	return slices.Concat([]string{"-c", "core.fileMode=false"}, diffFlags,
+		[]string{"-w", "--numstat", "-z", "--no-renames", "--"}, pathspecs)
+}
+
+// parseNumstatPaths reads the set of paths out of `--numstat -z` output. It is
+// its own function because a real git cannot be made to print a record this
+// parser refuses, so the refusal is only reachable, and only testable, from
+// here.
+//
+// A binary difference prints its two counts as "-", which is a shape this reads
+// like any other, since the counts are not what the caller asked about. A
+// record without both tabs is a shape the parser does not know, so it is
+// refused rather than read as a path that happens to hold a tab.
+func parseNumstatPaths(out string) (map[srcpath.Path]bool, error) {
+	named := map[srcpath.Path]bool{}
+	for _, record := range nulRecords(out) {
+		fields := strings.SplitN(record, "\t", 3)
+		if len(fields) != 3 {
+			return nil, &report.Failure{
+				Code:    report.CodeDiffUnparseable,
+				Message: "could not read the diff: git printed the numstat record " + strconv.Quote(record),
+			}
+		}
+		named[srcpath.FromSlash(fields[2])] = true
+	}
+	return named, nil
 }
 
 // filterDrivers is the config key of every content filter the repository
@@ -205,14 +452,22 @@ func (r Repo) filterDrivers() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var keys []string
-	for _, key := range strings.Split(strings.TrimSuffix(out, "\x00"), "\x00") {
-		if key == "" {
-			continue
+	return nulRecords(out), nil
+}
+
+// nulRecords splits the output of a `-z` git command into its records. Every
+// reader in this package goes through it, so a reader added later cannot
+// forget that a NUL-terminated stream ends in a trailing empty field and pick
+// up a phantom record. No git record any of these parsers accepts is empty, so
+// an empty one is dropped wherever it appears rather than only at the end.
+func nulRecords(out string) []string {
+	var records []string
+	for _, record := range strings.Split(out, "\x00") {
+		if record != "" {
+			records = append(records, record)
 		}
-		keys = append(keys, key)
 	}
-	return keys, nil
+	return records
 }
 
 // blankingEnv sets each key to the empty string through the GIT_CONFIG_COUNT
@@ -241,9 +496,9 @@ func blankingEnv(keys []string) []string {
 // filterDriverKeys matches every spelling of a content filter driver.
 const filterDriverKeys = `^filter\..*\.(clean|process|required)$`
 
-// noMatch reports whether err is `git config --get-regexp` finding nothing,
-// which it reports as exit 1 with no output. Any other exit code is a real
-// failure to read the repository's config and is not an empty answer.
+// noMatch reports whether err is git exiting 1, which is git answering the
+// question with no rather than failing to answer it. What the no means belongs
+// to the caller, so each one says it where it asks.
 func noMatch(err error) bool {
 	var exitErr *exec.ExitError
 	return errors.As(err, &exitErr) && exitErr.ExitCode() == 1
@@ -261,10 +516,12 @@ func noMatch(err error) bool {
 //
 // Every unreadable side resolves towards measuring, which is the conservative
 // direction. An added path the gate cannot read stays measured, and so does
-// every add paired with a deleted object the gate cannot read: a `cat-file`
-// failure, which is what a blobless partial clone gives offline, drops that
-// object from the comparison rather than escaping and leaving the run with no
-// document at all.
+// every other add in that run: the unknown content could be the one a deleted
+// blob explains, so counting without it would leave a readable sibling looking
+// accounted for and drop a file nobody moved. An add paired with a deleted
+// object the gate cannot read stays measured too: a `cat-file` failure, which
+// is what a blobless partial clone gives offline, drops that object from the
+// comparison rather than escaping and leaving the run with no document at all.
 //
 // Ambiguity resolves by counting rather than by picking a winner. For each
 // content digest the diff compares how many paths were added carrying it
@@ -278,7 +535,8 @@ func noMatch(err error) bool {
 // would silently unscore a brand-new file. Counting depends on no `git diff
 // --raw` ordering, so the answer is the same whichever order git lists them in.
 func (r Repo) pureMoves(base Base, drivers []string) ([]srcpath.Path, error) {
-	raw, err := r.gitBlanking(drivers, append(rawFlags, "-z", "--abbrev=40", "--no-renames", "--diff-filter=AD", base.Commit)...)
+	args := slices.Concat(rawFlags, []string{"-z", "--abbrev=40", "--no-renames", "--diff-filter=AD"}, cachedFlag(base), []string{base.Commit})
+	raw, err := r.gitBlanking(drivers, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -299,24 +557,53 @@ func (r Repo) pureMoves(base Base, drivers []string) ([]srcpath.Path, error) {
 	}
 	digests := map[srcpath.Path][sha256.Size]byte{}
 	claimants := map[[sha256.Size]byte]int{}
-	for _, path := range added {
-		body, err := os.ReadFile(r.root.Abs(path))
+	for _, add := range added {
+		body, err := r.addedContent(base, add)
 		if err != nil {
-			continue
+			// Move detection is off for the whole run, not for this add
+			// alone: the content the gate cannot read could be the one a
+			// deleted blob explains, so no add can be proven a move.
+			return nil, nil
 		}
 		digest := squashedDigest(body)
-		digests[path] = digest
+		digests[add.Path] = digest
 		claimants[digest]++
 	}
 	var moves []srcpath.Path
-	for _, path := range added {
-		digest, read := digests[path]
-		if !read || carried[digest] == 0 || claimants[digest] > carried[digest] {
+	for _, add := range added {
+		digest := digests[add.Path]
+		if carried[digest] == 0 || claimants[digest] > carried[digest] {
 			continue
 		}
-		moves = append(moves, path)
+		moves = append(moves, add.Path)
 	}
 	return moves, nil
+}
+
+// addedContent reads the new side of an added path, from the same snapshot the
+// deleted side comes out of.
+//
+// Under --staged that is the index blob the raw record names rather than the
+// file on disk. Read off disk, a path moved, edited, staged, and then restored
+// on disk to its pre-move text digests equal to the deleted blob, so the gate
+// calls it a pure move and drops it from the diff. It is then never handed to
+// an extractor, never claimed, and so never among the paths the staged_file_dirty
+// guard is asked about, and the run passes on exactly the divergence that guard
+// exists to refuse.
+func (r Repo) addedContent(base Base, add addedFile) ([]byte, error) {
+	if base.Staged {
+		body, err := r.git("cat-file", "blob", add.Blob)
+		return []byte(body), err
+	}
+	return os.ReadFile(r.root.Abs(add.Path))
+}
+
+// addedFile is one path a diff added, with the object id of its new-side
+// content. The id is all zeros for a working-tree diff, where the new side is
+// the file on disk and no object holds it.
+type addedFile struct {
+	Path srcpath.Path
+	Blob string
 }
 
 // squashedDigest digests body in the form `git diff -w` compares it in: every
@@ -336,14 +623,11 @@ func squashedDigest(body []byte) [sha256.Size]byte {
 const gitlinkMode = "160000"
 
 // parseRawAddsAndDeletes reads `git diff --raw -z` records, returning the
-// paths the diff added and the old-side blob ids it deleted. A record is the
-// metadata field ":<mode> <mode> <src> <dst> <status>" followed by the path,
-// both NUL-terminated.
-func parseRawAddsAndDeletes(raw string) (added []srcpath.Path, deleted []string, err error) {
-	records := strings.Split(strings.TrimSuffix(raw, "\x00"), "\x00")
-	if len(records) == 1 && records[0] == "" {
-		return nil, nil, nil
-	}
+// paths the diff added with their new-side blob ids and the old-side blob ids
+// it deleted. A record is the metadata field ":<mode> <mode> <src> <dst>
+// <status>" followed by the path, both NUL-terminated.
+func parseRawAddsAndDeletes(raw string) (added []addedFile, deleted []string, err error) {
+	records := nulRecords(raw)
 	if len(records)%2 != 0 {
 		return nil, nil, fmt.Errorf("git diff --raw emitted %d fields, want pairs", len(records))
 	}
@@ -352,13 +636,13 @@ func parseRawAddsAndDeletes(raw string) (added []srcpath.Path, deleted []string,
 		if len(fields) != 5 {
 			return nil, nil, fmt.Errorf("git diff --raw record is malformed: %q", records[i])
 		}
-		oldMode, newMode, src, status := strings.TrimPrefix(fields[0], ":"), fields[1], fields[2], fields[4]
+		oldMode, newMode, src, dst, status := strings.TrimPrefix(fields[0], ":"), fields[1], fields[2], fields[3], fields[4]
 		switch status {
 		case "A":
 			if newMode == gitlinkMode {
 				continue
 			}
-			added = append(added, srcpath.FromSlash(records[i+1]))
+			added = append(added, addedFile{Path: srcpath.FromSlash(records[i+1]), Blob: dst})
 		case "D":
 			if oldMode == gitlinkMode {
 				continue
@@ -615,6 +899,13 @@ type gitError struct {
 }
 
 func (e *gitError) Error() string {
+	// Nothing was captured when the process never ran, exec.ErrNotFound for a
+	// missing git or a blanked driver binary git tried to launch, and a
+	// trailing ": " would leave the reader looking for a complaint that was
+	// never made.
+	if e.stderr == "" {
+		return fmt.Sprintf("git %s: %v", strings.Join(e.args, " "), e.err)
+	}
 	return fmt.Sprintf("git %s: %v: %s", strings.Join(e.args, " "), e.err, e.stderr)
 }
 

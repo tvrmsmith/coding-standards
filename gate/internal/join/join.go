@@ -29,7 +29,7 @@ func Changed(extracted extract.Result, touched map[srcpath.Path][]int) (changed 
 	byFile := groupByFile(extracted.Spans)
 	inside := map[extract.Span]bool{}
 	for _, file := range sortedFiles(touched) {
-		if !extracted.Claimed[file] {
+		if !extracted.Claims(file) {
 			continue
 		}
 		for _, line := range touched[file] {
@@ -48,6 +48,21 @@ func Changed(extracted extract.Result, touched map[srcpath.Path][]int) (changed 
 	}
 	sortSpans(changed)
 	return changed, outsideSpans
+}
+
+// AllSpans returns every span extracted holds, in ascending order. This is the
+// --files rule: the flag carries no line information, so ADR 0007 makes every
+// method in a listed file changed, nested spans included, since with no touched
+// line there is nothing to attribute to the smallest container the way Changed's
+// narrowing would.
+//
+// The file list is already established upstream: extract.collect refuses any
+// path the extractor echoed but was not handed, exiting 1 with
+// extractor_path_mismatch.
+func AllSpans(extracted extract.Result) []extract.Span {
+	changed := slices.Clone(extracted.Spans)
+	sortSpans(changed)
+	return changed
 }
 
 // key identifies a span by file and line range, never by name, which is the

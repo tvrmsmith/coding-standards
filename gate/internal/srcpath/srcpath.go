@@ -13,9 +13,12 @@
 package srcpath
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -103,18 +106,234 @@ func (r Root) Place(candidate string) Placed {
 	if err != nil || !info.Mode().IsRegular() {
 		return placed
 	}
-	rel, err := filepath.Rel(r.resolved, resolved)
-	if err != nil {
-		return placed
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	rel, inside, err := r.relativize(resolved)
+	if err != nil || !inside {
 		return placed
 	}
 	placed.inside = true
-	placed.path = Path(filepath.ToSlash(rel))
+	placed.path = rel
 	return placed
+}
+
+// relativize reads an already resolved absolute path as a path under the root,
+// and says whether it landed under it at all. Place and named both ask, and
+// each decides for itself what a candidate that landed above the root means, so
+// the one definition of "outside" lives here rather than being spelled twice
+// and drifting.
+//
+// The error is the root and the candidate having no relative reading at all, a
+// second drive letter on Windows rather than a location above the root. It is a
+// third answer because it is not a placement, and a caller that reports it says
+// so in its own words.
+func (r Root) relativize(resolved string) (Path, bool, error) {
+	rel, err := filepath.Rel(r.resolved, resolved)
+	if err != nil {
+		return "", false, err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false, nil
+	}
+	return Path(filepath.ToSlash(rel)), true, nil
 }
 
 // FromSlash adopts an already repo-relative, slash-separated path, which is
 // the form `git diff` emits.
 func FromSlash(rel string) Path { return Path(rel) }
+
+// UnresolvedError is a name --files gave that the gate refuses to place on a
+// source file. It carries the name as the developer typed it, because the
+// message reaches the document verbatim and that is the only spelling they can
+// act on.
+//
+// The type exists so a caller can tell a refusal about the path from a failure
+// that is not about any path, a process whose working directory was deleted for
+// instance. Both come back from NamedFiles, and only the first is ADR 0005's
+// file_unresolved, whose message the reader expects to name a path.
+type UnresolvedError struct {
+	// Name is the path as the developer typed it.
+	Name string
+	// Reason completes the sentence after Name, as in "does not exist".
+	Reason string
+}
+
+func (e *UnresolvedError) Error() string { return e.Name + " " + e.Reason }
+
+// NamedFiles resolves every path --files named, in the order they were typed,
+// with each file listed once however many spellings named it.
+//
+// The identity is the resolved repo-relative path, which is the currency every
+// later stage keys on. `a.cs`, `./a.cs`, an absolute spelling and a symlink to
+// the file all come out of named as the same text, and spelledAsOnDisk forces
+// the tree's own case on top, so one text comparison covers every way of
+// writing one file. Handed the same file twice the extractor reports every span
+// in it twice, and the run exits 1 accusing the extractor of a contract
+// violation over a typo.
+//
+// Two tracked paths that are hard links to one inode stay two files, because
+// they are two paths the extractor reads and two paths a coverage report is
+// keyed by.
+func (r Root) NamedFiles(names []string) ([]Path, error) {
+	paths := make([]Path, 0, len(names))
+	seen := make(map[Path]bool, len(names))
+	dirs := dirNames{}
+	for _, name := range names {
+		path, err := r.named(name, dirs)
+		if err != nil {
+			return nil, err
+		}
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		paths = append(paths, path)
+	}
+	return paths, nil
+}
+
+// named resolves a path a human typed on --files. ADR 0004 resolves a
+// relative name against the process working directory and then relativizes
+// it to the root, and makes a path the gate cannot place inside the repo exit
+// 1 rather than be matched approximately. An absolute name already says where
+// it is, so joining it onto the working directory would name a path nobody
+// typed and report a file that exists as missing.
+//
+// A name that resolves to anything other than a regular file is refused, the
+// same rule Place applies, because no extractor claims a directory or a fifo,
+// so the gate would measure nothing and exit 0 pass over a tree the developer
+// believes they gated. A directory is named as one, since that is the mistake
+// a developer actually makes, and every other mode is refused as not a regular
+// file rather than being called a directory it is not.
+//
+// A refusal says "does not exist" only when the filesystem said the path is
+// not there. A parent directory the process cannot enter, a symlink cycle or a
+// component that is not a directory carry what the operating system said
+// instead, since sending the developer after a typo that is not there is the
+// misdiagnosis NoBaseError.Unrelated was added to avoid. A path the root cannot
+// be relativized against at all, a second drive letter on Windows rather than a
+// location above the root, says that in the gate's own words rather than
+// carrying filepath.Rel's, which quote two absolute paths the developer never
+// typed. All of them are still
+// UnresolvedError, so every refusal about the path reaches the document under
+// one code. Losing the working directory is not about the path at all, so it
+// travels as a plain error.
+func (r Root) named(name string, dirs dirNames) (Path, error) {
+	candidate := filepath.FromSlash(name)
+	if !filepath.IsAbs(candidate) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("resolving %s against the working directory: %w", name, err)
+		}
+		candidate = filepath.Join(cwd, candidate)
+	}
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", &UnresolvedError{Name: name, Reason: "does not exist"}
+		}
+		return "", unreadable(name, err)
+	}
+	rel, inside, err := r.relativize(resolved)
+	if err != nil {
+		return "", &UnresolvedError{Name: name, Reason: "has no path relative to the repo root"}
+	}
+	if !inside {
+		return "", &UnresolvedError{Name: name, Reason: "is outside the repo root"}
+	}
+	// EvalSymlinks already resolved this path, so absence here is a delete
+	// racing the two syscalls rather than a name the developer mistyped, and it
+	// reads as the filesystem failure it is.
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", unreadable(name, err)
+	}
+	if info.IsDir() {
+		return "", &UnresolvedError{Name: name, Reason: "is a directory, not a file"}
+	}
+	if !info.Mode().IsRegular() {
+		return "", &UnresolvedError{Name: name, Reason: "is not a regular file"}
+	}
+	spelled, err := r.spelledAsOnDisk(filepath.FromSlash(string(rel)), dirs)
+	if err != nil {
+		return "", unreadable(name, err)
+	}
+	if !spelled {
+		return "", &UnresolvedError{Name: name, Reason: "is not spelled as the file on disk is"}
+	}
+	return rel, nil
+}
+
+// unreadable is the refusal for a filesystem failure that is not the path
+// being absent, ENOTDIR from a name typed through a file, ELOOP from a symlink
+// cycle, or EACCES on a parent directory.
+//
+// The reason carries the errno's own words rather than the whole fs.PathError,
+// because that error quotes an absolute path the developer never typed and
+// which reads differently on every machine, and the name they did type already
+// opens the message.
+func unreadable(name string, err error) *UnresolvedError {
+	cause := err
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		cause = pathErr.Err
+	}
+	return &UnresolvedError{Name: name, Reason: "could not be read, " + cause.Error()}
+}
+
+// spelledAsOnDisk reports whether every component of rel is spelled the way the
+// directory holding it spells it.
+//
+// This only bites on a case-insensitive filesystem, APFS or NTFS, where
+// EvalSymlinks hands back the case the caller typed rather than the case on
+// disk. The gate would then hand the extractor `src/ordering/Order.cs` while
+// coverage, placed through Place, carries the tracked `src/Ordering/Order.cs`,
+// join would match neither against the other, and every method in a fully
+// covered file would come back unknown and fail the run. ADR 0004 fails a path
+// the gate cannot place rather than matching it approximately, so a spelling the
+// tree does not use is refused instead.
+//
+// The walk reads directories rather than comparing case-folded text, because
+// folding would also merge two files a case-sensitive filesystem keeps apart.
+//
+// dirs carries the listings already read, so `--files` over a few hundred
+// paths in one tree reads each ancestor directory once rather than once per
+// path.
+func (r Root) spelledAsOnDisk(rel string, dirs dirNames) (bool, error) {
+	dir := r.resolved
+	for _, component := range strings.Split(rel, string(filepath.Separator)) {
+		entries, err := dirs.of(dir)
+		if err != nil {
+			return false, err
+		}
+		if !slices.Contains(entries, component) {
+			return false, nil
+		}
+		dir = filepath.Join(dir, component)
+	}
+	return true, nil
+}
+
+// dirNames memoizes directory listings for the length of one NamedFiles call,
+// keyed by absolute directory path. It holds entry names alone, since that is
+// the whole of what the spelling walk compares, and it is deliberately not
+// shared across calls: a listing older than the run would answer for a tree
+// that has since changed.
+type dirNames map[string][]string
+
+// of is the entry names in dir, reading it the first time it is asked for. A
+// directory it could not read is not remembered, so a transient failure does
+// not answer for every later path under it.
+func (d dirNames) of(dir string) ([]string, error) {
+	if names, ok := d[dir]; ok {
+		return names, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(entries))
+	for i, entry := range entries {
+		names[i] = entry.Name()
+	}
+	d[dir] = names
+	return names, nil
+}

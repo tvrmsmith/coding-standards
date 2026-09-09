@@ -67,11 +67,47 @@ type Span struct {
 type Result struct {
 	// Spans is every method span the extractors found.
 	Spans []Span
-	// Claimed is the changed files some extractor said it handles. A touched
+	// claimed is the changed files some extractor said it handles. A touched
 	// line only counts as outside a span when it is in one of these; a line
 	// in a file no extractor claims, a Markdown file say, is outside the
 	// measurement rather than outside a span.
-	Claimed map[srcpath.Path]bool
+	claimed map[srcpath.Path]bool
+}
+
+// NewResult builds a Result from spans and the paths some extractor claimed.
+// Extract fills the field directly, so this exists for callers outside the
+// package. With claimed unexported there is no other way to state "an extractor
+// handles this file" as a test premise, and a test that could not say it would
+// have to route through a real extractor process to exercise a rule about set
+// membership.
+func NewResult(spans []Span, claimed []srcpath.Path) Result {
+	claims := make(map[srcpath.Path]bool, len(claimed))
+	for _, path := range claimed {
+		claims[path] = true
+	}
+	return Result{Spans: spans, claimed: claims}
+}
+
+// Claims reports whether some extractor said it handles path.
+func (r Result) Claims(path srcpath.Path) bool {
+	return r.claimed[path]
+}
+
+// ClaimedPaths returns the claimed paths in ascending order.
+func (r Result) ClaimedPaths() []srcpath.Path {
+	return slices.Sorted(maps.Keys(r.claimed))
+}
+
+// Unclaimed returns those of paths no extractor claimed, in ascending order.
+func (r Result) Unclaimed(paths []srcpath.Path) []srcpath.Path {
+	var unclaimed []srcpath.Path
+	for _, path := range paths {
+		if !r.claimed[path] {
+			unclaimed = append(unclaimed, path)
+		}
+	}
+	slices.Sort(unclaimed)
+	return unclaimed
 }
 
 // Extract runs every located extractor over the changed files it claims. It
@@ -82,7 +118,7 @@ func Extract(root srcpath.Root, changed []srcpath.Path) (Result, error) {
 	// changed set in a deployment that ships the gate without an extractor
 	// beside it.
 	worth := worthRunning(changed)
-	result := Result{Claimed: map[srcpath.Path]bool{}}
+	result := Result{claimed: map[srcpath.Path]bool{}}
 	if len(worth) == 0 {
 		return result, nil
 	}
@@ -98,10 +134,43 @@ func Extract(root srcpath.Root, changed []srcpath.Path) (Result, error) {
 		}
 		result.Spans = append(result.Spans, spans...)
 		for _, file := range claimed {
-			result.Claimed[file] = true
+			result.claimed[file] = true
 		}
 	}
 	return result, nil
+}
+
+// Routable lists which of changed the language table could hand to an
+// extractor, in the order it was given them.
+//
+// A caller only needs this after extraction failed. Result.Claims is the
+// authority while a run succeeds, but a failed run claims nothing, and a caller
+// that has to say something about the files extraction was working on would
+// otherwise fall back to every path in the diff and name a Markdown file no
+// extractor would ever have read. That answer has to be the one worthRunning
+// gives, so both ask routes, and the order the languages are checked in does
+// not matter to an existence question.
+func Routable(changed []srcpath.Path) []srcpath.Path {
+	var routable []srcpath.Path
+	for _, path := range changed {
+		for _, lang := range languages {
+			if routes(lang, path) {
+				routable = append(routable, path)
+				break
+			}
+		}
+	}
+	return routable
+}
+
+// routes reports whether lang's table entry lists path's extension. It folds
+// case for the reason worthRunning gives, and it is one function because the
+// staged_file_dirty fallback holds Routable and worthRunning to the same
+// answer.
+func routes(lang language, path srcpath.Path) bool {
+	return slices.ContainsFunc(lang.extensions, func(ext string) bool {
+		return strings.EqualFold(ext, path.Ext())
+	})
 }
 
 // worthRunning lists the languages at least one changed path could belong to,
@@ -120,9 +189,7 @@ func worthRunning(changed []srcpath.Path) []string {
 	var worth []string
 	for _, name := range sortedLanguages() {
 		for _, path := range changed {
-			if slices.ContainsFunc(languages[name].extensions, func(ext string) bool {
-				return strings.EqualFold(ext, path.Ext())
-			}) {
+			if routes(languages[name], path) {
 				worth = append(worth, name)
 				break
 			}

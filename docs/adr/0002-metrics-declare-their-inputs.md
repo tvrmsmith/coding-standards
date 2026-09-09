@@ -1,5 +1,17 @@
 # Each metric declares the inputs it needs, and the gate demands an input only when a selected metric asked for it
 
+## Current rule
+
+Each metric declares the inputs it needs. The gate resolves which metrics the run selected, takes
+the union of their declared inputs, and only then goes looking. An input nothing asked for is never
+demanded, and an input a selected metric asked for is never silently skipped. CRAP declares that it
+needs a coverage report and fails with "CRAP requires a coverage report, none found" when there is
+no usable one.
+
+This ADR carries no amendments and is short enough to read in full.
+
+## Decision
+
 `metric-gate` hosts more than one metric. CRAP declares that it needs a coverage report; a metric computed from the extractor output alone declares nothing. The gate resolves which metrics the run selected, takes the union of their declared inputs, and only then goes looking. A run selecting only metrics that need no coverage passes in a repo where nobody ran the tests, because nothing asked for coverage and nothing was silently skipped.
 
 A run that selects CRAP and finds no usable coverage report fails, and the message names the metric that is stuck rather than the file that is absent: "CRAP requires a coverage report, none found".

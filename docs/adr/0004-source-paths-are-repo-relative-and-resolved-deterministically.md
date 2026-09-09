@@ -1,5 +1,26 @@
 # A source path is repo-relative, and every other path form is resolved to it by one deterministic rule
 
+## Current rule
+
+The gate's single path currency is the **source path**, a repo-relative slash-separated path from
+`git rev-parse --show-toplevel`. Every other path form is resolved to it by one deterministic rule.
+There is no fuzzy matching, no fallback chain, and no inferred base directory.
+
+Four path spaces, one rule each. Diff paths arrive repo-relative already. A coverage report path is
+`<sources><source>` joined to `filename`. An extractor echoes back the path it was handed,
+byte-identical. A human-typed path resolves against the current working directory.
+
+A path that will not resolve refuses the run rather than passing with nothing measured:
+`coverage_source_root_erased`, then `file_ambiguous`, then a coverage path with zero candidates in
+the root, in that precedence. A human-typed path that names a directory, or spells a real file in a
+case the tree does not use, is refused as `file_unresolved`. Case folding is rejected for
+coverage-path resolution, where it can merge two real files; it is not rejected for extension
+routing, which only decides whether to launch a process.
+
+Sections below carry the reasoning and five dated amendments.
+
+## Decision
+
 The gate's single path currency is the **source path**: a repo-relative, slash-separated path from
 `git rev-parse --show-toplevel`. Every path the gate handles is resolved to that form, or the run
 fails. There is no fuzzy matching, no fallback chain, and no inferred base directory.
@@ -88,6 +109,22 @@ Two further resolution rules the implementation settled, both narrowing what cou
 - An **already absolute** filename is its own only candidate, and no `<source>` is joined onto it. Joining would
   name a path no report ever carried, `/src/src/app/Order.cs` off `<source>` `/src`, and the outside-repo
   diagnostic quotes the first candidate, so the reader would be shown a path the gate invented.
+
+**Amended 2026-09-05.** The human-typed rule above gained two refusals with
+[issue 14](https://github.com/tvrmsmith/coding-standards/issues/14), both under ADR 0005's `file_unresolved` code.
+A `--files` path that resolves inside the root but names a directory rather than a regular file is exit 1, matching
+the regular-file narrowing the paragraph above applies to coverage candidates. A `--files` path the tree spells in
+another case is also exit 1, because a case-insensitive filesystem resolves it to a real file that no coverage
+report is keyed by, so the run would measure a file the report cannot cover. That second refusal applies the
+reasoning of "Case folding for macOS. Rejected" to a path the developer typed, which the 2026-09-03 amendment above
+scoped to coverage-path resolution, so this records the new application rather than widening the rejection.
+`srcpath.Root` checks the spelling component by component against the directory entries and names the path as the
+developer typed it. Canonicalizing to git's spelling instead of refusing stays available as a later relaxation.
+
+**Amended 2026-09-07.** The first of those two refusals is wider than the paragraph above says. It covers every
+non-regular inode, not directories alone, so a `--files` path naming a fifo, socket or device node is exit 1 under
+the same code. The gate says "is a directory, not a file" for a directory and "is not a regular file" for the rest,
+which matches how the regular-file narrowing above already reads for coverage candidates.
 
 ## Considered options
 
