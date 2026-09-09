@@ -870,22 +870,46 @@ func (f *fixture) setOriginHead() {
 // exists but merge-base cannot relate to HEAD (issue 35). It leaves the
 // fixture back on the branch it started on, fetches so the remote-tracking ref
 // is refreshed from what was actually pushed rather than trusted from the push
-// output, and fails the case if that ref still shares history with HEAD.
+// output, and fails the case if that ref is missing or still shares history
+// with HEAD.
+//
+// The fetch runs with remote.origin.followRemoteHEAD=never, because from git
+// 2.47 a plain fetch writes refs/remotes/origin/HEAD, and a case that means to
+// reach the origin/<branch> rung would silently be pinning the origin/HEAD one
+// instead, differently on different runners.
+//
+// The orphan commit stages one explicit path rather than the whole tree, so a
+// case may call this helper before or after it writes its own fixture files: a
+// `git add -A` here would sweep untracked files onto the orphan branch and the
+// checkout back would then delete them from the working tree.
 func (f *fixture) pushOrphanHistoryToOrigin(branch string) {
 	f.t.Helper()
 	current := f.git("symbolic-ref", "--short", "HEAD")
 	f.git("checkout", "--quiet", "--orphan", "unrelated-history")
 	f.git("rm", "--quiet", "-rf", ".")
 	f.write("unrelated.txt", "shares no history with "+current+"\n")
-	f.commitAll("unrelated history")
+	f.git("add", "--", "unrelated.txt")
+	f.git("commit", "--quiet", "-m", "unrelated history")
 	f.git("push", "--quiet", "--force", "origin", "unrelated-history:"+branch)
 	f.git("checkout", "--quiet", current)
-	f.git("fetch", "--quiet", "origin")
+	f.git("-c", "remote.origin.followRemoteHEAD=never", "fetch", "--quiet", "origin")
 
+	f.git("rev-parse", "--verify", "--quiet", "origin/"+branch+"^{commit}")
 	cmd := exec.Command("git", "merge-base", "HEAD", "origin/"+branch)
 	cmd.Dir = f.root
 	cmd.Env = append(os.Environ(), gitEnv...)
-	if err := cmd.Run(); err == nil {
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
 		f.t.Fatalf("origin/%s still shares history with HEAD after the orphan push", branch)
+	}
+	// Exit 1 is git answering "no common ancestor"; every other exit code is
+	// git failing to answer at all, which is the same distinction gitscope
+	// draws and would otherwise let a broken fixture read as a working one.
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		f.t.Fatalf("merge-base HEAD origin/%s failed to answer: %v\n%s",
+			branch, err, strings.TrimSpace(stderr.String()))
 	}
 }
