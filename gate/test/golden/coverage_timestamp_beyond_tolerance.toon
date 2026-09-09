@@ -8,4 +8,4 @@ touched_lines_outside_spans: 0
 skipped_paths: []
 error:
   code: coverage_unparseable
-  message: "coverage report TestResults/coverage.cobertura.xml carries a timestamp \"{{STAMP}}\" more than 24h ahead of now; it must be epoch seconds"
+  message: "coverage report TestResults/coverage.cobertura.xml carries a timestamp \"{{STAMP}}\" more than 24h ahead of now; it must be epoch seconds, or the clock on this machine is behind the one that wrote it"
