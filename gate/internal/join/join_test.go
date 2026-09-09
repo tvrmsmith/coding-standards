@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tvrmsmith/coding-standards/gate/internal/coverage"
 	"github.com/tvrmsmith/coding-standards/gate/internal/extract"
 	"github.com/tvrmsmith/coding-standards/gate/internal/join"
+	"github.com/tvrmsmith/coding-standards/gate/internal/report"
 	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
 )
 
@@ -108,6 +110,33 @@ func TestChangedSkipsATouchedFileNoExtractorClaimed(t *testing.T) {
 	if got := labels(changed); !slices.Equal(got, want) {
 		t.Errorf("Changed returned unexpected spans\ngot:  %s\nwant: %s",
 			strings.Join(got, " "), strings.Join(want, " "))
+	}
+}
+
+// TestAttributeReportsFileUninstrumentedForAFileWithNoInstrumentableLines
+// pins the case coverage.mergeInto's zero-line entry creates: a report that
+// lists the file but names no instrumentable line inside it never
+// instrumented the file at all, so the span cannot be read as trivially
+// covered the way an instrumented file's empty span is. It must come back
+// unknown, not structural_na, and carry no coverage.
+func TestAttributeReportsFileUninstrumentedForAFileWithNoInstrumentableLines(t *testing.T) {
+	span := extract.Span{File: "src/a.cs", Name: "Empty", StartLine: 1, EndLine: 5}
+	lines := coverage.Set{"src/a.cs": coverage.Lines{}}
+
+	methods := join.Attribute([]extract.Span{span}, []extract.Span{span}, lines)
+
+	if len(methods) != 1 {
+		t.Fatalf("Attribute returned %d methods, want 1", len(methods))
+	}
+	got := methods[0]
+	if got.State != report.StateUnknown {
+		t.Errorf("State = %q, want %q", got.State, report.StateUnknown)
+	}
+	if got.Reason != report.ReasonFileUninstrumented {
+		t.Errorf("Reason = %q, want %q", got.Reason, report.ReasonFileUninstrumented)
+	}
+	if got.Coverage != 0 {
+		t.Errorf("Coverage = %v, want 0", got.Coverage)
 	}
 }
 

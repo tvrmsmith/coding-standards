@@ -17,7 +17,11 @@ The no-names rule governs **attribution**. Method **identity**, which is a diffe
 on `(file, name, startLine, endLine, signature)`, because two overloads can occupy one span. See
 [ADR 0009](0009-the-csharp-extractor-is-written-in-house.md).
 
-Sections below carry the reasoning and three dated amendments.
+Structural n/a is earned, not assumed: a span with no instrumentable line is structural n/a only
+when its file's report entry lists instrumentable lines elsewhere, since an entry with none at all
+means the report never instrumented that file.
+
+Sections below carry the reasoning and four dated amendments.
 
 ## Decision
 
@@ -59,6 +63,13 @@ overload a hit belongs to. Nothing about the async and state-machine reasoning c
 identifier still never appears on either side. (This paragraph first spelled the tuple without `name`. That was a
 transcription error, not a narrower decision: `class C { int A() => 1; int B() => 2; }` gives two methods one file,
 one line range and one empty parameter spelling, so dropping `name` would reject valid C# as a duplicated span.)
+
+**Amended 2026-09-09.** Structural n/a is now earned rather than assumed. A file the coverage
+report lists with no instrumentable line at all was never instrumented, so its changed methods are
+unknown under the new typed reason `file_uninstrumented`, not trivially covered. Absence of lines
+inside a span of a file the report did instrument stays structural n/a, because coverlet lists
+every instrumentable line of an instrumented class including the ones nobody hit, so absence there
+really is a span with nothing to instrument.
 
 Adding a second language means writing an extractor, not touching the gate. That was the reason for the seam and it is the reason ReportGenerator lost.
 

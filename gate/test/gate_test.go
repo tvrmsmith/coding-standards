@@ -901,6 +901,30 @@ func TestChangedMethodInAFileNoReportPathMatchedFails(t *testing.T) {
 			"0 of 2 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
+// TestFileInAReportCarryingNoInstrumentableLinesIsUnknownRatherThanCovered
+// pins issue 17's earned structural_na: a <class> with no <line> at all is
+// a report that never instrumented the file, not a file of trivial members,
+// so its changed method comes back unknown with the typed reason rather
+// than structural_na treated as fully covered.
+func TestFileInAReportCarryingNoInstrumentableLinesIsUnknownRatherThanCovered(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// a <class> for the file with no <line> at all, which is a report that
+	// never instrumented it rather than a file of trivial members
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "file_uninstrumented", 1, f.baseLabel("main"),
+		"1 changed method could not be attributed to a coverage report\n"+
+			"0 of 1 changed methods over CRAP threshold 30, worst score 0.00\n")
+}
+
 func TestFileTheExtractorCouldNotParseFails(t *testing.T) {
 	const broken = "src/Ordering/Broken.cs"
 

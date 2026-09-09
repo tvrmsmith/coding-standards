@@ -169,9 +169,13 @@ type Method struct {
 // the smallest span containing it and a container must not absorb the lines
 // of a local function nested inside it.
 //
-// A span whose file matched no report path is unknown; a span holding no
-// instrumentable line is structural_na, treated as fully covered, which is
-// what makes trivial members exclude themselves arithmetically.
+// A span whose file matched no report path is unknown. A span whose file
+// matched but whose entry lists no instrumentable line at all is unknown too,
+// because the report never instrumented that file rather than having found
+// it trivial, and reading it as covered would be the same broken join issue
+// 17 exists to close. Only once the file is confirmed instrumented does an
+// empty span turn structural_na, treated as fully covered, which is what
+// makes trivial members exclude themselves arithmetically.
 func Attribute(all []extract.Span, changed []extract.Span, lines coverage.Set) []Method {
 	byFile := groupByFile(all)
 	methods := make([]Method, 0, len(changed))
@@ -182,6 +186,14 @@ func Attribute(all []extract.Span, changed []extract.Span, lines coverage.Set) [
 				Span:   span,
 				State:  report.StateUnknown,
 				Reason: report.ReasonFileUnmatched,
+			})
+			continue
+		}
+		if len(fileLines) == 0 {
+			methods = append(methods, Method{
+				Span:   span,
+				State:  report.StateUnknown,
+				Reason: report.ReasonFileUninstrumented,
 			})
 			continue
 		}
