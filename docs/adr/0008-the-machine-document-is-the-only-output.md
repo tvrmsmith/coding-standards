@@ -46,6 +46,10 @@ consumer reading "raise coverage to 0.8" reads `0.8` and not a sentence.
 extension no extractor in the language table handles, and a `--files` path that resolves to a real
 file no extractor claims. Both proceed; neither fails the run.
 
+**Amended 2026-09-09.** A third thing produces `skipped_paths`: a discovered coverage report a
+fresher run already superseded (issue 32). It proceeds too, unless it is the only coverage the run
+found, in which case the run still fails with `coverage_stale`.
+
 One parser owns argv. Every flag the command takes, `--staged`, `--since`, `--files` and
 `--coverage`, is parsed in one place and printed in one usage block. Two parsers, each rejecting the
 other's flags as unknown, cannot print a usage block that tells the truth.
