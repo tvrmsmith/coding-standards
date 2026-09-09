@@ -105,10 +105,14 @@ Three shapes produce it:
 - **A dropped async matcher.** The matcher returns a promise nobody awaits, so the test ends
   before the assertion resolves. Await the assertion, not just the value.
 - **No matcher at all.** `expect(value)` on its own is a statement that computes nothing.
-- **An assertion inside a branch.** An assertion under `if` or in a `catch` reports nothing when
-  the branch is not taken, so a test that never enters the branch passes having checked nothing.
-  Decide the expected value before the assertion and assert unconditionally. To assert that
-  something threw, assert on the throwing call itself rather than asserting inside `catch`.
+- **An assertion inside a branch — [review-only] in C#.** An assertion under `if` or in a `catch`
+  reports nothing when the branch is not taken, so a test that never enters the branch passes
+  having checked nothing. Decide the expected value before the assertion and assert
+  unconditionally. To assert that something threw, assert on the throwing call itself rather than
+  asserting inside `catch`. `jest/no-conditional-expect` enforces this for TypeScript. C# has no
+  rule: measured against a large suite, most conditional assertions there are legitimate (both
+  branches assert, a deliberate failure reporter, or a parameterized test refining by case), and
+  nothing syntactic separates those from a real skip.
 
 ---
 
