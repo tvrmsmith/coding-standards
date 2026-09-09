@@ -8,4 +8,4 @@ touched_lines_outside_spans: 0
 skipped_paths: []
 error:
   code: coverage_unparseable
-  message: "coverage report TestResults/coverage.cobertura.xml carries a timestamp \"0\" from before 2000-01-01T00:00:00Z; it must be epoch seconds"
+  message: "coverage report tests/Beta.Tests/TestResults/run/coverage.cobertura.xml carries a timestamp \"0\" from before 2000-01-01T00:00:00Z; it must be epoch seconds"

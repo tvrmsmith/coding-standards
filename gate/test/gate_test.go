@@ -1694,7 +1694,7 @@ func TestCoverageReportStampedJustBeyondToleranceIsRefused(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// 25h ahead of now, one hour past ClockSkewTolerance: a clock-skewed CI
+	// 25h ahead of now, one hour past what coverage.FarAheadOfNow allows: a clock-skewed CI
 	// agent rather than a units error, and what pins the constant as a boundary
 	// rather than a magic number only large enough to catch milliseconds.
 	stamp := stampAt(time.Now().Add(25 * time.Hour))
@@ -1716,7 +1716,7 @@ func TestCoverageReportStampedInsideToleranceIsScored(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// 23h ahead of now, inside ClockSkewTolerance. An implementation refusing
+	// 23h ahead of now, inside what coverage.FarAheadOfNow allows. An implementation refusing
 	// every report stamped anywhere ahead of now, rather than only past the
 	// tolerance, fails here.
 	f.write("TestResults/coverage.cobertura.xml", coberturaStamped(stampAt(time.Now().Add(23*time.Hour)), f.root,
@@ -1784,7 +1784,7 @@ func TestChangedFileModifiedInsideToleranceIsScored(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// 23h ahead of now, inside ClockSkewTolerance, the mirror of the 25h case
+	// 23h ahead of now, inside what coverage.FarAheadOfNow allows, the mirror of the 25h case
 	// above. A guard refusing every mtime merely ahead of now, rather than only
 	// one past the tolerance, fails here, and that guard would refuse every run
 	// on a checkout over NFS or on a resumed VM carrying a few seconds of
@@ -1813,9 +1813,15 @@ func TestCoverageReportStampedBeforeTheFloorIsRefusedNotSkipped(t *testing.T) {
 	// side: a producer with no clock to read, or one writing seconds since boot
 	// rather than since the epoch. It is a discovered report, the one Origin
 	// issue 32 skips as superseded, so this pins that a stamp the gate cannot
-	// trust is refused rather than dropped quietly into skipped_paths, where
-	// its coverage would leave the score with nothing but a path to explain it.
-	f.write("TestResults/coverage.cobertura.xml", coberturaStamped("0", f.root,
+	// trust is refused rather than dropped quietly into skipped_paths. A fresh
+	// report sits beside it, the shape of the future-stamped case below, so a
+	// gate that skipped the floor-stamped one would still score the run and
+	// pass. Without that sibling the skip would run out of reports and refuse
+	// anyway, under a different code, and the case would hold whether the floor
+	// guard existed or not.
+	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml", coberturaStamped(freshStamp(), f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.write("tests/Beta.Tests/TestResults/run/coverage.cobertura.xml", coberturaStamped("0", f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
@@ -1823,7 +1829,30 @@ func TestCoverageReportStampedBeforeTheFloorIsRefusedNotSkipped(t *testing.T) {
 	}
 
 	f.run().assertMatches(t, "coverage_timestamp_before_floor", 1, f.baseLabel("main"),
-		"coverage report TestResults/coverage.cobertura.xml carries a timestamp \"0\" from before 2000-01-01T00:00:00Z; it must be epoch seconds\n")
+		"coverage report tests/Beta.Tests/TestResults/run/coverage.cobertura.xml carries a timestamp \"0\" from before 2000-01-01T00:00:00Z; it must be epoch seconds\n")
+}
+
+func TestCoverageReportStampedExactlyAtTheFloorIsScored(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// 2000-01-01T00:00:00Z exactly, the oldest instant the floor admits. A
+	// guard refusing everything at or below the floor, rather than only below
+	// it, fails here. The source carries the same instant so the report is not
+	// stale against it, which is what leaves the floor as the only rule the
+	// case can turn on.
+	edited := time.Unix(946684800, 0)
+	f.setModTime(orderService, edited)
+	f.write("TestResults/coverage.cobertura.xml", coberturaStamped("946684800", f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
 func TestFutureStampedReportBesideAFreshOneStillRefuses(t *testing.T) {
@@ -1990,15 +2019,14 @@ func TestCoverageReportWithAnUnreadableTimestampIsRefused(t *testing.T) {
 	// seconds between year 1 and 1970, so this stamp wraps into the distant
 	// past, and a report carrying it would otherwise be judged older than the
 	// code and skipped as superseded rather than refused as untrustworthy.
-	// Both int64 ends wrap when time.Unix offsets them, the ceiling into the
-	// past and the floor into the future, so each is reached by its own half of
-	// the range check and neither is caught by the plausibility band that
-	// judges the instant afterwards.
+	// Only the ceiling wraps. The int64 floor is a stamp time.Unix holds
+	// without underflowing, and the plausibility band refuses it afterwards
+	// with the wording that fits it, so it belongs to the floor case below
+	// rather than here.
 	stamps := map[string]string{
 		"ISO-8601 instant":   "2026-01-01T00:00:00Z",
 		"fractional seconds": "1767225600.123",
 		"int64 ceiling":      "9223372036854775807",
-		"int64 floor":        "-9223372036854775808",
 	}
 	for name, stamp := range stamps {
 		t.Run(name, func(t *testing.T) {

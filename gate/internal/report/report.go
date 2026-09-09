@@ -63,7 +63,7 @@ const (
 	CodeFileAmbiguous            = "file_ambiguous"
 	CodeCoverageOutsideRepo      = "coverage_outside_repo"
 	// CodeSourceMtimeInFuture is a changed file whose own modification time
-	// sits further ahead of the gate's clock than coverage.ClockSkewTolerance
+	// sits further ahead of the gate's clock than coverage.FarAheadOfNow
 	// allows (issue 30). It is the other side of the staleness comparison:
 	// coverage_unparseable refuses a report the gate cannot trust, and this
 	// refuses a working tree it cannot trust, where no report can be fresh
