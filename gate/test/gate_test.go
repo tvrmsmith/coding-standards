@@ -931,6 +931,29 @@ func TestExtractorEchoingAPathItWasNotGivenFails(t *testing.T) {
 		"csharp extractor returned a path it was not given: src/Ordering/Imposter.cs\n")
 }
 
+// TestExtractorVolunteeringASpanInAPathItWasNotGivenFails is the span arm of
+// the same refusal, and the case above is the file-status arm. The two are
+// separate walks over the response, and this one is the arm the gate now leans
+// on alone: nothing downstream filters spans against the file list any more, so
+// an extractor that volunteers a span in a file the gate never handed in would
+// otherwise have that method measured and folded into the score. Every
+// file-status entry here is legitimate, so only the span walk can catch it.
+func TestExtractorVolunteeringASpanInAPathItWasNotGivenFails(t *testing.T) {
+	imposter := span{File: "src/Ordering/Imposter.cs", Name: "Imposter.Run", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel, imposter}),
+	}
+
+	f.run().assertMatches(t, "extractor_path_mismatch", 1, f.baseLabel("main"),
+		"csharp extractor returned a path it was not given: src/Ordering/Imposter.cs\n")
+}
+
 func TestExtractorExitingNonZeroFails(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
