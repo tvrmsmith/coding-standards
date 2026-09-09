@@ -30,6 +30,11 @@ env:
   # drifting onto a different runtime than the job that tests the same net8.0
   # assemblies.
   DOTNET_VERSION: "8.0.x"
+  # The SDK the gate job packs the tool project with. This duplicates the
+  # feature band dotnet/global.json pins, which is what a developer's machine
+  # resolves, so the two have to move together: change one and the CI pack
+  # starts running a compiler the local pack never sees.
+  DOTNET_PACK_SDK_VERSION: "10.0.x"
 
 jobs:
   gate:
@@ -51,15 +56,19 @@ jobs:
             gate/go.sum
       - uses: actions/setup-dotnet@v4
         with:
-          # This job needs a Microsoft.NETCore.App 8.x runtime and no
-          # particular SDK: it runs no .NET test assemblies, it packs the tool
-          # project and runs 'dotnet tool install --tool-path', and the
-          # installed net8.0 tool shim needs that runtime to launch. No
-          # global-json-file here, because the pack runs from gate/test and
+          # Two installs, each for its own reason. The 10.x SDK is the one that
+          # packs the tool project, because the muxer picks the highest
+          # installed SDK here and that is the band a developer's machine packs
+          # with, so C# the local pack accepts cannot red only in CI. The 8.0.x
+          # install is for the Microsoft.NETCore.App 8.x shared framework the
+          # installed net8.0 tool shim launches on, which the 10.x SDK does not
+          # carry. No global-json-file here: the pack runs from gate/test and
           # dotnet searches upward from there, where dotnet/global.json is not
           # an ancestor, so naming the pin would claim a resolution that never
           # happens.
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-version: |
+            ${{ env.DOTNET_VERSION }}
+            ${{ env.DOTNET_PACK_SDK_VERSION }}
       # vet needs the Go toolchain and nothing else, so it carries the same
       # explicit guard the tests do rather than inheriting the implicit
       # success() that a failed SDK install would trip.
@@ -76,11 +85,15 @@ jobs:
       # turns a skip of the one case that packs and installs the real dotnet
       # extractor into a failure, because a silent skip would let that path go
       # unexercised forever. The explicit -timeout replaces Go's default 10
-      # minutes per binary, which the gate package can now approach: it packs
-      # the tool, installs it against an empty NUGET_PACKAGES directory and
-      # forks six child test binaries, and that takes 81s locally on a warm
-      # cache with nothing to restore. A slow NuGet restore under the default
-      # surfaces as an opaque panic rather than a timeout with room to spare.
+      # minutes per binary, which the gate package can now approach. What
+      # dominates its cost is not the number of cases but that the enforcement
+      # tests re-run this binary as a child process once per scenario arm, and
+      # every child re-runs TestMain, which shells out to go build twice before
+      # the case it was asked for even starts; on top of that the full-stack
+      # case packs the tool and installs it against an empty NUGET_PACKAGES
+      # directory. Measured at 175s locally on a warm cache with nothing to
+      # restore, so 20m leaves room for a cold NuGet restore. Under the default
+      # a slow restore surfaces as an opaque panic instead.
       - run: go test ./... -count=1 -timeout 20m
         working-directory: gate
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}

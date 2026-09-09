@@ -314,15 +314,21 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 	// A machine carrying only the SDK dotnet/global.json pins reaches this
 	// state, an installed toolchain that lists no 8.x shared framework. The
 	// AspNetCore line rides along so the run proves the probe wants the one
-	// framework the tool launches on rather than any 8 line at all.
-	const stubListsNoNet8 = "#!/bin/sh\ncat <<'EOF'\n" +
-		"Microsoft.AspNetCore.App 8.0.0 [/x/shared/Microsoft.AspNetCore.App]\n" +
-		"Microsoft.NETCore.App 10.0.0 [/x/shared/Microsoft.NETCore.App]\n" +
-		"EOF\n"
+	// framework the tool launches on rather than any 8 line at all. Every stub
+	// here sticks to shell builtins, because the PATH they run under carries
+	// the Go toolchain and nothing else.
+	const stubListsNoNet8 = "#!/bin/sh\n" +
+		"echo 'Microsoft.AspNetCore.App 8.0.0 [/x/shared/Microsoft.AspNetCore.App]'\n" +
+		"echo 'Microsoft.NETCore.App 10.0.0 [/x/shared/Microsoft.NETCore.App]'\n"
 
 	// The child runs the full-stack case and nothing else. Widening this
 	// pattern would let the child re-enter this test and fork forever.
 	const childCase = "^TestFullStackDrivesTheRealDotnetExtractor$"
+
+	// childRan is what -test.v prints once the child is past TestMain and into
+	// the case. Asserting it is what separates "the child failed for the reason
+	// under test" from "the child never built".
+	const childRan = "=== RUN   TestFullStackDrivesTheRealDotnetExtractor"
 
 	// Every child is given -test.short explicitly, so what it does never
 	// depends on the flags this parent happens to run under.
@@ -334,34 +340,53 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 		return string(out), err
 	}
 
-	// stubPath puts a stub dotnet ahead of this process's PATH, so the child
-	// keeps the toolchain its own TestMain builds the gate with.
+	// lookIn resolves name the way the child's exec.LookPath will, over the
+	// PATH it is about to be handed rather than this process's own.
+	lookIn := func(path, name string) (string, bool) {
+		for _, dir := range filepath.SplitList(path) {
+			candidate := filepath.Join(dir, name)
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+				return candidate, true
+			}
+		}
+		return "", false
+	}
+
+	// noDotnetPath is built up rather than filtered down: one directory
+	// holding a link to the go command the child's own TestMain shells out to,
+	// and nothing else. Subtracting dotnet directories from the host PATH
+	// instead would take go with it wherever the two share a directory, which
+	// is what a mise shims-only or a Homebrew layout looks like, and the case
+	// would then be measuring a build failure.
+	noDotnetPath := func(t *testing.T) string {
+		t.Helper()
+		goBin, err := exec.LookPath("go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := t.TempDir()
+		if err := os.Symlink(goBin, filepath.Join(dir, "go")); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := lookIn(dir, "go"); !ok {
+			t.Fatalf("go is not reachable under the assembled PATH %q, so the child would fail to build rather than fail to find dotnet", dir)
+		}
+		if found, ok := lookIn(dir, "dotnet"); ok {
+			t.Fatalf("the assembled PATH still carries a dotnet at %q, so this case would not reach the absent-dotnet branch", found)
+		}
+		return dir
+	}
+
+	// stubPath puts a stub dotnet ahead of the same assembled PATH, so what
+	// the child finds is the stub and the toolchain and nothing the host
+	// happens to install.
 	stubPath := func(t *testing.T, stubBody string) string {
 		t.Helper()
 		stubDir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(stubDir, "dotnet"), []byte(stubBody), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		return stubDir + string(os.PathListSeparator) + os.Getenv("PATH")
-	}
-
-	// pathWithoutDotnet drops every PATH directory carrying a dotnet, which
-	// leaves the child the same toolchain minus the one command the probe
-	// looks for. Removing the whole PATH instead would break the child's own
-	// TestMain, which shells out to go build.
-	pathWithoutDotnet := func(t *testing.T) string {
-		t.Helper()
-		var kept []string
-		for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
-			if _, err := os.Stat(filepath.Join(dir, "dotnet")); err == nil {
-				continue
-			}
-			kept = append(kept, dir)
-		}
-		if len(kept) == 0 {
-			t.Fatal("every PATH directory carries a dotnet, so this case cannot build a PATH without one")
-		}
-		return strings.Join(kept, string(os.PathListSeparator))
+		return stubDir + string(os.PathListSeparator) + noDotnetPath(t)
 	}
 
 	mustContain := func(t *testing.T, out string, wants []string) {
@@ -392,7 +417,8 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 
 	// bothArms runs the enforced and the unset child over one PATH and asserts
 	// the first fails naming the variable and the second skips, both quoting
-	// want.
+	// want. Each arm asserts the child reached the case, so an exit code that
+	// came from a failed build cannot pass for the outcome under test.
 	bothArms := func(t *testing.T, path string, want []string, args ...string) {
 		t.Helper()
 		t.Run("the enforced run fails instead of skipping", func(t *testing.T) {
@@ -400,7 +426,7 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 			if err == nil {
 				t.Fatalf("child exited zero, want a failure. output:\n%s", out)
 			}
-			mustContain(t, out, append([]string{envRequireDotnet, "forbids skipping"}, want...))
+			mustContain(t, out, append([]string{childRan, envRequireDotnet, "forbids skipping"}, want...))
 		})
 
 		t.Run("the unset run skips and passes", func(t *testing.T) {
@@ -408,7 +434,7 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 			if err != nil {
 				t.Fatalf("child failed with %v, want a pass. output:\n%s", err, out)
 			}
-			mustContain(t, out, append([]string{"--- SKIP"}, want...))
+			mustContain(t, out, append([]string{childRan, "--- SKIP"}, want...))
 		})
 	}
 
@@ -419,7 +445,7 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 	}
 
 	t.Run("dotnet is absent from PATH entirely", func(t *testing.T) {
-		bothArms(t, pathWithoutDotnet(t),
+		bothArms(t, noDotnetPath(t),
 			[]string{reasonNoNet8Runtime, "no dotnet to ask"}, "-test.short=false")
 	})
 
@@ -430,7 +456,7 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 	// rather than "never callable".
 	t.Run("-short decides before dotnet is ever run", func(t *testing.T) {
 		marker := filepath.Join(t.TempDir(), "probed")
-		path := stubPath(t, "#!/bin/sh\ntouch '"+marker+"'\n")
+		path := stubPath(t, "#!/bin/sh\n: > '"+marker+"'\n")
 
 		bothArms(t, path, []string{reasonShort}, "-test.short=true")
 
