@@ -3183,9 +3183,7 @@ func TestOriginHeadOutranksOriginMainWhenTheRemoteDefaultBranchIsNotMain(t *test
 	f.touchLine(orderService, 42)
 	f.commitAll("second")
 	f.git("push", "--quiet", "origin", "main")
-	if f.git("rev-parse", "origin/main") == f.git("rev-parse", "origin/HEAD") {
-		t.Fatal("origin/main and origin/HEAD are the same commit, so the case cannot separate the two rungs")
-	}
+	f.requireDistinctCommits("origin/main", "origin/HEAD")
 	f.touchLine(orderService, 62)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: append(spanCoverage(42, 10, 1), spanCoverage(61, 3, 2)...)}))
@@ -3214,9 +3212,7 @@ func TestOriginMainOutranksOriginMasterWhenBothRemoteBranchesExist(t *testing.T)
 	f.commitAll("second")
 	f.git("branch", "master")
 	f.git("push", "--quiet", "origin", "master")
-	if f.git("rev-parse", "origin/main") == f.git("rev-parse", "origin/master") {
-		t.Fatal("origin/main and origin/master are the same commit, so the case cannot separate the two rungs")
-	}
+	f.requireDistinctCommits("origin/main", "origin/master")
 	f.touchLine(orderService, 62)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: append(spanCoverage(42, 10, 1), spanCoverage(61, 3, 2)...)}))
@@ -3235,6 +3231,34 @@ func TestOriginMainOutranksOriginMasterWhenBothRemoteBranchesExist(t *testing.T)
 		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
 
+func TestOriginMasterOutranksLocalMainWhenBothExist(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.git("branch", "master")
+	f.addOrigin("master")
+	f.touchLine(orderService, 42)
+	f.commitAll("second")
+	f.requireDistinctCommits("origin/master", "main")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: append(spanCoverage(42, 10, 1), spanCoverage(61, 3, 2)...)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// The remote carries master only, so neither origin/HEAD nor origin/main
+	// resolves and the walk reaches origin/master, back at "initial", before
+	// local main, which is HEAD's own branch at "second". Diffing from
+	// origin/master carries both edits, two changed methods; diffing from main
+	// would carry only the working-tree edit to line 62, one. That is the last
+	// adjacent pair of BaseCandidates: swapping origin/master and main turns
+	// this case red on the count as well as the label.
+	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/master"),
+		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
+}
+
 func TestLocalMainOutranksLocalMasterWhenBothBranchesExist(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
@@ -3242,9 +3266,7 @@ func TestLocalMainOutranksLocalMasterWhenBothBranchesExist(t *testing.T) {
 	f.git("branch", "master")
 	f.touchLine(orderService, 42)
 	f.commitAll("second")
-	if f.git("rev-parse", "main") == f.git("rev-parse", "master") {
-		t.Fatal("main and master are the same commit, so the case cannot separate the two rungs")
-	}
+	f.requireDistinctCommits("main", "master")
 	f.touchLine(orderService, 62)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
