@@ -555,6 +555,9 @@ func (r Repo) pureMoves(base Base, drivers []string) ([]srcpath.Path, error) {
 	for _, add := range added {
 		body, err := r.addedContent(base, add)
 		if err != nil {
+			// Move detection is off for the whole run, not for this add
+			// alone: the content the gate cannot read could be the one a
+			// deleted blob explains, so no add can be proven a move.
 			return nil, nil
 		}
 		digest := squashedDigest(body)

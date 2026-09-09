@@ -16,7 +16,9 @@ const usage = "\n\nusage: metric-gate [--staged | --since <ref> | --files <path>
 	"  --files <path>...  every method in each named file\n" +
 	"  --coverage <path>  read this report instead of discovering one; repeatable\n"
 
-// TestScopeUsageErrors covers every command line the scope flags refuse.
+// TestScopeUsageErrors covers every command line metric-gate refuses before it
+// runs, the scope flags and --coverage alike. One parser owns argv, so one
+// table owns the message format rather than two files asserting the same shape.
 //
 // A usage error is decided before the gate opens the repo, so the fixture
 // carries no commit, no source, no report and no extractor config: nothing
@@ -82,11 +84,48 @@ func TestScopeUsageErrors(t *testing.T) {
 			argv:    []string{"--files", "--staged"},
 			problem: "--files needs at least one path",
 		},
+		// The mistake the stop-at-dash slurp exists for, and the only argv that
+		// reaches the conflict arm with --files already holding paths. Taken as
+		// a file name, --staged would reach the developer as a path that does
+		// not exist rather than as the two scopes they typed.
+		"a scope flag after a non-empty --files": {
+			argv:    []string{"--files", orderService, "--staged"},
+			problem: "--staged and --files name two scopes; pass one",
+		},
 		// An empty argument does not start with '-', so the slurp takes it,
 		// and joined onto the working directory it names the working directory.
 		"--files with an empty path": {
 			argv:    []string{"--files", ""},
 			problem: "--files was handed an empty path",
+		},
+		"--coverage with nothing after it": {
+			argv:    []string{"--coverage"},
+			problem: "--coverage needs a path",
+		},
+		"--coverage with an empty joined value": {
+			argv:    []string{"--coverage="},
+			problem: "--coverage needs a path",
+		},
+		// What an unset shell variable expands to. It must not reach the
+		// reader as a report naming nothing.
+		"--coverage with an empty separate value": {
+			argv:    []string{"--coverage", ""},
+			problem: "--coverage needs a path",
+		},
+		// A mistyped flag after --coverage would otherwise be swallowed as a
+		// report path and reach the developer as a coverage diagnostic inside a
+		// document, which reads as "the gate ran and your coverage is wrong"
+		// rather than "the command line is wrong". No producer names a report
+		// with two leading dashes, so the flag spelling is the one worth
+		// refusing. A single dash is taken as a path, which
+		// TestCoverageFlagTakesAValueBeginningWithOneDashAsAPath pins.
+		"--coverage given a flag as a separate value": {
+			argv:    []string{"--coverage", "--nope"},
+			problem: "--coverage needs a path, not the flag '--nope'",
+		},
+		"--coverage given a flag as a joined value": {
+			argv:    []string{"--coverage=--nope"},
+			problem: "--coverage needs a path, not the flag '--nope'",
 		},
 	}
 	for name, tt := range cases {
@@ -517,15 +556,19 @@ func TestStagedNamesTheDirtyFileWhenTheExtractorFailsOnIt(t *testing.T) {
 	// source does not parse, when the cause is the refusal this scope exists for.
 	f.write(added, csharpFile(20))
 	f.git("add", added)
-	if err := os.Remove(filepath.Join(f.root, filepath.FromSlash(added))); err != nil {
-		t.Fatal(err)
-	}
+	f.removeFile(added)
 	f.stub = stubConfig{Extensions: []string{".cs"}, ExitCode: 3}
 
 	f.runArgs("--staged").assertMatches(t, "staged_extractor_dirty", 1, f.headLabel(),
 		"refusing to score src/Ordering/New.cs: staged in one state and on disk in another\n")
 }
 
+// TestFilesNamingTwoHardLinksToOneInodeMeasuresBoth states the dedupe rule
+// rather than guarding today's implementation of it. NamedFiles dedupes on the
+// repo-relative path string and two hard links are two distinct strings, so no
+// mutation of the current code turns this case red. It goes red only against a
+// rewrite that dedupes on inode identity, which is the rewrite it exists to
+// forbid. The symlink case next to it is what exercises EvalSymlinks.
 func TestFilesNamingTwoHardLinksToOneInodeMeasuresBoth(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))

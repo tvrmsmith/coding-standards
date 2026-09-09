@@ -59,17 +59,15 @@ func main() {
 // either way, so a case that logs nothing runs against the same stub behaviour
 // as one that does. Dropped on the discarding side, a broken pipe from the
 // gate's write would come back as a successful extraction in the suite built to
-// catch it.
+// catch it. The input is a short path list, so buffering it even when no case
+// asked for the log costs nothing and leaves one read and one wrapped error.
 func drainStdin(cfg config) error {
-	if cfg.StdinLog == "" {
-		if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
-			return fmt.Errorf("stub extractor: reading stdin: %w", err)
-		}
-		return nil
-	}
 	body, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return fmt.Errorf("stub extractor: reading stdin: %w", err)
+	}
+	if cfg.StdinLog == "" {
+		return nil
 	}
 	if err := os.WriteFile(cfg.StdinLog, body, 0o644); err != nil {
 		return fmt.Errorf("stub extractor: %w", err)
