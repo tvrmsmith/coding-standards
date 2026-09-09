@@ -468,11 +468,7 @@ export function createBase({ extraRestrictedSyntax = [] } = {}) {
     {
       /**
        * SonarJS security rules that decide from the code alone, without a framework.
-       *
-       * Sonar's other security family reads Express and helmet configuration — response
-       * headers, cookie flags, CORS, CSRF. Three packages at the adoption target run
-       * Express, so those apply too; they are filed separately because each needs a
-       * framework-shaped fixture and they are one coherent batch.
+       * The ones that read an Express or helmet configuration are the slice below.
        */
       name: 'tvrmsmith/base/sonarjs-security',
       files: sourceFiles,
@@ -516,6 +512,55 @@ export function createBase({ extraRestrictedSyntax = [] } = {}) {
 
         // warn: a real prompt the user sees, and sometimes the feature.
         'sonarjs/no-intrusive-permissions': 'warn',
+      },
+    },
+    {
+      /**
+       * Sonar's other security family: rules that read a web framework's *configuration*
+       * rather than a call shape. Almost all of them find the app through
+       * `const app = express()` and then walk `app.use(middleware(options))`, so they are
+       * silent by construction in a package that does not run a server, and they cost
+       * nothing to leave on everywhere.
+       *
+       * All `error`. Each one names a specific header, flag or limit with a specific
+       * remediation, so there is nothing here to weigh: the fix is always to pass the
+       * option the rule is asking for.
+       */
+      name: 'tvrmsmith/base/sonarjs-web-framework',
+      files: sourceFiles,
+      plugins: { sonarjs },
+      rules: {
+        // Response headers helmet exists to set, switched back off.
+        'sonarjs/content-security-policy': 'error',
+        'sonarjs/no-mime-sniff': 'error',
+        'sonarjs/no-referrer-policy': 'error',
+        'sonarjs/strict-transport-security': 'error',
+        // Fires once per file on any `express()` app that neither uses helmet nor calls
+        // `app.disable('x-powered-by')`, rather than on a bad line. That is the point:
+        // the default leaks the framework and its version, so silence is the defect.
+        'sonarjs/x-powered-by': 'error',
+
+        // Session and cookie flags.
+        'sonarjs/insecure-cookie': 'error',
+        'sonarjs/cookie-no-httponly': 'error',
+        // Static assets mounted *after* the session middleware get a session cookie
+        // minted for every image request. An ordering bug no type checker can see.
+        'sonarjs/no-session-cookies-on-static-assets': 'error',
+        // `passport.authenticate` without a `req.session.regenerate` in the callback
+        // leaves the pre-login session id valid: session fixation.
+        'sonarjs/session-regeneration': 'error',
+
+        // Who is allowed to call the app, and with what.
+        'sonarjs/cors': 'error',
+        'sonarjs/csrf': 'error',
+
+        // Uploads and static serving.
+        'sonarjs/content-length': 'error',
+        'sonarjs/file-uploads': 'error',
+        'sonarjs/hidden-files': 'error',
+        // `xfwd: true` on a proxy forwards the client IP, which downstream code then
+        // trusts for rate limiting or allowlisting.
+        'sonarjs/no-ip-forward': 'error',
       },
     },
     {

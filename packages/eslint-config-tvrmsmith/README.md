@@ -254,6 +254,7 @@ split cannot erode by accident.
 | `tvrmsmith/base/regexp` | source | `eslint-plugin-regexp` correctness only: catastrophic backtracking, assertions that can never match, dead groups and quantifiers |
 | `tvrmsmith/base/sonarjs-bugs` | source | Sonar rules whose `meta.type` is `problem`: identical branches, overwritten elements, unthrown errors, shadowed globals |
 | `tvrmsmith/base/sonarjs-security` | source | Sonar's security family: hardcoded secrets, weak crypto, command and XXE injection, permissive file modes |
+| `tvrmsmith/base/sonarjs-web-framework` | source | The rest of that family, reading Express and helmet *configuration*: response headers, cookie flags, middleware ordering, CORS, CSRF, upload limits |
 | `tvrmsmith/base/sonarjs-tests` | test | Suite shapes that make a test not run or not report |
 | `tvrmsmith/react/jsx` | source | `eslint-plugin-react` correctness, security and deprecated-API rules, plus Sonar's two render-loop rules |
 | `tvrmsmith/react/a11y` | source | `eslint-plugin-jsx-a11y`: text alternatives, document language, ARIA validity, keyboard reachability, labelled controls. Plus Sonar's table and `<object>` rules, which jsx-a11y has no equivalent for |
@@ -279,6 +280,11 @@ A few things worth knowing before editing them:
   bare rule rejects correct ARIA: with no options, no element may carry any role. `react.js` sets
   the severity and reads the table out of the plugin's own recommended config. Copying it here
   would be a stale cache of something maintained against the ARIA spec.
+- **The web-framework slice is silent unless a package runs a server.** Almost every rule in it
+  finds the app by matching `<id> = express()` literally and then walks `app.use(...)`, so a package
+  with no Express in it gets no visitors and no cost. `sonarjs/x-powered-by` is the one that reports
+  on the file rather than on a line: it fires at the end of any file that instantiates an app and
+  never disables the header, because there the silence is the defect.
 - **Volume is not a reason to exclude a rule.** The pre-commit hook scopes reporting to changed
   files, so a large standing backlog costs nothing. The exclusions below are all about the rule
   being wrong, not loud.
@@ -348,9 +354,13 @@ Two things about the severities here:
 - **`react`'s PropTypes family, the classic-runtime rules, and the formatting families** — PropTypes
   is dead in a TypeScript codebase, the JSX transform makes `react-in-jsx-scope` wrong, and Prettier
   owns formatting.
-- **Sonar's Express and helmet security rules** — they apply: three packages at the adoption target
-  run Express. Each needs a framework-shaped fixture, and they form one coherent batch, so they are
-  filed separately rather than half-done here.
+- **`sonarjs/frame-ancestors`** — it reports `frameAncestors: ["'none'"]`, which is the *most*
+  restrictive value the directive takes and the one a locked-down app should be using. Verified
+  against the plugin: `'self'` passes and `'none'` reports, so the rule reads the ordering backwards.
+  Sonar ships it `off` in their own recommended config.
+- **`sonarjs/no-mixed-content`** — it reports any `contentSecurityPolicy({ directives })` that omits
+  `blockAllMixedContent`, a directive CSP Level 3 dropped. Every correct modern CSP block reports.
+  Also `off` in Sonar's recommended config.
 
 `testing-library/no-wait-for-empty-callback` is not available to enable: it was removed in the
 plugin's **6.0.0** — 6.5.0 already ships without it — and the last version carrying it is 5.11.1.
