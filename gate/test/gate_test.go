@@ -3172,3 +3172,101 @@ func TestOriginMainOutranksLocalMainWhenNoOriginHeadExists(t *testing.T) {
 	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/main"),
 		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
+
+func TestOriginHeadOutranksOriginMainWhenTheRemoteDefaultBranchIsNotMain(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.git("branch", "trunk")
+	f.addOrigin("trunk")
+	f.setOriginHead()
+	f.touchLine(orderService, 42)
+	f.commitAll("second")
+	f.git("push", "--quiet", "origin", "main")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: append(spanCoverage(42, 10, 1), spanCoverage(61, 3, 2)...)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// origin/HEAD names origin/trunk, which sits at "initial" while origin/main
+	// has moved on to "second" alongside local main. Diffing from origin/HEAD
+	// therefore carries both edits, two changed methods; diffing from
+	// origin/main would carry only the working-tree edit to line 62, one.
+	// TestOriginHeadOutranksLocalMainAsTheDiffBase separates origin/HEAD only
+	// from local main and only by ref name, so it would not catch ResolveBase
+	// preferring origin/main's count over origin/HEAD's; this fixture would.
+	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/HEAD"),
+		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
+}
+
+func TestOriginMasterResolvesOnAMasterDefaultBranch(t *testing.T) {
+	f := newFixture(t, "master")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.addOrigin("master")
+	// No setOriginHead: origin/HEAD is absent, so the walk reaches origin/master.
+	f.touchLine(orderService, 42)
+	f.commitAll("second")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: append(spanCoverage(42, 10, 1), spanCoverage(61, 3, 2)...)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// origin/master never resolves in any other case in this suite, so a typo
+	// in that entry of BaseCandidates would survive the whole suite green;
+	// this fixture is the one that would go red if it did.
+	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/master"),
+		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
+}
+
+func TestLocalMasterResolvesWhenNoRemoteExists(t *testing.T) {
+	f := newFixture(t, "master")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// No remote exists, so origin/master, which TestOriginMasterResolvesOnAMasterDefaultBranch
+	// leaves outranking local master, cannot hide a typo in the local master
+	// entry of BaseCandidates either: this is the only fixture that reaches it.
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("master"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestRemoteMainWithUnrelatedHistoryFallsThroughToLocalMain(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.addOrigin("main")
+	f.pushOrphanHistoryToOrigin("main")
+	// No setOriginHead: origin/HEAD is absent, so the walk reaches origin/main
+	// first.
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// origin/main exists but shares no history with HEAD, so its merge-base
+	// fails; ResolveBase's continue drops it rather than returning it as a
+	// found base. If that check were deleted, the run would either fail to
+	// read the diff or measure an empty one against origin/main's own tree,
+	// not the single working-tree edit this golden pins; the case's local main
+	// label together with that one changed method is what proves the walk fell
+	// all the way through instead.
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
