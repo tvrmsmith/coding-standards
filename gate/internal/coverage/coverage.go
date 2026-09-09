@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -93,11 +94,19 @@ func (s Source) staleRemedy() string {
 	case NamedOnCommandLine:
 		return "; regenerate " + s.Name + " or point --coverage at a current report"
 	case Discovered:
-		return "; clear stale TestResults directories and re-run the tests"
+		return discoveredStaleRemedy
 	default:
 		return ""
 	}
 }
+
+// discoveredStaleRemedy is the step that clears a stale discovered report, in
+// one place because two messages close with it: the refusal of a single named
+// report's discovered sibling above, and allSupersededFailure below, which has
+// only Names left by the time it runs and no Source to ask. Copying the clause
+// into both was rejected: a reword would then have to be made twice, and the
+// two coverage_stale messages would drift apart the once it was not.
+const discoveredStaleRemedy = "; clear stale TestResults directories and re-run the tests"
 
 // Newest is the freshest edit among the files that contributed a changed
 // method, which is what a report has to be at least as new as.
@@ -254,8 +263,11 @@ func underResultsDir(rel string) bool {
 	return false
 }
 
-// clockSkewTolerance is how far ahead of the gate's own clock a report may
-// claim to have been written before the gate stops believing it. An
+// ClockSkewTolerance is how far ahead of the gate's own clock a report may
+// claim to have been written before the gate stops believing it. It is
+// exported because the same window bounds the other side of the staleness
+// comparison, a changed file's own mtime, which the command stats and judges
+// before it ever reaches this package. An
 // unsynchronised CI agent or a machine resumed from a suspended VM drifts by
 // hours, not days, so a day of slack still lets an honest producer's report
 // through. A producer that writes the timestamp attribute in epoch
@@ -265,17 +277,31 @@ func underResultsDir(rel string) bool {
 // margin. The rule exists at all because without it, at.Before(newest.At) can
 // never be true for a timestamp that far out, so the staleness comparison
 // silently stops running and the report merges as though it had passed.
-const clockSkewTolerance = 24 * time.Hour
+const ClockSkewTolerance = 24 * time.Hour
+
+// ToleranceLabel renders ClockSkewTolerance the way every refusal quoting the
+// window spells it. Whole hours are spelled as hours, since Go's own duration
+// spelling of the current constant is "24h0m0s" and the window a message
+// quotes should read the way the reason for it was written down. Trimming
+// "0m0s" off the end of that string was rejected: retune the constant to 90
+// minutes and "1h30m0s" ends the same way, leaving the message reading "more
+// than 1h3 ahead of now".
+func ToleranceLabel() string {
+	if ClockSkewTolerance%time.Hour == 0 {
+		return strconv.FormatInt(int64(ClockSkewTolerance/time.Hour), 10) + "h"
+	}
+	return ClockSkewTolerance.String()
+}
 
 // Load reads every source in order and unions them into one set: a line is
 // instrumentable when any report lists it, and covered when any report
 // records a non-zero hit. now is a parameter rather than a call to time.Now()
-// here, so a test can pin the instant a report is judged against; a
-// package-level clock would let the pinning happen anywhere and a reader of
-// this signature would not see it.
+// here, so one run judges every report it loads against one instant rather
+// than against the clock as it advances through the loop, and a reader of this
+// signature sees which instant that is; a package-level clock would hide both.
 //
 // Before a report merges, it has to read, unmarshal, carry a readable
-// timestamp no more than clockSkewTolerance ahead of now, and be no older than
+// timestamp no more than ClockSkewTolerance ahead of now, and be no older than
 // newest.At. Failing to read, unmarshal or carry a readable timestamp stops
 // the run rather than dropping the report, because a bad report silently
 // dropped is exactly the untested code the staleness rule exists to catch. A
@@ -293,6 +319,14 @@ const clockSkewTolerance = 24 * time.Hour
 // leftover. A run where every source was skipped that way still refuses,
 // naming every one of them, since skipping all of them would otherwise pass
 // silently with nothing scored at all.
+//
+// A failure returns no skipped names, not even ones the loop had already
+// collected before it hit the failure. The run exits 1 with nothing scored, so
+// there is no understated coverage for a skipped name to explain, and the
+// document names the fault that stopped the run instead. Returning them
+// alongside was rejected for that: it would list a superseded report beside an
+// unrelated coverage_unparseable as though the two were both why the score is
+// short, when there is no score.
 //
 // An empty newest.At (the zero time) can never trip the staleness rule.
 func Load(root srcpath.Root, sources []Source, newest Newest, now time.Time) (Set, []string, error) {
@@ -313,11 +347,11 @@ func Load(root srcpath.Root, sources []Source, newest Newest, now time.Time) (Se
 				Message: "coverage report " + source.Name + " " + err.Error(),
 			}
 		}
-		if at.After(now.Add(clockSkewTolerance)) {
+		if at.After(now.Add(ClockSkewTolerance)) {
 			return nil, nil, &report.Failure{
 				Code: report.CodeCoverageUnparseable,
 				Message: fmt.Sprintf("coverage report %s carries a timestamp %q more than %s ahead of now; it must be epoch seconds",
-					source.Name, parsed.Timestamp, strings.TrimSuffix(clockSkewTolerance.String(), "0m0s")),
+					source.Name, parsed.Timestamp, ToleranceLabel()),
 			}
 		}
 		// Staleness is checked before the merge, not after it, so a refused or
@@ -344,8 +378,8 @@ func Load(root srcpath.Root, sources []Source, newest Newest, now time.Time) (Se
 }
 
 // allSupersededFailure refuses the run when every source Load saw was a
-// Discovered report skipped as superseded, leaving nothing to score. It
-// hardcodes the Discovered remedy rather than calling Source.staleRemedy,
+// Discovered report skipped as superseded, leaving nothing to score. It closes
+// with discoveredStaleRemedy directly rather than calling Source.staleRemedy,
 // because every name it is given reached the skipped list through that one
 // origin and by the time the loop ends the Source itself is gone, only its
 // Name kept.
@@ -356,8 +390,8 @@ func allSupersededFailure(skipped []string, newest Newest) *report.Failure {
 	}
 	return &report.Failure{
 		Code: report.CodeCoverageStale,
-		Message: fmt.Sprintf("coverage %s %s %s written before %s was last edited; clear stale TestResults directories and re-run the tests",
-			noun, joinPaths(skipped), verb, newest.File.String()),
+		Message: fmt.Sprintf("coverage %s %s %s written before %s was last edited%s",
+			noun, joinPaths(skipped), verb, newest.File.String(), discoveredStaleRemedy),
 	}
 }
 
@@ -377,8 +411,10 @@ type coberturaReport struct {
 // shape because the two shapes need different fixes: an attribute that is
 // absent has to be written, while any value ParseInt cannot read as base-10
 // seconds, another representation of an instant or plain garbage alike, is
-// already there and is a value to rewrite rather than one to add. The
-// offending value is quoted so the developer
+// already there and is a value to rewrite rather than one to add. A value
+// ParseInt reads but time.Unix cannot hold shares that wording, since it is
+// the same fix: the attribute in front of the developer is not epoch seconds.
+// The offending value is quoted so the developer
 // sees what the gate read rather than what they meant. Resolving the verdict
 // and its reason in one place is what stops a further rejection shape from
 // refusing under one wording and explaining itself with another.
@@ -387,11 +423,26 @@ func (r coberturaReport) timestamp() (time.Time, error) {
 		return time.Time{}, errors.New("carries no timestamp, so it cannot be judged against the code it describes")
 	}
 	seconds, err := strconv.ParseInt(r.Timestamp, 10, 64)
-	if err != nil {
+	if err != nil || seconds > maxEpochSeconds || seconds < minEpochSeconds {
 		return time.Time{}, fmt.Errorf("carries an unreadable timestamp %q; it must be epoch seconds", r.Timestamp)
 	}
 	return time.Unix(seconds, 0), nil
 }
+
+// The band time.Unix can hold without the internal seconds field it builds
+// wrapping. Go stores the value offset by the seconds between year 1 and 1970,
+// so a stamp within a few tens of billions of MaxInt64 wraps into the distant
+// past, and a report carrying one would then be judged older than the code and
+// skipped as superseded rather than refused, which is exactly the untrustworthy
+// stamp the tolerance rule above exists to refuse. No real producer reaches
+// here: epoch milliseconds and even nanoseconds stay far inside the band, so
+// this is the guard against a hand-written or corrupted value rather than
+// against a units bug.
+const (
+	secondsFromYearOneToEpoch = (1969*365 + 1969/4 - 1969/100 + 1969/400) * 24 * 60 * 60
+	maxEpochSeconds           = math.MaxInt64 - secondsFromYearOneToEpoch
+	minEpochSeconds           = math.MinInt64 + secondsFromYearOneToEpoch
+)
 
 type coberturaClass struct {
 	Filename string          `xml:"filename,attr"`

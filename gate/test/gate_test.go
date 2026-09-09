@@ -1694,7 +1694,7 @@ func TestCoverageReportStampedJustBeyondToleranceIsRefused(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// 25h ahead of now, one hour past clockSkewTolerance: a clock-skewed CI
+	// 25h ahead of now, one hour past ClockSkewTolerance: a clock-skewed CI
 	// agent rather than a units error, and what pins the constant as a boundary
 	// rather than a magic number only large enough to catch milliseconds.
 	stamp := stampAt(time.Now().Add(25 * time.Hour))
@@ -1716,7 +1716,7 @@ func TestCoverageReportStampedInsideToleranceIsScored(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// 23h ahead of now, inside clockSkewTolerance. An implementation refusing
+	// 23h ahead of now, inside ClockSkewTolerance. An implementation refusing
 	// every report stamped anywhere ahead of now, rather than only past the
 	// tolerance, fails here.
 	f.write("TestResults/coverage.cobertura.xml", coberturaStamped(stampAt(time.Now().Add(23*time.Hour)), f.root,
@@ -1749,6 +1749,34 @@ func TestNamedCoverageReportStampedFarAheadIsRefusedToo(t *testing.T) {
 	f.runWithArgs("--coverage", "artifacts/coverage.xml").assertMatches(t, "named_coverage_timestamp_ahead_of_now", 1,
 		f.baseLabel("main"),
 		"coverage report artifacts/coverage.xml carries a timestamp \"1767225600000\" more than 24h ahead of now; it must be epoch seconds\n")
+}
+
+func TestChangedFileModifiedFarAheadOfNowIsRefusedNamingTheFile(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The other side of the same comparison, moved by a machine's own clock
+	// rather than by a producer's units: a restored archive or a resumed VM
+	// leaves a source file modified in the future. No report can then be fresh
+	// enough, so a gate guarding only the report's side refuses with
+	// coverage_stale and sends the developer to clear TestResults directories
+	// that were never the problem. The report here is written fresh and is
+	// never read: the refusal names the file and its own modification time.
+	edited := time.Now().Add(25 * time.Hour).Truncate(time.Second)
+	f.setModTime(orderService, edited)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	modified := edited.UTC().Format(time.RFC3339)
+	f.run().assertMatchesWith(t, "source_mtime_in_future", 1, f.baseLabel("main"),
+		"src/Ordering/OrderService.cs was last modified "+modified+
+			", more than 24h ahead of now; correct the clock on this machine or restore the file's modification time\n",
+		map[string]string{"MODIFIED": modified})
 }
 
 func TestFutureStampedReportBesideAFreshOneStillRefuses(t *testing.T) {
@@ -1909,9 +1937,16 @@ func TestCoverageReportWithAnUnreadableTimestampIsRefused(t *testing.T) {
 	// them and needs to be told to rewrite it rather than that it is missing.
 	// Neither spelling is a base-10 integer, and reading either as one would
 	// judge the report against the Unix epoch instead.
+	// The int64 ceiling is a base-10 integer ParseInt reads happily, so it
+	// reaches the refusal only because the gate range-checks the value before
+	// building an instant from it. time.Unix offsets what it stores by the
+	// seconds between year 1 and 1970, so this stamp wraps into the distant
+	// past, and a report carrying it would otherwise be judged older than the
+	// code and skipped as superseded rather than refused as untrustworthy.
 	stamps := map[string]string{
 		"ISO-8601 instant":   "2026-01-01T00:00:00Z",
 		"fractional seconds": "1767225600.123",
+		"int64 ceiling":      "9223372036854775807",
 	}
 	for name, stamp := range stamps {
 		t.Run(name, func(t *testing.T) {
@@ -1941,11 +1976,11 @@ func TestSupersededDiscoveredReportIsSkippedAndTheFreshOneScores(t *testing.T) {
 	f.touchLine(orderService, 62)
 	// Discovery consumes reports in Name order, so the stale one here is the
 	// second the loader reaches, and the loader still judges it rather than
-	// stopping at the first, the point TestStalenessIsJudgedOnEveryDiscoveredReportNotJustTheFirst
-	// pinned before issue 32 reversed what judging it stale does. Refusing the
-	// run here, as that superseded test did, would fail every edit-and-test
-	// iteration on a leftover TestResults directory that a fresh run has
-	// already made irrelevant.
+	// stopping at the first. That much this case pinned before issue 32, when
+	// judging a discovered report stale refused the run; issue 32 keeps the
+	// judging and changes what it does, because refusing here would fail every
+	// edit-and-test iteration on a leftover TestResults directory that a fresh
+	// run has already made irrelevant.
 	//
 	// The stale report carries a fourth instrumentable line the fresh one never
 	// lists. An implementation that merges a stale report before dropping it,
@@ -1963,6 +1998,70 @@ func TestSupersededDiscoveredReportIsSkippedAndTheFreshOneScores(t *testing.T) {
 	}
 
 	f.run().assertMatches(t, "superseded_report_skipped", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestMethodWhoseOnlyCoverageWasSupersededIsUnknownNotMisscored(t *testing.T) {
+	const ghost = "src/Ordering/Ghost.cs"
+	vanish := span{File: ghost, Name: "Ghost.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write(ghost, csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.touchLine(ghost, 7)
+	// Both files edited on the same second, so the stale report is stale
+	// against whichever of them the newest edit resolves to.
+	f.setModTime(ghost, f.modTime(orderService))
+	// The fresh report knows only OrderService.cs. Ghost.cs was covered by the
+	// superseded report alone, so skipping that report leaves Ghost.Vanish with
+	// no coverage at all rather than with a second file's lines standing in for
+	// it. Every other case for issue 32 gives both reports the same class, where
+	// the fresh one backfills whatever the skipped one held; this is the shape
+	// where dropping a report costs the run coverage, and the cost is loud, an
+	// unknown row and the skipped report named beside it, rather than a method
+	// scored against lines that are not its own.
+	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml",
+		coberturaStamped(freshStamp(), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.write("tests/Beta.Tests/TestResults/run/coverage.cobertura.xml",
+		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+			coverageClass{filename: ghost, lines: spanCoverage(5, 4, 4)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(ghost, orderService), []span{vanish, cancel}),
+	}
+
+	f.run().assertMatches(t, "superseded_report_was_sole_coverage", 1, f.baseLabel("main"),
+		"1 changed method could not be attributed to a coverage report\n"+
+			"0 of 2 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestSupersededReportAndUnreadablePathAreOneSortedSkippedList(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The two reasons a path lands in skipped_paths at once, a directory the
+	// walk could not enter and a report a fresher run superseded. They are
+	// produced by different code at different times and merge into one list,
+	// so the run pins that the list is one sorted sequence: the unreadable
+	// directory here sorts after the superseded report, which appending
+	// discovery's skips and then the loader's would reverse.
+	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml",
+		coberturaStamped(freshStamp(), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.write("tests/Beta.Tests/TestResults/run/coverage.cobertura.xml",
+		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
+	f.denyRead("tests/Zeta.Tests/TestResults/locked")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "superseded_report_and_unreadable_path", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
@@ -2004,17 +2103,23 @@ func TestTwoProjectsSharingOneResultsDirectoryKeepBothReports(t *testing.T) {
 	// project's report under one shared root, the layout that broke the
 	// grouping fix tried and reverted on the #15 branch: any rule keeping only
 	// the newest report per directory keeps one of these and scores Cancel on a
-	// third of its lines rather than the union of both.
-	f.write("TestResults/6f1c8a/coverage.cobertura.xml", cobertura(f.root,
+	// third of its lines rather than the union of both. The two are stamped two
+	// seconds apart, both of them fresh, so such a rule has an unambiguous
+	// loser to drop; stamped on the same second, as cobertura() would stamp
+	// them, a rule that keeps both on a tie would pass this case unnoticed.
+	// The document is the union either report alone cannot produce, which
+	// two_projects_union already holds for two reports found under separate
+	// results directories.
+	f.write("TestResults/6f1c8a/coverage.cobertura.xml", coberturaStamped(f.editStamp(orderService, 0), f.root,
 		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 1}, {number: 62, hits: 0}, {number: 63, hits: 0}}}))
-	f.write("TestResults/b90d21/coverage.cobertura.xml", cobertura(f.root,
+	f.write("TestResults/b90d21/coverage.cobertura.xml", coberturaStamped(f.editStamp(orderService, 2*time.Second), f.root,
 		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 0}, {number: 62, hits: 1}, {number: 63, hits: 1}}}))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	f.run().assertMatches(t, "shared_results_directory_union", 0, f.baseLabel("main"),
+	f.run().assertMatches(t, "two_projects_union", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.00\n")
 }
 
