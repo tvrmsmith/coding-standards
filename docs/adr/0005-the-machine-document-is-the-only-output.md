@@ -1,5 +1,10 @@
 # metric-gate emits one TOON document on stdout and has no human output mode
 
+**Superseded 2026-09-09 by [ADR 0008](0008-the-machine-document-is-the-only-output.md).** The
+decision is unchanged. 0008 states it in one pass with the seventeen amendments below folded in,
+including the typed-code count they revised four times; this file stays for the reasoning and the
+dated history, and is not the file to read for the live rule.
+
 `metric-gate` is a flat command with no subcommands. Its stdout is always a single [TOON](https://toonformat.dev/)
 document, spec v4.1.1, encoded with the pipe delimiter. There is no `--format` flag, no text renderer, and no
 JSON renderer. A human running the binary by hand reads the same document, plus one summary line on stderr:
