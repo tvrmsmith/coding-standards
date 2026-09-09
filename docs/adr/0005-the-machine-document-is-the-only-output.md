@@ -208,6 +208,24 @@ the other's flags as unknown, cannot print a usage block that tells the truth. T
 that amendment gives a malformed invocation is unchanged, and no typed code covers it, for the reason it gives:
 the codes name what the gate found in a repository and a run whose arguments never parsed never chose one.
 
+**Amended 2026-09-09.** The 2026-09-07 amendment above describes the `staged_file_dirty` extraction-failure
+exception as asking "only about the paths the extractor was handed and failed on". `Extract` fails atomically, so
+there is no per-path "failed on" to ask about, and the gate asks `extract.Routable` over the changed set, a
+membership test against the static extension table. Read the exception as: when extraction fails under `--staged`,
+the gate asks whether any routable changed path is staged in one state and dirty on disk in another, and reports
+`staged_file_dirty` in place of the extractor's own cause only when that check names such a path. An extractor
+failure with no divergent path keeps its own cause, which is the decision the 2026-09-07 paragraph intended and
+the wording missed.
+
+**Amended 2026-09-09.** The staged-and-dirty refusal is narrowed a third way, beside the claimed-files-only
+narrowing and the extraction-failure exception. The divergence check runs git with `-w` and with
+`-c core.fileMode=false`, so a file staged in one state and then reindented or chmod'd on disk is scored rather
+than refused. [ADR 0003](0003-changed-method-is-a-span-holding-a-touched-line.md) states the rule flatly, that a
+file staged in one state and dirty in another exits 1 naming those files. Read it with this narrowing: the refusal
+fires on a change that can move a line, not on one that changes only whitespace or the executable bit, because
+neither can shift a line number and the only reason to refuse is that the gate would otherwise score index content
+against working-tree line numbers.
+
 Three parts of that shape are decisions in their own right.
 
 **The fix instruction is two typed cells, never prose.** `action` is one of `raise_coverage`, `split_method`, or
