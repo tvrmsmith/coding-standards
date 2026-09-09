@@ -48,12 +48,20 @@ func TestScopeUsageErrors(t *testing.T) {
 			argv:    []string{"--staged", "--files", orderService},
 			problem: "--files and --staged name two scopes; pass one",
 		},
-		// A second --staged names no second scope, but the message treats the
-		// command line as the developer wrote it rather than deciding they
-		// meant one flag, which is the same call the two-flag cases make.
+		// One flag typed twice names no second scope, so it gets a sentence
+		// about the repetition. "--staged and --staged name two scopes"
+		// contradicts itself and leaves the developer looking for a second
+		// flag they never typed.
 		"the same scope flag twice": {
 			argv:    []string{"--staged", "--staged"},
-			problem: "--staged and --staged name two scopes; pass one",
+			problem: "--staged was passed twice; pass it once",
+		},
+		// The same rule with a value flag, where the developer plausibly meant
+		// the second ref to replace the first. The gate refuses rather than
+		// picking one, which is the call the two-scope cases make too.
+		"the same ref flag twice": {
+			argv:    []string{"--since", "release", "--since", "main"},
+			problem: "--since was passed twice; pass it once",
 		},
 		// --files is variadic rather than repeatable, so a second one names
 		// one scope and gets the message saying where the paths go.
@@ -91,6 +99,19 @@ func TestScopeUsageErrors(t *testing.T) {
 		"a scope flag after a non-empty --files": {
 			argv:    []string{"--files", orderService, "--staged"},
 			problem: "--staged and --files name two scopes; pass one",
+		},
+		// Both stops are a single dash, not two, which is the asymmetry
+		// against --coverage that
+		// TestCoverageFlagTakesAValueBeginningWithOneDashAsAPath sits opposite.
+		// Weakened to "--", `--since -5` becomes a ref lookup for a commit
+		// nobody named.
+		"--since followed by a single-dash argument": {
+			argv:    []string{"--since", "-5"},
+			problem: "--since needs a ref",
+		},
+		"--files followed by a single-dash argument": {
+			argv:    []string{"--files", "-report.xml"},
+			problem: "--files needs at least one path",
 		},
 		// An empty argument does not start with '-', so the slurp takes it,
 		// and joined onto the working directory it names the working directory.
@@ -1170,4 +1191,32 @@ func TestFilesStopsCollectingPathsAtTheCoverageFlag(t *testing.T) {
 	f.runArgs("--files", orderService, "--coverage", "artifacts/coverage.xml").
 		assertMatches(t, "files_single_file", 0, "",
 			"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
+}
+
+func TestFilesResumesParsingAfterTheWholeListRatherThanInsideIt(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write(otherService, csharpFile(30))
+	f.commitAll("initial")
+
+	// A multi-path list is what pins where the parser resumes. --files consumes
+	// two arguments here, so an index that resumes one short reads
+	// src/Ordering/Other.cs a second time as a positional argument and exits 1
+	// on a usage error, and one long swallows --coverage and discovers the
+	// report instead of reading the one named. The two reports carry different
+	// numbers so the second failure shows in the document rather than only in
+	// which file was opened.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 0)}))
+	f.write("artifacts/coverage.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: append(spanCoverage(42, 10, 9), spanCoverage(61, 3, 2)...)},
+		coverageClass{filename: otherService, lines: spanCoverage(11, 4, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService, otherService), []span{placeAsync, cancel, otherRun}),
+	}
+
+	f.runArgs("--files", orderService, otherService, "--coverage", "artifacts/coverage.xml").
+		assertMatches(t, "files_named_directly", 0, "",
+			"0 of 3 changed methods over CRAP threshold 30, worst score 9.08\n")
 }

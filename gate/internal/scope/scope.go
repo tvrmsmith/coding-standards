@@ -131,13 +131,12 @@ func Parse(args []string) (Scope, error) {
 			sc.Mode, sc.Files, i = ModeFiles, files, i+len(files)
 
 		case arg == "--coverage", strings.HasPrefix(arg, "--coverage="):
-			value, joined := strings.CutPrefix(arg, "--coverage=")
-			if !joined {
-				value = ""
-				if i+1 < len(args) {
-					i++
-					value = args[i]
-				}
+			var value string
+			if after, joined := strings.CutPrefix(arg, "--coverage="); joined {
+				value = after
+			} else if i+1 < len(args) {
+				i++
+				value = args[i]
 			}
 			if value == "" {
 				return Scope{}, &UsageError{Problem: "--coverage needs a path"}
@@ -185,12 +184,19 @@ func slurpFiles(args []string, from int) ([]string, error) {
 // conflict reports two scope flags named on the same command line, the one
 // just seen first and the one already set second.
 //
-// A second --files is still a usage error, since the flag is variadic rather
-// than repeatable, but it names one scope and not two, so it gets the message
-// that says where the paths go.
+// One flag typed twice is a different mistake from two flags naming two
+// scopes, and the two-scopes sentence contradicts itself when both halves are
+// the same flag. A repetition gets a sentence about the repetition instead.
+//
+// A second --files keeps its own wording. The flag is variadic rather than
+// repeatable, so what the developer needs is not "pass it once" but where the
+// paths go.
 func conflict(second, first Mode) error {
-	if second == ModeFiles && first == ModeFiles {
-		return &UsageError{Problem: "--files takes every path in one list, as in 'metric-gate --files a.cs b.cs'"}
+	if second == first {
+		if second == ModeFiles {
+			return &UsageError{Problem: "--files takes every path in one list, as in 'metric-gate --files a.cs b.cs'"}
+		}
+		return &UsageError{Problem: flagNames[second] + " was passed twice; pass it once"}
 	}
 	return &UsageError{Problem: flagNames[second] + " and " + flagNames[first] + " name two scopes; pass one"}
 }

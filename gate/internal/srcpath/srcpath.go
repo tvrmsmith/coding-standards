@@ -175,8 +175,9 @@ func (e *UnresolvedError) Error() string { return e.Name + " " + e.Reason }
 func (r Root) NamedFiles(names []string) ([]Path, error) {
 	paths := make([]Path, 0, len(names))
 	seen := make(map[Path]bool, len(names))
+	dirs := dirNames{}
 	for _, name := range names {
-		path, err := r.named(name)
+		path, err := r.named(name, dirs)
 		if err != nil {
 			return nil, err
 		}
@@ -215,7 +216,7 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // UnresolvedError, so every refusal about the path reaches the document under
 // one code. Losing the working directory is not about the path at all, so it
 // travels as a plain error.
-func (r Root) named(name string) (Path, error) {
+func (r Root) named(name string, dirs dirNames) (Path, error) {
 	candidate := filepath.FromSlash(name)
 	if !filepath.IsAbs(candidate) {
 		cwd, err := os.Getwd()
@@ -251,7 +252,7 @@ func (r Root) named(name string) (Path, error) {
 	if !info.Mode().IsRegular() {
 		return "", &UnresolvedError{Name: name, Reason: "is not a regular file"}
 	}
-	spelled, err := r.spelledAsOnDisk(filepath.FromSlash(string(rel)))
+	spelled, err := r.spelledAsOnDisk(filepath.FromSlash(string(rel)), dirs)
 	if err != nil {
 		return "", unreadable(name, err)
 	}
@@ -292,17 +293,47 @@ func unreadable(name string, err error) *UnresolvedError {
 //
 // The walk reads directories rather than comparing case-folded text, because
 // folding would also merge two files a case-sensitive filesystem keeps apart.
-func (r Root) spelledAsOnDisk(rel string) (bool, error) {
+//
+// dirs carries the listings already read, so `--files` over a few hundred
+// paths in one tree reads each ancestor directory once rather than once per
+// path.
+func (r Root) spelledAsOnDisk(rel string, dirs dirNames) (bool, error) {
 	dir := r.resolved
 	for _, component := range strings.Split(rel, string(filepath.Separator)) {
-		entries, err := os.ReadDir(dir)
+		entries, err := dirs.of(dir)
 		if err != nil {
 			return false, err
 		}
-		if !slices.ContainsFunc(entries, func(e os.DirEntry) bool { return e.Name() == component }) {
+		if !slices.Contains(entries, component) {
 			return false, nil
 		}
 		dir = filepath.Join(dir, component)
 	}
 	return true, nil
+}
+
+// dirNames memoizes directory listings for the length of one NamedFiles call,
+// keyed by absolute directory path. It holds entry names alone, since that is
+// the whole of what the spelling walk compares, and it is deliberately not
+// shared across calls: a listing older than the run would answer for a tree
+// that has since changed.
+type dirNames map[string][]string
+
+// of is the entry names in dir, reading it the first time it is asked for. A
+// directory it could not read is not remembered, so a transient failure does
+// not answer for every later path under it.
+func (d dirNames) of(dir string) ([]string, error) {
+	if names, ok := d[dir]; ok {
+		return names, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(entries))
+	for i, entry := range entries {
+		names[i] = entry.Name()
+	}
+	d[dir] = names
+	return names, nil
 }
