@@ -3706,8 +3706,12 @@ func TestRunOutsideAGitRepoWritesNoDocumentAndExitsOne(t *testing.T) {
 
 	result := f.run()
 
-	// This failure is upstream of the document, so ADR 0008's one-TOON-document
-	// rule cannot apply: there is no base and no scope to report. git's own
+	// This is the shape the run has today, not the shape it should have. ADR
+	// 0008 carves one case out of its one-TOON-document rule, a malformed
+	// command line, and running outside a git repo is not that one, so the empty
+	// stdout below is a known deviation this case pins rather than a rule 0008
+	// grants. The failure does land upstream of the document, with no base and
+	// no scope to report. git's own
 	// explanation is in git's own language, but the failing argv is not, and
 	// gitError.Error carries it, so naming the invocation that failed keeps the
 	// case specific without pinning it to English. A panic or an unrelated
