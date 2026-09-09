@@ -3,13 +3,12 @@
 // lines of a source file are instrumentable and which of those were hit. A
 // report it cannot trust at all, one whose own timestamp it cannot read or
 // one stamped outside the band an honest producer's clock reaches, is refused
-// rather than merged,
-// because coverage silently dropped reaches the score as untested code. A
-// report merely older than the code it describes is refused the same way when
-// a human named it, but one discovery found is instead skipped as a report a
-// fresher run has already superseded, since dotnet test leaves every earlier
-// run's TestResults directory on disk and the developer never asked the gate
-// to weigh it against the fresh one sitting beside it.
+// rather than merged, because coverage silently dropped reaches the score as
+// untested code. A report merely older than the code it describes is refused
+// the same way when a human named it, but one discovery found is instead
+// skipped as a report a fresher run has already superseded, since dotnet test
+// leaves every earlier run's TestResults directory on disk and the developer
+// never asked the gate to weigh it against the fresh one sitting beside it.
 // It resolves report paths by ADR 0004's one rule, and the rule cuts two
 // ways: one path it cannot place inside the repo is a silent ignore, while a
 // report with an erased source root, a class contradicting itself, or no class
@@ -433,10 +432,10 @@ type coberturaReport struct {
 // seconds, another representation of an instant or plain garbage alike, is
 // already there and is a value to rewrite rather than one to add. A value
 // ParseInt reads but time.Unix cannot hold shares that wording, since it is
-// the same fix: the attribute in front of the developer is not epoch seconds.
-// The offending value is quoted so the developer
-// sees what the gate read rather than what they meant. Resolving the verdict
-// and its reason in one place is what stops a further rejection shape from
+// the same fix, the attribute in front of the developer is not epoch seconds.
+// The offending value is quoted so the developer sees what the gate read
+// rather than what they meant. Resolving the verdict and its reason in one
+// place is what stops a further rejection shape from
 // refusing under one wording and explaining itself with another.
 func (r coberturaReport) timestamp() (time.Time, error) {
 	if r.Timestamp == "" {
