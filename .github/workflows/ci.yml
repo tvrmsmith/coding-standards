@@ -55,14 +55,18 @@ jobs:
       - run: go vet ./...
         working-directory: gate
       # A vet finding is not a reason to withhold the test result, so the tests
-      # run anyway. They still need both toolchains, so a failed setup skips
-      # them rather than reporting a second broken thing. METRIC_GATE_REQUIRE_DOTNET
-      # turns a missing SDK into a test failure instead of a skip, because one
-      # case here packs and installs the real dotnet extractor and a silent
-      # skip would let that path go unexercised forever.
+      # run anyway. Go setup is their precondition, so a failed one skips them
+      # rather than reporting a second broken thing. A failed SDK install is
+      # not, because it reds the job on its own, and running the tests anyway
+      # reports the whole Go suite plus a clear METRIC_GATE_REQUIRE_DOTNET
+      # failure on the one SDK-dependent case in a single round trip.
+      # METRIC_GATE_REQUIRE_DOTNET turns a missing SDK into a test failure
+      # instead of a skip, because that one case packs and installs the real
+      # dotnet extractor and a silent skip would let that path go unexercised
+      # forever.
       - run: go test ./... -count=1
         working-directory: gate
-        if: ${{ !cancelled() && steps.setup.outcome == 'success' && steps.setup-dotnet.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         env:
           METRIC_GATE_REQUIRE_DOTNET: "1"
 
