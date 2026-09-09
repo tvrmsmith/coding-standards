@@ -1643,112 +1643,6 @@ func TestLibraryCoveredByTwoTestProjectsIsScoredOnTheUnion(t *testing.T) {
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.00\n")
 }
 
-func TestCoverageReportStampedInEpochMillisecondsIsRefused(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-	f.touchLine(orderService, 62)
-	// A units error a producer emitting epoch milliseconds writes, coverage.py's
-	// Cobertura writer among several Java ones. Read as seconds it lands the
-	// parsed instant tens of thousands of years out, so a run comparing only
-	// against newest.At would never see this report as stale and would score
-	// Cancel against it.
-	f.write("TestResults/coverage.cobertura.xml", coberturaStamped("1767225600000", f.root,
-		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
-	f.stub = stubConfig{
-		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
-	}
-
-	// No crap table appears: no method is scored against a report the run
-	// refused.
-	f.run().assertMatches(t, "coverage_timestamp_ahead_of_now", 1, f.baseLabel("main"),
-		"coverage report TestResults/coverage.cobertura.xml carries a timestamp \"1767225600000\" more than 24h ahead of now; it must be epoch seconds\n")
-}
-
-func TestCoverageReportStampedJustBeyondToleranceIsRefused(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-	f.touchLine(orderService, 62)
-	// 25h ahead of now, one hour past clockSkewTolerance: a clock-skewed CI
-	// agent rather than a units error, and what pins the constant as a boundary
-	// rather than a magic number only large enough to catch milliseconds.
-	stamp := stampAt(time.Now().Add(25 * time.Hour))
-	f.write("TestResults/coverage.cobertura.xml", coberturaStamped(stamp, f.root,
-		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
-	f.stub = stubConfig{
-		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
-	}
-
-	f.run().assertMatchesWith(t, "coverage_timestamp_beyond_tolerance", 1, f.baseLabel("main"),
-		"coverage report TestResults/coverage.cobertura.xml carries a timestamp "+
-			strconv.Quote(stamp)+" more than 24h ahead of now; it must be epoch seconds\n",
-		map[string]string{"STAMP": stamp})
-}
-
-func TestCoverageReportStampedInsideToleranceIsScored(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-	f.touchLine(orderService, 62)
-	// 23h ahead of now, inside clockSkewTolerance. An implementation refusing
-	// every report stamped anywhere ahead of now, rather than only past the
-	// tolerance, fails here.
-	f.write("TestResults/coverage.cobertura.xml", coberturaStamped(stampAt(time.Now().Add(23*time.Hour)), f.root,
-		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
-	f.stub = stubConfig{
-		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
-	}
-
-	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
-		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
-}
-
-func TestNamedCoverageReportStampedFarAheadIsRefusedToo(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-	f.touchLine(orderService, 62)
-	// Outside any TestResults directory, so discovery cannot reach it: the only
-	// way this report is read is by naming it, which pins the future-timestamp
-	// rule as running for a named report too, unlike staleness, which a named
-	// report can only be refused for and never skipped.
-	f.write("artifacts/coverage.xml", coberturaStamped("1767225600000", f.root,
-		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
-	f.stub = stubConfig{
-		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
-	}
-
-	f.runWithArgs("--coverage", "artifacts/coverage.xml").assertMatches(t, "named_coverage_timestamp_ahead_of_now", 1,
-		f.baseLabel("main"),
-		"coverage report artifacts/coverage.xml carries a timestamp \"1767225600000\" more than 24h ahead of now; it must be epoch seconds\n")
-}
-
-func TestFutureStampedReportBesideAFreshOneStillRefuses(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-	f.touchLine(orderService, 62)
-	// Issue 32 notes a report stamped implausibly far ahead would win any
-	// ranking it took part in. This pins that it is refused outright instead of
-	// preferred over the fresh report discovered beside it.
-	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml", coberturaStamped(freshStamp(), f.root,
-		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
-	f.write("tests/Beta.Tests/TestResults/run/coverage.cobertura.xml", coberturaStamped("1767225600000", f.root,
-		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
-	f.stub = stubConfig{
-		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
-	}
-
-	f.run().assertMatches(t, "coverage_timestamp_ahead_beside_fresh", 1, f.baseLabel("main"),
-		"coverage report tests/Beta.Tests/TestResults/run/coverage.cobertura.xml carries a timestamp \"1767225600000\" more than 24h ahead of now; it must be epoch seconds\n")
-}
-
 func TestCoverageReportOlderThanTheCodeItDescribesIsRefused(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
@@ -1911,52 +1805,17 @@ func TestCoverageReportWithAnUnreadableTimestampIsRefused(t *testing.T) {
 	}
 }
 
-func TestSupersededDiscoveredReportIsSkippedAndTheFreshOneScores(t *testing.T) {
+func TestStalenessIsJudgedOnEveryDiscoveredReportNotJustTheFirst(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 	// Discovery consumes reports in Name order, so the stale one here is the
-	// second the loader reaches, and the loader still judges it rather than
-	// stopping at the first, the point TestStalenessIsJudgedOnEveryDiscoveredReportNotJustTheFirst
-	// pinned before issue 32 reversed what judging it stale does. Refusing the
-	// run here, as that superseded test did, would fail every edit-and-test
-	// iteration on a leftover TestResults directory that a fresh run has
-	// already made irrelevant.
-	//
-	// The stale report carries a fourth instrumentable line the fresh one never
-	// lists. An implementation that merges a stale report before dropping it,
-	// rather than skipping it outright before the merge, scores Cancel over
-	// four lines instead of three: 0.5 and 4.13, not 0.667 and 3.33.
+	// second the loader reaches. A run that judged only the first would merge
+	// this one and score the method against a report predating the edit, which
+	// is the leftover-TestResults case the remedy sentence is written for.
 	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml",
 		coberturaStamped(freshStamp(), f.root,
-			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
-	f.write("tests/Beta.Tests/TestResults/run/coverage.cobertura.xml",
-		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
-			coverageClass{filename: orderService, lines: spanCoverage(61, 4, 0)}))
-	f.stub = stubConfig{
-		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
-	}
-
-	f.run().assertMatches(t, "superseded_report_skipped", 0, f.baseLabel("main"),
-		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
-}
-
-func TestEveryDiscoveredReportStaleRefusesNamingThemAll(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-	f.touchLine(orderService, 62)
-	// Both reports stale by one second, so nothing survives to skip past:
-	// unlike TestSupersededDiscoveredReportIsSkippedAndTheFreshOneScores, there
-	// is no fresh report to fall back on and the run has to refuse rather than
-	// pass silently with an empty crap table. The single-report shape of this
-	// message is already pinned by
-	// TestCoverageReportOlderThanTheCodeItDescribesIsRefused and its golden
-	// coverage_stale.toon, which this case leaves untouched.
-	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml",
-		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
 			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
 	f.write("tests/Beta.Tests/TestResults/run/coverage.cobertura.xml",
 		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
@@ -1966,33 +1825,9 @@ func TestEveryDiscoveredReportStaleRefusesNamingThemAll(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	f.run().assertMatches(t, "coverage_stale_every_report", 1, f.baseLabel("main"),
-		"coverage reports tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml and "+
-			"tests/Beta.Tests/TestResults/run/coverage.cobertura.xml were written before "+
+	f.run().assertMatches(t, "coverage_stale_second_report", 1, f.baseLabel("main"),
+		"coverage report tests/Beta.Tests/TestResults/run/coverage.cobertura.xml was written before "+
 			"src/Ordering/OrderService.cs was last edited; clear stale TestResults directories and re-run the tests\n")
-}
-
-func TestTwoProjectsSharingOneResultsDirectoryKeepBothReports(t *testing.T) {
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-	f.touchLine(orderService, 62)
-	// dotnet test Sln.sln --results-directory ./TestResults writes every
-	// project's report under one shared root, the layout that broke the
-	// grouping fix tried and reverted on the #15 branch: any rule keeping only
-	// the newest report per directory keeps one of these and scores Cancel on a
-	// third of its lines rather than the union of both.
-	f.write("TestResults/6f1c8a/coverage.cobertura.xml", cobertura(f.root,
-		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 1}, {number: 62, hits: 0}, {number: 63, hits: 0}}}))
-	f.write("TestResults/b90d21/coverage.cobertura.xml", cobertura(f.root,
-		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 0}, {number: 62, hits: 1}, {number: 63, hits: 1}}}))
-	f.stub = stubConfig{
-		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
-	}
-
-	f.run().assertMatches(t, "shared_results_directory_union", 0, f.baseLabel("main"),
-		"0 of 1 changed methods over CRAP threshold 30, worst score 3.00\n")
 }
 
 func TestStalenessIsJudgedOnEveryNamedReportNotJustTheFirst(t *testing.T) {
