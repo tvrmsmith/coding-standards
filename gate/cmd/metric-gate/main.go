@@ -379,7 +379,18 @@ func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (co
 // resolves to the lexicographically smallest path, and keeping the first file
 // seen is enough for that because join.Changed returns its spans in ascending
 // file order, which its doc comment promises and its own test holds it to.
+//
+// A file modified further ahead of now than coverage.ClockSkewTolerance stops
+// the run here, naming that file and its own modification time. The comparison
+// coverage.Load runs has two sides and a bad clock, a restored archive or a
+// resumed VM moves this one: with newest.At in the future no report can be
+// fresh enough, so the run would otherwise die with coverage_stale telling the
+// developer to clear TestResults directories, which will never fix it. The
+// report codes were rejected for this: nothing is wrong with any report, and
+// naming one would send the developer to regenerate a file that is already
+// current.
 func newestEdit(root srcpath.Root, changed []extract.Span) (coverage.Newest, error) {
+	now := time.Now()
 	var newest coverage.Newest
 	seen := map[srcpath.Path]bool{}
 	for _, span := range changed {
@@ -392,6 +403,13 @@ func newestEdit(root srcpath.Root, changed []extract.Span) (coverage.Newest, err
 			return coverage.Newest{}, fmt.Errorf("stat %s: %w", span.File, err)
 		}
 		at := info.ModTime().Truncate(time.Second)
+		if at.After(now.Add(coverage.ClockSkewTolerance)) {
+			return coverage.Newest{}, &report.Failure{
+				Code: report.CodeSourceMtimeInFuture,
+				Message: fmt.Sprintf("%s was last modified %s, more than %s ahead of now; correct the clock on this machine or restore the file's modification time",
+					span.File, at.UTC().Format(time.RFC3339), coverage.ToleranceLabel()),
+			}
+		}
 		if newest.File == "" || at.After(newest.At) {
 			newest = coverage.Newest{File: span.File, At: at}
 		}
