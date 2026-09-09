@@ -216,16 +216,14 @@ func selectDiff(repo gitscope.Repo, sc scope.Scope) (selection, error) {
 // table answer that here. They are asked about rather than the whole diff,
 // because a dirty staged Markdown file the extractor never saw would otherwise
 // replace the extractor's own cause with one about a file nothing was going to
-// read. A divergence check that cannot run answers nil for the same reason: the
-// extractor's cause is the one the gate did establish.
+// read. stagedDirty names no file when it could not ask git, and that answer
+// is the one to keep here for the same reason: the extractor's cause is the one
+// the gate did establish.
 func dirtyBehindExtraction(repo gitscope.Repo, base gitscope.Base, files []srcpath.Path) *report.Failure {
 	if !base.Staged {
 		return nil
 	}
-	dirty, err := stagedDirty(repo, extract.Routable(files))
-	if err != nil {
-		return nil
-	}
+	dirty, _ := stagedDirty(repo, extract.Routable(files))
 	return dirty
 }
 
