@@ -14,12 +14,14 @@
 // failure only, a malformed command line, which "exits 1 with empty stdout and
 // no typed code, because argv failed before the run had a shape to report".
 //
-// Two errors take that shape downstream of the document instead, failing to stat
-// a changed file and failing to read the working directory a --coverage path
-// resolves against, and that shape is a known deviation from the contract
-// rather than part of it. Both happen after the changed methods are counted, so
-// the gate did examine a repository and still emits nothing. Issue 31 gives them
-// typed codes and moves them inside the document.
+// Three other errors take that shape, and 0008 sanctions none of them. Failing
+// to open a git repository lands upstream of the document, before there is a
+// base or a scope to report. Failing to stat a changed file and failing to read
+// the working directory a --coverage path resolves against land downstream,
+// after the changed methods are counted, so the gate did examine a repository
+// and still emits nothing. All three are known deviations from the contract
+// rather than part of it, and issue 31 gives the two downstream ones typed
+// codes and moves them inside the document.
 package main
 
 import (
