@@ -96,6 +96,7 @@ or the fix is a judgment call.
 | `no-restricted-syntax` (`?.` inside `expect(...)`) | error | A4 |
 | `no-restricted-syntax` (empty `waitFor` callback) | error | D11 |
 | `tvrmsmith/combine-assertions-on-same-object` | warn | A1 |
+| `tvrmsmith/no-quantifier-assertion` | warn | A2 |
 | `jest/prefer-to-be` | error | A2 |
 | `jest/prefer-to-contain` | error | A2 |
 | `jest/prefer-to-have-length` | error | A2 |
@@ -112,6 +113,12 @@ or the fix is a judgment call.
 | `jest/valid-expect-in-promise` | error | A5 |
 | `jest/no-standalone-expect` | error | A5 |
 | `jest/expect-expect` | warn | A5 |
+
+`no-quantifier-assertion` is the only custom A2 rule, and it exists because the off-the-shelf
+A2 layer has a measured hole: `expect(xs.every(p)).toBe(true)` reduces the collection to a
+boolean before the matcher runs, and nothing upstream sees it. `measure-a2-residue.mjs` buckets
+a target repo's boolean assertions to show which uncovered shapes are worth a rule and which
+stay review-only. Run it before proposing another one.
 
 `expect-expect` is the one A5 rule at warn, and not because the guideline is soft. The rule counts
 only calls named in `assertFunctionNames` (default `expect`), so a suite asserting through another

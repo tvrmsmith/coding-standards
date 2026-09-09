@@ -118,6 +118,7 @@ Three shapes produce it:
 |----------|----------|
 | Multiple properties on one object | Single structural/equivalence assertion |
 | Collection contents | Equivalence against expected items |
+| Every element satisfies a predicate | Filter to the ones that do not, assert the result is empty |
 | Collection count only | Direct count assertion |
 | Single item + type verification | Filter to single → type check → equivalence |
 | Can't combine assertions | Wrap in assertion scope / use lazy evaluation |
