@@ -2,7 +2,8 @@
 // developer named on the command line instead, parses them, and answers which
 // lines of a source file are instrumentable and which of those were hit. A
 // report it cannot trust at all, one whose own timestamp it cannot read or
-// one stamped implausibly far ahead of now, is refused rather than merged,
+// one stamped outside the band an honest producer's clock reaches, is refused
+// rather than merged,
 // because coverage silently dropped reaches the score as untested code. A
 // report merely older than the code it describes is refused the same way when
 // a human named it, but one discovery found is instead skipped as a report a
@@ -263,13 +264,15 @@ func underResultsDir(rel string) bool {
 	return false
 }
 
-// ClockSkewTolerance is how far ahead of the gate's own clock a report may
-// claim to have been written before the gate stops believing it. It is
-// exported because the same window bounds the other side of the staleness
-// comparison, a changed file's own mtime, which the command stats and judges
-// before it ever reaches this package. An
-// unsynchronised CI agent or a machine resumed from a suspended VM drifts by
-// hours, not days, so a day of slack still lets an honest producer's report
+// clockSkewTolerance is how far ahead of the gate's own clock an instant may
+// sit before the gate stops believing it, and toleranceLabel is how every
+// refusal quoting the window spells it. The two are retuned together, and the
+// label is written out rather than rendered from the constant because Go
+// spells this duration "24h0m0s" and trimming that back to "24h" is only
+// correct while the window is whole hours.
+//
+// An unsynchronised CI agent or a machine resumed from a suspended VM drifts
+// by hours, not days, so a day of slack still lets an honest producer's report
 // through. A producer that writes the timestamp attribute in epoch
 // milliseconds rather than seconds, coverage.py's Cobertura writer among
 // several Java ones, lands the parsed instant tens of thousands of years in
@@ -277,21 +280,35 @@ func underResultsDir(rel string) bool {
 // margin. The rule exists at all because without it, at.Before(newest.At) can
 // never be true for a timestamp that far out, so the staleness comparison
 // silently stops running and the report merges as though it had passed.
-const ClockSkewTolerance = 24 * time.Hour
+const (
+	clockSkewTolerance = 24 * time.Hour
+	toleranceLabel     = "24h"
+)
 
-// ToleranceLabel renders ClockSkewTolerance the way every refusal quoting the
-// window spells it. Whole hours are spelled as hours, since Go's own duration
-// spelling of the current constant is "24h0m0s" and the window a message
-// quotes should read the way the reason for it was written down. Trimming
-// "0m0s" off the end of that string was rejected: retune the constant to 90
-// minutes and "1h30m0s" ends the same way, leaving the message reading "more
-// than 1h3 ahead of now".
-func ToleranceLabel() string {
-	if ClockSkewTolerance%time.Hour == 0 {
-		return strconv.FormatInt(int64(ClockSkewTolerance/time.Hour), 10) + "h"
-	}
-	return ClockSkewTolerance.String()
+// FarAheadOfNow reports whether at sits further ahead of now than the gate
+// tolerates, and FarAheadOfNowClause is the fragment every refusal for it
+// closes with. Both are exported because the staleness comparison has two
+// sides and the command owns the other one: it stats a changed file's mtime
+// before this package ever sees a report. Exporting the window itself was
+// rejected, since the caller would then rebuild the predicate and the clause
+// by hand and a retune here would have to be matched there.
+func FarAheadOfNow(at, now time.Time) bool {
+	return at.After(now.Add(clockSkewTolerance))
 }
+
+const FarAheadOfNowClause = "more than " + toleranceLabel + " ahead of now"
+
+// earliestPlausibleStamp is the oldest instant a report may claim to have been
+// written at, 2000-01-01T00:00:00Z. No Cobertura producer predates it: the
+// format's own tooling is younger than that, and any checkout the gate scores
+// was tested by a run that happened after it. What lands below it is the same
+// units fault the tolerance catches from the other side, a producer writing
+// seconds since boot or since process start, or a zeroed or negative attribute
+// where the writer had no clock to read. Leaving the floor off was rejected
+// because such a stamp parses, holds, and sorts before every edit, so a
+// discovered report carrying one is skipped as superseded and its coverage
+// silently leaves the score, which is what the upper bound exists to prevent.
+const earliestPlausibleStamp = 946684800
 
 // Load reads every source in order and unions them into one set: a line is
 // instrumentable when any report lists it, and covered when any report
@@ -301,13 +318,14 @@ func ToleranceLabel() string {
 // signature sees which instant that is; a package-level clock would hide both.
 //
 // Before a report merges, it has to read, unmarshal, carry a readable
-// timestamp no more than ClockSkewTolerance ahead of now, and be no older than
-// newest.At. Failing to read, unmarshal or carry a readable timestamp stops
-// the run rather than dropping the report, because a bad report silently
-// dropped is exactly the untested code the staleness rule exists to catch. A
-// timestamp implausibly far ahead of now stops the run the same way whichever
-// Origin the source carries, since a report the gate cannot trust is not one a
-// fresher run superseded.
+// timestamp inside the plausible band, from earliestPlausibleStamp to
+// clockSkewTolerance ahead of now, and be no older than newest.At. Failing to
+// read, unmarshal or carry a readable timestamp stops the run rather than
+// dropping the report, because a bad report silently dropped is exactly the
+// untested code the staleness rule exists to catch. A timestamp outside the
+// band stops the run the same way whichever Origin the source carries and
+// whichever side it falls out on, since a report the gate cannot trust is not
+// one a fresher run superseded.
 //
 // A report merely older than newest.At is judged by Origin instead. One a
 // human named on --coverage still refuses the run: they chose it, and
@@ -347,11 +365,18 @@ func Load(root srcpath.Root, sources []Source, newest Newest, now time.Time) (Se
 				Message: "coverage report " + source.Name + " " + err.Error(),
 			}
 		}
-		if at.After(now.Add(ClockSkewTolerance)) {
+		if FarAheadOfNow(at, now) {
 			return nil, nil, &report.Failure{
 				Code: report.CodeCoverageUnparseable,
-				Message: fmt.Sprintf("coverage report %s carries a timestamp %q more than %s ahead of now; it must be epoch seconds",
-					source.Name, parsed.Timestamp, ToleranceLabel()),
+				Message: fmt.Sprintf("coverage report %s carries a timestamp %q %s; it must be epoch seconds, or the clock on this machine is behind the one that wrote it",
+					source.Name, parsed.Timestamp, FarAheadOfNowClause),
+			}
+		}
+		if at.Unix() < earliestPlausibleStamp {
+			return nil, nil, &report.Failure{
+				Code: report.CodeCoverageUnparseable,
+				Message: fmt.Sprintf("coverage report %s carries a timestamp %q from before %s; it must be epoch seconds",
+					source.Name, parsed.Timestamp, time.Unix(earliestPlausibleStamp, 0).UTC().Format(time.RFC3339)),
 			}
 		}
 		// Staleness is checked before the merge, not after it, so a refused or
@@ -391,7 +416,7 @@ func allSupersededFailure(skipped []string, newest Newest) *report.Failure {
 	return &report.Failure{
 		Code: report.CodeCoverageStale,
 		Message: fmt.Sprintf("coverage %s %s %s written before %s was last edited%s",
-			noun, joinPaths(skipped), verb, newest.File.String(), discoveredStaleRemedy),
+			noun, joinNames(skipped), verb, newest.File.String(), discoveredStaleRemedy),
 	}
 }
 
@@ -531,7 +556,7 @@ func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath string
 				Code: report.CodeFileAmbiguous,
 				Message: fmt.Sprintf(
 					"class %s in coverage report %s resolved to more than one path inside the repo root, %s",
-					class.Filename, reportPath, joinPaths(distinct)),
+					class.Filename, reportPath, joinNames(distinct)),
 			}
 		}
 		if len(distinct) == 0 {
@@ -570,22 +595,30 @@ func (s Set) union(other Set) {
 	}
 }
 
-// joinPaths renders paths one diagnostic quotes as a readable list, so a
+// joinNames renders the names one diagnostic quotes as a readable list, so a
 // class contradicting itself three ways names all three rather than the first
 // two. It is generic over any ~string rather than srcpath.Path alone, so the
 // same rendering serves a file_ambiguous diagnostic and the all-superseded
 // coverage_stale one, which names []string report names that have no
 // srcpath.Path of their own, some of them (a report named on --coverage) not
-// even inside the repo. A single element returns alone rather than joining
-// against nothing, which the file_ambiguous caller never needs, since a class
-// resolving to one path is not ambiguous, but the coverage_stale caller does.
-func joinPaths[T ~string](paths []T) string {
-	if len(paths) == 1 {
-		return string(paths[0])
+// even inside the repo. It is "names" rather than "paths" for exactly that:
+// what it joins is how the document names a thing, which is not always a path.
+// A single element returns alone rather than joining against nothing, which
+// the file_ambiguous caller never needs, since a class resolving to one path
+// is not ambiguous, but the coverage_stale caller does. Empty returns the
+// empty string rather than indexing off the end of the slice; no caller passes
+// it today, both being guarded, and a diagnostic quoting nothing is a worse
+// fault to hand a developer than a panic is to debug.
+func joinNames[T ~string](names []T) string {
+	if len(names) == 0 {
+		return ""
 	}
-	rendered := make([]string, 0, len(paths))
-	for _, path := range paths {
-		rendered = append(rendered, string(path))
+	if len(names) == 1 {
+		return string(names[0])
+	}
+	rendered := make([]string, 0, len(names))
+	for _, name := range names {
+		rendered = append(rendered, string(name))
 	}
 	return strings.Join(rendered[:len(rendered)-1], ", ") + " and " + rendered[len(rendered)-1]
 }

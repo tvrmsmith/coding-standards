@@ -334,12 +334,16 @@ func dirtyMessage(dirty []srcpath.Path) string {
 // skipped list of its own too, since a named report is the one Source.Origin
 // coverage.Load never skips as superseded. The newest edit is computed here,
 // behind the declared-input guard, so a metric asking for no coverage pays no
-// stat for one.
+// stat for one. The clock is read once here and passed down, so both sides of
+// the staleness comparison, a source file's mtime and a report's own stamp,
+// are judged against the same instant rather than against a clock that
+// advanced between them.
 func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (coverage.Set, []string, error) {
 	if !slices.Contains(crap.DeclaredInputs, inputCoverage) {
 		return nil, nil, nil
 	}
-	newest, err := newestEdit(root, changed)
+	now := time.Now()
+	newest, err := newestEdit(root, changed, now)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -348,7 +352,7 @@ func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (co
 		if err != nil {
 			return nil, nil, fmt.Errorf("resolving --coverage paths against the working directory: %w", err)
 		}
-		set, _, err := coverage.Load(root, coverage.Named(root, cwd, named), newest, time.Now())
+		set, _, err := coverage.Load(root, coverage.Named(root, cwd, named), newest, now)
 		return set, nil, err
 	}
 	sources, skipped, err := coverage.Discover(root)
@@ -362,7 +366,7 @@ func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (co
 				coverage.Glob + " under the repo root",
 		}
 	}
-	set, superseded, err := coverage.Load(root, sources, newest, time.Now())
+	set, superseded, err := coverage.Load(root, sources, newest, now)
 	// discovery's own skips and Load's superseded skips are two different
 	// reasons a path is missing from the score, a walk that could not read a
 	// directory and a report a fresher run replaced, but skipped_paths does
@@ -380,17 +384,21 @@ func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (co
 // seen is enough for that because join.Changed returns its spans in ascending
 // file order, which its doc comment promises and its own test holds it to.
 //
-// A file modified further ahead of now than coverage.ClockSkewTolerance stops
-// the run here, naming that file and its own modification time. The comparison
-// coverage.Load runs has two sides and a bad clock, a restored archive or a
-// resumed VM moves this one: with newest.At in the future no report can be
-// fresh enough, so the run would otherwise die with coverage_stale telling the
-// developer to clear TestResults directories, which will never fix it. The
-// report codes were rejected for this: nothing is wrong with any report, and
-// naming one would send the developer to regenerate a file that is already
-// current.
-func newestEdit(root srcpath.Root, changed []extract.Span) (coverage.Newest, error) {
-	now := time.Now()
+// A file modified far enough ahead of now to fail coverage.FarAheadOfNow
+// stops the run here, naming that file and its own modification time. The
+// comparison coverage.Load runs has two sides and a bad clock, a restored
+// archive or a resumed VM moves this one: with newest.At in the future no
+// report can be fresh enough, so the run would otherwise die with
+// coverage_stale telling the developer to clear TestResults directories, which
+// will never fix it. It is the same window the report side is judged by, asked
+// of coverage rather than rebuilt here, so retuning the window or rewording
+// the clause cannot leave the two sides disagreeing. The window is all this
+// guard covers: skew inside it still moves newest.At ahead of every report and
+// still reaches the misleading remedy, which is the pre-existing behaviour
+// this narrows rather than removes. A report code was rejected for the
+// refusal: nothing is wrong with any report, and naming one would send the
+// developer to regenerate a file that is already current.
+func newestEdit(root srcpath.Root, changed []extract.Span, now time.Time) (coverage.Newest, error) {
 	var newest coverage.Newest
 	seen := map[srcpath.Path]bool{}
 	for _, span := range changed {
@@ -403,11 +411,11 @@ func newestEdit(root srcpath.Root, changed []extract.Span) (coverage.Newest, err
 			return coverage.Newest{}, fmt.Errorf("stat %s: %w", span.File, err)
 		}
 		at := info.ModTime().Truncate(time.Second)
-		if at.After(now.Add(coverage.ClockSkewTolerance)) {
+		if coverage.FarAheadOfNow(at, now) {
 			return coverage.Newest{}, &report.Failure{
 				Code: report.CodeSourceMtimeInFuture,
-				Message: fmt.Sprintf("%s was last modified %s, more than %s ahead of now; correct the clock on this machine or restore the file's modification time",
-					span.File, at.UTC().Format(time.RFC3339), coverage.ToleranceLabel()),
+				Message: fmt.Sprintf("%s was last modified %s, %s; correct the clock on this machine or restore the file's modification time",
+					span.File, at.UTC().Format(time.RFC3339), coverage.FarAheadOfNowClause),
 			}
 		}
 		if newest.File == "" || at.After(newest.At) {

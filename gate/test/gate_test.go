@@ -1686,7 +1686,7 @@ func TestCoverageReportStampedInEpochMillisecondsIsRefused(t *testing.T) {
 	// No crap table appears: no method is scored against a report the run
 	// refused.
 	f.run().assertMatches(t, "coverage_timestamp_ahead_of_now", 1, f.baseLabel("main"),
-		"coverage report TestResults/coverage.cobertura.xml carries a timestamp \"1767225600000\" more than 24h ahead of now; it must be epoch seconds\n")
+		"coverage report TestResults/coverage.cobertura.xml carries a timestamp \"1767225600000\" more than 24h ahead of now; it must be epoch seconds, or the clock on this machine is behind the one that wrote it\n")
 }
 
 func TestCoverageReportStampedJustBeyondToleranceIsRefused(t *testing.T) {
@@ -1707,7 +1707,7 @@ func TestCoverageReportStampedJustBeyondToleranceIsRefused(t *testing.T) {
 
 	f.run().assertMatchesWith(t, "coverage_timestamp_beyond_tolerance", 1, f.baseLabel("main"),
 		"coverage report TestResults/coverage.cobertura.xml carries a timestamp "+
-			strconv.Quote(stamp)+" more than 24h ahead of now; it must be epoch seconds\n",
+			strconv.Quote(stamp)+" more than 24h ahead of now; it must be epoch seconds, or the clock on this machine is behind the one that wrote it\n",
 		map[string]string{"STAMP": stamp})
 }
 
@@ -1748,7 +1748,7 @@ func TestNamedCoverageReportStampedFarAheadIsRefusedToo(t *testing.T) {
 
 	f.runWithArgs("--coverage", "artifacts/coverage.xml").assertMatches(t, "named_coverage_timestamp_ahead_of_now", 1,
 		f.baseLabel("main"),
-		"coverage report artifacts/coverage.xml carries a timestamp \"1767225600000\" more than 24h ahead of now; it must be epoch seconds\n")
+		"coverage report artifacts/coverage.xml carries a timestamp \"1767225600000\" more than 24h ahead of now; it must be epoch seconds, or the clock on this machine is behind the one that wrote it\n")
 }
 
 func TestChangedFileModifiedFarAheadOfNowIsRefusedNamingTheFile(t *testing.T) {
@@ -1779,6 +1779,53 @@ func TestChangedFileModifiedFarAheadOfNowIsRefusedNamingTheFile(t *testing.T) {
 		map[string]string{"MODIFIED": modified})
 }
 
+func TestChangedFileModifiedInsideToleranceIsScored(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// 23h ahead of now, inside ClockSkewTolerance, the mirror of the 25h case
+	// above. A guard refusing every mtime merely ahead of now, rather than only
+	// one past the tolerance, fails here, and that guard would refuse every run
+	// on a checkout over NFS or on a resumed VM carrying a few seconds of
+	// forward skew, which is the drift the window exists to allow. The report
+	// carries the same instant, so it is not stale against an edit in the
+	// future and the run reaches a score rather than a staleness refusal.
+	edited := time.Now().Add(23 * time.Hour).Truncate(time.Second)
+	f.setModTime(orderService, edited)
+	f.write("TestResults/coverage.cobertura.xml", coberturaStamped(stampAt(edited), f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestCoverageReportStampedBeforeTheFloorIsRefusedNotSkipped(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// timestamp="0" is the units fault the tolerance catches from the other
+	// side: a producer with no clock to read, or one writing seconds since boot
+	// rather than since the epoch. It is a discovered report, the one Origin
+	// issue 32 skips as superseded, so this pins that a stamp the gate cannot
+	// trust is refused rather than dropped quietly into skipped_paths, where
+	// its coverage would leave the score with nothing but a path to explain it.
+	f.write("TestResults/coverage.cobertura.xml", coberturaStamped("0", f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_timestamp_before_floor", 1, f.baseLabel("main"),
+		"coverage report TestResults/coverage.cobertura.xml carries a timestamp \"0\" from before 2000-01-01T00:00:00Z; it must be epoch seconds\n")
+}
+
 func TestFutureStampedReportBesideAFreshOneStillRefuses(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
@@ -1797,7 +1844,7 @@ func TestFutureStampedReportBesideAFreshOneStillRefuses(t *testing.T) {
 	}
 
 	f.run().assertMatches(t, "coverage_timestamp_ahead_beside_fresh", 1, f.baseLabel("main"),
-		"coverage report tests/Beta.Tests/TestResults/run/coverage.cobertura.xml carries a timestamp \"1767225600000\" more than 24h ahead of now; it must be epoch seconds\n")
+		"coverage report tests/Beta.Tests/TestResults/run/coverage.cobertura.xml carries a timestamp \"1767225600000\" more than 24h ahead of now; it must be epoch seconds, or the clock on this machine is behind the one that wrote it\n")
 }
 
 func TestCoverageReportOlderThanTheCodeItDescribesIsRefused(t *testing.T) {
@@ -1943,10 +1990,15 @@ func TestCoverageReportWithAnUnreadableTimestampIsRefused(t *testing.T) {
 	// seconds between year 1 and 1970, so this stamp wraps into the distant
 	// past, and a report carrying it would otherwise be judged older than the
 	// code and skipped as superseded rather than refused as untrustworthy.
+	// Both int64 ends wrap when time.Unix offsets them, the ceiling into the
+	// past and the floor into the future, so each is reached by its own half of
+	// the range check and neither is caught by the plausibility band that
+	// judges the instant afterwards.
 	stamps := map[string]string{
 		"ISO-8601 instant":   "2026-01-01T00:00:00Z",
 		"fractional seconds": "1767225600.123",
 		"int64 ceiling":      "9223372036854775807",
+		"int64 floor":        "-9223372036854775808",
 	}
 	for name, stamp := range stamps {
 		t.Run(name, func(t *testing.T) {
@@ -2036,6 +2088,33 @@ func TestMethodWhoseOnlyCoverageWasSupersededIsUnknownNotMisscored(t *testing.T)
 	f.run().assertMatches(t, "superseded_report_was_sole_coverage", 1, f.baseLabel("main"),
 		"1 changed method could not be attributed to a coverage report\n"+
 			"0 of 2 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestSupersededNameIsNotCarriedIntoALaterReportFailure(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// A superseded report the loader has already skipped, then a second report
+	// it cannot parse at all. The run exits 1 with nothing scored, so there is
+	// no understated coverage for the skipped name to explain and the document
+	// carries the fault that stopped the run alone: skipped_paths stays empty
+	// rather than listing a leftover TestResults directory beside a broken
+	// report as though both were why the score is short.
+	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml",
+		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
+			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
+	const malformed = "<coverage><packages>\n"
+	f.write("tests/Beta.Tests/TestResults/run/coverage.cobertura.xml", malformed)
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	cause := xmlUnmarshalCause(t, malformed)
+	f.run().assertMatchesWith(t, "unparseable_report_after_a_superseded_one", 1, f.baseLabel("main"),
+		"could not parse coverage report tests/Beta.Tests/TestResults/run/coverage.cobertura.xml; "+cause+"\n",
+		map[string]string{"CAUSE": cause})
 }
 
 func TestSupersededReportAndUnreadablePathAreOneSortedSkippedList(t *testing.T) {
