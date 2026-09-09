@@ -1694,7 +1694,7 @@ func TestCoverageReportStampedJustBeyondToleranceIsRefused(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// 25h ahead of now, one hour past what coverage.FarAheadOfNow allows: a clock-skewed CI
+	// 25h ahead of now, one hour past the 24h tolerance the gate allows: a clock-skewed CI
 	// agent rather than a units error, and what pins the constant as a boundary
 	// rather than a magic number only large enough to catch milliseconds.
 	stamp := stampAt(time.Now().Add(25 * time.Hour))
@@ -1716,7 +1716,7 @@ func TestCoverageReportStampedInsideToleranceIsScored(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// 23h ahead of now, inside what coverage.FarAheadOfNow allows. An implementation refusing
+	// 23h ahead of now, inside the 24h tolerance the gate allows. An implementation refusing
 	// every report stamped anywhere ahead of now, rather than only past the
 	// tolerance, fails here.
 	f.write("TestResults/coverage.cobertura.xml", coberturaStamped(stampAt(time.Now().Add(23*time.Hour)), f.root,
