@@ -68,7 +68,7 @@ func TestFileMovedWithNoContentChangeReportsNoChangedMethods(t *testing.T) {
 	f.write(origin, csharpFile(20))
 	f.commitAll("initial")
 	// `--no-renames` splits this into a delete plus an add carrying the whole
-	// file, and ADR 0003 says a rename with no content change touches nothing.
+	// file, and ADR 0007 says a rename with no content change touches nothing.
 	f.git("mv", origin, moved)
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
@@ -610,7 +610,7 @@ func TestMethodMovedToANewPathAndEditedIsScoredAtItsNewLocation(t *testing.T) {
 	f.write(origin, csharpFile(20))
 	f.commitAll("initial")
 	// git scores this as a rename, which status R would drop from an
-	// ACM-filtered diff; ADR 0003 says the method appears as added lines at
+	// ACM-filtered diff; ADR 0007 says the method appears as added lines at
 	// its new location instead.
 	f.git("mv", origin, moved)
 	f.touchLine(moved, 7)
@@ -728,9 +728,9 @@ func TestEveryMethodInANewlyAddedFileIsMeasured(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.write(fresh, csharpFile(20))
-	// `git add` is required, not incidental. ADR 0003's tracked-paths-only
-	// amendment says touched lines come from tracked paths only, so an
-	// unstaged new file contributes nothing.
+	// `git add` is required, not incidental. ADR 0007's tracked-paths-only
+	// rule says touched lines come from tracked paths only, so an unstaged
+	// new file contributes nothing.
 	f.git("add", fresh)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: fresh, lines: append(spanCoverage(4, 4, 1), spanCoverage(11, 5, 1)...)}))
@@ -1257,7 +1257,7 @@ func TestADiffGitRefusesToPrintIsATypedDocumentNotAnEmptyStdout(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	// Base resolution reads commits and still succeeds, so the document exists
-	// and ADR 0005 requires it on stdout. The diff itself reads the old side's
+	// and ADR 0008 requires it on stdout. The diff itself reads the old side's
 	// blob, which is gone, so git exits 128 before printing a patch.
 	blob := f.git("rev-parse", "HEAD:"+orderService)
 	f.touchLine(orderService, 62)
@@ -2589,7 +2589,7 @@ func TestCoverageFlagTakesAValueBeginningWithOneDashAsAPath(t *testing.T) {
 		f.baseLabel("main"), "0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
-// assertUsageError checks the shape ADR 0005 gives a failure upstream of the
+// assertUsageError checks the shape ADR 0008 gives a failure upstream of the
 // document: exit 1, nothing on stdout, and the cause plus the usage line on
 // stderr.
 func assertUsageError(t *testing.T, result runResult, stderr string) {
@@ -3464,7 +3464,7 @@ func TestRunOutsideAGitRepoWritesNoDocumentAndExitsOne(t *testing.T) {
 
 	result := f.run()
 
-	// This failure is upstream of the document, so ADR 0005's one-TOON-document
+	// This failure is upstream of the document, so ADR 0008's one-TOON-document
 	// rule cannot apply: there is no base and no scope to report. git's own
 	// explanation is in git's own language, but the failing argv is not, and
 	// gitError.Error carries it, so naming the invocation that failed keeps the

@@ -1,4 +1,4 @@
-// Package gitscope answers the two questions ADR 0003 puts to git: which
+// Package gitscope answers the two questions ADR 0007 puts to git: which
 // commit the run diffs against, and which lines that diff touched. The gate
 // runs git itself rather than taking hunks from a wrapper, so `-w` and
 // `--diff-filter` are fixed in one place and no caller can get them wrong.
@@ -35,7 +35,7 @@
 //
 // The diff covers tracked paths only. A brand-new source file the developer
 // has not yet `git add`ed contributes no touched lines and therefore no
-// changed methods, which ADR 0003 records as a deliberate limitation of the
+// changed methods, which ADR 0007 records as a deliberate limitation of the
 // merge-base scope rather than an oversight.
 package gitscope
 
@@ -54,7 +54,7 @@ import (
 	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
 )
 
-// BaseCandidates is ADR 0003's base resolution order. There is no HEAD~1
+// BaseCandidates is ADR 0007's base resolution order. There is no HEAD~1
 // fallback: a silently different base is the failure the caller cannot
 // detect.
 var BaseCandidates = []string{"origin/HEAD", "origin/main", "origin/master", "main", "master"}
@@ -94,9 +94,9 @@ type Base struct {
 func (b Base) Label() string { return b.Ref + "@" + b.Commit[:7] }
 
 // NoBaseError reports that the run has no commit to diff against: none of
-// ADR 0003's candidates resolved, --since named a ref that does not exist, or
+// ADR 0007's candidates resolved, --since named a ref that does not exist, or
 // --staged found no HEAD to diff the index against. The message points at
-// --since, issue 14's flag, per ADR 0003's Consequences, except when the
+// --since, issue 14's flag, per ADR 0007's Consequences, except when the
 // branch has no commit or --since is itself what failed, whether the ref did
 // not resolve or it resolved and shares no history with HEAD. Naming the flag
 // again in any of those tells the caller nothing new.
@@ -225,17 +225,18 @@ func (r Repo) verifyCommit(rev string, absent NoBaseError) (string, error) {
 // file git scores as a rename carries status R, `--diff-filter=ACM` drops it
 // entirely, and a method that gained a decision point on the way to its new
 // path is never scored. Decomposing the rename into a delete plus an add
-// gives the add side every line, which is what ADR 0003 means by "a method
-// moved between files appears as added lines at its new location".
+// gives the add side every line, which is what ADR 0007 means by a method
+// moved between files being "measured at its new location rather than dropped
+// by `--diff-filter=ACM`".
 //
-// Decomposition alone would break ADR 0003's other sentence, that a file
+// Decomposition alone would break ADR 0007's other sentence, that a file
 // renamed with no content change reports no touched lines, because the add
 // side of a pure `git mv` is the whole file. So an added path whose content,
 // whitespace ignored, is the only match for a path the same diff deleted is
 // dropped afterwards, and only a move that also edited the file is measured.
 //
 // Nothing gets out of here untyped. Base resolution has already succeeded, so
-// the document exists and ADR 0005's one-document rule binds: every cause below
+// the document exists and ADR 0008's one-document rule binds: every cause below
 // this line, a git invocation that failed as much as a patch the parser refused,
 // comes back as a report.Failure so main can put it in the document's error
 // block. Exiting 1 with an empty stdout instead is a shape the caller cannot
@@ -275,7 +276,7 @@ func (r Repo) touchedLines(base Base) (map[srcpath.Path][]int, error) {
 
 // cachedFlag is `--cached` when base.Staged, which is what turns a diff's
 // working-tree comparison into an index comparison. One diff code path
-// serves both ADR 0003's default scope and --staged this way, rather than a
+// serves both ADR 0007's default scope and --staged this way, rather than a
 // second near-copy of TouchedLines and pureMoves.
 func cachedFlag(base Base) []string {
 	if base.Staged {
@@ -512,7 +513,7 @@ func noMatch(err error) bool {
 // and one rule cannot hold two definitions of "changed". Comparing raw bytes
 // would leave a `git mv` combined with a reindent looking like a whole-file
 // add, and every method in it would demand coverage attribution, which is the
-// wall of failures ADR 0003 gives `-w` to prevent.
+// wall of failures ADR 0007 gives `-w` to prevent.
 //
 // Every unreadable side resolves towards measuring, which is the conservative
 // direction. An added path the gate cannot read stays measured, and so does

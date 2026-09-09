@@ -1,5 +1,5 @@
 // Package report assembles the one TOON document metric-gate writes on
-// stdout (ADR 0005), the human summary it writes on stderr, and the exit code
+// stdout (ADR 0008), the human summary it writes on stderr, and the exit code
 // that goes with them. The field list is fixed and never varies with the
 // outcome.
 package report
@@ -180,7 +180,7 @@ func (m Metric) WorstScore() float64 {
 
 // Document is one whole gate run's output.
 type Document struct {
-	// Scope is the token naming which scope the run used (ADR 0005), one per
+	// Scope is the token naming which scope the run used (ADR 0008), one per
 	// mode: merge-base, staged, since, files. It carries scope's own type so
 	// the four tokens are spelled in one place, the package that parses the
 	// flags they name, rather than again here as the removed

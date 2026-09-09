@@ -86,7 +86,7 @@ const (
 // still learns which report was refused and why, which is the part the gate
 // knows, and a remedy it cannot determine is worse guessed than omitted.
 // Refusing loudly instead is not available here either, since an unrecovered
-// panic exits 2 and ADR 0005 spends that code on "threshold exceeded", so the
+// panic exits 2 and ADR 0008 spends that code on "threshold exceeded", so the
 // one unreachable arm would tell CI the code failed the gate.
 func (s Source) staleRemedy() string {
 	switch s.Origin {
@@ -196,7 +196,7 @@ func Named(root srcpath.Root, cwd string, paths []string) []Source {
 // path that is genuinely outside the repo has no repo-relative form, so it is
 // named by the same resolved absolute path the containment test just weighed.
 // The developer's own spelling was rejected for that case: the document carries
-// no working directory (ADR 0005), so a relative name reaches a consumer that
+// no working directory (ADR 0008), so a relative name reaches a consumer that
 // cannot resolve it, and the same report named from two directories would print
 // two strings.
 //

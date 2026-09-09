@@ -1,5 +1,5 @@
 // Package crap is the CRAP metric: the inputs it declares (ADR 0002), the
-// formula, and the two typed fix cells ADR 0005 requires beside it.
+// formula, and the two typed fix cells ADR 0008 requires beside it.
 package crap
 
 import (
@@ -24,7 +24,7 @@ const Threshold = 30
 // message names the metric rather than the file.
 var DeclaredInputs = []string{"coverage"}
 
-// The two fix instructions and their absence, as ADR 0005 types them.
+// The two fix instructions and their absence, as ADR 0008 types them.
 const (
 	ActionSplitMethod   = "split_method"
 	ActionRaiseCoverage = "raise_coverage"
