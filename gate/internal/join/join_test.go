@@ -47,24 +47,41 @@ func TestChangedReturnsSpansInAscendingOrder(t *testing.T) {
 	}
 }
 
-// TestInFilesMeasuresEveryExtractedSpanInAscendingOrder pins --files' half of
-// the ADR 0003 rule: with no touched line to narrow against, every span the
+// TestAllSpansMeasuresEveryExtractedSpanInAscendingOrder pins --files' half of
+// the ADR 0007 rule: with no touched line to narrow against, every span the
 // extractor found is changed, nested spans included, in the same ascending
 // order Changed promises.
-func TestInFilesMeasuresEveryExtractedSpanInAscendingOrder(t *testing.T) {
-	extracted := extract.NewResult([]extract.Span{
+//
+// The span in src/c.cs, which the claimed list does not name, is the asserted
+// half of "claim membership is irrelevant here": AllSpans measures it anyway,
+// because extract.collect is what refuses a path the extractor was not handed
+// and a second filter here would only hide a regression in that check.
+//
+// The final check pins the clone. AllSpans sorts in place, so returning
+// extracted.Spans itself would reorder the caller's slice, and join.Attribute
+// later reads that same slice through smallestContaining, whose tie-break is
+// first-wins over input order.
+func TestAllSpansMeasuresEveryExtractedSpanInAscendingOrder(t *testing.T) {
+	spans := []extract.Span{
 		{File: "src/b.cs", Name: "Outer", StartLine: 1, EndLine: 20},
 		{File: "src/a.cs", Name: "Second", StartLine: 30, EndLine: 40},
+		{File: "src/c.cs", Name: "Unclaimed", StartLine: 1, EndLine: 4},
 		{File: "src/b.cs", Name: "Local", StartLine: 5, EndLine: 8},
 		{File: "src/a.cs", Name: "First", StartLine: 1, EndLine: 10},
-	}, []srcpath.Path{"src/b.cs", "src/a.cs"})
+	}
+	original := labels(slices.Clone(spans))
+	extracted := extract.NewResult(spans, []srcpath.Path{"src/b.cs", "src/a.cs"})
 
-	changed := join.InFiles(extracted)
+	changed := join.AllSpans(extracted)
 
-	want := []string{"src/a.cs:1", "src/a.cs:30", "src/b.cs:1", "src/b.cs:5"}
+	want := []string{"src/a.cs:1", "src/a.cs:30", "src/b.cs:1", "src/b.cs:5", "src/c.cs:1"}
 	if got := labels(changed); !slices.Equal(got, want) {
-		t.Errorf("InFiles returned spans out of order\ngot:  %s\nwant: %s",
+		t.Errorf("AllSpans returned spans out of order\ngot:  %s\nwant: %s",
 			strings.Join(got, " "), strings.Join(want, " "))
+	}
+	if got := labels(extracted.Spans); !slices.Equal(got, original) {
+		t.Errorf("AllSpans reordered the caller's spans\ngot:  %s\nwant: %s",
+			strings.Join(got, " "), strings.Join(original, " "))
 	}
 }
 

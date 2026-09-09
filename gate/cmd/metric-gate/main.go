@@ -270,7 +270,7 @@ func selectFiles(repo gitscope.Repo, names []string) (selection, error) {
 	// nor an error, so it is listed rather than silently dropped.
 	selected.SkippedPaths = pathStrings(extracted.Unclaimed(resolved))
 	selected.Extracted = extracted
-	selected.Changed = join.InFiles(extracted)
+	selected.Changed = join.AllSpans(extracted)
 	return selected, nil
 }
 
