@@ -51,12 +51,14 @@ jobs:
             gate/go.sum
       - uses: actions/setup-dotnet@v4
         with:
-          # The SDK version lives in dotnet/global.json so the runner and a
-          # developer's machine cannot disagree about it. This job runs no .NET
-          # test assemblies. It packs the tool project and runs 'dotnet tool
-          # install --tool-path', and the installed net8.0 tool shim needs the
-          # 8.0 runtime to launch.
-          global-json-file: dotnet/global.json
+          # This job needs a Microsoft.NETCore.App 8.x runtime and no
+          # particular SDK: it runs no .NET test assemblies, it packs the tool
+          # project and runs 'dotnet tool install --tool-path', and the
+          # installed net8.0 tool shim needs that runtime to launch. No
+          # global-json-file here, because the pack runs from gate/test and
+          # dotnet searches upward from there, where dotnet/global.json is not
+          # an ancestor, so naming the pin would claim a resolution that never
+          # happens.
           dotnet-version: ${{ env.DOTNET_VERSION }}
       # vet needs the Go toolchain and nothing else, so it carries the same
       # explicit guard the tests do rather than inheriting the implicit
@@ -73,8 +75,13 @@ jobs:
       # than withholding it behind a broken install. METRIC_GATE_REQUIRE_DOTNET
       # turns a skip of the one case that packs and installs the real dotnet
       # extractor into a failure, because a silent skip would let that path go
-      # unexercised forever.
-      - run: go test ./... -count=1
+      # unexercised forever. The explicit -timeout replaces Go's default 10
+      # minutes per binary, which the gate package can now approach: it packs
+      # the tool, installs it against an empty NUGET_PACKAGES directory and
+      # forks six child test binaries, and that takes 81s locally on a warm
+      # cache with nothing to restore. A slow NuGet restore under the default
+      # surfaces as an opaque panic rather than a timeout with room to spare.
+      - run: go test ./... -count=1 -timeout 20m
         working-directory: gate
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         env:
