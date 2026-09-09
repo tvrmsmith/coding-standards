@@ -27,6 +27,13 @@ var binDir string
 const extractorName = "metric-gate-csharp"
 
 func TestMain(m *testing.M) {
+	// Parsed here rather than only where it is used, so a -run filter that
+	// excludes the full-stack case cannot leave a typo like
+	// METRIC_GATE_REQUIRE_DOTNET=true undetected and enforcement quietly off.
+	if _, err := requireDotnet(os.Getenv(envRequireDotnet)); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	dir, err := os.MkdirTemp("", "metric-gate-bin")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

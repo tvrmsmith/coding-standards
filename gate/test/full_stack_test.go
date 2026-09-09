@@ -1,6 +1,7 @@
 package gate_test
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -33,12 +34,13 @@ const reasonShort = "full-stack case packs and installs a dotnet tool, skipped w
 // keeps Microsoft.AspNetCore.App and Microsoft.WindowsDesktop.App out.
 const net8RuntimePrefix = "Microsoft.NETCore.App 8."
 
-// reasonNoSDK is why TestFullStackDrivesTheRealDotnetExtractor skips, or fails
-// when METRIC_GATE_REQUIRE_DOTNET forbids the skip. An SDK alone is not
-// enough. dotnet/global.json pins a 10 SDK, the tool project targets net8.0
-// with no roll-forward, so the installed shim cannot launch on a machine that
-// carries no 8.x shared framework.
-const reasonNoSDK = "no Microsoft.NETCore.App 8.x runtime for the net8.0 extractor tool"
+// reasonNoNet8Runtime is why TestFullStackDrivesTheRealDotnetExtractor skips,
+// or fails when METRIC_GATE_REQUIRE_DOTNET forbids the skip. An SDK alone is
+// not enough. dotnet/global.json pins a 10 SDK, the tool project targets
+// net8.0 with no roll-forward, so the installed shim cannot launch on a
+// machine that carries no 8.x shared framework. The framework name comes from
+// net8RuntimePrefix so a move off net8.0 changes one line.
+const reasonNoNet8Runtime = "no " + net8RuntimePrefix + "x runtime for the net8.0 extractor tool"
 
 // listsNet8Runtime reports whether dotnet --list-runtimes output names an 8.x
 // shared framework.
@@ -61,6 +63,7 @@ func TestListsNet8RuntimeMatchesOnlyTheSharedFramework(t *testing.T) {
 	}{
 		{"finds the framework among other lines", "Microsoft.AspNetCore.App 8.0.27 [/x]\nMicrosoft.NETCore.App 8.0.27 [/x]\n", true},
 		{"finds it as the only line", "Microsoft.NETCore.App 8.0.0 [/x]", true},
+		{"finds it past leading whitespace and a carriage return", "  Microsoft.NETCore.App 8.0.27 [/x]\r\n", true},
 		{"rejects a 10 runtime", "Microsoft.NETCore.App 10.0.8 [/x]\n", false},
 		{"rejects a future 80 line the prefix must not swallow", "Microsoft.NETCore.App 80.0.1 [/x]\n", false},
 		{"rejects the aspnet framework", "Microsoft.AspNetCore.App 8.0.27 [/x]\n", false},
@@ -134,53 +137,82 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 	}
 }
 
-// dotnetSkipReason decides whether TestFullStackDrivesTheRealDotnetExtractor
-// may skip and, if so, whether it is actually allowed to. require reflects
-// METRIC_GATE_REQUIRE_DOTNET=1, which CI sets so a missing SDK fails the run
-// instead of silently skipping the only case that exercises the real
-// extractor. sdkOK says the 8.x shared framework the tool needs is present,
-// which an SDK on PATH does not by itself prove.
-// short is checked before sdkOK, so a -short run always reports
-// the -short reason even when the SDK is also missing. That ordering also
-// lets the caller pass sdkOK true under -short without probing for dotnet,
-// because the value cannot reach the result.
-func dotnetSkipReason(short, sdkOK, require bool) (reason string, fatal bool) {
-	switch {
-	case short:
-		reason = reasonShort
-	case !sdkOK:
-		reason = reasonNoSDK
+// skipCause names why TestFullStackDrivesTheRealDotnetExtractor would skip.
+// The caller switches on it instead of matching the reason text, so adding a
+// cause is a compile-time question rather than a string comparison that
+// silently stops matching.
+type skipCause int
+
+const (
+	// causeRuns is the case going ahead: no skip route applies.
+	causeRuns skipCause = iota
+	causeShort
+	causeNoNet8Runtime
+)
+
+// reason is the text this cause skips or fails with.
+func (c skipCause) reason() string {
+	switch c {
+	case causeShort:
+		return reasonShort
+	case causeNoNet8Runtime:
+		return reasonNoNet8Runtime
+	default:
+		return ""
 	}
-	return reason, reason != "" && require
 }
 
-// TestDotnetSkipReasonRefusesToSkipWhenRequired pins dotnetSkipReason's
-// reason and fatal decision for every combination of -short, SDK
-// availability, and METRIC_GATE_REQUIRE_DOTNET.
+// dotnetSkipReason decides whether TestFullStackDrivesTheRealDotnetExtractor
+// may skip and, if so, whether it is actually allowed to. require reflects
+// METRIC_GATE_REQUIRE_DOTNET=1, which CI sets so a missing runtime fails the
+// run instead of silently skipping the only case that exercises the real
+// extractor. net8OK says the 8.x shared framework the tool needs is present,
+// which an SDK on PATH does not by itself prove.
+// short is checked before net8OK, so a -short run always reports the -short
+// cause even when the runtime is also missing. That ordering also lets the
+// caller pass net8OK true under -short without probing for dotnet, because
+// the value cannot reach the result.
+func dotnetSkipReason(short, net8OK, require bool) (cause skipCause, fatal bool) {
+	switch {
+	case short:
+		cause = causeShort
+	case !net8OK:
+		cause = causeNoNet8Runtime
+	}
+	return cause, cause != causeRuns && require
+}
+
+// TestDotnetSkipReasonRefusesToSkipWhenRequired pins dotnetSkipReason's cause
+// and fatal decision, and each cause's reason text, for every combination of
+// -short, runtime availability, and METRIC_GATE_REQUIRE_DOTNET.
 func TestDotnetSkipReasonRefusesToSkipWhenRequired(t *testing.T) {
 	cases := []struct {
 		name    string
 		short   bool
-		sdkOK   bool
+		net8OK  bool
 		require bool
+		cause   skipCause
 		reason  string
 		fatal   bool
 	}{
-		{"runs when short is false, sdk is ok, and dotnet is not required", false, true, false, "", false},
-		{"runs when short is false, sdk is ok, and dotnet is required", false, true, true, "", false},
-		{"skips for -short when dotnet is not required", true, true, false, reasonShort, false},
-		{"fails for -short when dotnet is required", true, true, true, reasonShort, true},
-		{"skips for a missing sdk when dotnet is not required", false, false, false, reasonNoSDK, false},
-		{"fails for a missing sdk when dotnet is required", false, false, true, reasonNoSDK, true},
-		{"reports the -short reason over a missing sdk when dotnet is not required", true, false, false, reasonShort, false},
-		{"reports the -short reason over a missing sdk when dotnet is required", true, false, true, reasonShort, true},
+		{"runs when short is false, the runtime is present, and dotnet is not required", false, true, false, causeRuns, "", false},
+		{"runs when short is false, the runtime is present, and dotnet is required", false, true, true, causeRuns, "", false},
+		{"skips for -short when dotnet is not required", true, true, false, causeShort, reasonShort, false},
+		{"fails for -short when dotnet is required", true, true, true, causeShort, reasonShort, true},
+		{"skips for a missing runtime when dotnet is not required", false, false, false, causeNoNet8Runtime, reasonNoNet8Runtime, false},
+		{"fails for a missing runtime when dotnet is required", false, false, true, causeNoNet8Runtime, reasonNoNet8Runtime, true},
+		{"reports the -short cause over a missing runtime when dotnet is not required", true, false, false, causeShort, reasonShort, false},
+		{"reports the -short cause over a missing runtime when dotnet is required", true, false, true, causeShort, reasonShort, true},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			reason, fatal := dotnetSkipReason(c.short, c.sdkOK, c.require)
-			if reason != c.reason {
-				t.Errorf("reason = %q, want %q", reason, c.reason)
+			cause, fatal := dotnetSkipReason(c.short, c.net8OK, c.require)
+			if cause != c.cause {
+				t.Errorf("cause = %v, want %v", cause, c.cause)
+			}
+			if got := cause.reason(); got != c.reason {
+				t.Errorf("reason = %q, want %q", got, c.reason)
 			}
 			if fatal != c.fatal {
 				t.Errorf("fatal = %v, want %v", fatal, c.fatal)
@@ -191,10 +223,17 @@ func TestDotnetSkipReasonRefusesToSkipWhenRequired(t *testing.T) {
 
 // TestRequireDotnetDecidesTheFullStackOutcome runs the full-stack case in a
 // child copy of this test binary, once with METRIC_GATE_REQUIRE_DOTNET=1 and
-// once with it unset, against a dotnet that always fails. The helpers each
-// carry their own table, but only a real run proves the variable name the
-// child reads is the one CI sets and that the fatal path is reachable at all.
+// once with it unset, against three stub dotnets: one that exits non-zero, one
+// that succeeds while listing no 8.x shared framework, and one that records
+// having been called at all so the -short run can prove it never probed. The
+// helpers each carry their own table, but only a real run proves the variable
+// name the child reads is the one CI sets and that the fatal path is reachable
+// at all.
 func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
+	if testing.Short() {
+		t.Skip("forks child test binaries that each rebuild the gate, skipped with -short")
+	}
+
 	const stubRefusesToRun = "#!/bin/sh\necho 'stub dotnet refuses to run' >&2\nexit 3\n"
 	// A machine carrying only the SDK dotnet/global.json pins reaches this
 	// state, an installed toolchain that lists no 8.x shared framework. The
@@ -209,13 +248,15 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 	// pattern would let the child re-enter this test and fork forever.
 	const childCase = "^TestFullStackDrivesTheRealDotnetExtractor$"
 
-	runChild := func(t *testing.T, stubBody, require string) (string, error) {
+	// Every child is given -test.short explicitly, so what it does never
+	// depends on the flags this parent happens to run under.
+	runChild := func(t *testing.T, stubBody, require string, args ...string) (string, error) {
 		t.Helper()
 		stubDir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(stubDir, "dotnet"), []byte(stubBody), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		cmd := exec.Command(os.Args[0], "-test.run", childCase, "-test.v")
+		cmd := exec.Command(os.Args[0], append([]string{"-test.run", childCase, "-test.v"}, args...)...)
 		cmd.Env = append(childEnv(require), "PATH="+stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 		out, err := cmd.CombinedOutput()
 		return string(out), err
@@ -238,34 +279,56 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 		{
 			name: "dotnet cannot run at all",
 			stub: stubRefusesToRun,
-			want: []string{reasonNoSDK, "exit status 3"},
+			want: []string{reasonNoNet8Runtime, "exit status 3", "stub dotnet refuses to run"},
 		},
 		{
 			name: "dotnet runs and lists no 8.x runtime",
 			stub: stubListsNoNet8,
-			want: []string{reasonNoSDK, "found no line starting with", "Microsoft.NETCore.App 10.0.0"},
+			want: []string{reasonNoNet8Runtime, "found no line starting with", "Microsoft.NETCore.App 10.0.0"},
 		},
+	}
+
+	// bothArms runs the enforced and the unset child over one stub and asserts
+	// the first fails naming the variable and the second skips, both quoting
+	// want.
+	bothArms := func(t *testing.T, stub string, want []string, args ...string) {
+		t.Helper()
+		t.Run("the enforced run fails instead of skipping", func(t *testing.T) {
+			out, err := runChild(t, stub, "1", args...)
+			if err == nil {
+				t.Fatalf("child exited zero, want a failure. output:\n%s", out)
+			}
+			mustContain(t, out, append([]string{envRequireDotnet, "forbids skipping"}, want...))
+		})
+
+		t.Run("the unset run skips and passes", func(t *testing.T) {
+			out, err := runChild(t, stub, "", args...)
+			if err != nil {
+				t.Fatalf("child failed with %v, want a pass. output:\n%s", err, out)
+			}
+			mustContain(t, out, append([]string{"--- SKIP"}, want...))
+		})
 	}
 
 	for _, s := range scenarios {
 		t.Run(s.name, func(t *testing.T) {
-			t.Run("the enforced run fails instead of skipping", func(t *testing.T) {
-				out, err := runChild(t, s.stub, "1")
-				if err == nil {
-					t.Fatalf("child exited zero, want a failure. output:\n%s", out)
-				}
-				mustContain(t, out, append([]string{envRequireDotnet, "forbids skipping"}, s.want...))
-			})
-
-			t.Run("the unset run skips and passes", func(t *testing.T) {
-				out, err := runChild(t, s.stub, "")
-				if err != nil {
-					t.Fatalf("child failed with %v, want a pass. output:\n%s", err, out)
-				}
-				mustContain(t, out, append([]string{"--- SKIP"}, s.want...))
-			})
+			bothArms(t, s.stub, s.want, "-test.short=false")
 		})
 	}
+
+	// The -short guard exists so the case pays for no dotnet subprocess it
+	// cannot use the answer of. A stub that records being run is what turns
+	// that into an assertion rather than a claim in a comment.
+	t.Run("-short decides before dotnet is ever run", func(t *testing.T) {
+		marker := filepath.Join(t.TempDir(), "probed")
+		stub := "#!/bin/sh\ntouch " + marker + "\n"
+
+		bothArms(t, stub, []string{reasonShort}, "-test.short=true")
+
+		if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("the stub dotnet ran under -short: os.Stat(%q) = %v, want a not-exist error", marker, err)
+		}
+	})
 }
 
 // childEnv copies this process's environment with METRIC_GATE_REQUIRE_DOTNET
@@ -306,27 +369,31 @@ func TestFullStackDrivesTheRealDotnetExtractor(t *testing.T) {
 	// A -short run cannot use the probe's answer, so it never pays for the
 	// subprocess and the first-run initialization dotnet may do behind it.
 	short := testing.Short()
-	sdkOK := true
+	net8OK := true
 	// The probe's error and output are what tell a reader whether dotnet is
 	// absent from PATH, failed when it ran, or ran fine and simply carries no
 	// 8.x framework, and the enforced run reports nothing else about the
 	// machine.
-	detailNoSDK := reasonNoSDK
+	var detailNoNet8Runtime string
 	if !short {
 		out, probeErr := exec.Command("dotnet", "--list-runtimes").CombinedOutput()
 		listed := strings.TrimSpace(string(out))
 		switch {
+		case errors.Is(probeErr, exec.ErrNotFound):
+			net8OK = false
+			detailNoNet8Runtime = fmt.Sprintf("%s, and no dotnet to ask: %v", reasonNoNet8Runtime, probeErr)
 		case probeErr != nil:
-			sdkOK = false
-			detailNoSDK = fmt.Sprintf("%s, dotnet --list-runtimes failed with %v and printed %q", reasonNoSDK, probeErr, listed)
+			net8OK = false
+			detailNoNet8Runtime = fmt.Sprintf("%s, dotnet --list-runtimes failed with %v and printed %q", reasonNoNet8Runtime, probeErr, listed)
 		case !listsNet8Runtime(listed):
-			sdkOK = false
-			detailNoSDK = fmt.Sprintf("%s, dotnet --list-runtimes found no line starting with %q and listed %q", reasonNoSDK, net8RuntimePrefix, listed)
+			net8OK = false
+			detailNoNet8Runtime = fmt.Sprintf("%s, dotnet --list-runtimes found no line starting with %q and listed %q", reasonNoNet8Runtime, net8RuntimePrefix, listed)
 		}
 	}
-	if reason, fatal := dotnetSkipReason(short, sdkOK, require); reason != "" {
-		if reason == reasonNoSDK {
-			reason = detailNoSDK
+	if cause, fatal := dotnetSkipReason(short, net8OK, require); cause != causeRuns {
+		reason := cause.reason()
+		if cause == causeNoNet8Runtime {
+			reason = detailNoNet8Runtime
 		}
 		if fatal {
 			t.Fatalf("%s=1 forbids skipping: %s", envRequireDotnet, reason)
