@@ -1,5 +1,26 @@
 # A source path is repo-relative, and every other path form is resolved to it by one deterministic rule
 
+## Current rule
+
+The gate's single path currency is the **source path**, a repo-relative slash-separated path from
+`git rev-parse --show-toplevel`. Every other path form is resolved to it by one deterministic rule.
+There is no fuzzy matching, no fallback chain, and no inferred base directory.
+
+Four path spaces, one rule each. Diff paths arrive repo-relative already. A coverage report path is
+`<sources><source>` joined to `filename`. An extractor echoes back the path it was handed,
+byte-identical. A human-typed path resolves against the current working directory.
+
+A path that will not resolve refuses the run rather than passing with nothing measured:
+`coverage_source_root_erased`, then `file_ambiguous`, then a coverage path with zero candidates in
+the root, in that precedence. A human-typed path that names a directory, or spells a real file in a
+case the tree does not use, is refused as `file_unresolved`. Case folding is rejected for
+coverage-path resolution, where it can merge two real files; it is not rejected for extension
+routing, which only decides whether to launch a process.
+
+Sections below carry the reasoning and five dated amendments.
+
+## Decision
+
 The gate's single path currency is the **source path**: a repo-relative, slash-separated path from
 `git rev-parse --show-toplevel`. Every path the gate handles is resolved to that form, or the run
 fails. There is no fuzzy matching, no fallback chain, and no inferred base directory.

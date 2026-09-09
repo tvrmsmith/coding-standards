@@ -1,5 +1,26 @@
 # CRAP is computed from a source-level complexity walker joined to coverage by source span
 
+## Current rule
+
+CRAP takes cyclomatic complexity from a source-level AST walker and coverage from coverlet, joined
+by `(file path, start line, end line)`, attributing each covered line to the smallest span
+containing it. No method name, signature, or mangled CLR identifier participates in the join.
+
+Complexity extraction is language-specific; coverage parsing is format-specific and normalizes to
+`{ file, line, hits }`. The join, the diff scoping, the formula, the threshold and the exit code are
+language-neutral. The gate is a static Go binary per platform; extractors are separate binaries
+behind a stdin/stdout contract.
+
+Any single `unknown` fails the run. There is no tolerated fraction and no tunable.
+
+The no-names rule governs **attribution**. Method **identity**, which is a different question, keys
+on `(file, name, startLine, endLine, signature)`, because two overloads can occupy one span. See
+[ADR 0009](0009-the-csharp-extractor-is-written-in-house.md).
+
+Sections below carry the reasoning and three dated amendments.
+
+## Decision
+
 The CRAP gate takes cyclomatic complexity from a source-level AST walker and coverage from coverlet, and joins the two by `(file path, start line, end line)`, attributing each covered line to the smallest span containing it. No method name, signature, or mangled CLR identifier appears in the join. Complexity extraction is language-specific and produces `{ file, qualifiedName, startLine, endLine, complexity }`; coverage parsing is format-specific and normalizes to `{ file, line, hits }`; the join, the diff scoping, the formula, the threshold, and the exit code are language-neutral.
 
 ## Considered options

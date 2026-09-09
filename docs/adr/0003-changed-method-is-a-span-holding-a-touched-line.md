@@ -1,5 +1,9 @@
 # A changed method is a working-tree span holding at least one touched line
 
+**Superseded 2026-09-09 by [ADR 0007](0007-changed-method-is-a-span-holding-a-touched-line.md).** The
+decision is unchanged. 0007 states it in one pass with the eight amendments below folded in; this
+file stays for the reasoning and the dated history, and is not the file to read for the live rule.
+
 Scope is changed methods, and this is the whole definition. A **touched line** is any new-side line reported by `git diff -w -U0 --diff-filter=ACM`; a zero-length hunk, which is what a pure deletion produces, touches the line at its insertion point. A **changed method** is a method span in the working tree containing at least one touched line, and where spans nest, only the smallest containing span is changed. One touched line changes the whole method, because CRAP is a per-method number and there is no CRAP of three lines.
 
 Spans come only from the extractor parsing the working tree. The coverage report contributes lines and hits and never spans, so a method element in the report that the extractor did not emit is not a method as far as the gate is concerned.
