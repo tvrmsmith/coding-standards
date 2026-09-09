@@ -76,10 +76,10 @@ type Result struct {
 
 // NewResult builds a Result from spans and the paths some extractor claimed.
 // Extract fills the field directly, so this exists for callers outside the
-// package, which today is the join suite: with claimed unexported there is no
-// other way to state "an extractor handles this file" as a test premise, and a
-// test that could not say it would have to route through a real extractor
-// process to exercise a rule about set membership.
+// package. With claimed unexported there is no other way to state "an extractor
+// handles this file" as a test premise, and a test that could not say it would
+// have to route through a real extractor process to exercise a rule about set
+// membership.
 func NewResult(spans []Span, claimed []srcpath.Path) Result {
 	claims := make(map[srcpath.Path]bool, len(claimed))
 	for _, path := range claimed {

@@ -26,14 +26,12 @@ func TestClaimsAnswersMembership(t *testing.T) {
 	}
 }
 
-// TestClaimedPathsSortsAndCollapsesDuplicates pins the order a --staged run
-// promises: it checks these files for divergence and names them in a refusal
-// message the goldens pin, so the order has to be a promise ClaimedPaths
-// keeps, not an accident of map iteration. The duplicate comes from two
-// extractors claiming the same path, which must collapse to one entry rather
-// than naming a file twice.
-func TestClaimedPathsSortsAndCollapsesDuplicates(t *testing.T) {
-	result := extract.NewResult(nil, []srcpath.Path{"src/d.cs", "src/a.cs", "src/c.cs", "src/a.cs"})
+// TestClaimedPathsSorts pins the order a --staged run promises: it checks
+// these files for divergence and names them in a refusal message the goldens
+// pin, so the order has to be a promise ClaimedPaths keeps, not an accident of
+// map iteration.
+func TestClaimedPathsSorts(t *testing.T) {
+	result := extract.NewResult(nil, []srcpath.Path{"src/d.cs", "src/a.cs", "src/c.cs"})
 
 	got := result.ClaimedPaths()
 

@@ -50,21 +50,16 @@ func Changed(extracted extract.Result, touched map[srcpath.Path][]int) (changed 
 	return changed, outsideSpans
 }
 
-// InFiles returns every span extracted holds. This is the --files rule: the
-// flag carries no line information, so ADR 0003 makes every method in a
-// listed file changed, nested spans included, since with no touched line
-// there is nothing to attribute to the smallest container the way Changed's
+// AllSpans returns every span extracted holds, in ascending order. This is the
+// --files rule: the flag carries no line information, so ADR 0007 makes every
+// method in a listed file changed, nested spans included, since with no touched
+// line there is nothing to attribute to the smallest container the way Changed's
 // narrowing would.
 //
-// It takes no file list because there is nothing left to filter against.
-// extract.collect already refuses any span whose file it was not handed,
-// exiting 1 with extractor_path_mismatch, so every span reaching extracted
-// came from a file the caller named. A filter here could only ever drop
-// nothing on a passing run and hide a regression in that check on a failing
-// one, silently, which is the failure mode this codebase makes loud
-// everywhere else. The invariant has one owner, collect, and one failure
-// mode, loud.
-func InFiles(extracted extract.Result) []extract.Span {
+// The file list is already established upstream: extract.collect refuses any
+// path the extractor echoed but was not handed, exiting 1 with
+// extractor_path_mismatch.
+func AllSpans(extracted extract.Result) []extract.Span {
 	changed := slices.Clone(extracted.Spans)
 	sortSpans(changed)
 	return changed
