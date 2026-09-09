@@ -1056,3 +1056,52 @@ func TestTheSameScopeFlagTwiceNamesTwoScopes(t *testing.T) {
 
 	assertUsageError(t, result, "metric-gate: --staged and --staged name two scopes; pass one"+usage)
 }
+
+func TestStagedTakesANamedCoverageReport(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+
+	f.touchLine(orderService, 62)
+	f.git("add", orderService)
+
+	// Discoverable, and it leaves Cancel uncovered. Reading it instead of the
+	// named report scores Cancel 12.00, which is what makes the case tell one
+	// parser owning argv apart from --coverage being dropped on a scope flag.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 0)}))
+	// Named, outside any TestResults directory so discovery cannot reach it.
+	f.write("artifacts/coverage.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.runArgs("--staged", "--coverage", "artifacts/coverage.xml").
+		assertMatches(t, "staged_single_method", 0, f.headLabel(),
+			"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestFilesStopsCollectingPathsAtTheCoverageFlag(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+
+	// A --files list is variadic, so the risk this case pins is the flag after
+	// it being swallowed as a path. That would fail the run naming
+	// artifacts/coverage.xml as an unresolvable source file rather than
+	// reading it as the report.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 0)}))
+	f.write("artifacts/coverage.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: append(spanCoverage(42, 10, 9), spanCoverage(61, 3, 2)...)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.runArgs("--files", orderService, "--coverage", "artifacts/coverage.xml").
+		assertMatches(t, "files_single_file", 0, "",
+			"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
+}
