@@ -24,6 +24,12 @@ env:
   # CI that does not reproduce locally is a version gap. Two jobs install node,
   # and reading the number from here is what keeps them on the same one.
   NODE_VERSION: "24"
+  # The SDK feature band still comes from dotnet/global.json. This pins the
+  # runtime line, which no project file states. Two jobs install the SDK, and
+  # reading the number from here is what stops the job that packs the tool from
+  # drifting onto a different runtime than the job that tests the same net8.0
+  # assemblies.
+  DOTNET_VERSION: "8.0.x"
 
 jobs:
   gate:
@@ -44,16 +50,20 @@ jobs:
             gate/go.mod
             gate/go.sum
       - uses: actions/setup-dotnet@v4
-        id: setup-dotnet
         with:
           # The SDK version lives in dotnet/global.json so the runner and a
-          # developer's machine cannot disagree about it. 8.0.x is named here
-          # because it supplies the runtime the net8.0 test assemblies execute
-          # on, which no project file states.
+          # developer's machine cannot disagree about it. This job runs no .NET
+          # test assemblies. It packs the tool project and runs 'dotnet tool
+          # install --tool-path', and the installed net8.0 tool shim needs the
+          # 8.0 runtime to launch.
           global-json-file: dotnet/global.json
-          dotnet-version: 8.0.x
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      # vet needs the Go toolchain and nothing else, so it carries the same
+      # explicit guard the tests do rather than inheriting the implicit
+      # success() that a failed SDK install would trip.
       - run: go vet ./...
         working-directory: gate
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
       # A vet finding is not a reason to withhold the test result, so the tests
       # run anyway. Go setup is their precondition, so a failed one skips them
       # rather than reporting a second broken thing. A failed SDK install is
@@ -83,7 +93,7 @@ jobs:
           # because it supplies the runtime the net8.0 test assemblies execute
           # on, which no project file states.
           global-json-file: dotnet/global.json
-          dotnet-version: 8.0.x
+          dotnet-version: ${{ env.DOTNET_VERSION }}
 
       # Each suite below runs even after an earlier one fails, so one round trip
       # reports every broken suite rather than only the first. Setup is not

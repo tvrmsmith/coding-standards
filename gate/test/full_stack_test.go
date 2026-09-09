@@ -52,17 +52,18 @@ func requireDotnet(raw string) (bool, error) {
 // requireDotnet accepts and the near misses it has to reject.
 func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 	cases := []struct {
-		raw     string
-		require bool
-		wantErr bool
+		raw             string
+		require         bool
+		wantErrContains string
 	}{
-		{"1", true, false},
-		{"", false, false},
-		{"0", false, true},
-		{"true", false, true},
-		{"TRUE", false, true},
-		{"yes", false, true},
-		{" 1", false, true},
+		{"1", true, ""},
+		{"", false, ""},
+		{"0", false, `"0"`},
+		{"true", false, `"true"`},
+		{"TRUE", false, `"TRUE"`},
+		{"yes", false, `"yes"`},
+		{" 1", false, `" 1"`},
+		{"nope", false, `"1" is the only value that enables enforcement`},
 	}
 
 	for _, c := range cases {
@@ -71,8 +72,17 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 			if require != c.require {
 				t.Errorf("require = %v, want %v", require, c.require)
 			}
-			if (err != nil) != c.wantErr {
-				t.Errorf("err = %v, want error %v", err, c.wantErr)
+			if c.wantErrContains == "" {
+				if err != nil {
+					t.Errorf("err = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("err = nil, want one containing %q", c.wantErrContains)
+			}
+			if !strings.Contains(err.Error(), c.wantErrContains) {
+				t.Errorf("err = %q, want it to contain %q", err, c.wantErrContains)
 			}
 		})
 	}
@@ -151,8 +161,22 @@ func TestFullStackDrivesTheRealDotnetExtractor(t *testing.T) {
 	// A -short run cannot use the probe's answer, so it never pays for the
 	// subprocess and the first-run initialization dotnet may do behind it.
 	short := testing.Short()
-	sdkOK := short || exec.Command("dotnet", "--version").Run() == nil
+	sdkOK := true
+	// The probe's error and output are what tell a reader whether dotnet is
+	// absent, exited non-zero, or could not resolve the SDK global.json asks
+	// for, and the enforced run reports nothing else about the machine.
+	detailNoSDK := reasonNoSDK
+	if !short {
+		out, probeErr := exec.Command("dotnet", "--version").CombinedOutput()
+		sdkOK = probeErr == nil
+		if probeErr != nil {
+			detailNoSDK = fmt.Sprintf("%s with %v and printed %q", reasonNoSDK, probeErr, strings.TrimSpace(string(out)))
+		}
+	}
 	if reason, fatal := dotnetSkipReason(short, sdkOK, require); reason != "" {
+		if reason == reasonNoSDK {
+			reason = detailNoSDK
+		}
 		if fatal {
 			t.Fatalf("%s=1 forbids skipping: %s", envRequireDotnet, reason)
 		}
