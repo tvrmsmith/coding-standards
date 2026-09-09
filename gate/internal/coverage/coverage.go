@@ -352,25 +352,11 @@ func Load(root srcpath.Root, sources []Source, newest Newest, now time.Time) (Se
 				Message: fmt.Sprintf("could not parse coverage report %s; %s", source.Name, parseCause(err)),
 			}
 		}
-		at, err := parsed.timestamp()
+		at, err := parsed.instant(now)
 		if err != nil {
 			return nil, nil, &report.Failure{
 				Code:    report.CodeCoverageUnparseable,
 				Message: "coverage report " + source.Name + " " + err.Error(),
-			}
-		}
-		if farAheadOfNow(at, now) {
-			return nil, nil, &report.Failure{
-				Code: report.CodeCoverageUnparseable,
-				Message: fmt.Sprintf("coverage report %s carries a timestamp %q %s; it must be epoch seconds, or the clock on this machine is behind the one that wrote it",
-					source.Name, parsed.Timestamp, farAheadOfNowClause),
-			}
-		}
-		if at.Unix() < earliestPlausibleStamp {
-			return nil, nil, &report.Failure{
-				Code: report.CodeCoverageUnparseable,
-				Message: fmt.Sprintf("coverage report %s carries a timestamp %q from before %s; it must be epoch seconds",
-					source.Name, parsed.Timestamp, time.Unix(earliestPlausibleStamp, 0).UTC().Format(time.RFC3339)),
 			}
 		}
 		// Staleness is checked before the merge, not after it, so a refused or
@@ -424,20 +410,25 @@ type coberturaReport struct {
 	Classes   []coberturaClass `xml:"packages>package>classes>class"`
 }
 
-// timestamp reads the report's own clock, which is what the staleness rule
-// judges rather than any timestamp of the file on disk. The error is the
-// reason the rule cannot run, worded for the refusal message and split by
-// shape because the two shapes need different fixes: an attribute that is
-// absent has to be written, while any value ParseInt cannot read as base-10
-// seconds, another representation of an instant or plain garbage alike, is
-// already there and is a value to rewrite rather than one to add. A value
-// ParseInt reads but time.Unix cannot hold shares that wording, since it is
-// the same fix, the attribute in front of the developer is not epoch seconds.
-// The offending value is quoted so the developer sees what the gate read
-// rather than what they meant. Resolving the verdict and its reason in one
-// place is what stops a further rejection shape from
-// refusing under one wording and explaining itself with another.
-func (r coberturaReport) timestamp() (time.Time, error) {
+// instant reads the report's own clock, which is what the staleness rule
+// judges rather than any timestamp of the file on disk, and answers only for a
+// stamp the gate is willing to trust: readable, no further ahead of now than
+// clockSkewTolerance, and no older than earliestPlausibleStamp. Every rejection
+// shape resolves here, both the verdict and the sentence explaining it, so a
+// further shape cannot refuse under one wording and explain itself with
+// another, and the caller never reads Timestamp back to word its own. The
+// error is the reason the staleness rule cannot run, worded for the refusal
+// message with the offending value quoted so the developer sees what the gate
+// read rather than what they meant, and split by shape because the shapes need
+// different fixes: an attribute that is absent has to be written, while any
+// value ParseInt cannot read as base-10 seconds, another representation of an
+// instant or plain garbage alike, is already there and is a value to rewrite
+// rather than one to add. A value ParseInt reads but time.Unix cannot hold
+// shares that wording, since it is the same fix, the attribute in front of the
+// developer is not epoch seconds. A stamp outside the plausible band names the
+// end it fell out of, since a clock a day behind the producer's and a stamp
+// from before the format existed are not the same fault.
+func (r coberturaReport) instant(now time.Time) (time.Time, error) {
 	if r.Timestamp == "" {
 		return time.Time{}, errors.New("carries no timestamp, so it cannot be judged against the code it describes")
 	}
@@ -445,7 +436,16 @@ func (r coberturaReport) timestamp() (time.Time, error) {
 	if err != nil || seconds > maxEpochSeconds {
 		return time.Time{}, fmt.Errorf("carries an unreadable timestamp %q; it must be epoch seconds", r.Timestamp)
 	}
-	return time.Unix(seconds, 0), nil
+	at := time.Unix(seconds, 0)
+	if farAheadOfNow(at, now) {
+		return time.Time{}, fmt.Errorf("carries a timestamp %q %s; it must be epoch seconds, or the clock on this machine is behind the one that wrote it",
+			r.Timestamp, farAheadOfNowClause)
+	}
+	if seconds < earliestPlausibleStamp {
+		return time.Time{}, fmt.Errorf("carries a timestamp %q from before %s; it must be epoch seconds",
+			r.Timestamp, time.Unix(earliestPlausibleStamp, 0).UTC().Format(time.RFC3339))
+	}
+	return at, nil
 }
 
 // The highest stamp time.Unix can hold without the internal seconds field it
