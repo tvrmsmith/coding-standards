@@ -929,10 +929,11 @@ func (f *fixture) pushOrphanHistoryToOrigin(branch string) {
 	}
 	// Exit 1 is git answering "no common ancestor"; every other exit code is
 	// git failing to answer at all, so only exit 1 confirms the helper really
-	// produced unrelated history. The distinction is the helper's own, drawn
-	// here so a broken fixture cannot read as a working one; ResolveBase drops
-	// any merge-base failure alike, and that quiet fall-through is what the
-	// caller pins. gitscope draws it in ResolveRef and noMatch.
+	// produced unrelated history. The guard is what pins which arm the caller
+	// reaches. ResolveBase falls through on exit 1 alone and returns every
+	// other exit code as an unreadable diff, so a fixture that broke into one
+	// of those would fail the case rather than reading as a working one.
+	// gitscope draws the same line in ResolveRef and noMatch.
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
 		f.t.Fatalf("merge-base HEAD origin/%s failed to answer: %v\n%s",
