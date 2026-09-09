@@ -69,11 +69,13 @@ jobs:
       # rather than reporting a second broken thing. A failed SDK install is
       # not, because it reds the job on its own, and running the tests anyway
       # reports the whole Go suite plus a clear METRIC_GATE_REQUIRE_DOTNET
-      # failure on the one SDK-dependent case in a single round trip.
-      # METRIC_GATE_REQUIRE_DOTNET turns a missing SDK into a test failure
-      # instead of a skip, because that one case packs and installs the real
-      # dotnet extractor and a silent skip would let that path go unexercised
-      # forever.
+      # failure on the one dotnet-dependent case in a single round trip.
+      # ubuntu-latest ships an SDK, so that case does not settle for one. It
+      # looks for a Microsoft.NETCore.App 8.x runtime, which only the step
+      # above puts on the runner, and METRIC_GATE_REQUIRE_DOTNET turns its
+      # absence into a test failure instead of a skip. That case packs and
+      # installs the real dotnet extractor, and a silent skip would let that
+      # path go unexercised forever.
       - run: go test ./... -count=1
         working-directory: gate
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
