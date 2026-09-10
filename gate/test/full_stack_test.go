@@ -435,6 +435,28 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 		"--list-sdks) echo '"+badPinInstalled+"' ;;\n"+
 		"esac\n")
 
+	// A first-run banner on stderr with nothing on stdout, which is what a
+	// freshly extracted dotnet prints. The answer is still empty, so the probe
+	// must read stdout alone: conflating the streams would turn the banner into
+	// a version number and let this machine through to a pack it cannot do.
+	const bannerMessage = "Welcome to .NET"
+	banner := stubDotnetPath(t, "#!/bin/sh\n"+
+		"case \"$1\" in\n"+
+		"--version) echo '"+bannerMessage+"' >&2 ;;\n"+
+		"--list-runtimes) echo 'Microsoft.NETCore.App 8.0.27 [/x/shared/Microsoft.NETCore.App]' ;;\n"+
+		"esac\n")
+
+	// A compiler matching the pin whose runtime query itself fails, so the probe
+	// learns nothing about the shared frameworks rather than learning there are
+	// none.
+	const listRuntimesMessage = "The command could not be loaded"
+	brokenRuntimeList := stubDotnetPath(t, "#!/bin/sh\n"+
+		"case \"$1\" in\n"+
+		"--version) echo '8.0.100' ;;\n"+
+		"--list-sdks) echo '8.0.100 [/x/sdk]' ;;\n"+
+		"--list-runtimes) echo '"+listRuntimesMessage+"' >&2; exit 1 ;;\n"+
+		"esac\n")
+
 	// No dotnet on the PATH at all, which is the arm errors.Is(exec.ErrNotFound)
 	// answers. go stays reachable because the child re-runs TestMain, which
 	// rebuilds both binaries before the selected case starts.
@@ -479,6 +501,22 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 			env:   []string{badPin},
 			short: long,
 			wants: []string{"--- SKIP", reasonNoPinnedSDK, badPinMessage},
+		},
+		{
+			name:    "a banner on stderr is not an answer on stdout",
+			env:     []string{banner},
+			require: "1",
+			short:   long,
+			wantErr: true,
+			wants:   []string{"forbids skipping", reasonNoPinnedSDK, "printed nothing"},
+		},
+		{
+			name:    "a failing --list-runtimes reports what dotnet said",
+			env:     []string{brokenRuntimeList},
+			require: "1",
+			short:   long,
+			wantErr: true,
+			wants:   []string{"forbids skipping", reasonNoUsableRuntime, "failed with", listRuntimesMessage},
 		},
 		{
 			name:    "no dotnet on the PATH at all fails the enforced run",

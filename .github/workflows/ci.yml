@@ -256,6 +256,9 @@ jobs:
       # and dotnet/tests/Consumer exists to emit diagnostics rather than to be
       # run.
       - name: Compare the suites on disk against the hand-maintained list
+        # The step above is a peer, not a precondition, so a drifted env-var
+        # name still reports whether a suite landed unwired.
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
 
