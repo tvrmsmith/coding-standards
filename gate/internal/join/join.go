@@ -186,14 +186,16 @@ type Method struct {
 // instrumented and its entry is never empty, and its getters read measured at
 // coverage 0.
 //
-// Three shapes still reach the arm. Coverlet run with SkipAutoProps=true
-// suppresses exactly the auto-property getter lines that evidence rests on. A
-// file whose only type carries [ExcludeFromCodeCoverage] gets no lines
-// either. And a producer that writes lines solely under <methods>, leaving
-// the class-level element empty, which coverlet, the producer this gate
-// reads, does not do. Under any of them a changed method in such a file exits
-// 1 rather than scoring as covered. That is the accepted cost of refusing to
-// read an uninstrumented file as covered.
+// Two shapes still reach the arm. Coverlet run with SkipAutoProps=true
+// suppresses exactly the auto-property getter lines that evidence rests on.
+// And a producer that writes lines solely under <methods>, leaving the
+// class-level element empty, which coverlet, the producer this gate reads,
+// does not do. Under either one a changed method in such a file exits 1
+// rather than scoring as covered. That is the accepted cost of refusing to
+// read an uninstrumented file as covered. A file whose only type carries
+// [ExcludeFromCodeCoverage] is not one of them: coverlet leaves its <class>
+// out of the report altogether, so the set holds no entry for the file and
+// its spans take the first arm, file_unmatched, which also exits 1.
 func Attribute(all []extract.Span, changed []extract.Span, lines coverage.Set) []Method {
 	byFile := groupByFile(all)
 	methods := make([]Method, 0, len(changed))
