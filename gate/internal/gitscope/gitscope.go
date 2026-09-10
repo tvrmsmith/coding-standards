@@ -216,18 +216,26 @@ func (r Repo) ResolveBase() (Base, error) {
 //
 // Every invocation tells exit 1, which is git answering the question with no,
 // from every other exit code, which is git failing to answer it. A rev spec git
-// refuses to evaluate, `--since main@{9}` against a shorter reflog, or an object
-// store missing a commit the merge base has to walk, reported as a name that
-// does not exist would send the developer hunting a typo, so it comes back
-// typed as an unreadable diff instead.
+// refuses to evaluate, `--since main@{9}` against a shorter reflog, comes back
+// typed as an unreadable diff, because reported as a name that does not exist
+// it would send the developer hunting a typo.
 //
-// Either shape of message can come out of the two `rev-parse --verify` checks,
-// so both are pinned by a golden. `--quiet` is what makes an absent ref exit 1
-// at all, and it also swallows what rev-parse itself would say about a rev it
+// The `^{commit}` peel is what makes "does not name a commit" the answer a tag
+// on a tree gets, which is the answer --since owes a caller who chose the ref by
+// hand. It cannot separate that ref from one whose own commit object is gone,
+// since git exits 1 on both, so `--since main` in a store missing main's commit
+// says main does not name a commit while the default scope, which verifies its
+// candidates unpeeled, reports the object merge-base could not read. Issue 68
+// tracks that gap.
+//
+// Only the argv shape reaches a caller from these two checks today, and
+// since_ref_unreadable pins it. `--quiet` is what makes an absent ref exit 1 at
+// all, and it also swallows what rev-parse itself would say about a rev it
 // declined to resolve, `--since main@{9}` against a shorter reflog for one,
 // which leaves the failed command as the only thing to report. A fatal raised
 // under rev-parse rather than by it still reaches stderr, a ref store git
-// cannot parse for one, and cause prefers that sentence. Simplifying cause to
+// cannot parse for one, which base_head_unreadable pins from the default
+// scope's own HEAD check, and cause prefers that sentence. Simplifying cause to
 // the argv form on the strength of the first case would drop git's own account
 // of the second, which is the half that names what is broken.
 //
@@ -277,9 +285,9 @@ func (r Repo) ResolveStaged() (Base, error) {
 // unreadable diff on every other exit code. It does not promise a commit id:
 // ResolveBase asks it about a ref deliberately unpeeled, so for a rung whose
 // object the store lacks git exits 0 and the string names no resolved commit.
-// ResolveStaged is the one caller that reads the string, and it asks about
-// HEAD, which git resolves to a commit or not at all. The other three discard
-// it and want only which of the two arms fired.
+// ResolveStaged is the one of the five call sites that reads the string, and it
+// asks about HEAD, which git resolves to a commit or not at all. The other four
+// discard it and want only which of the two arms fired.
 //
 // Every resolver's every check shares this rather than spelling the same two
 // arms out each time, which is what makes one reading of noMatch the reading
@@ -290,8 +298,10 @@ func (r Repo) ResolveStaged() (Base, error) {
 // there could not be reached by a test.
 //
 // The no comes back as one sentinel rather than as an error the caller hands
-// in, so no caller can supply a nil for the exit-1 arm to return, which would
-// leave a resolver reading the empty string back as a commit id.
+// in, because what exit 1 means is the caller's to say and what exit 1 is is
+// this helper's. A caller supplying the error would be free to supply one for
+// some other exit code too, and the three resolvers would be back to three
+// readings of git's answer, which is what issue 43 set out to end.
 func (r Repo) verifyRev(rev string) (string, error) {
 	out, err := r.git("rev-parse", "--verify", "--quiet", rev)
 	if err != nil {
