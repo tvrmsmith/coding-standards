@@ -107,10 +107,16 @@ Two layers. **AwesomeAssertions.Analyzers `FAA0001`–`FAA0004`** is the asserti
 the enforcement mapping. All four ship as `Info`, which never surfaces in a build, so they are
 elevated to `warning` — not `error`, because adoption is machine-local with no CI gate.
 
-The second layer is **the built-in `CAxxxx` rules the SDK ships disabled**, minus a short
+The second layer is **the built-in `CAxxxx` rules the SDK ships *quiet***, minus a short
 exclusion list, and it maps to no guideline. Same one-directional rule as the TypeScript
 `test-integrity` slice: a rule that is already installed and already correct does not need a
 guideline written for it first.
+
+Quiet means the build shows nothing without this config, and the SDK has two ways of being quiet.
+Some rules ship disabled outright. The rest ship enabled at `note`, which is SARIF's spelling of
+`DiagnosticSeverity.Info`: MSBuild does not print it and `TreatWarningsAsErrors` never touches it,
+so the rule runs and reports into the void. That is the same position `FAA0001`-`FAA0004` are in,
+and both kinds are raised to `warning` for the same reason.
 
 No package backs that layer. The SDK already loads the analyzers, and a `.globalconfig` configures
 severity by id regardless of which assembly emits the diagnostic. Setting an explicit severity is
@@ -118,8 +124,9 @@ also what *enables* a rule that ships disabled, so this reaches the same rules a
 `<AnalysisMode>All</AnalysisMode>` without injecting that property and without sweeping in the
 exclusions.
 
-The rules that are *on* by default are deliberately left alone. Raising them here would also
-subject them to changed-files scoping, which would *reduce* what the target repo already reports.
+The rules that already report at `warning` or `error` are deliberately left alone. Raising them
+here would also subject them to changed-files scoping, which would *reduce* what the target repo
+already reports. A quiet rule reports nothing today, so scoping it costs nothing.
 
 `node ../generate-ca-severities.mjs` regenerates the block. It reads the rule set from the SDK
 rather than a pinned list, so an SDK upgrade that adds `CA` rules picks them up instead of quietly

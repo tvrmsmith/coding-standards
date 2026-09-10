@@ -49,7 +49,7 @@ const ours = [
 const injectionArtifacts = ['AD0001', 'CS8032', 'CS8034', 'CS9057']
 
 /**
- * Every off-by-default CA rule is enabled except these. Four reasons, and the distinction
+ * Every quiet CA rule is raised to warning except these. Four reasons, and the distinction
  * between them is the whole argument: "fires a lot" is not on the list, because the pre-commit
  * hook scopes reporting to changed files, so a large standing backlog costs nothing.
  *
@@ -68,10 +68,12 @@ const excluded = {
   CA1303: 'literals as localized parameters: nothing here is localized',
   CA1724: 'type name matches namespace: unavoidable and harmless in a monorepo this shape',
   CA1515: 'make public types internal: aimed at apps, wrong for cross-project consumption',
+  CA1707: 'no underscores in member names: every one of the 7676 hits is a test method, and the naming convention it objects to is the one test-best-practices teaches',
 
   // -- Obsolete advice. ----------------------------------------------------------------------
   CA1014: 'CLSCompliant attribute: dead concern for modern C#',
   CA1017: 'ComVisible attribute: same',
+  CA1716: 'identifiers should not match keywords: the keywords are VB ones, so this is CLS interop again',
   CA2235: 'non-serializable fields: legacy ISerializable',
   CA2237: 'mark ISerializable types: legacy ISerializable',
 
@@ -86,9 +88,20 @@ const excluded = {
   CA1030: 'use events where appropriate: a naming heuristic on Fire*/Raise*',
   CA1814: 'jagged over multidimensional arrays: situational',
   CA2225: 'operator named alternates: CLS/VB interop, effectively dead',
+  CA1711: 'incorrect type-name suffix: 54 of 58 hits demand renaming a *EventHandler, which is the right name for a domain event handler',
+  CA1720: 'identifier contains type name: half the hits are the substring misfire on Signed',
 }
 
-/** Ask the compiler which CA rules exist and which ship disabled. */
+/**
+ * Ask the compiler which CA rules exist and which of them are *quiet*: reporting nothing a build
+ * shows unless this config raises them.
+ *
+ * Two default configurations are quiet, and reading only the first is a bug this generator shipped
+ * with. `enabled: false` is the obvious one. `level: "note"` is the subtle one: the rule runs, but
+ * note is SARIF's spelling of DiagnosticSeverity.Info, which MSBuild does not print and
+ * TreatWarningsAsErrors never touches. Enabled in name, silent in practice. That is the same
+ * position FAA0001-0004 are in, and the block above them raises those for exactly this reason.
+ */
 function probeSdk() {
   const dir = mkdtempSync(join(tmpdir(), 'ca-probe-'))
   try {
@@ -105,38 +118,49 @@ function probeSdk() {
       ...(run.tool.extensions ?? []).flatMap((e) => e.rules ?? []),
     ])
 
-    const off = new Map()
+    const quiet = new Map()
     for (const rule of rules) {
       if (!rule.id.startsWith('CA')) continue
       const { enabled = true, level = 'warning' } = rule.defaultConfiguration ?? {}
-      if (enabled && level !== 'none') continue
+      if (enabled && level !== 'none' && level !== 'note') continue
       const text = (rule.shortDescription ?? rule.fullDescription ?? {}).text ?? ''
-      off.set(rule.id, text.replace(/\s+/g, ' ').trim())
+      quiet.set(rule.id, {
+        why: enabled ? 'note' : 'disabled',
+        text: text.replace(/\s+/g, ' ').trim(),
+      })
     }
-    return off
+    return quiet
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 }
 
-const offByDefault = probeSdk()
-const enabled = [...offByDefault.keys()].filter((id) => !(id in excluded)).sort()
-const skipped = Object.keys(excluded).filter((id) => !offByDefault.has(id))
+const quietByDefault = probeSdk()
+const enabled = [...quietByDefault.keys()].filter((id) => !(id in excluded)).sort()
+const skipped = Object.keys(excluded).filter((id) => !quietByDefault.has(id))
+const raisedFrom = (why) => enabled.filter((id) => quietByDefault.get(id).why === why).length
 
 const START = '# --- BEGIN generated: built-in CA severities (node dotnet/generate-ca-severities.mjs) ---'
 const END = '# --- END generated: built-in CA severities ---'
 
 function severityBlock() {
   const byReason = []
-  for (const id of enabled) byReason.push(`# ${id} ${offByDefault.get(id)}\ndotnet_diagnostic.${id}.severity = warning`)
+  for (const id of enabled) {
+    byReason.push(`# ${id} ${quietByDefault.get(id).text}\ndotnet_diagnostic.${id}.severity = warning`)
+  }
 
   return [
     START,
     '#',
-    `# The ${enabled.length} CA rules that ship *disabled* in the .NET SDK, minus ${Object.keys(excluded).length}`,
-    '# exclusions. The other CA rules are on by default and are deliberately left alone: raising',
+    `# The ${enabled.length} CA rules the .NET SDK ships *quiet*, minus ${Object.keys(excluded).length} exclusions.`,
+    `# Quiet means the build shows nothing without this file: ${raisedFrom('disabled')} of them are disabled`,
+    `# outright, and ${raisedFrom('note')} are enabled at note (DiagnosticSeverity.Info), which MSBuild does not`,
+    '# print and TreatWarningsAsErrors never touches. Both are raised the same way and for the same',
+    '# reason the FAA block above raises its four.',
+    '#',
+    '# The CA rules that already report at warning or error are deliberately left alone: raising',
     '# them here would also let the changed-files scoping mute them, which would reduce what the',
-    '# target repo already reports.',
+    '# target repo already reports. A quiet rule reports nothing today, so scoping it costs nothing.',
     '#',
     '# No <Analyzer Include> backs these. The SDK already loads the analyzers; a globalconfig',
     '# configures severity by id and does not care which assembly emits the diagnostic. Setting',
@@ -191,9 +215,9 @@ if (process.argv.includes('--check')) {
 
 for (const [path, next] of edits) writeFileSync(path, next)
 
-console.log(`off by default in this SDK: ${offByDefault.size}`)
-console.log(`enabled: ${enabled.length}   excluded: ${Object.keys(excluded).length}`)
+console.log(`quiet in this SDK: ${quietByDefault.size}`)
+console.log(`enabled: ${enabled.length} (${raisedFrom('disabled')} disabled, ${raisedFrom('note')} note)   excluded: ${Object.keys(excluded).length}`)
 console.log(`ids carried through all three files: ${allIds.length}`)
 if (skipped.length) {
-  console.log(`\nexclusions that no longer match an off-by-default rule (prune them): ${skipped.join(', ')}`)
+  console.log(`\nexclusions that no longer match a quiet rule (prune them): ${skipped.join(', ')}`)
 }
