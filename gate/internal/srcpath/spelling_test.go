@@ -74,10 +74,10 @@ func TestSpelledAsOnDiskReportsADirectoryItCannotRead(t *testing.T) {
 func TestRelativizeReportsARootTheCandidateHasNoRelativeReadingAgainst(t *testing.T) {
 	root := Root{resolved: filepath.Join("relative", "root")}
 
-	rel, inside, err := root.relativize(filepath.Join(t.TempDir(), "OrderService.cs"))
+	rel, place, err := root.relativize(filepath.Join(t.TempDir(), "OrderService.cs"))
 
-	if err == nil || rel != "" || inside {
-		t.Errorf("relativize against a relative root returned %q, %v, %v, want \"\", false and an error", rel, inside, err)
+	if err == nil || rel != "" || place != outside {
+		t.Errorf("relativize against a relative root returned %q, %v, %v, want \"\", outside and an error", rel, place, err)
 	}
 }
 

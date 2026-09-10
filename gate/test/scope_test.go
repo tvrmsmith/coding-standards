@@ -3,6 +3,7 @@ package gate_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -420,6 +421,47 @@ func TestFilesNamingAFileInTheWrongCaseRefusesRatherThanMeasuresIt(t *testing.T)
 	f.runArgs("--files", "src/ordering/OrderService.cs").
 		assertMatches(t, "files_wrong_case", 1, "",
 			"src/ordering/OrderService.cs is not spelled as the file on disk is\n")
+}
+
+func TestFilesNamingAMisCasedRepoRootPrefixRefusesTheSpellingNotTheLocation(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	singleFileCoverageAndStub(t, f)
+	miscasedRoot := sameDirectoryUpperCased(t, f.root)
+
+	// Issue 48. The file is the fixture's own, correctly cased below the root,
+	// and only the root prefix is typed in another case. EvalSymlinks keeps
+	// that case, so filepath.Rel reads the path as escaping and the gate used
+	// to answer "is outside the repo root", sending the developer after a
+	// location mistake when what they have is a spelling one.
+	typed := filepath.Join(miscasedRoot, filepath.FromSlash(orderService))
+	f.runArgs("--files", typed).
+		assertMatchesWith(t, "files_miscased_root_prefix", 1, "",
+			typed+" is not spelled as the repo root is\n",
+			map[string]string{"PATH": typed})
+}
+
+// sameDirectoryUpperCased is dir with every letter of its text upper-cased,
+// skipping the case unless that name reaches the same directory. os.SameFile is
+// stricter than probing the filesystem once with caseInsensitiveFilesystem,
+// because a temp root can sit under a case-sensitive component on a machine
+// whose own volume folds case, and then only some of the prefix folds.
+func sameDirectoryUpperCased(t *testing.T, dir string) string {
+	t.Helper()
+	upper := strings.ToUpper(dir)
+	if upper == dir {
+		t.Skip("the fixture root has no letter to re-case, so there is no mis-cased prefix to type")
+	}
+	want, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.Stat(upper)
+	if err != nil || !os.SameFile(want, got) {
+		t.Skipf("the filesystem is case sensitive, so %s does not name the fixture root", upper)
+	}
+	return upper
 }
 
 func TestFilesNamingAPathThroughAFileFailsInTheDocument(t *testing.T) {
