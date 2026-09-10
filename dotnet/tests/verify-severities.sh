@@ -283,7 +283,10 @@ EOF
 printf 'bin/\nobj/\n' > "$scoped/.gitignore"
 git -C "$scoped" init -q
 git -C "$scoped" add -A
-git -C "$scoped" -c user.name=verify -c user.email=verify@localhost commit -qm 'baseline'
+# commit.gpgsign=false: a throwaway repo has no reason to sign, and inheriting a global signing
+# config makes this gate fail whenever the developer's key agent is locked.
+git -C "$scoped" -c user.name=verify -c user.email=verify@localhost -c commit.gpgsign=false \
+  commit -qm 'baseline'
 
 # TVRMSMITH_SCOPE_TTL=0 because these builds run back to back and the generated config is
 # normally reused for a few seconds — without it the second build would read the first one's.

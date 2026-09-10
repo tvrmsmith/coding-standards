@@ -93,7 +93,7 @@ Everything else is off the shelf. These have no off-the-shelf equivalent:
 
 The off-the-shelf layer around them is already curated: `packages/eslint-config-tvrmsmith` for
 TypeScript, and for C# both AwesomeAssertions.Analyzers `FAA0001`–`FAA0004` and most of the built-in
-`CAxxxx` rules the SDK ships disabled (see `dotnet/README.md` — the analyzer pairing is
+`CAxxxx` rules the SDK ships quiet, disabled or at `note` (see `dotnet/README.md` — the analyzer pairing is
 version-sensitive and mixing it with FluentAssertions fails *silently*, and the `CA` set is
 generated from the SDK's own rule metadata rather than a pinned list).
 
