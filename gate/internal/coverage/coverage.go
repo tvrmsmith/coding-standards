@@ -55,9 +55,10 @@ type Source struct {
 	Abs string
 	// Name is how a failure names the report: repo-relative whenever the
 	// report resolves inside the repo, and the resolved absolute path for a
-	// named one that does not, which has no repo-relative form. namedAs
-	// records why the absolute form beats the developer's own spelling there.
-	Name string
+	// named one that does not, which has no repo-relative form.
+	// srcpath.Root.Name is the one place that containment question is
+	// answered (issue 36).
+	Name srcpath.Name
 	// Origin is how the report reached the gate, which decides the remedy a
 	// refusal offers.
 	Origin Origin
@@ -91,7 +92,7 @@ const (
 func (s Source) staleRemedy() string {
 	switch s.Origin {
 	case NamedOnCommandLine:
-		return "; regenerate " + s.Name + " or point --coverage at a current report"
+		return "; regenerate " + s.Name.String() + " or point --coverage at a current report"
 	default:
 		return ""
 	}
@@ -142,7 +143,7 @@ func Discover(root srcpath.Root) (sources []Source, skipped []string, err error)
 		// the worst a skipped subtree can cost is a report the walk did not
 		// see, which the reader now sees in `skipped_paths`.
 		if err != nil {
-			skipped = append(skipped, relative(root, path))
+			skipped = append(skipped, root.Name(path).String())
 			if entry != nil && entry.IsDir() {
 				return fs.SkipDir
 			}
@@ -159,19 +160,19 @@ func Discover(root srcpath.Root) (sources []Source, skipped []string, err error)
 		}
 		rel, err := filepath.Rel(root.Dir(), path)
 		if err != nil {
-			skipped = append(skipped, relative(root, path))
+			skipped = append(skipped, root.Name(path).String())
 			return nil
 		}
 		if !underResultsDir(rel) {
 			return nil
 		}
-		sources = append(sources, Source{Abs: path, Name: filepath.ToSlash(rel), Origin: Discovered})
+		sources = append(sources, Source{Abs: path, Name: root.Name(path), Origin: Discovered})
 		return nil
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("discovering coverage reports: %w", err)
 	}
-	slices.SortFunc(sources, func(a, b Source) int { return strings.Compare(a.Name, b.Name) })
+	slices.SortFunc(sources, func(a, b Source) int { return strings.Compare(string(a.Name), string(b.Name)) })
 	slices.Sort(skipped)
 	return sources, skipped, nil
 }
@@ -188,72 +189,9 @@ func Named(root srcpath.Root, cwd string, paths []string) []Source {
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(cwd, abs)
 		}
-		sources = append(sources, Source{Abs: abs, Name: namedAs(root, abs), Origin: NamedOnCommandLine})
+		sources = append(sources, Source{Abs: abs, Name: root.Name(abs), Origin: NamedOnCommandLine})
 	}
 	return sources
-}
-
-// namedAs renders a named report the way the document names paths. It
-// relativizes the resolved reading of the path against the resolved root, so a
-// path reached through a symlink is named repo-relative rather than escaping
-// the root. A path naming nothing on disk resolves as far as it exists, since
-// the root itself is very often reached through a symlink (/tmp and /var on
-// macOS) and comparing an unresolved path against the resolved root would
-// escape for the indirection rather than for where the path actually is. A
-// path that is genuinely outside the repo has no repo-relative form, so it is
-// named by the same resolved absolute path the containment test just weighed.
-// The developer's own spelling was rejected for that case: the document carries
-// no working directory (ADR 0005), so a relative name reaches a consumer that
-// cannot resolve it, and the same report named from two directories would print
-// two strings.
-//
-// It answers "is this inside the repo" itself, where srcpath's package doc
-// claims that question for srcpath alone. srcpath.Root.Place cannot answer it
-// here, since Place requires a regular file and the whole point of namedAs is
-// to name a path that may be nothing. So separator handling and
-// case-insensitive filesystems now have two answers, and correcting one leaves
-// the other as it was, so a named report would be relativized where the other
-// call site keeps the typed spelling, or the reverse. relative()
-// below is a third spelling, with no escape guard at all. Issue 36 unifies all
-// three behind an existence-agnostic sibling of Place, which is a change to
-// srcpath and not to a branch about staleness.
-func namedAs(root srcpath.Root, abs string) string {
-	resolved := resolveExisting(abs)
-	rel, err := filepath.Rel(root.Dir(), resolved)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return filepath.ToSlash(resolved)
-	}
-	return filepath.ToSlash(rel)
-}
-
-// resolveExisting resolves the symlinks of the deepest ancestor of abs that is
-// on disk and rejoins the components below it as they were typed. A path that
-// exists whole resolves whole, and one naming nothing still comes back rooted
-// where it really sits rather than behind whatever link led there. Only a
-// component that is not there is climbed past: a symlink loop or an ancestor
-// the process may not search is a real fault, and climbing over it would rename
-// a report that does sit inside the repo into one the document names as though
-// it sat outside.
-func resolveExisting(abs string) string {
-	resolved, err := filepath.EvalSymlinks(abs)
-	if err == nil {
-		return resolved
-	}
-	parent := filepath.Dir(abs)
-	if !errors.Is(err, fs.ErrNotExist) || parent == abs {
-		return abs
-	}
-	return filepath.Join(resolveExisting(parent), filepath.Base(abs))
-}
-
-// relative renders a walked path the way the document names paths, falling
-// back to the absolute path when it cannot be placed under the root.
-func relative(root srcpath.Root, path string) string {
-	rel, err := filepath.Rel(root.Dir(), path)
-	if err != nil {
-		return filepath.ToSlash(path)
-	}
-	return filepath.ToSlash(rel)
 }
 
 // underResultsDir reports whether any directory component of rel is the
@@ -363,19 +301,19 @@ func Load(root srcpath.Root, sources []Source, newest Newest, now time.Time) (Se
 		if err != nil {
 			return nil, nil, &report.Failure{
 				Code:    report.CodeCoverageUnparseable,
-				Message: "coverage report " + source.Name + " " + err.Error(),
+				Message: "coverage report " + source.Name.String() + " " + err.Error(),
 			}
 		}
 		// Staleness is checked before the merge, not after it, so a refused or
 		// skipped report never contributes a line even transiently.
 		if at.Before(newest.At) {
 			if source.Origin == Discovered {
-				skipped = append(skipped, source.Name)
+				skipped = append(skipped, source.Name.String())
 				continue
 			}
 			return nil, nil, &report.Failure{
 				Code: report.CodeCoverageStale,
-				Message: "coverage report " + source.Name + " was written before " +
+				Message: "coverage report " + source.Name.String() + " was written before " +
 					newest.File.String() + " was last edited" + source.staleRemedy(),
 			}
 		}
@@ -542,7 +480,7 @@ var sourceLinkScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
 // The classes fold into a set of this report's own, unioned into the caller's
 // only once every check has passed, so a report that fails leaves nothing of
 // itself behind.
-func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath string) error {
+func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath srcpath.Name) error {
 	if failure := r.erasedSourceRoot(reportPath); failure != nil {
 		return failure
 	}
@@ -637,7 +575,7 @@ func joinNames[T ~string](names []T) string {
 // from either shape would only mislead. DeterministicReport is tested over
 // every class first, so it wins over UseSourceLink in a report carrying both
 // shapes whatever order the classes appear in.
-func (r coberturaReport) erasedSourceRoot(reportPath string) *report.Failure {
+func (r coberturaReport) erasedSourceRoot(reportPath srcpath.Name) *report.Failure {
 	for _, class := range r.Classes {
 		if erasedSourceRootPlaceholder.MatchString(class.Filename) {
 			return &report.Failure{
@@ -747,7 +685,7 @@ func placeCandidates(candidates []string, root srcpath.Root) (distinct []srcpath
 // says so rather than quoting a relative string the reader would read as a path
 // inside the repo. A report whose classes carry no filename to join builds no
 // candidate at all, and says that instead.
-func outsideRepoFailure(example string, reportPath string, root srcpath.Root) *report.Failure {
+func outsideRepoFailure(example string, reportPath srcpath.Name, root srcpath.Root) *report.Failure {
 	compared := "example path " + example
 	switch {
 	case example == "":
