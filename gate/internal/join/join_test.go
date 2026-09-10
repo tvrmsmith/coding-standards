@@ -128,15 +128,9 @@ func TestAttributeReportsFileUninstrumentedForAFileWithNoInstrumentableLines(t *
 	if len(methods) != 1 {
 		t.Fatalf("Attribute returned %d methods, want 1", len(methods))
 	}
-	got := methods[0]
-	if got.State != report.StateUnknown {
-		t.Errorf("State = %q, want %q", got.State, report.StateUnknown)
-	}
-	if got.Reason != report.ReasonFileUninstrumented {
-		t.Errorf("Reason = %q, want %q", got.Reason, report.ReasonFileUninstrumented)
-	}
-	if got.Coverage != 0 {
-		t.Errorf("Coverage = %v, want 0", got.Coverage)
+	want := join.Method{Span: span, State: report.StateUnknown, Reason: report.ReasonFileUninstrumented}
+	if methods[0] != want {
+		t.Errorf("Attribute returned %+v, want %+v", methods[0], want)
 	}
 }
 

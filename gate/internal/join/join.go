@@ -176,6 +176,17 @@ type Method struct {
 // 17 exists to close. Only once the file is confirmed instrumented does an
 // empty span turn structural_na, treated as fully covered, which is what
 // makes trivial members exclude themselves arithmetically.
+//
+// A file of nothing but trivial members does not reach the second arm.
+// Measured against a real `dotnet test --collect:"XPlat Code Coverage"` run
+// over a record with only positional members and a class with two
+// auto-implemented properties, none of them touched by a test, coverlet
+// emits a <class> per type carrying class-level <lines> with one hits="0"
+// entry per auto-property getter. So such a file is instrumented and its
+// entry is never empty, and its getters read measured at coverage 0. The one
+// shape this arm does fail is a producer that writes lines solely under
+// <methods> and leaves the class-level element empty, which coverlet, the
+// producer this gate reads, does not do.
 func Attribute(all []extract.Span, changed []extract.Span, lines coverage.Set) []Method {
 	byFile := groupByFile(all)
 	methods := make([]Method, 0, len(changed))

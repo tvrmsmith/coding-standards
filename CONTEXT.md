@@ -142,7 +142,7 @@ What the join could establish about one method span.
 | --- | --- | --- |
 | measured | coverage was attributed to the span | scored normally |
 | structural n/a | the span holds no instrumentable lines | treated as fully covered |
-| unknown | the span could not be attributed at all | fails the run, exit 1, with a typed reason |
+| unknown | the span could not be attributed at all | excluded from scoring, fails the run, exit 1, with a typed reason |
 
 `structural n/a` is what makes trivial members exclude themselves. `unknown` means the join broke,
 never that the code is untested, because a coverage report lists methods nobody called.
