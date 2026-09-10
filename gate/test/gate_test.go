@@ -3840,3 +3840,55 @@ func TestATagShadowingACandidateWithANonCommitReportsAnUnreadableDiffRatherThanS
 	f.run().assertMatchesWith(t, "base_merge_base_unreadable", 1, "",
 		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
 }
+
+func TestAnUnreadableRungStopsTheRunRatherThanResolvingABaseThroughALaterOne(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	// addOrigin leaves refs/remotes/origin/HEAD unset, so origin/main is the
+	// first rung the walk resolves and the broken one is the one it reaches.
+	f.addOrigin("main")
+	// A commit only origin/main carries, so dropping its object breaks that
+	// rung alone and leaves local main whole.
+	f.git("checkout", "--quiet", "-b", "remote-tip")
+	f.touchLine(orderService, 40)
+	f.commitAll("remote tip")
+	remoteTip := f.git("rev-parse", "HEAD")
+	f.git("push", "--quiet", "origin", "remote-tip:main")
+	f.git("checkout", "--quiet", "main")
+	f.git("branch", "--quiet", "-D", "remote-tip")
+	f.git("checkout", "--quiet", "-b", "topic")
+	f.touchLine(orderService, 62)
+	f.commitAll("second")
+	// The rung behind the broken one, asserted rather than assumed. A walk that
+	// fell through would resolve a base here and the run would report a
+	// measurement, so without the guard this case could go green on a repo
+	// where nothing usable followed, which is the hole the neighbouring cases
+	// have.
+	f.requireDistinctCommits("origin/main", "main")
+	f.baseLabel("main")
+	f.removeLooseObject(remoteTip)
+	// A coverage report and an extractor the run never reaches, so that a walk
+	// which fell through would answer with a measurement over local main rather
+	// than stopping at some later complaint. That leaves the null base the
+	// golden carries as the thing this case fails on, which is the difference
+	// between refusing and resolving.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// origin/main resolves, local main is a base one rung down that the walk
+	// could reach, and the run still refuses. Refusing is the point. A base
+	// resolved through a rung other than the one the developer's own repo says
+	// their work forked from is a wrong answer nothing in the output would show
+	// them, where the object git cannot read names what is really broken. The
+	// null base the golden carries is what separates the two: a walk that
+	// regained its old continue would report a base here.
+	cause := f.gitStderr("merge-base", "HEAD", "origin/main")
+
+	f.run().assertMatchesWith(t, "base_merge_base_unreadable", 1, "",
+		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
+}
