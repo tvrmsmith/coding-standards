@@ -3772,11 +3772,10 @@ func TestAMergeBaseGitCannotWalkReportsAnUnreadableDiffRatherThanTryingTheNextRe
 	// which is the walk itself failing and is what this case pins that the
 	// missing-candidate case does not. Both checks answer about a ref rather
 	// than about an object, so merge-base is the first thing to touch the
-	// missing one. Left to fall
-	// through, git failing to walk would read as git answering that main shares
-	// no ancestor with HEAD, the walk would try the remaining rungs, and a repo
-	// with nothing else to reach would name every candidate rather than the
-	// object it cannot read.
+	// missing one. Left to fall through, git failing to walk would read as git
+	// answering that main shares no ancestor with HEAD, the walk would try the
+	// remaining rungs, and a repo with nothing else to reach would name every
+	// candidate rather than the object it cannot read.
 	cause := f.gitStderr("merge-base", "HEAD", "main")
 
 	f.run().assertMatchesWith(t, "base_merge_base_unreadable", 1, "",

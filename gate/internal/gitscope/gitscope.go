@@ -221,10 +221,15 @@ func (r Repo) ResolveBase() (Base, error) {
 // does not exist would send the developer hunting a typo, so it comes back
 // typed as an unreadable diff instead.
 //
-// The merge base carries git's own words. The two `rev-parse --verify` checks
-// carry the failed command rather than a sentence, because `--quiet` is what
-// makes an absent ref exit 1 at all and it silences git on every other exit
-// code with it.
+// Either shape of message can come out of the two `rev-parse --verify` checks,
+// so both are pinned by a golden. `--quiet` is what makes an absent ref exit 1
+// at all, and it also swallows what rev-parse itself would say about a rev it
+// declined to resolve, `--since main@{9}` against a shorter reflog for one,
+// which leaves the failed command as the only thing to report. A fatal raised
+// under rev-parse rather than by it still reaches stderr, a ref store git
+// cannot parse for one, and cause prefers that sentence. Simplifying cause to
+// the argv form on the strength of the first case would drop git's own account
+// of the second, which is the half that names what is broken.
 //
 // HEAD is verified before the merge base is asked for, the same check
 // ResolveBase and ResolveStaged make, because merge-base against an unborn HEAD
