@@ -77,6 +77,10 @@ local `master`. Failing all of those the run exits 1 naming every ref it tried a
 `--since`. Falling back to `HEAD~1` was rejected because a silently different base is the failure a
 caller cannot detect.
 
+**Amended 2026-09-09.** `HEAD` is verified before the walk, so a branch with no commit reports that.
+Any git exit other than 1, at any check, reports an unreadable diff carrying git's words. Candidates
+verify **unpeeled**, because `<ref>^{commit}` exits 1 on a missing object.
+
 `--files` carries no line information, so every method in a listed file is changed and `base` is
 null. `--staged` reports index line numbers while the extractor parses the disk copy, so the gate
 exits 1 on a file staged in one state and dirty on disk in another. That refusal is narrowed three
