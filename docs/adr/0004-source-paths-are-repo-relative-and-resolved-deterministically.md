@@ -17,7 +17,7 @@ case the tree does not use, is refused as `file_unresolved`. Case folding is rej
 coverage-path resolution, where it can merge two real files; it is not rejected for extension
 routing, which only decides whether to launch a process.
 
-Sections below carry the reasoning and six dated amendments.
+Sections below carry the reasoning and five dated amendments.
 
 ## Decision
 
@@ -125,16 +125,6 @@ developer typed it. Canonicalizing to git's spelling instead of refusing stays a
 non-regular inode, not directories alone, so a `--files` path naming a fifo, socket or device node is exit 1 under
 the same code. The gate says "is a directory, not a file" for a directory and "is not a regular file" for the rest,
 which matches how the regular-file narrowing above already reads for coverage candidates.
-
-**Amended 2026-09-09.** "Case folding for macOS. Rejected" below rejects folding **by text**, which on Linux
-merges two real files. Folding a root prefix **verified by `os.SameFile`** cannot: two distinct directories are
-two inodes on any filesystem, so `/tmp/REPO` beside a real `/tmp/repo` still reads as outside on Linux. That
-narrow fold is now taken, with [issue 48](https://github.com/tvrmsmith/coding-standards/issues/48) and
-[issue 36](https://github.com/tvrmsmith/coding-standards/issues/36). It governs the **root prefix alone**: an
-absolute `--files` path whose root prefix is mis-cased is still exit 1, now as "is not spelled as the repo root
-is" rather than "is outside the repo root", so the developer retypes the half that is wrong instead of hunting
-a location mistake, and a coverage candidate with the same prefix places where it really sits. Case **below**
-the root is still refused, unfolded, which is what keeps `case_only_path_difference` at exit 1.
 
 ## Considered options
 
