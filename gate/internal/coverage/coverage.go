@@ -54,10 +54,17 @@ type Source struct {
 	// Abs is where the report sits on disk.
 	Abs string
 	// Name is how a failure names the report: repo-relative whenever the
-	// report resolves inside the repo, and the resolved absolute path for a
-	// named one that does not, which has no repo-relative form.
-	// srcpath.Root.Name is the one place that containment question is
-	// answered (issue 36).
+	// report sits inside the repo, and the resolved absolute path for a named
+	// one that does not, which has no repo-relative form.
+	//
+	// The two origins reach that name by different roads, and only one of them
+	// is a containment question (issue 36). A path the developer typed on
+	// --coverage may name anything anywhere, so Named asks srcpath.Root.Name,
+	// the entry point onto srcpath.relativize, which is the one owner of the
+	// containment predicate. A discovered report is not that case: fs.WalkDir
+	// never follows a symlink, so every path it yields is literally under
+	// root.Dir(), naming one is a rendering with no escape to guard, and
+	// walkedName below is that rendering.
 	Name srcpath.Name
 	// Origin is how the report reached the gate, which decides the remedy a
 	// refusal offers.
@@ -160,7 +167,7 @@ func Discover(root srcpath.Root) (sources []Source, skipped []string, err error)
 		}
 		rel, err := filepath.Rel(root.Dir(), path)
 		if err != nil {
-			skipped = append(skipped, filepath.ToSlash(path))
+			skipped = append(skipped, walkedName(root, path).String())
 			return nil
 		}
 		if !underResultsDir(rel) {
