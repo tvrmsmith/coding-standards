@@ -897,7 +897,7 @@ func TestChangedMethodInAFileNoReportPathMatchedFails(t *testing.T) {
 	}
 
 	f.run().assertMatches(t, "unknown_changed_method", 1, f.baseLabel("main"),
-		"the gate could not score 1 changed method, see the reason column\n"+
+		"the gate could not score 1 changed method, see the reason column of the table on stdout\n"+
 			"0 of 2 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
@@ -921,16 +921,16 @@ func TestFileInAReportCarryingNoInstrumentableLinesIsUnknownRatherThanCovered(t 
 	}
 
 	f.run().assertMatches(t, "file_uninstrumented", 1, f.baseLabel("main"),
-		"the gate could not score 1 changed method, see the reason column\n"+
+		"the gate could not score 1 changed method, see the reason column of the table on stdout\n"+
 			"0 of 1 changed methods over CRAP threshold 30, worst score 0.00\n")
 }
 
-// TestFileWithNoLinesInOneReportIsStillMeasuredFromAnother pins that the
-// emptiness rule is judged on the union of every report, not on one report at
-// a time. A `dotnet test` run over several projects writes one report per
-// project, and a project that never loaded the library under test lists its
-// file with no line, so judging per report would fail an ordinary multi
-// project layout the moment a second report carries the real coverage.
+// TestFileWithNoLinesInOneReportIsStillMeasuredFromAnother pins where the
+// emptiness rule lives. The gate judges it in the join, over the union of
+// every report it consumed, so one report listing the file with no line
+// cannot make the method unknown while another report carries its coverage.
+// An implementation that judged emptiness per report inside mergeInto would
+// fail this case; the current one keeps it measured.
 func TestFileWithNoLinesInOneReportIsStillMeasuredFromAnother(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
@@ -947,6 +947,27 @@ func TestFileWithNoLinesInOneReportIsStillMeasuredFromAnother(t *testing.T) {
 
 	f.run().assertMatches(t, "empty_entry_union", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.00\n")
+}
+
+// TestTwoUnknownChangedMethodsAreCountedInThePlural pins the plural noun of
+// the unknown message, which every other unknown case leaves untested because
+// each of them changes exactly one method.
+func TestTwoUnknownChangedMethodsAreCountedInThePlural(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 45)
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "two_uninstrumented_methods", 1, f.baseLabel("main"),
+		"the gate could not score 2 changed methods, see the reason column of the table on stdout\n"+
+			"0 of 2 changed methods over CRAP threshold 30, worst score 0.00\n")
 }
 
 func TestFileTheExtractorCouldNotParseFails(t *testing.T) {
@@ -2118,7 +2139,7 @@ func TestMethodWhoseOnlyCoverageWasSupersededIsUnknownNotMisscored(t *testing.T)
 	}
 
 	f.run().assertMatches(t, "superseded_report_was_sole_coverage", 1, f.baseLabel("main"),
-		"the gate could not score 1 changed method, see the reason column\n"+
+		"the gate could not score 1 changed method, see the reason column of the table on stdout\n"+
 			"0 of 2 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
@@ -3300,7 +3321,7 @@ func TestCaseOnlyPathDifferenceIsRefusedRatherThanGuessed(t *testing.T) {
 	}
 
 	f.run().assertMatches(t, "case_only_path_difference", 1, f.baseLabel("main"),
-		"the gate could not score 1 changed method, see the reason column\n"+
+		"the gate could not score 1 changed method, see the reason column of the table on stdout\n"+
 			"0 of 2 changed methods over CRAP threshold 30, worst score 10.75\n")
 }
 
@@ -3459,7 +3480,7 @@ func TestReportCarryingNoClassesDoesNotTripTheOutsideRepoDiagnostic(t *testing.T
 	}
 
 	f.run().assertMatches(t, "report_with_no_classes", 1, f.baseLabel("main"),
-		"the gate could not score 1 changed method, see the reason column\n"+
+		"the gate could not score 1 changed method, see the reason column of the table on stdout\n"+
 			"0 of 1 changed methods over CRAP threshold 30, worst score 0.00\n")
 }
 

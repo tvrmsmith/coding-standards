@@ -452,7 +452,7 @@ func unknownMessage(unknown int) string {
 	if unknown == 1 {
 		noun = "changed method"
 	}
-	return fmt.Sprintf("the gate could not score %d %s, see the reason column", unknown, noun)
+	return fmt.Sprintf("the gate could not score %d %s, see the reason column of the table on stdout", unknown, noun)
 }
 
 // changedFiles lists the files the diff touched, in a fixed order so the
