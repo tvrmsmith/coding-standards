@@ -177,16 +177,23 @@ type Method struct {
 // empty span turn structural_na, treated as fully covered, which is what
 // makes trivial members exclude themselves arithmetically.
 //
-// A file of nothing but trivial members does not reach the second arm.
-// Measured against a real `dotnet test --collect:"XPlat Code Coverage"` run
-// over a record with only positional members and a class with two
-// auto-implemented properties, none of them touched by a test, coverlet
-// emits a <class> per type carrying class-level <lines> with one hits="0"
-// entry per auto-property getter. So such a file is instrumented and its
-// entry is never empty, and its getters read measured at coverage 0. The one
-// shape this arm does fail is a producer that writes lines solely under
-// <methods> and leaves the class-level element empty, which coverlet, the
-// producer this gate reads, does not do.
+// Under default coverlet options a file of nothing but trivial members does
+// not reach the second arm. Measured against a real `dotnet test
+// --collect:"XPlat Code Coverage"` run over a record with only positional
+// members and a class with two auto-implemented properties, none of them
+// touched by a test, coverlet emits a <class> per type carrying class-level
+// <lines> with one hits="0" entry per auto-property getter. So such a file is
+// instrumented and its entry is never empty, and its getters read measured at
+// coverage 0.
+//
+// Three shapes still reach the arm. Coverlet run with SkipAutoProps=true
+// suppresses exactly the auto-property getter lines that evidence rests on. A
+// file whose only type carries [ExcludeFromCodeCoverage] gets no lines
+// either. And a producer that writes lines solely under <methods>, leaving
+// the class-level element empty, which coverlet, the producer this gate
+// reads, does not do. Under any of them a changed method in such a file exits
+// 1 rather than scoring as covered. That is the accepted cost of refusing to
+// read an uninstrumented file as covered.
 func Attribute(all []extract.Span, changed []extract.Span, lines coverage.Set) []Method {
 	byFile := groupByFile(all)
 	methods := make([]Method, 0, len(changed))

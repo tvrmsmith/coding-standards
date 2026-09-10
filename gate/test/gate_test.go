@@ -925,16 +925,15 @@ func TestFileInAReportCarryingNoInstrumentableLinesIsUnknownRatherThanCovered(t 
 			"0 of 1 changed methods over CRAP threshold 30, worst score 0.00\n")
 }
 
-// TestInstrumentedUncoveredAutoPropertyGetterIsMeasuredAtZero pins the
-// boundary the file_uninstrumented arm depends on. Coverlet instruments an
-// auto-implemented property, emitting a class-level line at the getter's own
-// line number with hits="0" when no test touched it, so the file's entry is
-// not empty and the getter reads measured at coverage 0. A change that turned
-// such a getter unknown, or read it as structural_na treated as fully
+// TestOneLineSpanWhoseOnlyLineWasNeverHitIsMeasuredAtZero pins the boundary
+// the file_uninstrumented arm depends on. The report carries one
+// instrumentable line at the span's own line number with hits="0", so the
+// file's entry is not empty and the span reads measured at coverage 0. A
+// change that turned it unknown, or read it as structural_na treated as fully
 // covered, would fail this case.
-func TestInstrumentedUncoveredAutoPropertyGetterIsMeasuredAtZero(t *testing.T) {
+func TestOneLineSpanWhoseOnlyLineWasNeverHitIsMeasuredAtZero(t *testing.T) {
 	const money = "src/Ordering/Money.cs"
-	getAmount := span{File: money, Name: "Money.get_Amount", StartLine: 7, EndLine: 7, Complexity: 1}
+	amount := span{File: money, Name: "Money.Amount", StartLine: 7, EndLine: 7, Complexity: 1}
 
 	f := newFixture(t, "main")
 	f.write(money, csharpFile(20))
@@ -944,10 +943,10 @@ func TestInstrumentedUncoveredAutoPropertyGetterIsMeasuredAtZero(t *testing.T) {
 		coverageClass{filename: money, lines: spanCoverage(7, 1, 0)}))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(money), []span{getAmount}),
+		Stdout:     extractorOutput(t, parsed(money), []span{amount}),
 	}
 
-	f.run().assertMatches(t, "instrumented_getter", 0, f.baseLabel("main"),
+	f.run().assertMatches(t, "one_line_span_never_hit", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 2.00\n")
 }
 
@@ -957,6 +956,15 @@ func TestInstrumentedUncoveredAutoPropertyGetterIsMeasuredAtZero(t *testing.T) {
 // cannot make the method unknown while another report carries its coverage.
 // An implementation that judged emptiness per report inside mergeInto would
 // fail this case; the current one keeps it measured.
+//
+// The fixture directory names carry the case. Discovery sorts reports by
+// path, so tests/Integration.Tests, which carries the hit lines, merges
+// before tests/Unit.Tests, which is empty. The empty entry landing second is
+// what makes a union that replaced or went sticky per report fail here, and
+// the invariant it pins is that an empty entry contributes nothing to the
+// union rather than erasing another report's lines. Rename either directory
+// so the empty report sorts first and the case still passes while quietly
+// losing that discrimination.
 func TestFileWithNoLinesInOneReportIsStillMeasuredFromAnother(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))

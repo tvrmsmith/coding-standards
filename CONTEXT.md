@@ -147,5 +147,6 @@ What the join could establish about one method span.
 `structural n/a` is what makes trivial members exclude themselves. `unknown` means the join broke,
 never that the code is untested, because a coverage report lists methods nobody called.
 
-`structural n/a` is earned, not assumed: a file the report lists with no instrumentable line at all
-is a broken join, not a file of trivial members, so it reads as unknown.
+`structural n/a` is earned, not assumed: a file listed with no instrumentable line at all across the
+union of every report the gate merged is a broken join, not a file of trivial members, so it reads
+as unknown.
