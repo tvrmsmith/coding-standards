@@ -42,15 +42,14 @@ func TestRelativizeRefusesTwoDistinctDirectoriesDifferingOnlyInCase(t *testing.T
 	}
 }
 
-// Every case below that goes through miscasedRoot skips on a case-sensitive
-// filesystem, which is every Linux runner and so every CI job.
+// Every case below that goes through miscasedRoot needs a filesystem that
+// folds case, so those run on macOS only. They cover the shape a developer
+// actually types, a real mis-cased spelling, and the E2E golden is the same
+// shape and the same skip.
 //
-// State plainly what that leaves CI running of this rule: the negative half
-// above, two distinct directories differing only in case reading as outside,
-// plus the direct foldRootPrefix unit test below. The production success path,
-// --files refusing a mis-cased root prefix by name, runs on macOS only. No way
-// of writing these cases changes that, because the fold exists for a filesystem
-// ubuntu-latest is not.
+// The folded arm itself runs everywhere. The cases further down build a Root
+// whose resolved directory is reached under a case-differing symlink, and
+// named folds that prefix on any filesystem, ubuntu-latest included.
 func TestRelativizeReadsAMisCasedRootPrefixAsFolded(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
@@ -65,15 +64,12 @@ func TestRelativizeReadsAMisCasedRootPrefixAsFolded(t *testing.T) {
 	}
 }
 
-// A direct unit test of foldRootPrefix's own contract, and only that. The input
-// is one no production caller can hand it: Place, Name and named all resolve
-// symlinks before they relativize, and that collapses the link back onto the
-// root's own spelling, so a real run never reaches the fold this way.
-//
-// What CI covers of the rule is therefore the negative half, two distinct
-// directories differing only in case reading as outside, which the case above
-// pins. The production success path runs on a case-insensitive filesystem only,
-// and every case that drives it through a public entry point skips on Linux.
+// A direct unit test of foldRootPrefix's own contract, and only that. The link
+// here is on the candidate's side of a root the gate resolved, which is an
+// input no caller can hand it: Place, Name and named all resolve the candidate
+// before they relativize, and that collapses this link back onto the root's own
+// spelling. The link that does reach the fold everywhere is on the root's side,
+// which the named cases below build.
 func TestRelativizeFoldsARootPrefixReachedThroughACaseDifferingSymlink(t *testing.T) {
 	root := containmentRoot(t)
 	linked := filepath.Join(filepath.Dir(root.Dir()), strings.ToUpper(filepath.Base(root.Dir())))
@@ -125,6 +121,42 @@ func TestNamedRefusesAMisCasedRootPrefixAsASpellingRatherThanALocation(t *testin
 	}
 	if unresolved.Name != name {
 		t.Errorf("Name = %q, want the name as typed, %q", unresolved.Name, name)
+	}
+}
+
+// The same refusal on a case-sensitive filesystem, so CI runs the folded arm
+// rather than skipping it. named resolves the candidate's symlinks and never
+// the root's, so a root whose own directory is reached under a case-differing
+// name folds a candidate that is spelled exactly as the tree spells it.
+func TestNamedRefusesACaseDifferingRootSpellingAsASpellingRatherThanALocation(t *testing.T) {
+	root, real := symlinkedMiscasedRoot(t)
+	name := touch(t, filepath.Join(real, "src", "a.cs"))
+
+	_, err := root.named(name, dirNames{})
+
+	var unresolved *UnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("named returned %v, want an *UnresolvedError", err)
+	}
+	if unresolved.Reason != "is not spelled as the repo root is" {
+		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is not spelled as the repo root is")
+	}
+}
+
+// The ordering the two arms sit in, pinned where every runner executes it. A
+// folded path that is also a directory is a directory mistake first, so the
+// developer who retypes the case gets the same message on the second try.
+func TestNamedRefusesACaseDifferingRootSpellingOfTheRepoRootAsADirectory(t *testing.T) {
+	root, real := symlinkedMiscasedRoot(t)
+
+	_, err := root.named(real, dirNames{})
+
+	var unresolved *UnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("named returned %v, want an *UnresolvedError", err)
+	}
+	if unresolved.Reason != "is a directory, not a file" {
+		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is a directory, not a file")
 	}
 }
 
@@ -191,12 +223,23 @@ func TestPlaceRefusesACandidateWhoseRootPrefixIsMisCased(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
+	if err := os.Symlink("src", filepath.Join(root.Dir(), "srclink")); err != nil {
+		t.Fatal(err)
+	}
+	// Typed through a relative link, which resolves to the same mis-cased prefix
+	// with the link spelled out. Resolved answering the link-free path is what
+	// says Place read the file and weighed containment, rather than turning back
+	// at the absolute, symlink or regular-file check ahead of it.
+	resolved := filepath.Join(miscased, "src", "a.cs")
 
-	placed := root.Place(filepath.Join(miscased, "src", "a.cs"))
+	placed := root.Place(filepath.Join(miscased, "srclink", "a.cs"))
 
 	rel, in := placed.Inside()
 	if in || rel != "" {
 		t.Errorf("Place on a mis-cased root prefix returned %q, %v, want \"\", false", rel, in)
+	}
+	if placed.Resolved() != filepath.ToSlash(resolved) {
+		t.Errorf("Resolved = %q, want the resolved candidate %q", placed.Resolved(), filepath.ToSlash(resolved))
 	}
 }
 
@@ -275,6 +318,31 @@ func TestNameReadsAPathTypedThroughASymlinkedRootAsRepoRelative(t *testing.T) {
 	if name != "TestResults/coverage.xml" {
 		t.Errorf("Name on a path through the root's own symlink = %q, want %q", name, "TestResults/coverage.xml")
 	}
+}
+
+// symlinkedMiscasedRoot is a Root whose resolved directory is an upper-cased
+// symlink to a real lower-cased one, returned with that real directory. It is
+// how a case-sensitive filesystem reaches the fold: two spellings, one inode,
+// which is what sameDir asks for, and the root's own spelling is the one that
+// differs, so resolving the candidate cannot collapse it.
+//
+// A filesystem that folds case cannot build it, since the upper-cased name is
+// already the directory, and there the miscasedRoot cases cover the same arm.
+func symlinkedMiscasedRoot(t *testing.T) (Root, string) {
+	t.Helper()
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := mkdir(t, filepath.Join(tmp, "repo"))
+	link := filepath.Join(tmp, "REPO")
+	if _, err := os.Stat(link); err == nil {
+		t.Skipf("the filesystem folded %s onto %s already, so there is no link to make", link, real)
+	}
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	return Root{resolved: link}, real
 }
 
 // miscasedRoot is root's own directory with the last component upper-cased,

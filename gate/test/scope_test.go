@@ -448,11 +448,11 @@ func TestFilesNamingAMisCasedRepoRootPrefixRefusesTheSpellingNotTheLocation(t *t
 // because a temp root can sit under a case-sensitive component on a machine
 // whose own volume folds case, and then only some of the prefix folds.
 //
-// The skip always fires on CI, which is ubuntu-latest, and there is no writing
-// of the case that avoids it: the refusal above exists for a case-insensitive
-// filesystem and Linux is not one. What CI runs of this rule is the negative
-// half, in gate/internal/srcpath, where two distinct directories differing only
-// in case read as outside.
+// The skip fires on CI, which is ubuntu-latest, because this case goes end to
+// end through a real mis-cased spelling and that needs a filesystem that folds.
+// It is the shape a developer actually types, so it stays. The refusal itself
+// runs on every filesystem in gate/internal/srcpath, where a Root reached under
+// a case-differing symlink drives named's folded arm directly.
 func sameDirectoryUpperCased(t *testing.T, dir string) string {
 	t.Helper()
 	upper := strings.ToUpper(dir)
