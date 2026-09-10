@@ -62,13 +62,15 @@ func TestRelativizeReadsAMisCasedRootPrefixAsFolded(t *testing.T) {
 	}
 }
 
-// This is the positive half of the fold rule on a case-sensitive filesystem,
-// beside the negative half the two-distinct-directories case above pins there.
-// A symlink whose last component differs from its target only in case reaches
-// one directory under two spellings, and os.Stat follows it, so EqualFold and
-// os.SameFile both hold and foldRootPrefix's success path runs on Linux CI. The
-// macOS-only cases stay, because a symlink is not the same shape as a
-// filesystem that folds every name.
+// A direct unit test of foldRootPrefix's own contract, and only that. The input
+// is one no production caller can hand it: Place, Name and named all resolve
+// symlinks before they relativize, and that collapses the link back onto the
+// root's own spelling, so a real run never reaches the fold this way.
+//
+// What CI covers of the rule is therefore the negative half, two distinct
+// directories differing only in case reading as outside, which the case above
+// pins. The production success path runs on a case-insensitive filesystem only,
+// and every case that drives it through a public entry point skips on Linux.
 func TestRelativizeFoldsARootPrefixReachedThroughACaseDifferingSymlink(t *testing.T) {
 	root := containmentRoot(t)
 	linked := filepath.Join(filepath.Dir(root.Dir()), strings.ToUpper(filepath.Base(root.Dir())))
@@ -120,6 +122,40 @@ func TestNamedRefusesAMisCasedRootPrefixAsASpellingRatherThanALocation(t *testin
 	}
 	if unresolved.Name != name {
 		t.Errorf("Name = %q, want the name as typed, %q", unresolved.Name, name)
+	}
+}
+
+// --files naming the repo root is a directory mistake whichever case it is
+// typed in, so the developer who retypes the case gets the same message on the
+// second try rather than a new one. The mis-cased half of the pair only exists
+// on a filesystem that folds; the correctly cased half below it runs everywhere
+// and is what the two are compared against.
+func TestNamedRefusesTheMisCasedRepoRootAsADirectory(t *testing.T) {
+	root := containmentRoot(t)
+	miscased := miscasedRoot(t, root)
+
+	_, err := root.named(miscased, dirNames{})
+
+	var unresolved *UnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("named returned %v, want an *UnresolvedError", err)
+	}
+	if unresolved.Reason != "is a directory, not a file" {
+		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is a directory, not a file")
+	}
+}
+
+func TestNamedRefusesTheRepoRootAsADirectory(t *testing.T) {
+	root := containmentRoot(t)
+
+	_, err := root.named(root.Dir(), dirNames{})
+
+	var unresolved *UnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("named returned %v, want an *UnresolvedError", err)
+	}
+	if unresolved.Reason != "is a directory, not a file" {
+		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is a directory, not a file")
 	}
 }
 

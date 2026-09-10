@@ -3,10 +3,13 @@
 // Every conversion that produces a Path lives here, so the invariant is
 // enforced once rather than separately in extract and coverage.
 //
-// One containment predicate serves the package, relativize, and Place and Name
-// are the two entry points onto it (issue 36).
+// One containment predicate serves the package, relativize, and Place, Name and
+// named are the three entry points onto it (issue 36). named carries the most
+// user-visible policy of the three, the two distinct refusal reasons a --files
+// path can come back with, so a reader changing containment has to weigh it
+// beside the other two rather than reading Place and Name alone.
 //
-// They differ in what has to be on disk. Place refuses a candidate that is not
+// Place and Name differ in what has to be on disk. Place refuses a candidate that is not
 // a regular file, so that a coverage class filename of "../.." or of a bare
 // directory name cannot stand in for a report's worth of classes that placed
 // nothing. Name has to name a path that may be nothing at all, a --coverage
@@ -233,17 +236,21 @@ func (n Name) String() string { return string(n) }
 // classes that placed nothing, and the whole point here is to name a path that
 // may be nothing at all.
 //
-// A path that is genuinely outside the repo is named by the resolved absolute
-// path the containment test just weighed, not by the developer's own spelling.
-// The document carries no working directory (ADR 0005), so a relative name
-// reaches a consumer that cannot resolve it, and one report named from two
-// directories would print two strings. A folded root prefix is named
-// repo-relative, the same as an exact one, since it is the same directory.
+// It answers one of three shapes. A path inside the repo is named
+// repo-relative, and a folded root prefix is named repo-relative too, the same
+// as an exact one, since it is the same directory. A path genuinely outside the
+// repo is named by the resolved absolute path the containment test just
+// weighed, not by the developer's own spelling: the document carries no working
+// directory (ADR 0005), so a relative name reaches a consumer that cannot
+// resolve it, and one report named from two directories would print two
+// strings.
 //
-// A path that is not absolute comes back as its own slash-separated text.
-// Resolving it here against the process working directory would place a
-// report's own relative filename inside the root by accident, so the caller
-// joins its working directory on first, which is what coverage.Named does.
+// The third shape is an input that is not absolute, which comes back as its own
+// slash-separated text. That is a caller which has not joined its working
+// directory on yet, and no caller reaches it today: coverage.Named joins cwd
+// before it asks. Resolving it here instead would place a report's own relative
+// filename inside the root by accident, which is why the join belongs to the
+// caller.
 func (r Root) Name(path string) Name {
 	if !filepath.IsAbs(path) {
 		return Name(filepath.ToSlash(path))
@@ -363,10 +370,18 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // below, because the mis-cased component is the root and not the file and the reader
 // has to know which half to retype. Place treats the same path as inside,
 // because a coverage report the gate resolves is not something a developer can
-// retype. All of them are still
-// UnresolvedError, so every refusal about the path reaches the document under
-// one code. Losing the working directory is not about the path at all, so it
-// travels as a plain error.
+// retype.
+//
+// That refusal is weighed after the mode checks, so --files naming the repo
+// root itself answers "is a directory, not a file" in either case, and a
+// developer who retypes the case gets the same message on the second try rather
+// than a new one. A mis-cased regular file still reaches the spelling refusal,
+// having passed those checks. The outside refusal stays ahead of them, since a
+// path above the root has nothing inside the repo to stat.
+//
+// All of them are still UnresolvedError, so every refusal about the path
+// reaches the document under one code. Losing the working directory is not
+// about the path at all, so it travels as a plain error.
 func (r Root) named(name string, dirs dirNames) (Path, error) {
 	candidate := filepath.FromSlash(name)
 	if !filepath.IsAbs(candidate) {
@@ -387,11 +402,8 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 	if err != nil {
 		return "", &UnresolvedError{Name: name, Reason: "has no path relative to the repo root"}
 	}
-	switch place {
-	case outside:
+	if place == outside {
 		return "", &UnresolvedError{Name: name, Reason: "is outside the repo root"}
-	case folded:
-		return "", &UnresolvedError{Name: name, Reason: "is not spelled as the repo root is"}
 	}
 	// EvalSymlinks already resolved this path, so absence here is a delete
 	// racing the two syscalls rather than a name the developer mistyped, and it
@@ -405,6 +417,9 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 	}
 	if !info.Mode().IsRegular() {
 		return "", &UnresolvedError{Name: name, Reason: "is not a regular file"}
+	}
+	if place == folded {
+		return "", &UnresolvedError{Name: name, Reason: "is not spelled as the repo root is"}
 	}
 	spelled, err := r.spelledAsOnDisk(filepath.FromSlash(string(rel)), dirs)
 	if err != nil {
