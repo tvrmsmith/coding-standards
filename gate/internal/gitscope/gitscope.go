@@ -134,10 +134,10 @@ func (e NoBaseError) Error() string {
 	}
 }
 
-// errCandidateAbsent is a BaseCandidates rung git exits 1 on, which is the
-// ordinary case of a repository that does not carry that branch. It never
-// leaves ResolveBase, because the walk's whole answer to an absent rung is the
-// next one.
+// errCandidateAbsent is a BaseCandidates rung whose ref git exits 1 on, which
+// is the ordinary case of a repository that does not carry that branch. It
+// never leaves ResolveBase, because the walk's whole answer to an absent rung
+// is the next one.
 var errCandidateAbsent = errors.New("candidate does not name a commit")
 
 // ResolveBase walks BaseCandidates and returns the merge base of HEAD and
@@ -152,6 +152,18 @@ var errCandidateAbsent = errors.New("candidate does not name a commit")
 // list, which sends the developer after a missing branch while every ref that
 // list names is sitting in the repo.
 //
+// The candidate is verified unpeeled, where ResolveRef peels with `^{commit}`.
+// A peel reads the object the ref names, and git exits 1 on an object its store
+// does not hold, the same code an absent branch gives. Peeled here, a rung
+// whose commit is missing reads as a rung the repo does not carry, the walk
+// skips it, and the run ends at the tried-refs list naming a branch that is
+// sitting in the repo, which is the failure this resolver exists to close.
+// Unpeeled, the check answers about the ref alone and merge-base is what
+// classifies the object. Every rung is a branch or a remote-tracking ref, so
+// the peel bought the walk nothing to begin with. ResolveRef keeps it because
+// --since can name a tag, and "does not name a commit" is the answer that flag
+// owes its caller.
+//
 // HEAD is verified before the walk, the check ResolveRef makes and for the
 // reason its comment gives. merge-base against an unborn HEAD exits 128, so
 // left to fall through, a branch made with `git checkout --orphan` in a repo
@@ -162,10 +174,19 @@ func (r Repo) ResolveBase() (Base, error) {
 		return Base{}, err
 	}
 	for _, ref := range BaseCandidates {
-		if _, err := r.verifyCommit(ref+"^{commit}", errCandidateAbsent); err != nil {
+		if _, err := r.verifyCommit(ref, errCandidateAbsent); err != nil {
 			if errors.Is(err, errCandidateAbsent) {
 				continue
 			}
+			// No fixture reaches this arm, and swapping it for a continue
+			// leaves the whole suite green. The ref store is the only place a
+			// ref read fails to answer at all, since every damaged loose ref
+			// real git will produce is the exit 1 that means no such ref, and a
+			// damaged store fails every read alike, so the HEAD check above
+			// returns before the walk starts. It is kept because a continue
+			// here is the swallowing this resolver exists to remove, and which
+			// arm a fixture can reach is a property of today's git rather than
+			// of the rule.
 			return Base{}, err
 		}
 		mergeBase, err := r.git("merge-base", "HEAD", ref)

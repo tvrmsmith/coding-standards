@@ -3725,6 +3725,11 @@ func TestBranchWithNoCommitInARepoHoldingHistorySaysSoRatherThanNamingEveryRef(t
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.git("checkout", "--quiet", "--orphan", "fresh")
+	// The rung the case turns on, asserted rather than assumed. The HEAD check
+	// short-circuits ahead of the walk, so this document is byte-identical to
+	// the one an empty repo emits and the case would go on passing if the
+	// history it is named for stopped being there.
+	f.git("rev-parse", "--verify", "--quiet", "main^{commit}")
 
 	// main still resolves, so the walk reaches merge-base, and merge-base
 	// against an unborn HEAD exits 128 rather than the exit 1 that means no
@@ -3769,6 +3774,41 @@ func TestAMergeBaseGitCannotWalkReportsAnUnreadableDiffRatherThanTryingTheNextRe
 	// would read as git answering that main shares no ancestor with HEAD, the
 	// walk would try the remaining rungs, and a repo with nothing else to reach
 	// would name every candidate rather than the object it cannot read.
+	cause := f.gitStderr("merge-base", "HEAD", "main")
+
+	f.run().assertMatchesWith(t, "base_merge_base_unreadable", 1, "",
+		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": cause})
+}
+
+func TestBeforeTheFirstCommitTheDefaultScopeSaysSoRatherThanNamingEveryRef(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+
+	// No commit anywhere, so no candidate resolves either, and the tried-refs
+	// list is what the walk alone would print. The HEAD check ahead of it is
+	// what turns that into the branch's own answer, which is the same one
+	// --staged gives from the same check.
+	f.run().assertMatches(t, "base_no_commits", 1, "",
+		"no diff base: this branch has no commit\n")
+}
+
+func TestACandidateWhoseCommitObjectIsGoneReportsAnUnreadableDiffRatherThanNamingEveryRef(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.git("checkout", "--quiet", "-b", "topic")
+	f.touchLine(orderService, 62)
+	f.commitAll("second")
+	// main's own commit, which HEAD reaches only through the parent link, so
+	// removing it leaves HEAD readable and main's object gone.
+	f.removeLooseObject(f.git("rev-parse", "main"))
+
+	// `rev-parse --verify --quiet main^{commit}` exits 1 on a missing object,
+	// the same code an absent branch gives, so a peeled candidate check reads a
+	// rung git cannot read as a rung the repo does not carry, skips it, and
+	// ends at the tried-refs list naming main while main is sitting right
+	// there. Unpeeled, the check answers about the ref and merge-base is what
+	// classifies the object.
 	cause := f.gitStderr("merge-base", "HEAD", "main")
 
 	f.run().assertMatchesWith(t, "base_merge_base_unreadable", 1, "",
