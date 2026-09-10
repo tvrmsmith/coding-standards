@@ -3860,13 +3860,17 @@ func TestAnUnreadableRungStopsTheRunRatherThanResolvingABaseThroughALaterOne(t *
 	f.git("checkout", "--quiet", "-b", "topic")
 	f.touchLine(orderService, 62)
 	f.commitAll("second")
-	// The rung behind the broken one, asserted rather than assumed. A walk that
-	// fell through would resolve a base here and the run would report a
-	// measurement, so without the guard this case could go green on a repo
-	// where nothing usable followed, which is the hole the neighbouring cases
-	// have.
+	// Two refs rather than one, so the base the run refuses to resolve is not
+	// the broken rung's own commit.
 	f.requireDistinctCommits("origin/main", "main")
-	f.baseLabel("main")
+	// A healthy later rung is what the case needs, and it is read back rather
+	// than assumed. Local main has to be an ancestor of HEAD for the walk to
+	// have a good base one rung down, and without that this case would go green
+	// on a repo where nothing usable followed, which is the hole the
+	// neighbouring cases have.
+	if fallback := f.baseLabel("main"); fallback != "main@"+f.git("rev-parse", "main")[:7] {
+		t.Fatalf("local main is %s rather than a base behind HEAD, so the walk has no healthy rung to fall through to", fallback)
+	}
 	f.removeLooseObject(remoteTip)
 	// A coverage report and an extractor the run never reaches, so that a walk
 	// which fell through would answer with a measurement over local main rather
@@ -3885,7 +3889,7 @@ func TestAnUnreadableRungStopsTheRunRatherThanResolvingABaseThroughALaterOne(t *
 	// resolved through a rung other than the one the developer's own repo says
 	// their work forked from is a wrong answer nothing in the output would show
 	// them, where the object git cannot read names what is really broken. The
-	// null base the golden carries is what separates the two: a walk that
+	// null base the golden carries is what separates the two, since a walk that
 	// regained its old continue would report a base here.
 	cause := f.gitStderr("merge-base", "HEAD", "origin/main")
 
