@@ -283,12 +283,12 @@ func (r Repo) ResolveStaged() (Base, error) {
 
 // verifyRev resolves rev, answering errNoSuchRev when git exits 1 and an
 // unreadable diff on every other exit code. It promises no commit id. Every
-// check here is unpeeled but ResolveRef's, so for a ref whose commit object the
-// store lacks git exits 0 and prints an id the object store does not hold,
-// which is the fact the merge base that follows fails on. ResolveStaged is the
-// one of the five call sites that reads the string, and it can be handed a
-// dangling id that way. The other four discard it and want only which of the
-// two arms fired.
+// check here is unpeeled but the ref check ResolveRef makes, so for a ref whose
+// commit object the store lacks git exits 0 and prints an id the object store
+// does not hold, which is the fact the merge base that follows fails on.
+// ResolveStaged is the one of the five call sites that reads the string, and it
+// can be handed a dangling id that way. The other four discard it and want only
+// which of the two arms fired.
 //
 // Every resolver's every check shares this rather than spelling the same two
 // arms out each time, which is what makes one reading of noMatch the reading
