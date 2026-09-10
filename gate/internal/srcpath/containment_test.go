@@ -42,12 +42,15 @@ func TestRelativizeRefusesTwoDistinctDirectoriesDifferingOnlyInCase(t *testing.T
 	}
 }
 
-// Every fold case below this one skips on a case-sensitive filesystem, which
-// is every Linux runner, because there a mis-cased root prefix names nothing
-// and the answer is the outside one the case above pins. The branch they cover
-// is reachable only where the filesystem folds, so they run on the developer's
-// macOS laptop and the one above runs on CI. Between them both readings of the
-// rule are exercised somewhere.
+// Every case below that goes through miscasedRoot skips on a case-sensitive
+// filesystem, which is every Linux runner and so every CI job.
+//
+// State plainly what that leaves CI running of this rule: the negative half
+// above, two distinct directories differing only in case reading as outside,
+// plus the direct foldRootPrefix unit test below. The production success path,
+// --files refusing a mis-cased root prefix by name, runs on macOS only. No way
+// of writing these cases changes that, because the fold exists for a filesystem
+// ubuntu-latest is not.
 func TestRelativizeReadsAMisCasedRootPrefixAsFolded(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
@@ -159,9 +162,9 @@ func TestNamedRefusesTheRepoRootAsADirectory(t *testing.T) {
 	}
 }
 
-// The fold rule narrows what "outside" means, so this pins that it still means
-// something. It needs no skip, since a file beside the root is outside it on
-// either kind of filesystem.
+// The fold rule narrows what "outside" means for --files, so this pins that it
+// still means something there. It needs no skip, since a file beside the root
+// is outside it on either kind of filesystem.
 func TestNamedStillRefusesAPathGenuinelyOutsideTheRoot(t *testing.T) {
 	root := containmentRoot(t)
 	name := touch(t, filepath.Join(filepath.Dir(root.Dir()), "outside.cs"))
@@ -177,11 +180,14 @@ func TestNamedStillRefusesAPathGenuinelyOutsideTheRoot(t *testing.T) {
 	}
 }
 
-// Place is the coverage side, where nobody typed the path and there is nothing
-// to retype, so a folded root prefix places the candidate rather than refusing
-// it. The components below the root keep the candidate's own case, which is
-// what leaves gate/test's case_only_path_difference at exit 1.
-func TestPlaceAcceptsACandidateWhoseRootPrefixIsMisCased(t *testing.T) {
+// The fold is asymmetric on purpose, and this is the other side of it. A
+// --files path is one a developer typed and can retype, so named tells them
+// which half to fix. A coverage candidate is not: nobody typed it, so there is
+// nothing to retype, and folding it in would be case folding on the
+// coverage-path side, which ADR 0004 rejects. Place therefore answers what it
+// always has, that the candidate landed nowhere. Making the coverage side fold
+// too is a decision for a dated ADR 0004 amendment, which is Trevor's call.
+func TestPlaceRefusesACandidateWhoseRootPrefixIsMisCased(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
@@ -189,8 +195,8 @@ func TestPlaceAcceptsACandidateWhoseRootPrefixIsMisCased(t *testing.T) {
 	placed := root.Place(filepath.Join(miscased, "src", "a.cs"))
 
 	rel, in := placed.Inside()
-	if !in || rel != "src/a.cs" {
-		t.Errorf("Place on a mis-cased root prefix returned %q, %v, want \"src/a.cs\", true", rel, in)
+	if in || rel != "" {
+		t.Errorf("Place on a mis-cased root prefix returned %q, %v, want \"\", false", rel, in)
 	}
 }
 
@@ -207,24 +213,26 @@ func TestNameReadsAnAbsentPathInsideTheRepoAsRepoRelative(t *testing.T) {
 	}
 }
 
-// Name's folded arm, which is the --coverage side of the fold rule: a report
-// under a mis-cased root prefix is named repo-relative like an exact one, and
-// not by an absolute machine path that reads as though it sat outside the repo.
+// The naming side of the same asymmetry Place holds. A --coverage report under
+// a mis-cased root prefix is still named by the absolute path the containment
+// test weighed, which is what the gate has always answered and what every
+// existing coverage golden is written against. Only named acts on the fold;
+// pulling the coverage side in with it needs a dated ADR 0004 amendment.
 //
-// Unlike the relativize case above this one cannot be reached through a
-// case-differing symlink, so it skips on Linux. Name resolves before it
-// relativizes, and resolveExisting's EvalSymlinks collapses the link back onto
-// the root's own spelling, leaving nothing folded to read. A non-symlink
-// component that keeps the typed case is what a case-insensitive filesystem
-// alone produces.
-func TestNameReadsAPathUnderAMisCasedRootPrefixAsRepoRelative(t *testing.T) {
+// It skips on Linux because a case-differing symlink cannot stand in here. Name
+// resolves before it relativizes, and resolveExisting's EvalSymlinks collapses
+// the link back onto the root's own spelling, leaving nothing folded to read.
+// Only a case-insensitive filesystem keeps the typed case on a non-symlink
+// component.
+func TestNameReadsAPathUnderAMisCasedRootPrefixAsItsResolvedAbsolutePath(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
+	path := filepath.Join(miscased, "TestResults", "coverage.cobertura.xml")
 
-	name := root.Name(filepath.Join(miscased, "TestResults", "coverage.cobertura.xml"))
+	name := root.Name(path)
 
-	if name != "TestResults/coverage.cobertura.xml" {
-		t.Errorf("Name under a mis-cased root prefix = %q, want %q", name, "TestResults/coverage.cobertura.xml")
+	if name != Name(filepath.ToSlash(path)) {
+		t.Errorf("Name under a mis-cased root prefix = %q, want the resolved path %q", name, filepath.ToSlash(path))
 	}
 }
 
