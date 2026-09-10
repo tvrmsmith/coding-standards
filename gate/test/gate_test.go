@@ -3754,7 +3754,7 @@ func TestARefStoreGitCannotReadReportsAnUnreadableDiffRatherThanNamingEveryRef(t
 	cause := f.gitStderr("rev-parse", "--verify", "--quiet", "HEAD")
 
 	f.run().assertMatchesWith(t, "base_head_unreadable", 1, "",
-		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": cause})
+		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
 }
 
 func TestAMergeBaseGitCannotWalkReportsAnUnreadableDiffRatherThanTryingTheNextRef(t *testing.T) {
@@ -3779,7 +3779,7 @@ func TestAMergeBaseGitCannotWalkReportsAnUnreadableDiffRatherThanTryingTheNextRe
 	cause := f.gitStderr("merge-base", "HEAD", "main")
 
 	f.run().assertMatchesWith(t, "base_merge_base_unreadable", 1, "",
-		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": cause})
+		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
 }
 
 func TestBeforeTheFirstCommitTheDefaultScopeSaysSoRatherThanNamingEveryRef(t *testing.T) {
@@ -3814,5 +3814,29 @@ func TestACandidateWhoseCommitObjectIsGoneReportsAnUnreadableDiffRatherThanNamin
 	cause := f.gitStderr("merge-base", "HEAD", "main")
 
 	f.run().assertMatchesWith(t, "base_merge_base_unreadable", 1, "",
-		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": cause})
+		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
+}
+
+func TestATagShadowingACandidateWithANonCommitReportsAnUnreadableDiffRatherThanSkippingTheRung(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.git("checkout", "--quiet", "-b", "topic")
+	f.touchLine(orderService, 62)
+	f.commitAll("second")
+	// git resolves refs/tags/main ahead of refs/heads/main, so this tag is what
+	// the main rung names from here on, and it names a tree rather than a
+	// commit.
+	f.git("tag", "main", f.git("rev-parse", "HEAD^{tree}"))
+
+	// The unpeeled candidate check is what lets the tag resolve at all, since a
+	// `^{commit}` peel exits 1 on it and the walk would skip the rung and end
+	// at the tried-refs list naming main. Unpeeled, merge-base is what
+	// classifies the object, at exit 128, and the run names the object it
+	// cannot read rather than resolving a base through some other rung than the
+	// one the developer's repo says main is.
+	cause := f.gitStderr("merge-base", "HEAD", "main")
+
+	f.run().assertMatchesWith(t, "base_merge_base_unreadable", 1, "",
+		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
 }
