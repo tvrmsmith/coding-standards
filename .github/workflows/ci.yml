@@ -195,36 +195,51 @@ jobs:
       #
       # yq is on ubuntu-latest already and parses the workflow rather than
       # matching text in it, so reformatting this file cannot break the check.
-      # It hands the extracted pair to the Go side, which compares the key
-      # against its own constant. Each half then reads the artifact it owns.
+      # It hands the step's whole env block to the Go side, which searches it
+      # for its own constant. Naming no key here is the point: each half reads
+      # the artifact it owns, and a second variable landing in that step cannot
+      # point the Go side at the wrong one.
       - name: The gate job's enforcement variable is the one the suite reads
         run: |
           set -euo pipefail
 
-          pair=$(yq '
+          entries=$(yq '
             .jobs.gate.steps[]
             | select(.id == "tests")
-            | .env
+            | (.env // {})
             | to_entries
-            | .[0]
+            | .[]
             | .key + "=" + .value
           ' .github/workflows/ci.yml)
 
-          case "$pair" in
-            *=*) ;;
-            *)
-              echo "No step with id 'tests' in the gate job sets an env block, so there" >&2
-              echo "is no enforcement variable to compare and this step proved nothing." >&2
-              exit 1
-              ;;
-          esac
+          if [[ -z "$entries" ]]; then
+            echo "No step with id 'tests' in the gate job sets an env block, so there" >&2
+            echo "is no enforcement variable to compare and this step proved nothing." >&2
+            exit 1
+          fi
 
-          echo "The gate job sets $pair."
+          echo "The gate job's test step sets:"
+          echo "$entries"
+
           # This step stays at the repository root so the workflow path above
           # resolves, and `go -C` names the module's directory rather than
           # moving the shell into it.
-          METRIC_GATE_WORKFLOW_ENFORCEMENT="$pair" \
-            go -C gate test ./test -run '^TestTheWorkflowEnablesEnforcement$' -count=1 -v
+          if ! out=$(METRIC_GATE_WORKFLOW_ENFORCEMENT="$entries" \
+              go -C gate test ./test -run '^TestTheWorkflowEnablesEnforcement$' -count=1 -v 2>&1); then
+            echo "$out" >&2
+            exit 1
+          fi
+          echo "$out"
+
+          # go test exits zero when -run matches nothing, and the case skips
+          # itself when the variable above never reaches it, so the PASS line is
+          # what separates a real assertion from a green step that ran nothing.
+          if ! grep -qF -- '--- PASS: TestTheWorkflowEnablesEnforcement' <<<"$out"; then
+            echo "TestTheWorkflowEnablesEnforcement did not run. Either it was renamed and the" >&2
+            echo "-run pattern above no longer selects it, or it skipped because the env block" >&2
+            echo "never reached it. Either way this step asserted nothing." >&2
+            exit 1
+          fi
 
       # The jobs above name their projects one by one, which keeps install
       # order explicit but lets a seventh project land and never run. This step

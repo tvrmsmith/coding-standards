@@ -34,10 +34,12 @@ const globalJSONPath = "dotnet/global.json"
 // the one case that drives the real extractor cannot lapse into a green skip.
 const envRequireDotnet = "METRIC_GATE_REQUIRE_DOTNET"
 
-// envWorkflowEnforcement carries the enforcement environment pair the CI
-// wiring job reads out of .github/workflows/ci.yml with a YAML parser, in
-// KEY=VALUE form. Only that job sets it, so the assertion below is a no-op on
-// a developer's machine and the workflow stays the single source of the key.
+// envWorkflowEnforcement carries the whole env block of the CI gate job's test
+// step, one KEY=VALUE pair per line, read out of .github/workflows/ci.yml with
+// a YAML parser by the wiring job. The workflow names no key; this suite
+// searches the block for its own constant, so the Go side stays the single
+// source of the name. Only that job sets it, so the assertion below is a no-op
+// on a developer's machine.
 const envWorkflowEnforcement = "METRIC_GATE_WORKFLOW_ENFORCEMENT"
 
 // reasonShort is why TestFullStackDrivesTheRealDotnetExtractor skips under
@@ -257,33 +259,75 @@ func probeDotnet() error {
 	return nil
 }
 
-// TestTheWorkflowEnablesEnforcement closes the gap between the key this suite
-// reads and the key CI sets. The wiring job parses .github/workflows/ci.yml
-// with a YAML reader, hands the gate job's environment pair over in
-// METRIC_GATE_WORKFLOW_ENFORCEMENT, and this compares it against the constant
-// the suite actually reads. Rename one without the other and the mismatch reds
-// here rather than turning enforcement off in silence.
-func TestTheWorkflowEnablesEnforcement(t *testing.T) {
-	pair, ok := os.LookupEnv(envWorkflowEnforcement)
-	if !ok {
-		t.Skipf("%s is unset, so there is no extracted workflow pair to compare against; the CI wiring job sets it", envWorkflowEnforcement)
+// lookupPair finds key in a block of KEY=VALUE lines, the shape the wiring job
+// hands the gate job's env block over in. Searching rather than taking a fixed
+// position is what keeps a second variable landing in that step from pointing
+// this case at the wrong key.
+func lookupPair(block, key string) (string, bool) {
+	for _, line := range strings.Split(block, "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && k == key {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// TestLookupPairFindsTheKeyAnywhereInTheBlock pins that the search survives a
+// step growing other variables, and reports the near misses as absent.
+func TestLookupPairFindsTheKeyAnywhereInTheBlock(t *testing.T) {
+	cases := []struct {
+		name  string
+		block string
+		want  string
+		found bool
+	}{
+		{"the only pair", "METRIC_GATE_REQUIRE_DOTNET=1", "1", true},
+		{"last of several", "GOFLAGS=-mod=readonly\nCGO_ENABLED=0\nMETRIC_GATE_REQUIRE_DOTNET=1", "1", true},
+		{"first of several", "METRIC_GATE_REQUIRE_DOTNET=1\nGOFLAGS=-mod=readonly", "1", true},
+		{"past surrounding whitespace", "  METRIC_GATE_REQUIRE_DOTNET=1  \n", "1", true},
+		{"an empty value is still found", "METRIC_GATE_REQUIRE_DOTNET=", "", true},
+		{"a value carrying an equals sign", "METRIC_GATE_REQUIRE_DOTNET=a=b", "a=b", true},
+		{"a block naming other keys only", "GOFLAGS=-mod=readonly\nCGO_ENABLED=0", "", false},
+		{"a key that only shares a prefix", "METRIC_GATE_REQUIRE_DOTNET_V2=1", "", false},
+		{"a bare key with no equals sign", "METRIC_GATE_REQUIRE_DOTNET", "", false},
+		{"an empty block", "", "", false},
 	}
 
-	key, value, split := strings.Cut(pair, "=")
-	if !split {
-		t.Fatalf("%s=%q is not the KEY=VALUE pair the wiring job is meant to hand over", envWorkflowEnforcement, pair)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, found := lookupPair(c.block, envRequireDotnet)
+			if got != c.want || found != c.found {
+				t.Errorf("lookupPair = %q, %v, want %q, %v", got, found, c.want, c.found)
+			}
+		})
 	}
-	if key != envRequireDotnet {
-		t.Fatalf("the gate job's test step sets %q but this suite reads %q, so the workflow key and the Go constant have drifted and enforcement is off: the full-stack case would skip in CI and the real extractor would never run",
-			key, envRequireDotnet)
+}
+
+// TestTheWorkflowEnablesEnforcement closes the gap between the key this suite
+// reads and the key CI sets. The wiring job parses .github/workflows/ci.yml
+// with a YAML reader, hands the gate job's whole env block over in
+// METRIC_GATE_WORKFLOW_ENFORCEMENT, and this searches it for the constant the
+// suite actually reads. Rename one without the other and the mismatch reds here
+// rather than turning enforcement off in silence.
+func TestTheWorkflowEnablesEnforcement(t *testing.T) {
+	block, ok := os.LookupEnv(envWorkflowEnforcement)
+	if !ok {
+		t.Skipf("%s is unset, so there is no extracted workflow env block to search; the CI wiring job sets it", envWorkflowEnforcement)
+	}
+
+	value, found := lookupPair(block, envRequireDotnet)
+	if !found {
+		t.Fatalf("the gate job's test step sets %q, none of which is %s, so the workflow key and the Go constant have drifted and enforcement is off: the full-stack case would skip in CI and the real extractor would never run",
+			block, envRequireDotnet)
 	}
 
 	require, err := requireDotnet(value, true)
 	if err != nil {
-		t.Fatalf("the gate job sets %s=%q, which this suite refuses: %v", key, value, err)
+		t.Fatalf("the gate job sets %s=%q, which this suite refuses: %v", envRequireDotnet, value, err)
 	}
 	if !require {
-		t.Fatalf("the gate job sets %s=%q, which does not enable enforcement, so the full-stack case would skip in CI and the real extractor would never run", key, value)
+		t.Fatalf("the gate job sets %s=%q, which does not enable enforcement, so the full-stack case would skip in CI and the real extractor would never run", envRequireDotnet, value)
 	}
 }
 
@@ -332,6 +376,24 @@ func stubDotnetPath(t *testing.T, body string) string {
 	return "PATH=" + dir + string(os.PathListSeparator) + os.Getenv("PATH")
 }
 
+// toolOnlyPath returns a PATH holding a symlink to each named tool and nothing
+// else, which is how a child runs with no dotnet reachable at all while
+// TestMain still finds the go toolchain it rebuilds the binaries with.
+func toolOnlyPath(t *testing.T, tools ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, tool := range tools {
+		found, err := exec.LookPath(tool)
+		if err != nil {
+			t.Fatalf("locating %s, which a PATH holding only %v needs: %v", tool, tools, err)
+		}
+		if err := os.Symlink(found, filepath.Join(dir, tool)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return "PATH=" + dir
+}
+
 // TestRequireDotnetDecidesTheFullStackOutcome runs the full-stack case in a
 // child copy of this test binary against machines that cannot serve it, with
 // METRIC_GATE_REQUIRE_DOTNET set and unset. Only a real run proves the fatal
@@ -362,13 +424,29 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 		"--list-runtimes) echo 'Microsoft.NETCore.App 6.0.36 [/x/shared/Microsoft.NETCore.App]' ;;\n"+
 		"esac\n")
 
+	// The shape a runner mispinned against dotnet/global.json really produces:
+	// the muxer exits non-zero and writes the resolution failure to stderr,
+	// while --list-sdks still names what is on disk.
+	const badPinMessage = "A compatible .NET SDK was not found. Specified version 8.0.100"
+	const badPinInstalled = "9.0.100 [/x/sdk]"
+	badPin := stubDotnetPath(t, "#!/bin/sh\n"+
+		"case \"$1\" in\n"+
+		"--version) echo '"+badPinMessage+"' >&2; exit 1 ;;\n"+
+		"--list-sdks) echo '"+badPinInstalled+"' ;;\n"+
+		"esac\n")
+
+	// No dotnet on the PATH at all, which is the arm errors.Is(exec.ErrNotFound)
+	// answers. go stays reachable because the child re-runs TestMain, which
+	// rebuilds both binaries before the selected case starts.
+	noDotnet := toolOnlyPath(t, "go")
+
 	// -test.short is passed explicitly in every row, so what a child does never
 	// depends on the flags this parent happens to run under.
 	const long, short = "-test.short=false", "-test.short=true"
 
 	cases := []struct {
 		name    string
-		env     string
+		env     []string
 		require string
 		short   string
 		wantErr bool
@@ -376,7 +454,7 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 	}{
 		{
 			name:    "the enforced run fails instead of skipping",
-			env:     noSDK,
+			env:     []string{noSDK},
 			require: "1",
 			short:   long,
 			wantErr: true,
@@ -384,13 +462,35 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 		},
 		{
 			name:  "the unset run skips and passes",
-			env:   noSDK,
+			env:   []string{noSDK},
 			short: long,
 			wants: []string{"--- SKIP", reasonNoPinnedSDK, "printed nothing"},
 		},
 		{
+			name:    "a failing --version reports what dotnet said and what is installed",
+			env:     []string{badPin},
+			require: "1",
+			short:   long,
+			wantErr: true,
+			wants:   []string{"forbids skipping", reasonNoPinnedSDK, badPinMessage, badPinInstalled},
+		},
+		{
+			name:  "a failing --version skips the unenforced run",
+			env:   []string{badPin},
+			short: long,
+			wants: []string{"--- SKIP", reasonNoPinnedSDK, badPinMessage},
+		},
+		{
+			name:    "no dotnet on the PATH at all fails the enforced run",
+			env:     []string{noDotnet, "CGO_ENABLED=0"},
+			require: "1",
+			short:   long,
+			wantErr: true,
+			wants:   []string{"forbids skipping", reasonNoPinnedSDK, "no dotnet to ask"},
+		},
+		{
 			name:    "a runtime below the floor is not enough for the enforced run",
-			env:     oldRuntime,
+			env:     []string{oldRuntime},
 			require: "1",
 			short:   long,
 			wantErr: true,
@@ -398,7 +498,7 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 		},
 		{
 			name:  "a runtime below the floor skips the unenforced run",
-			env:   oldRuntime,
+			env:   []string{oldRuntime},
 			short: long,
 			wants: []string{"--- SKIP", reasonNoUsableRuntime, "Microsoft.NETCore.App 6.0.36"},
 		},
@@ -420,11 +520,7 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var extraEnv []string
-			if c.env != "" {
-				extraEnv = []string{c.env}
-			}
-			out, err := runChild(t, c.require, extraEnv, "-test.run", childCase, "-test.v", c.short)
+			out, err := runChild(t, c.require, c.env, "-test.run", childCase, "-test.v", c.short)
 			if c.wantErr && err == nil {
 				t.Fatalf("child exited zero, want a failure. output:\n%s", out)
 			}
@@ -554,13 +650,9 @@ func (f *fixture) appendComment(rel string, n int) {
 // from the shared stub-based binDir. It returns that directory.
 func installRealExtractor(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-
-	build := exec.Command("go", "build", "-o", filepath.Join(dir, "metric-gate"), "./cmd/metric-gate")
-	build.Dir = ".."
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building metric-gate: %v\n%s", err, out)
-	}
+	// A directory holding the gate and no extractor beside it is exactly what
+	// this case needs before it installs the real tool into it.
+	dir := gateOnlyDir(t)
 
 	// `dotnet tool install` resolves the package id and version out of the
 	// NuGet global packages folder once anything has extracted it there, and
