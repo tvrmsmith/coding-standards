@@ -7,6 +7,16 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!--
+      net8.0 makes the runtimeconfig ask for Microsoft.NETCore.App 8.0.0, and the
+      host's default Minor roll-forward climbs inside 8.x without ever crossing a
+      major, so the packed tool's shim could not launch on a machine carrying only
+      a 10 runtime even though a 10 SDK builds it. Major is purely additive: the
+      target framework stays net8.0, a machine with an 8.x runtime still selects
+      8.x, and the only new outcome is that a 10-only machine launches the tool
+      instead of failing.
+    -->
+    <RollForward>Major</RollForward>
   </PropertyGroup>
 
   <PropertyGroup Label="Tool packaging">

@@ -30,11 +30,6 @@ env:
   # drifting onto a different runtime than the job that tests the same net8.0
   # assemblies.
   DOTNET_VERSION: "8.0.x"
-  # The SDK the gate job packs the tool project with. This duplicates the
-  # feature band dotnet/global.json pins, which is what a developer's machine
-  # resolves, so the two have to move together: change one and the CI pack
-  # starts running a compiler the local pack never sees.
-  DOTNET_PACK_SDK_VERSION: "10.0.x"
 
 jobs:
   gate:
@@ -56,19 +51,19 @@ jobs:
             gate/go.sum
       - uses: actions/setup-dotnet@v4
         with:
-          # Two installs, each for its own reason. The 10.x SDK is the one that
-          # packs the tool project, because the muxer picks the highest
-          # installed SDK here and that is the band a developer's machine packs
-          # with, so C# the local pack accepts cannot red only in CI. The 8.0.x
-          # install is for the Microsoft.NETCore.App 8.x shared framework the
-          # installed net8.0 tool shim launches on, which the 10.x SDK does not
-          # carry. No global-json-file here: the pack runs from gate/test and
-          # dotnet searches upward from there, where dotnet/global.json is not
-          # an ancestor, so naming the pin would claim a resolution that never
-          # happens.
-          dotnet-version: |
-            ${{ env.DOTNET_VERSION }}
-            ${{ env.DOTNET_PACK_SDK_VERSION }}
+          # Two installs, each for its own reason. global-json-file brings the
+          # SDK that packs the tool project: the test runs both the pack and
+          # its probe from dotnet/, so dotnet/global.json is an ancestor and
+          # governs the resolution here exactly as it does on a developer's
+          # machine, and that one file is the only pin. C# the local pack
+          # accepts therefore cannot red only in CI. The 8.0.x install is for
+          # the Microsoft.NETCore.App 8.x shared framework the installed net8.0
+          # tool shim launches on, which the pinned SDK does not carry. The
+          # tool asks for Major roll-forward, so a 10-only machine could run it
+          # too, but installing 8.0.x here means CI keeps exercising the 8 path
+          # and never the 10 one.
+          global-json-file: dotnet/global.json
+          dotnet-version: ${{ env.DOTNET_VERSION }}
       # vet needs the Go toolchain and nothing else, so it carries the same
       # explicit guard the tests do rather than inheriting the implicit
       # success() that a failed SDK install would trip.
@@ -87,14 +82,19 @@ jobs:
       # unexercised forever. The explicit -timeout replaces Go's default 10
       # minutes per binary, which the gate package can now approach. What
       # dominates its cost is not the number of cases but that the enforcement
-      # tests re-run this binary as a child process, and every child re-runs
-      # TestMain, which shells out to go build twice before the case it was
-      # asked for even starts; on top of that the full-stack case packs the
-      # tool and installs it against an empty NUGET_PACKAGES directory.
-      # Measured at 164s locally on a warm cache with nothing to restore, so
-      # 12m leaves room for a cold NuGet restore on a slower runner. Under the
-      # default a slow restore surfaces as an opaque panic instead.
+      # tests re-run this binary as a child process, and every one of those
+      # children re-runs TestMain, which shells out to go build twice before
+      # the case it was asked for even starts; on top of that the full-stack
+      # case packs the tool and installs it against an empty NUGET_PACKAGES
+      # directory. The gate/test package alone measured 87s locally with a warm
+      # build cache and a populated NuGet cache, so 12m leaves room for a cold
+      # restore on a slower runner. Under the default a slow restore surfaces
+      # as an opaque panic instead.
       - run: go test ./... -count=1 -timeout 12m
+        # The wiring job selects this step by id and reads the env block below
+        # with a YAML parser, so renaming the id there and here has to happen
+        # together or that job reds.
+        id: tests
         working-directory: gate
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         env:
@@ -184,6 +184,47 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: gate/go.mod
+
+      # The gate suite reads one environment variable to decide whether a skip
+      # of the case that drives the real dotnet extractor is a failure, and the
+      # gate job above sets it. Nothing connected the two names, so renaming
+      # either one left enforcement off with CI still green.
+      #
+      # yq is on ubuntu-latest already and parses the workflow rather than
+      # matching text in it, so reformatting this file cannot break the check.
+      # It hands the extracted pair to the Go side, which compares the key
+      # against its own constant. Each half then reads the artifact it owns.
+      - name: The gate job's enforcement variable is the one the suite reads
+        run: |
+          set -euo pipefail
+
+          pair=$(yq '
+            .jobs.gate.steps[]
+            | select(.id == "tests")
+            | .env
+            | to_entries
+            | .[0]
+            | .key + "=" + .value
+          ' .github/workflows/ci.yml)
+
+          case "$pair" in
+            *=*) ;;
+            *)
+              echo "No step with id 'tests' in the gate job sets an env block, so there" >&2
+              echo "is no enforcement variable to compare and this step proved nothing." >&2
+              exit 1
+              ;;
+          esac
+
+          echo "The gate job sets $pair."
+          # This step stays at the repository root so the workflow path above
+          # resolves, and `go -C` names the module's directory rather than
+          # moving the shell into it.
+          METRIC_GATE_WORKFLOW_ENFORCEMENT="$pair" \
+            go -C gate test ./test -run '^TestTheWorkflowEnablesEnforcement$' -count=1 -v
 
       # The jobs above name their projects one by one, which keeps install
       # order explicit but lets a seventh project land and never run. This step
