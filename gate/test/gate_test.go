@@ -925,6 +925,32 @@ func TestFileInAReportCarryingNoInstrumentableLinesIsUnknownRatherThanCovered(t 
 			"0 of 1 changed methods over CRAP threshold 30, worst score 0.00\n")
 }
 
+// TestInstrumentedUncoveredAutoPropertyGetterIsMeasuredAtZero pins the
+// boundary the file_uninstrumented arm depends on. Coverlet instruments an
+// auto-implemented property, emitting a class-level line at the getter's own
+// line number with hits="0" when no test touched it, so the file's entry is
+// not empty and the getter reads measured at coverage 0. A change that turned
+// such a getter unknown, or read it as structural_na treated as fully
+// covered, would fail this case.
+func TestInstrumentedUncoveredAutoPropertyGetterIsMeasuredAtZero(t *testing.T) {
+	const money = "src/Ordering/Money.cs"
+	getAmount := span{File: money, Name: "Money.get_Amount", StartLine: 7, EndLine: 7, Complexity: 1}
+
+	f := newFixture(t, "main")
+	f.write(money, csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(money, 7)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: money, lines: spanCoverage(7, 1, 0)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(money), []span{getAmount}),
+	}
+
+	f.run().assertMatches(t, "instrumented_getter", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 2.00\n")
+}
+
 // TestFileWithNoLinesInOneReportIsStillMeasuredFromAnother pins where the
 // emptiness rule lives. The gate judges it in the join, over the union of
 // every report it consumed, so one report listing the file with no line
