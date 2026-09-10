@@ -62,6 +62,44 @@ func TestRelativizeReadsAMisCasedRootPrefixAsFolded(t *testing.T) {
 	}
 }
 
+// This is the positive half of the fold rule on a case-sensitive filesystem,
+// beside the negative half the two-distinct-directories case above pins there.
+// A symlink whose last component differs from its target only in case reaches
+// one directory under two spellings, and os.Stat follows it, so EqualFold and
+// os.SameFile both hold and foldRootPrefix's success path runs on Linux CI. The
+// macOS-only cases stay, because a symlink is not the same shape as a
+// filesystem that folds every name.
+func TestRelativizeFoldsARootPrefixReachedThroughACaseDifferingSymlink(t *testing.T) {
+	root := containmentRoot(t)
+	linked := filepath.Join(filepath.Dir(root.Dir()), strings.ToUpper(filepath.Base(root.Dir())))
+	if _, err := os.Stat(linked); err == nil {
+		t.Skipf("the filesystem folded %s onto the root already, so there is no link to make; the macOS cases cover this shape", linked)
+	}
+	if err := os.Symlink(root.Dir(), linked); err != nil {
+		t.Fatal(err)
+	}
+
+	rel, place, err := root.relativize(filepath.Join(linked, "src", "a.txt"))
+
+	if err != nil || place != folded || rel != "src/a.txt" {
+		t.Errorf("relativize through a case-differing symlink to the root returned %q, %v, %v, want \"src/a.txt\", folded, nil", rel, place, err)
+	}
+}
+
+// An ancestor of the root is shorter than the root, so foldRootPrefix has no
+// prefix of the root's length to take and has to answer outside rather than
+// slice past the end of the candidate's components. --files <parent-of-repo>
+// reaches this on every filesystem.
+func TestRelativizeReadsAnAncestorOfTheRootAsOutside(t *testing.T) {
+	root := containmentRoot(t)
+
+	rel, place, err := root.relativize(filepath.Dir(root.Dir()))
+
+	if err != nil || place != outside || rel != "" {
+		t.Errorf("relativize on an ancestor of the root returned %q, %v, %v, want \"\", outside, nil", rel, place, err)
+	}
+}
+
 func TestNamedRefusesAMisCasedRootPrefixAsASpellingRatherThanALocation(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
@@ -130,6 +168,27 @@ func TestNameReadsAnAbsentPathInsideTheRepoAsRepoRelative(t *testing.T) {
 
 	if name != "TestResults/coverage.cobertura.xml" {
 		t.Errorf("Name on an absent path inside the repo = %q, want %q", name, "TestResults/coverage.cobertura.xml")
+	}
+}
+
+// Name's folded arm, which is the --coverage side of the fold rule: a report
+// under a mis-cased root prefix is named repo-relative like an exact one, and
+// not by an absolute machine path that reads as though it sat outside the repo.
+//
+// Unlike the relativize case above this one cannot be reached through a
+// case-differing symlink, so it skips on Linux. Name resolves before it
+// relativizes, and resolveExisting's EvalSymlinks collapses the link back onto
+// the root's own spelling, leaving nothing folded to read. A non-symlink
+// component that keeps the typed case is what a case-insensitive filesystem
+// alone produces.
+func TestNameReadsAPathUnderAMisCasedRootPrefixAsRepoRelative(t *testing.T) {
+	root := containmentRoot(t)
+	miscased := miscasedRoot(t, root)
+
+	name := root.Name(filepath.Join(miscased, "TestResults", "coverage.cobertura.xml"))
+
+	if name != "TestResults/coverage.cobertura.xml" {
+		t.Errorf("Name under a mis-cased root prefix = %q, want %q", name, "TestResults/coverage.cobertura.xml")
 	}
 }
 

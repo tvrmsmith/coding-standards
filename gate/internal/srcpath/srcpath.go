@@ -143,9 +143,9 @@ func (p placement) String() string {
 }
 
 // relativize reads an already resolved absolute path as a path under the root,
-// and says where it landed. Place and named both ask, and each decides for
+// and says where it landed. Place, Name and named all ask, and each decides for
 // itself what a candidate that landed above the root means, so the one
-// definition of "outside" lives here rather than being spelled twice and
+// definition of "outside" lives here rather than being spelled three times and
 // drifting.
 //
 // The error is the root and the candidate having no relative reading at all, a
@@ -165,10 +165,14 @@ func (r Root) relativize(resolved string) (Path, placement, error) {
 
 // foldRootPrefix is the second reading of a candidate filepath.Rel says
 // escapes. On a case-insensitive filesystem EvalSymlinks hands back the case
-// the developer typed, so `/TMP/repo/src/A.cs` against a root of `/tmp/repo`
-// relativizes to `../../private/TMP/repo/src/A.cs` and reads as outside when
-// the file is in fact inside (issue 48). The developer then goes looking for a
-// location mistake instead of a spelling one.
+// the developer typed for a component that is not itself a symlink, so with the
+// root resolved to `/private/tmp/cf_test`, `/tmp/CF_TEST/sub/a.txt` resolves to
+// `/private/tmp/CF_TEST/sub/a.txt` and filepath.Rel reads that as
+// `../CF_TEST/sub/a.txt`, outside, when the file is in fact inside (issue 48).
+// The developer then goes looking for a location mistake instead of a spelling
+// one. This takes the first four components, `/private/tmp/CF_TEST`, folds them
+// against `/private/tmp/cf_test`, confirms with os.SameFile that the two names
+// reach one directory, and answers folded with `sub/a.txt`.
 //
 // os.SameFile is what keeps this from being the text folding ADR 0004 rejects.
 // Two directories that differ only in case are two inodes on a case-sensitive
