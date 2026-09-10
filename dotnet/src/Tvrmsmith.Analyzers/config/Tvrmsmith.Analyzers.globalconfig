@@ -78,6 +78,26 @@ dotnet_diagnostic.TVRM0004.severity = warning
 # against the adoption target it is dominated by legitimate idioms.
 dotnet_diagnostic.TVRM0005.severity = warning
 
+##
+## Comment length — enforcement home for the "Comments" guideline in coding-standards/SKILL.md.
+##
+## Warning, never error, and for a reason of its own on top of the one above: length is a weak
+## proxy for what that guideline actually judges, which is whether the comment is justifying
+## something. A report asks for a re-read of the code, so it must not stop a build.
+##
+## Doc comments are exempt at any length, which is what makes the threshold a regression guard
+## rather than a refactor mandate. See the rule doc linked from the descriptor.
+##
+
+# TVRM0006 comment-block-length — a non-doc comment run over the budget.
+dotnet_diagnostic.TVRM0006.severity = warning
+
+# The budget, in source lines. A plain analyzer-config key rather than a `dotnet_diagnostic` one,
+# which carries severity and not rule parameters. Roslyn has no parameter mechanism of its own;
+# SonarAnalyzer reaches for a SonarLint.xml AdditionalFile for the same reason, and a bare key
+# keeps the setting in the same file as the severity it goes with.
+tvrmsmith_comment_block_max_lines = 10
+
 # --- BEGIN generated: built-in CA severities (node dotnet/generate-ca-severities.mjs) ---
 #
 # The 262 CA rules the .NET SDK ships *quiet*, minus 25 exclusions.

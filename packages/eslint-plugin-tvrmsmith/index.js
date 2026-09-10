@@ -1,14 +1,17 @@
 import combineAssertionsOnSameObject from './rules/combine-assertions-on-same-object.js'
 import noQuantifierAssertion from './rules/no-quantifier-assertion.js'
+import commentBlockLength from './rules/comment-block-length.js'
 
 /**
  * The custom half of the tvrmsmith lint layer: the guidelines with no off-the-shelf rule
  * in either language. Everything that *does* have one lives in `eslint-config-tvrmsmith`.
  *
- * Two rules. `combine-assertions-on-same-object` is guideline A1, the one guideline with no
+ * Three rules. `combine-assertions-on-same-object` is guideline A1, the one guideline with no
  * off-the-shelf rule in either language. `no-quantifier-assertion` is the A2 residue: the
  * shape left over after the off-the-shelf A2 layer, measured rather than guessed at
- * (`eslint-config-tvrmsmith/measure-a2-residue.mjs`).
+ * (`eslint-config-tvrmsmith/measure-a2-residue.mjs`). `comment-block-length` is the Comments
+ * guideline, which neither ecosystem covers: every off-the-shelf length rule measures a
+ * physical line rather than a comment.
  *
  * The other two custom rules from the enforcement mapping — `no-suppression-before-assertion`
  * and `no-assertion-escape-cast` — are C#-only; their TypeScript halves are covered off the
@@ -28,6 +31,7 @@ const plugin = {
   rules: {
     'combine-assertions-on-same-object': combineAssertionsOnSameObject,
     'no-quantifier-assertion': noQuantifierAssertion,
+    'comment-block-length': commentBlockLength,
   },
 }
 

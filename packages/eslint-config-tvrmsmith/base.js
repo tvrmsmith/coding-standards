@@ -129,6 +129,18 @@ export function createBase({ extraRestrictedSyntax = [] } = {}) {
       },
     },
     {
+      name: 'tvrmsmith/base/comment-block-length',
+      files: sourceFiles,
+      plugins: { tvrmsmith },
+      rules: {
+        // The "Comments" guideline — a paragraph justifying a workaround means the code is
+        // wrong. warn, never error: length is a weak proxy for intent, so a report asks the
+        // author to re-read the code and the honest fix is never mechanical. Doc comments
+        // are exempt, so this catches prose, not documentation.
+        'tvrmsmith/comment-block-length': ['warn', { max: 10 }],
+      },
+    },
+    {
       name: 'tvrmsmith/base/assertion-intent',
       files: testFiles,
       plugins: { jest, tvrmsmith },

@@ -29,7 +29,7 @@ fail() { printf '\nFAIL: %s\n' "$1" >&2; exit 1; }
 
 # The ids tests/Consumer is written to violate, asserted identically by all three delivery
 # sections below. One list, so adding a rule cannot be half-wired into the verification.
-injected_ids=(FAA0001 FAA0002 TVRM0001 TVRM0002 TVRM0003 TVRM0004 TVRM0005)
+injected_ids=(FAA0001 FAA0002 TVRM0001 TVRM0002 TVRM0003 TVRM0004 TVRM0005 TVRM0006)
 
 # Single source of truth for the assertion-library version lives in Directory.Build.props.
 aa_version="$(sed -n 's/.*<AwesomeAssertionsVersion>\(.*\)<\/AwesomeAssertionsVersion>.*/\1/p' \

@@ -60,6 +60,26 @@ public class CustomRuleViolations
 
         act.Should().ThrowAsync<InvalidOperationException>();
     }
+
+    // TVRM0006 comment-block-length. Twelve lines of plain prose, over the ten-line budget, and
+    // deliberately the justifying-a-workaround shape the guideline is about rather than anything
+    // a doc comment would carry. The block has to be plain // lines: a /// block is exempt at any
+    // length, so writing the fixture as documentation would prove nothing.
+    // It also has to sit on its own lines rather than trail a statement, because a trailing
+    // comment annotates the code beside it and never joins a block.
+    // The lines below pad the block past the budget without saying anything the rule cares about,
+    // which is the point: the analyzer counts lines, and only the author can judge intent.
+    // Padding line one.
+    // Padding line two.
+    // Padding line three.
+    // Padding line four.
+    [Fact]
+    public void CommentBlockOverTheBudget()
+    {
+        var page = new Page { Number = 2 };
+
+        page.Number.Should().Be(2);
+    }
 }
 
 public sealed class Page

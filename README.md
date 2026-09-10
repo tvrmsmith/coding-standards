@@ -75,7 +75,7 @@ harness/                             # machine-local adoption harness: editor la
 The plugin loader ignores `packages/`, `dotnet/` and `gate/` — it reads only `.claude-plugin/` and
 `skills/`.
 
-## The custom rules (v1)
+## The custom rules
 
 Everything else is off the shelf. These have no off-the-shelf equivalent:
 
@@ -90,6 +90,11 @@ Everything else is off the shelf. These have no off-the-shelf equivalent:
 5. `no-dropped-async-assertion` — Roslyn only (`TVRM0005`). Catches an awaitable assertion nobody
    awaits, in the synchronous test bodies the compiler's CS4014 cannot reach. TypeScript is covered
    by `jest/valid-expect` too.
+6. `comment-block-length` — Roslyn (`TVRM0006`) **and** ESLint, both
+   [documented together](packages/eslint-plugin-tvrmsmith/docs/rules/comment-block-length.md).
+   Warns on a run of non-documentation comments over 10 lines and exempts doc comments at any
+   length. StyleCop ships no length rule at all; Sonar's `S103` and `@stylistic/max-len` cap a
+   physical *line*, so they flag long code and miss a long comment made of short lines.
 
 The off-the-shelf layer around them is already curated: `packages/eslint-config-tvrmsmith` for
 TypeScript, and for C# both AwesomeAssertions.Analyzers `FAA0001`–`FAA0004` and most of the built-in
