@@ -95,9 +95,13 @@ func (f *fixture) deleteLines(rel string, from, to int) {
 // file at src and inserts them into dst immediately after dst's line after.
 // It copies the lines verbatim, so they are byte-identical at their new home.
 // Both src and dst must already exist on disk, since the helper reads each
-// one before it rewrites it.
+// one before it rewrites it, and they must name different files, since after
+// would then be in post-cut coordinates.
 func (f *fixture) moveLinesBetween(src string, from, to int, dst string, after int) {
 	f.t.Helper()
+	if src == dst {
+		f.t.Fatalf("moveLinesBetween got %s for both sides; use moveLinesWithin", src)
+	}
 	srcLines := strings.Split(f.read(src), "\n")
 	cut := slices.Clone(srcLines[from-1 : to])
 	f.write(src, strings.Join(slices.Delete(srcLines, from-1, to), "\n"))

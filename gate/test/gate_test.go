@@ -700,13 +700,8 @@ func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) 
 	// link is not dangling. Deletion cases miss this: git renders a deleted
 	// file's new side as `+++ /dev/null`, which carries no extension, so no
 	// extractor ever claims it, and only a live typechange exercises status T.
-	full := filepath.Join(f.root, filepath.FromSlash(orderFile))
-	if err := os.Remove(full); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("OrderService.cs", full); err != nil {
-		t.Skipf("the filesystem does not allow symlinks: %v", err)
-	}
+	f.removeFile(orderFile)
+	f.symlinkTo(filepath.Base(orderService), orderFile)
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderFile), []span{orderTotal}),
