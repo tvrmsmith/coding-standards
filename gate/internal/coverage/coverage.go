@@ -143,7 +143,7 @@ func Discover(root srcpath.Root) (sources []Source, skipped []string, err error)
 		// the worst a skipped subtree can cost is a report the walk did not
 		// see, which the reader now sees in `skipped_paths`.
 		if err != nil {
-			skipped = append(skipped, root.Name(path).String())
+			skipped = append(skipped, walkedName(root, path).String())
 			if entry != nil && entry.IsDir() {
 				return fs.SkipDir
 			}
@@ -160,13 +160,13 @@ func Discover(root srcpath.Root) (sources []Source, skipped []string, err error)
 		}
 		rel, err := filepath.Rel(root.Dir(), path)
 		if err != nil {
-			skipped = append(skipped, root.Name(path).String())
+			skipped = append(skipped, filepath.ToSlash(path))
 			return nil
 		}
 		if !underResultsDir(rel) {
 			return nil
 		}
-		sources = append(sources, Source{Abs: path, Name: root.Name(path), Origin: Discovered})
+		sources = append(sources, Source{Abs: path, Name: srcpath.Name(filepath.ToSlash(rel)), Origin: Discovered})
 		return nil
 	})
 	if err != nil {
@@ -175,6 +175,26 @@ func Discover(root srcpath.Root) (sources []Source, skipped []string, err error)
 	slices.SortFunc(sources, func(a, b Source) int { return strings.Compare(string(a.Name), string(b.Name)) })
 	slices.Sort(skipped)
 	return sources, skipped, nil
+}
+
+// walkedName renders a path the walk yielded as the document names it, which is
+// its path relative to the root, or the absolute path when the two have no
+// relative reading at all.
+//
+// This is not a second owner of the containment question (issue 36). fs.WalkDir
+// never follows a symlink, so every path it hands back is literally under
+// root.Dir() and there is no escape to guard against; naming one is a rendering
+// and not a containment decision, and srcpath.relativize stays the gate's only
+// escape predicate. Resolving here instead, through srcpath.Root.Name, would
+// name a discovered report that happens to be a symlink by the absolute path of
+// whatever it points at. srcpath.Root.Name is still what Named below needs,
+// where the developer typed the path and it may name anything anywhere.
+func walkedName(root srcpath.Root, path string) srcpath.Name {
+	rel, err := filepath.Rel(root.Dir(), path)
+	if err != nil {
+		return srcpath.Name(filepath.ToSlash(path))
+	}
+	return srcpath.Name(filepath.ToSlash(rel))
 }
 
 // Named resolves each developer-typed path against cwd when it is relative,
