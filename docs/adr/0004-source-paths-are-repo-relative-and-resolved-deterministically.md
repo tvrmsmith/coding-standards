@@ -15,9 +15,10 @@ A path that will not resolve refuses the run rather than passing with nothing me
 the root, in that precedence. A human-typed path that names a directory, or spells a real file in a
 case the tree does not use, is refused as `file_unresolved`. Case folding is rejected for
 coverage-path resolution, where it can merge two real files; it is not rejected for extension
-routing, which only decides whether to launch a process.
+routing, which only decides whether to launch a process, nor for a repo-root prefix that
+`os.SameFile` confirms reaches the root directory, which merges nothing.
 
-Sections below carry the reasoning and five dated amendments.
+Sections below carry the reasoning and six dated amendments.
 
 ## Decision
 
@@ -149,6 +150,26 @@ lossless. The reverse direction is not.
 `os.path.exists` returns true. A case mismatch therefore survives resolution and surfaces as an
 unresolved changed method, exit 1, naming the file. Folding by default would instead make the gate wrong
 on Linux, where two spellings really are two files.
+
+**Amended 2026-09-11.** The paragraph above rejects folding **by text**, which on Linux merges two real
+files. Folding a root prefix **verified by `os.SameFile`** cannot: two directories differing only in case
+are two inodes on a case-sensitive filesystem, so `/tmp/REPO` beside a real `/tmp/repo` still reads as
+outside on Linux, which is the property the rejection protects. That narrow fold is now taken, with
+[issue 48](https://github.com/tvrmsmith/coding-standards/issues/48) and
+[issue 36](https://github.com/tvrmsmith/coding-standards/issues/36).
+
+It governs the **root prefix alone**, on every door into containment: an absolute `--files` path whose root
+prefix is mis-cased is still exit 1, now as "is not spelled as the repo root is" rather than "is outside the
+repo root", so the developer retypes the half that is wrong instead of hunting a location mistake; and a
+coverage candidate or a report name with the same prefix places and is named where it really sits rather
+than being reported as escaping the repo. Folding on the coverage side is what the 2026-09-03 amendment
+scoped the rejection to, and it is admitted here because `os.SameFile` supplies the evidence that
+amendment's reasoning lacked, not because the rejection is being narrowed by preference.
+
+Case **below** the root is still refused, unfolded, which is what keeps `case_only_path_difference` at exit
+1 and keeps the gate from attributing coverage to a file the report did not measure. `strings.EqualFold`
+runs ahead of the `os.SameFile` confirmation, so a bind mount or a hard-linked directory, one inode reached
+under two unrelated names, does not fold either.
 
 **A `--source-root` escape hatch** for reports whose root has been erased. Rejected as configuration with
 no user. The failure names the MSBuild property to turn off, and the day someone hits it the flag is a
