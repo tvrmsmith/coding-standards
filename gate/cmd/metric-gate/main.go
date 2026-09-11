@@ -32,12 +32,11 @@
 // issue 31's scope as the one exception to the empty stdout above: stdout
 // refusing the write that carries the document, a full disk or a closed
 // descriptor among the causes. The gate did produce a document, and it still
-// exits 1 with no typed code, because the document is the thing that could
-// not be delivered.
-// A write that came up short leaves a truncated document behind, so on this
-// cause alone stdout may hold part of a document rather than nothing, and the
-// exit code is the only signal a caller can trust. Issue 31 has nowhere to move
-// it to.
+// exits 1 with no typed code, because the document is the thing that could not
+// be delivered. A write that came up short leaves a truncated document behind,
+// so on this cause alone stdout may hold part of a document rather than
+// nothing, and the exit code is the only signal a caller can trust. Issue 31
+// has nowhere to move it to.
 package main
 
 import (

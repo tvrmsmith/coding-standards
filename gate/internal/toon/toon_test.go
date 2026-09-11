@@ -455,11 +455,10 @@ func TestEncode_TableFloatCellCarriesTheRoundingPastTheDecimalPoint(t *testing.T
 // issue 89 tracks giving 0008 a worked example, which would retire the
 // citation. Two cells depart from the 0005 example, which was written
 // against a --since run and prints scope: since and base: main@9f3c110.
-// The merge-base
-// scope token is fixed live by ADR 0008 ("scope is one of merge-base,
-// staged, since, files"), and the base label is this test's own
-// concrete ref, since no ADR fixes one for the default mode. No cell is
-// re-derived by running the encoder.
+// The merge-base scope token is fixed live by ADR 0008 ("scope is one
+// of merge-base, staged, since, files"), and the base label is this
+// test's own concrete ref, since no ADR fixes one for the default mode.
+// No cell is re-derived by running the encoder.
 func TestEncode_ADR0005WorkedExample(t *testing.T) {
 	doc := toon.Doc{Fields: []toon.Field{
 		{Key: "status", Value: "fail"},
