@@ -52,8 +52,8 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           # Two installs, each for its own reason. global-json-file brings the
-          # SDK that packs the tool project: the test runs both the pack and
-          # its probe from dotnet/, so dotnet/global.json is an ancestor and
+          # SDK that packs the tool project: the test runs the pack and the
+          # tool install from dotnet/, so dotnet/global.json is an ancestor and
           # governs the resolution here exactly as it does on a developer's
           # machine, and that one file is the only pin. C# the local pack
           # accepts therefore cannot red only in CI. The 8.0.x install is for
