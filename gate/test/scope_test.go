@@ -450,9 +450,12 @@ func TestFilesNamingAMisCasedRepoRootPrefixRefusesTheSpellingNotTheLocation(t *t
 //
 // The skip fires on CI, which is ubuntu-latest, because this case goes end to
 // end through a real mis-cased spelling and that needs a filesystem that folds.
-// It is the shape a developer actually types, so it stays. The refusal itself
-// runs on every filesystem in gate/internal/srcpath, where a Root reached under
-// a case-differing symlink drives named's folded arm directly.
+// It is the shape a developer actually types, so it stays, and it is the only
+// coverage the shipped refusal has: nothing verifies it on ubuntu-latest. The
+// unit cases in gate/internal/srcpath do run the folded arm there, but they
+// drive it from a Root reached under a case-differing symlink, which is a Root
+// NewRoot cannot produce, so they test the arm's logic rather than a state a
+// Linux user reaches.
 func sameDirectoryUpperCased(t *testing.T, dir string) string {
 	t.Helper()
 	upper := strings.ToUpper(dir)
