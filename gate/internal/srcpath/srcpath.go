@@ -25,11 +25,14 @@
 // 36 follow-up work.
 //
 // Landing under the root is not the same as being accepted. named still refuses
-// a mis-cased root prefix, because a --files path is one a developer typed and
-// can retype, and telling them which half is misspelled is the whole of issue
-// 48. It carries the most user-visible policy of the three, the distinct refusal
-// reasons a --files path can come back with, so a reader changing containment has
-// to weigh it beside the other two rather than reading Place and Name alone.
+// an absolute mis-cased root prefix, because such a --files path is one a
+// developer typed and can retype, and telling them which half is misspelled is
+// the whole of issue 48. A relative one is accepted, since its root prefix came
+// from the process working directory rather than from anything the developer
+// typed. named carries the most user-visible policy of the three, the distinct
+// refusal reasons a --files path can come back with, so a reader changing
+// containment has to weigh it beside the other two rather than reading Place and
+// Name alone.
 //
 // Place and Name differ in what has to be on disk. Place refuses a candidate that is not
 // a regular file, so that a coverage class filename of "../.." or of a bare
@@ -474,14 +477,23 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // words rather than carrying filepath.Rel's, which quote two absolute paths the
 // developer never typed.
 //
-// A name whose root prefix is spelled in another case is refused too, and it
-// says so rather than reusing the "not spelled as the file on disk is" refusal
-// below, because the mis-cased component is the root and not the file and the reader
-// has to know which half to retype. named is the only caller that refuses on that
-// reading. Place and Name place and name the same path where it really sits,
-// because a coverage candidate is not one a developer typed and there is nobody
-// to send back to the keyboard; the fold is confirmed by os.SameFile, so it
-// merges no two files (ADR 0004, amended 2026-09-11).
+// An absolute name whose root prefix is spelled in another case is refused too,
+// and it says so rather than reusing the "not spelled as the file on disk is"
+// refusal below, because the mis-cased component is the root and not the file and
+// the reader has to know which half to retype. named is the only caller that
+// refuses on that reading. Place and Name place and name the same path where it
+// really sits, because a coverage candidate is not one a developer typed and
+// there is nobody to send back to the keyboard; the fold is confirmed by
+// os.SameFile, so it merges no two files (ADR 0004, amended 2026-09-11).
+//
+// Only an absolute one, which is the scope ADR 0004's amendment writes the rule
+// in. A relative name carries no root prefix at all: the one weighed here came
+// from the process working directory, which is whatever path the developer's
+// shell cd'd through, so refusing would quote a name and blame a half of it that
+// is not in the string they typed and cannot be retyped. The fold is accepted
+// there and the name goes on to spelledAsOnDisk, which walks every component
+// below the root against the tree's own entries, so nothing is matched
+// approximately for having taken that road.
 //
 // That refusal is weighed after the mode checks, so --files naming the repo
 // root itself answers "is a directory, not a file" in either case, and a
@@ -495,7 +507,8 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // about the path at all, so it travels as a plain error.
 func (r Root) named(name string, dirs dirNames) (Path, error) {
 	candidate := filepath.FromSlash(name)
-	if !filepath.IsAbs(candidate) {
+	typedAbsolute := filepath.IsAbs(candidate)
+	if !typedAbsolute {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return "", fmt.Errorf("resolving %s against the working directory: %w", name, err)
@@ -532,7 +545,7 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 	if !info.Mode().IsRegular() {
 		return "", &UnresolvedError{Name: name, Reason: "is not a regular file"}
 	}
-	if place == folded {
+	if place == folded && typedAbsolute {
 		return "", &UnresolvedError{Name: name, Reason: "is not spelled as the repo root is"}
 	}
 	spelled, err := r.spelledAsOnDisk(filepath.FromSlash(string(rel)), dirs)
