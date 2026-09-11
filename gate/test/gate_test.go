@@ -715,7 +715,7 @@ func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) 
 	if got := f.git("diff", "--name-status", "main", "--", orderFile); got != "T\t"+orderFile {
 		t.Fatalf("git reports %q for %s, so this case is not exercising a typechange", got, orderFile)
 	}
-	if got := f.git("ls-tree", "main", "--", orderFile); strings.HasPrefix(got, "120000 ") {
+	if got := f.git("ls-tree", "main", "--", orderFile); !strings.HasPrefix(got, "100644 ") {
 		t.Fatalf("main holds %q for %s, want a real file", got, orderFile)
 	}
 	if info, err := os.Lstat(filepath.Join(f.root, filepath.FromSlash(orderFile))); err != nil {
@@ -741,11 +741,15 @@ func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) 
 
 	// The changed set is empty, so the gate exits before it ever spawns the
 	// extractor for extraction, and the stub never runs the path that writes
-	// StdinLog. This direction is the dangerous handing, since an extractor
-	// given the link path follows it and reports the target's spans under
-	// Order.cs, so the check catches a regression that hands over the path
-	// while still emitting an empty document, which the golden alone cannot
-	// see.
+	// StdinLog. Today the golden already reds on any handing of Order.cs,
+	// since the extractor's file list is the touched-line key set and a
+	// touched line either lands inside Order.Total's 60-64 span or outside
+	// it. This check states the rule directly instead of inferring it from an
+	// empty document, and it holds if a later change decouples the
+	// extractor's input from the touched-line key set, which the mode-aware
+	// pass in issue 84 would do. This direction is the dangerous handing,
+	// since an extractor given the link path follows it and reports the
+	// target's spans under Order.cs.
 	switch _, err := os.Stat(handed); {
 	case err == nil:
 		t.Errorf("the extractor was handed %q, want nothing", readFile(t, handed))
@@ -822,10 +826,13 @@ func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) 
 	// StdinLog. A --capabilities probe cannot create the file either: the
 	// stub answers --capabilities and returns before it drains stdin
 	// (gate/test/stub/main.go), so even a capabilities-only invocation leaves
-	// this file absent. An ACMT widen is caught by the golden above, not by
-	// this check. What this check adds on its own is the case the golden
-	// cannot see: a change that hands the extractor the typechange path while
-	// still emitting an empty document.
+	// this file absent. An ACMT widen is caught by the golden above, and so
+	// is any other handing of Order.cs today, since the extractor's file list
+	// is the touched-line key set. This check states the rule directly, that
+	// a dropped path never reaches the extractor, instead of inferring it
+	// from an empty document, and it holds if a later change decouples the
+	// extractor's input from that key set, which the mode-aware pass in issue
+	// 84 would do.
 	switch _, err := os.Stat(handed); {
 	case err == nil:
 		t.Errorf("the extractor was handed %q, want nothing", readFile(t, handed))
