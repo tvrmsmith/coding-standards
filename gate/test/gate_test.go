@@ -2954,8 +2954,8 @@ func assertUsageError(t *testing.T, result runResult, stderr string) {
 }
 
 // The cases below are issue 16: the three exit-1 diagnostics ADR 0004's
-// 2026-09-03 amendment defers there, plus regression coverage for the
-// resolution rules the tracer already satisfied before this issue landed.
+// Consequences names, plus regression coverage for the resolution rules the
+// tracer already satisfied before this issue landed.
 
 func TestNestedSolutionLayoutScoresCorrectly(t *testing.T) {
 	const nested = "src/Services/Ordering/Api/OrderService.cs"

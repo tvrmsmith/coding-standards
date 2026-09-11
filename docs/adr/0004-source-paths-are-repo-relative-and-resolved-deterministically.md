@@ -12,8 +12,9 @@ byte-identical. A human-typed path resolves against the current working director
 
 A path that will not resolve refuses the run rather than passing with nothing measured:
 `coverage_source_root_erased`, then `file_ambiguous`, then a coverage path with zero candidates in
-the root, in that precedence. A human-typed path that names a directory, or spells a real file in a
-case the tree does not use, is refused as `file_unresolved`. Case folding is rejected for
+the root, in that precedence. A human-typed path is refused as `file_unresolved` when it names
+anything other than a regular file, when it spells a real file in a case the tree does not use, and
+when it is absolute and mis-cases the repo-root prefix. Case folding is rejected for
 coverage-path resolution, where it can merge two real files; it is not rejected for extension
 routing, which only decides whether to launch a process, nor for a repo-root prefix that
 `os.SameFile` confirms reaches the root directory, which merges nothing.
@@ -46,7 +47,8 @@ in source paths, so extractor output is already in the canonical form, and a mis
 
 **Human-typed paths** on `--files` and `--coverage` resolve against the process cwd, then relativize.
 A `--coverage` path may live anywhere, since a report is not repo content. A `--files` path outside
-the repo root is exit 1, and three of its refusals share the `file_unresolved` code:
+the repo root is exit 1. Three further `--files` refusals, on paths that do resolve inside the root,
+share the `file_unresolved` code:
 
 - A path resolving inside the root that names anything other than a regular file. The gate says "is a
   directory, not a file" for a directory and "is not a regular file" for a fifo, socket or device
@@ -101,16 +103,19 @@ files. Folding a repo-root prefix **verified by `os.SameFile`** cannot: two dire
 case are two inodes on a case-sensitive filesystem, so `/tmp/REPO` beside a real `/tmp/repo` still reads
 as outside on Linux, which is the property the rejection protects. That narrow fold is now taken, with
 [issue 48](https://github.com/tvrmsmith/coding-standards/issues/48) and
-[issue 36](https://github.com/tvrmsmith/coding-standards/issues/36). It governs the root prefix alone, at
-every door into containment: a coverage candidate or a report display name whose prefix is mis-cased
-places and is named where it really sits rather than being reported as escaping the repo, and the
-`--files` refusal above survives as a refusal about spelling. Case **below** the root is still refused,
-unfolded, which is what keeps `case_only_path_difference` at exit 1 and keeps the gate from attributing
-coverage to a file the report did not measure. `strings.EqualFold` runs ahead of the `os.SameFile`
-confirmation, so a bind mount or a hard-linked directory, one inode reached under two unrelated names,
-does not fold either. Coverage-path resolution is what the paragraph above scopes the rejection to, and
-the fold is admitted there because `os.SameFile` supplies the evidence that reasoning lacked, not
-because the rejection is being narrowed by preference.
+[issue 36](https://github.com/tvrmsmith/coding-standards/issues/36).
+
+It governs the root prefix alone, at every door into containment: a coverage candidate or a report
+display name whose prefix is mis-cased places and is named where it really sits rather than being
+reported as escaping the repo, and the `--files` refusal above survives as a refusal about spelling.
+Coverage-path resolution is what the paragraph above scopes the rejection to, and the fold is admitted
+there because `os.SameFile` supplies the evidence that reasoning lacked, not because the rejection is
+being narrowed by preference.
+
+Case **below** the root is still refused, unfolded, which is what keeps `case_only_path_difference` at
+exit 1 and keeps the gate from attributing coverage to a file the report did not measure.
+`strings.EqualFold` runs ahead of the `os.SameFile` confirmation, so a bind mount or a hard-linked
+directory, one inode reached under two unrelated names, does not fold either.
 
 **A `--source-root` escape hatch** for reports whose root has been erased. Rejected as configuration with
 no user. The failure names the MSBuild property to turn off, and the day someone hits it the flag is a
@@ -124,8 +129,8 @@ confined to `<source>`.
 
 Three exit-1 rules land here, typed `coverage_source_root_erased`, `file_ambiguous` and
 `coverage_outside_repo` in [ADR 0008](0008-the-machine-document-is-the-only-output.md). They are checked
-per report, in discovery order, and within one report in the order the three paragraphs below run. The
-erased source root is tested over the whole class list before any candidate is built.
+per report, in discovery order, and within one report in that order. The erased source root is tested
+over the whole class list before any candidate is built.
 
 **A report whose source root has been erased fails the run, exit 1.** `DeterministicReport=true` emits
 `<sources/>` empty with filenames rooted at a `/_/` placeholder, and `UseSourceLink=true` emits one
@@ -154,7 +159,8 @@ The rule is unconditional. Whether a candidate failed because it landed outside 
 file is gone from disk makes no difference at report level, and the two were tried as separate signals
 and reverted: a real coverlet report on Unix carries `<source>/</source>`, which resolves, so no on-disk
 signal tells "built in another checkout" apart from "deleted since the test run", and splitting them
-left the container case undiagnosed. A single unplaceable path is still ignored in silence. It is only a
+left the container case undiagnosed. A single unplaceable path is still ignored in silence, per the
+"unresolvable report path" paragraph below. It is only a
 report with nothing left that fails. A report carrying no `<class>` element at all raises nothing, since
 it placed nothing to be outside; a changed method it fails to cover still fails the run as
 `unknown_changed_method`.
@@ -180,8 +186,8 @@ that issue 6 unions every discovered report rather than taking the newest.
 
 ## History
 
-Accepted with six dated amendments, five of which were folded into the text they corrected on
-2026-09-11 once each had landed. The first 2026-09-03 entry scoped the case-folding rejection to
+Accepted with six dated amendments. On 2026-09-11 four were folded into the text they corrected, one
+was dropped, and one was kept. The first 2026-09-03 entry scoped the case-folding rejection to
 coverage-path resolution. The 2026-09-05 and 2026-09-07 entries added the human-typed refusals that
 came with [issue 14](https://github.com/tvrmsmith/coding-standards/issues/14). The 2026-09-04 entry
 recorded three exit-1 rules arriving, and the second 2026-09-03 entry, which had deferred those same

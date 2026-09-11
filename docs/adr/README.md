@@ -21,8 +21,7 @@ by 0007, [0005](0005-the-machine-document-is-the-only-output.md) by 0008,
 ## Conventions
 
 An accepted ADR keeps every decision it made and every reason it gave, through any edit. Text moves
-and a landed changelog entry retires; a decision, a reason, and the wording of a rule do not. Three
-ways to change one.
+and a landed changelog entry retires; a decision and its reasons do not. Three ways to change one.
 
 **Amend** when the decision stands and the text is wrong, incomplete, or overtaken by a detail.
 Write a paragraph opening with `**Amended YYYY-MM-DD.**` at the start of a line, and place it next
@@ -33,13 +32,13 @@ section states the current fact directly, carrying over every fact and every rea
 held; only the changelog hop goes. Add a `## History` section naming what was folded and when, so
 nothing about the file's past is lost. An amendment stays dated and separate while it records
 something still in flight, or where it narrowed a decision rather than recording one arriving. 0004
-was folded this way on 2026-09-11, from six dated entries and 2513 words to one and 2189.
+was folded this way on 2026-09-11, from six dated entries and 2513 words down to one entry.
 
 **Supersede** when the decision itself changes, and when amendments have accumulated past the point
 where the file can be read straight through. Write a new numbered ADR stating the rule in one pass.
 Give the old file a `**Superseded YYYY-MM-DD by [ADR NNNN](...)**` paragraph under its title and
 leave everything else in it untouched. Add the new ADR to the table above and move the old row down
-to the superseded line. Nothing is deleted.
+to the superseded line. Nothing in the superseded file is deleted.
 
 **Five amendments is the consolidation trigger.** Past that the amendments outweigh the decision and
 a reader has to reconstruct the rule from a changelog. ADR 0005 reached seventeen, four of them
@@ -50,6 +49,6 @@ when what is left still crowds out the decision.
 what a reader is expected to read in full, so it has to be readable in one sitting; the file is what
 they scroll when the block is not enough. A decision that will not fit is more than one decision.
 0007, 0008 and 0009 run 193 to 240 words in the block and 784 to 1499 in the file. 0004 is folded and
-still over the file target, at 185 words in the block and 2189 in the file.
+still over the file target, at 201 words in the block and 2215 in the file.
 
 If an ADR looks wrong, that is a decision to escalate to the user, not an edit to make.

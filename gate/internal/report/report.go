@@ -55,9 +55,9 @@ const (
 	// one of them lands here, so no refusal about a named path escapes the
 	// document.
 	CodeFileUnresolved = "file_unresolved"
-	// The three coverage-path causes ADR 0004's 2026-09-03 amendment defers to
-	// issue 16: a source root MSBuild erased, a class resolving to two paths
-	// inside the repo root, and a report resolving only outside it.
+	// The three coverage-path causes ADR 0004's Consequences names, which
+	// landed with issue 16: a source root MSBuild erased, a class resolving to
+	// two paths inside the repo root, and a report resolving only outside it.
 	// coverage.mergeInto owns the order they are checked in.
 	CodeCoverageSourceRootErased = "coverage_source_root_erased"
 	CodeFileAmbiguous            = "file_ambiguous"
