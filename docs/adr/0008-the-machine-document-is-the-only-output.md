@@ -43,9 +43,9 @@ always present. `action` and `target_coverage` are typed cells in the table rath
 consumer reading "raise coverage to 0.8" reads `0.8` and not a sentence.
 
 **Amended 2026-09-09.** A table with no rows encodes as `crap: []`, since with no elements there is
-no uniform shape to declare. ADR 0005 fixed that encoding and this file lost it in consolidation,
-while `internal/toon` still implements it. The amendment sits here rather than beside the
-crap-table sentence in the current rule, which is near the 250-word cap.
+no uniform shape to declare. This qualifies "Its field list is fixed and does not vary with the
+outcome". ADR 0005 fixed that encoding and this file lost it in consolidation, while `internal/toon`
+still implements it.
 
 `skipped_paths` lists paths no extractor claimed. Two things produce it: a changed file whose
 extension no extractor in the language table handles, and a `--files` path that resolves to a real
@@ -55,7 +55,7 @@ file no extractor claims. Both proceed; neither fails the run.
 fresher run already superseded (issue 32). It proceeds too, unless it is the only coverage the run
 found, in which case the run still fails with `coverage_stale`.
 
-**Amended 2026-09-09.** This corrects the sentence above, which names the wrong pair. Nothing
+**Amended 2026-09-09.** This corrects "Two things produce it", which names the wrong pair. Nothing
 produces a `skipped_paths` entry for a changed file whose extension no extractor handles, because
 the diff scopes never write the field at all. What writes it is a `--files` path resolving to a real
 file no extractor claims, and the coverage reports discovery could not read or found superseded.
