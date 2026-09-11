@@ -10,6 +10,7 @@ package gate_test
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -205,6 +206,18 @@ func (f *fixture) runWithEnv(extra ...string) runResult {
 	return f.exec(binDir, f.root, nil, append([]string{"METRIC_GATE_STUB=" + f.stubConfigPath()}, extra...)...)
 }
 
+// runWithStdout is run with out standing in for the gate's stdout, which is
+// how a case points the write at a broken descriptor like /dev/full. It takes
+// an *os.File because that is the only thing os/exec hands the child as its
+// own descriptor: any other writer gets a pipe os/exec copies from, so the
+// child's writes all succeed and no write failure ever reaches the gate. What
+// out received is the caller's to read, since /dev/full and its kind cannot be
+// read back, so only the exit code and stderr come back here.
+func (f *fixture) runWithStdout(out *os.File) (int, string) {
+	f.t.Helper()
+	return f.execTo(binDir, f.root, nil, out, "METRIC_GATE_STUB="+f.stubConfigPath())
+}
+
 // runIn executes the gate against the binary and extractor sitting in dir
 // rather than the shared stub-based binDir, so a case that needs its own
 // installation cannot disturb the rest of the suite.
@@ -264,22 +277,33 @@ func (f *fixture) stubConfigPath() string {
 // does not mean to pin what a relative path resolves against.
 func (f *fixture) exec(dir, workdir string, args []string, extraEnv ...string) runResult {
 	f.t.Helper()
+	var stdout strings.Builder
+	exitCode, stderr := f.execTo(dir, workdir, args, &stdout, extraEnv...)
+	return runResult{exitCode: exitCode, stdout: stdout.String(), stderr: stderr}
+}
+
+// execTo starts the gate with its stdout pointed at out and reports the two
+// things it learns whatever out is, the exit code and stderr. Assembling a
+// whole runResult is exec's job alone, so no caller can read an unset stdout
+// field as the gate having printed nothing.
+func (f *fixture) execTo(dir, workdir string, args []string, out io.Writer, extraEnv ...string) (int, string) {
+	f.t.Helper()
 	cmd := exec.Command(filepath.Join(dir, "metric-gate"), args...)
 	cmd.Dir = workdir
 	cmd.Env = append(os.Environ(), append(append([]string{}, gitEnv...), extraEnv...)...)
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
+	var stderr strings.Builder
+	cmd.Stdout = out
 	cmd.Stderr = &stderr
 	err := cmd.Run()
-	result := runResult{stdout: stdout.String(), stderr: stderr.String()}
+	exitCode := 0
 	switch e := err.(type) {
 	case nil:
 	case *exec.ExitError:
-		result.exitCode = e.ExitCode()
+		exitCode = e.ExitCode()
 	default:
 		f.t.Fatalf("running metric-gate: %v", err)
 	}
-	return result
+	return exitCode, stderr.String()
 }
 
 // assertMatches checks the run against a golden file and the expected exit
