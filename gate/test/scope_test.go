@@ -451,11 +451,20 @@ func TestFilesNamingAMisCasedRepoRootPrefixRefusesTheSpellingNotTheLocation(t *t
 // The skip fires on CI, which is ubuntu-latest, because this case goes end to
 // end through a real mis-cased spelling and that needs a filesystem that folds.
 // It is the shape a developer actually types, so it stays, and it is the only
-// coverage the shipped refusal has: nothing verifies it on ubuntu-latest. The
-// unit cases in gate/internal/srcpath do run the folded arm there, but they
-// drive it from a Root reached under a case-differing symlink, which is a Root
-// NewRoot cannot produce, so they test the arm's logic rather than a state a
-// Linux user reaches.
+// coverage the shipped refusal has: nothing verifies it on ubuntu-latest, and
+// the golden gate/test/golden/files_miscased_root_prefix.toon is never rendered
+// there, so it can drift with the document schema without a test going red.
+// Trevor has accepted that residual risk.
+//
+// The fold is macOS-only by construction, not by an omission a job could close.
+// NewRoot runs EvalSymlinks over the whole path, so a real Root's resolved field
+// is symlink-free and spelled exactly as the tree spells it, and on a
+// case-sensitive filesystem no other spelling reaches that directory. The unit
+// cases in gate/internal/srcpath do run the folded arm on Linux, but they
+// hand-build a Root the constructor cannot produce, so they test the arm's logic
+// rather than a state a Linux user reaches. Symlinking an upper-cased name onto
+// the fixture repo here would not help: EvalSymlinks collapses the link and
+// nothing folds.
 func sameDirectoryUpperCased(t *testing.T, dir string) string {
 	t.Helper()
 	upper := strings.ToUpper(dir)
