@@ -17,7 +17,7 @@ case the tree does not use, is refused as `file_unresolved`. Case folding is rej
 coverage-path resolution, where it can merge two real files; it is not rejected for extension
 routing, which only decides whether to launch a process.
 
-Sections below carry the reasoning and five dated amendments.
+Sections below carry the reasoning and six dated amendments.
 
 ## Decision
 
@@ -125,6 +125,31 @@ developer typed it. Canonicalizing to git's spelling instead of refusing stays a
 non-regular inode, not directories alone, so a `--files` path naming a fifo, socket or device node is exit 1 under
 the same code. The gate says "is a directory, not a file" for a directory and "is not a regular file" for the rest,
 which matches how the regular-file narrowing above already reads for coverage candidates.
+
+**Amended 2026-09-11.** [Issue 38](https://github.com/tvrmsmith/coding-standards/issues/38) landed the
+first case that consumes a report coverlet wrote. `TestFullStackScoresAReportCoverletWrote` in
+`gate/test/coverlet_test.go` runs `dotnet test --collect:"XPlat Code Coverage"` over a generated fixture
+solution and scores the file the collector left behind. Every other case in that suite builds its XML with
+the hand-written `cobertura()` helper, so until now the coverage-report rule in the Decision section above
+was only ever checked against this repo's own reading of the format. The 2026-09-04 amendment states the
+Unix `<source>/</source>` shape as a fact; the suite now exercises it. The join the case drives is that `/`
+plus a class filename carrying the absolute path with its leading slash stripped,
+so a checkout at `/work/repo` yields `work/repo/src/Points.cs`, which is what
+"`<sources><source>` joined to `filename`" comes to in practice. The same report carries `branch="False"` rather than lowercase, hit counts above 1, a
+`<methods>` block duplicating the class-level `<lines>`, and `line-rate` and `lines-covered` on the root
+element. The gate handled all of it already and nothing pinned it. `cobertura()` spells several of those
+differently and stays exactly as it is, because a stale, unparseable or source-root-erased report is cheap
+to build by hand and coverlet will not produce one on demand.
+
+The non-determinism that argued against a case like this needs no normalisation, and that is the decision
+rather than an omission. coverlet writes a fresh GUID directory per run and a `timestamp` that moves, and
+neither reaches the assertion, because on the success path the machine document names no report path and no
+timestamp. `skipped_paths` is empty and the crap table carries source paths only, so the golden's one hole
+stays the resolved base. What the harness guarantees instead is that exactly one report exists, which it
+gets from a fresh temp repo per run and a single `dotnet test`. A second run would leave a superseded report
+the gate lists in `skipped_paths`, and that is a second GUID in the document. The fixture pins its package
+versions as literals for the same reason it pins the SDK, so a coverlet bump that changes the report shape
+is a deliberate change that reds the case.
 
 ## Considered options
 

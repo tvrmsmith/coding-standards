@@ -29,17 +29,17 @@ const extractorPackage = "Tvrmsmith.MetricGate.CSharp"
 const dotnetDir = "../../dotnet"
 
 // envRequireDotnet names the variable CI sets to forbid every skip route, so
-// the one case that drives the real extractor cannot lapse into a green skip.
+// the cases that drive the real toolchain cannot lapse into a green skip.
 const envRequireDotnet = "METRIC_GATE_REQUIRE_DOTNET"
 
-// reasonShort is why TestFullStackDrivesTheRealDotnetExtractor fails under
-// -short once METRIC_GATE_REQUIRE_DOTNET forbids every skip route.
-const reasonShort = "full-stack case packs and installs a dotnet tool, skipped with -short"
+// reasonShort is why the cases in realExtractorCases fail under -short once
+// METRIC_GATE_REQUIRE_DOTNET forbids every skip route.
+const reasonShort = "full-stack cases pack and install a dotnet tool, skipped with -short"
 
-// reasonUnset is why the case skips when nothing enforces it. It states the
-// one thing a reader has to do to make the case run, because the case asks
-// nothing of the machine before it decides.
-var reasonUnset = "set " + envRequireDotnet + "=1 to run the full-stack case"
+// reasonUnset is why those cases skip when nothing enforces it. It states the
+// one thing a reader has to do to make them run, because they ask nothing of
+// the machine before they decide.
+var reasonUnset = "set " + envRequireDotnet + "=1 to run the full-stack cases"
 
 // requireDotnet reads a METRIC_GATE_REQUIRE_DOTNET value and whether it was
 // set at all. It takes both instead of reading the environment so every value
@@ -102,15 +102,33 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 	}
 }
 
-// childCase selects the full-stack case in a child and nothing else. Widening
-// this pattern would let the child re-enter the forking tests and fork
-// forever.
-const childCase = "^TestFullStackDrivesTheRealDotnetExtractor$"
+// realExtractorCases names every case that drives the real dotnet toolchain
+// and so decides on METRIC_GATE_REQUIRE_DOTNET. The child selection and the
+// child's RUN lines are both derived from it, so adding a case here is the one
+// edit that puts it under the enforcement rows below. The same names appear in
+// ci.yml, which greps the verbose log for each one's PASS line.
+var realExtractorCases = []string{
+	"TestFullStackDrivesTheRealDotnetExtractor",
+	"TestFullStackScoresAReportCoverletWrote",
+}
 
-// childRan is what -test.v prints once a child is past TestMain and into the
-// full-stack case. Asserting it is what separates "the child failed for the
+// childCase selects those cases in a child and nothing else. Widening this
+// pattern would let the child re-enter the forking tests and fork forever.
+var childCase = "^(" + strings.Join(realExtractorCases, "|") + ")$"
+
+// childRan is what -test.v prints once a child is past TestMain and into each
+// selected case. Asserting them is what separates "the child failed for the
 // reason under test" from "the child never built" or "-run matched nothing".
-const childRan = "=== RUN   TestFullStackDrivesTheRealDotnetExtractor"
+var childRan = runLines(realExtractorCases)
+
+// runLines is the -test.v RUN line for each named case.
+func runLines(names []string) []string {
+	lines := make([]string, len(names))
+	for i, name := range names {
+		lines[i] = "=== RUN   " + name
+	}
+	return lines
+}
 
 // childTimeout bounds a child. A test binary invoked directly, rather than
 // through `go test`, defaults -test.timeout to 0, so without this a child that
@@ -140,11 +158,11 @@ func mustContain(t *testing.T, out string, wants ...string) {
 	}
 }
 
-// TestRequireDotnetDecidesTheFullStackOutcome runs the full-stack case in a
+// TestRequireDotnetDecidesTheFullStackOutcome runs the full-stack cases in a
 // child copy of this test binary with METRIC_GATE_REQUIRE_DOTNET set and
-// unset. The case asks the machine nothing before it decides, so the variable
-// and -short are the whole input, and only a real run proves the fatal route
-// is reachable at all rather than dead behind a skip.
+// unset. They ask the machine nothing before they decide, so the variable and
+// -short are the whole input, and only a real run proves the fatal route is
+// reachable at all rather than dead behind a skip.
 func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 	if testing.Short() {
 		t.Skip("forks child test binaries that each rebuild the gate, skipped with -short")
@@ -189,7 +207,8 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 			if !c.wantErr && err != nil {
 				t.Fatalf("child failed with %v, want a pass. output:\n%s", err, out)
 			}
-			mustContain(t, out, append([]string{childRan}, c.wants...)...)
+			mustContain(t, out, childRan...)
+			mustContain(t, out, c.wants...)
 		})
 	}
 }
@@ -197,7 +216,7 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 // TestTestMainRefusesAnUnusableRequireDotnet runs this binary with nothing
 // selected, so the only thing under test is TestMain's read of
 // METRIC_GATE_REQUIRE_DOTNET. That guard is what stops a -run filter excluding
-// the full-stack case from leaving a typo undetected, and the parse it calls
+// the full-stack cases from leaving a typo undetected, and the parse it calls
 // is covered as a pure function while the wiring around it is not.
 func TestTestMainRefusesAnUnusableRequireDotnet(t *testing.T) {
 	if testing.Short() {

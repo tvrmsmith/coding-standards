@@ -77,27 +77,28 @@ jobs:
       # because a failed SDK install reds the job on its own and running the
       # tests anyway still reports the Go suite in the same round trip rather
       # than withholding it behind a broken install. METRIC_GATE_REQUIRE_DOTNET
-      # turns a skip of the one case that packs and installs the real dotnet
-      # extractor into a failure, because a silent skip would let that path go
-      # unexercised forever. The variable only turns a skip into a failure
-      # though, so it says nothing about a case no run selected. The PASS line
-      # is what closes that: a narrowed package pattern, a -run filter or a
-      # build tag all leave it absent, and no run can print it without the case
-      # having executed. That also covers the env key, because a key that
-      # drifted from the constant the suite reads leaves the case skipping and
-      # the line missing.
+      # turns a skip of either case that drives the real dotnet toolchain into a
+      # failure, because a silent skip would let those paths go unexercised
+      # forever. The variable only turns a skip into a failure though, so it
+      # says nothing about a case no run selected. The PASS lines are what close
+      # that: a narrowed package pattern, a -run filter or a build tag all leave
+      # them absent, and no run can print one without the case having executed.
+      # That also covers the env key, because a key that drifted from the
+      # constant the suite reads leaves both cases skipping and both lines
+      # missing.
       #
       # The explicit -timeout replaces Go's default 10 minutes per binary. What
       # dominates its cost is not the number of cases but that the enforcement
       # tests re-run this binary as a child process, and every one of those
       # children re-runs TestMain, which shells out to go build twice before
-      # the case it was asked for even starts; on top of that the full-stack
+      # the case it was asked for even starts; on top of that each full-stack
       # case packs the tool and installs it against an empty NUGET_PACKAGES
-      # directory. The gate/test package alone measured 87s locally with a warm
-      # build cache and a populated NuGet cache, so 12m leaves room for a cold
-      # restore on a slower runner. Under the default a slow restore surfaces
-      # as an opaque panic instead.
-      - name: Run the gate suite and prove the full-stack case ran
+      # directory, and the coverlet case then runs dotnet test over a generated
+      # fixture solution. The gate/test package alone measured 109s locally with
+      # a warm build cache and a populated NuGet cache, so 12m leaves room for a
+      # cold restore on a slower runner. Under the default a slow restore
+      # surfaces as an opaque panic instead.
+      - name: Run the gate suite and prove the full-stack cases ran
         working-directory: gate
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         env:
@@ -105,13 +106,18 @@ jobs:
         run: |
           set -euo pipefail
           go test ./... -count=1 -v -timeout 12m | tee "$RUNNER_TEMP/gate-tests.txt"
-          if ! grep -qF -- '--- PASS: TestFullStackDrivesTheRealDotnetExtractor' "$RUNNER_TEMP/gate-tests.txt"; then
-            echo "The gate suite passed without TestFullStackDrivesTheRealDotnetExtractor" >&2
-            echo "reporting PASS, so the case that packs and installs the real dotnet" >&2
-            echo "extractor did not run. Either the go test line above no longer selects" >&2
-            echo "its package, the case was renamed, or enforcement is off." >&2
-            exit 1
-          fi
+          # One name per case in the suite's realExtractorCases list. Adding a
+          # case there adds a line here.
+          for name in TestFullStackDrivesTheRealDotnetExtractor \
+                      TestFullStackScoresAReportCoverletWrote; do
+            if ! grep -qF -- "--- PASS: $name" "$RUNNER_TEMP/gate-tests.txt"; then
+              echo "The gate suite passed without $name reporting PASS, so a case" >&2
+              echo "that drives the real dotnet toolchain did not run. Either the go" >&2
+              echo "test line above no longer selects its package, the case was" >&2
+              echo "renamed, or enforcement is off." >&2
+              exit 1
+            fi
+          done
 
   dotnet:
     name: extractor and analyzers (dotnet)
