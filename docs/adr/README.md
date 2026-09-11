@@ -20,15 +20,21 @@ by 0007, [0005](0005-the-machine-document-is-the-only-output.md) by 0008,
 
 ## Conventions
 
-An accepted ADR is never rewritten in place and never reworded for style. There are three ways to
-change one, and only the third removes anything.
+An accepted ADR is never reworded for style. There are four ways to change one, and only the last
+removes anything.
 
 **Amend** when the decision stands and the text is wrong, incomplete, or overtaken by a detail.
 Write a paragraph opening with `**Amended YYYY-MM-DD.**` at the start of a line, and place it next
 to the text it corrects, so a reader meets the correction where they meet the claim.
 
-**Supersede** when the decision itself changes, and when amendments have accumulated past the point
-where the file can be read straight through. Write a new numbered ADR stating the rule in one pass.
+**Consolidate** when the decision still stands but the amendments have piled up past the point where
+the file reads straight through. Rewrite the file in place, folding every amendment's rule back into
+the body, and open it with a `**Consolidated YYYY-MM-DD.**` paragraph saying so. The number stays, so
+every link to it keeps working. No rule may be dropped and no decision may change; `git log -p` on
+the file keeps the amendments as they were written. Consolidating is a decision to escalate to the
+user first, not a tidy-up to make on your own.
+
+**Supersede** when the decision itself changes. Write a new numbered ADR stating the rule in one pass.
 Give the old file a `**Superseded YYYY-MM-DD by [ADR NNNN](...)**` paragraph under its title and
 leave everything else in it untouched. Add the new ADR to the table above and move the old row down
 to the superseded line. Nothing is deleted.
@@ -41,13 +47,16 @@ history, and a consequence it already states is that history.
 
 **Five amendments is the consolidation trigger.** Past that the amendments outweigh the decision and
 a reader has to reconstruct the rule from a changelog. ADR 0005 reached seventeen, four of them
-revising one number, each claiming to supersede the others.
+revising one number, each claiming to supersede the others. 0004 hit six on 2026-09-11 and was
+consolidated in place the same day.
 
 **The `## Current rule` block stays under 250 words**, and the whole file under 1500. The block is
 what a reader is expected to read in full, so it has to be readable in one sitting; the file is what
 they scroll when the block is not enough. A decision that will not fit is more than one decision.
 Neither ceiling is checked mechanically yet, which is [issue 87](https://github.com/tvrmsmith/coding-standards/issues/87).
 
-0004 is past both triggers, six amendments and 2606 words, and is the next one to consolidate.
+0004 came down from 2606 words to 1791 in that consolidation, with no rule dropped. It is still over
+1500, and the remaining excess is reasoning rather than restatement, so the next move on it is the
+split this section already prescribes rather than another pass of trimming.
 
 If an ADR looks wrong, that is a decision to escalate to the user, not an edit to make.
