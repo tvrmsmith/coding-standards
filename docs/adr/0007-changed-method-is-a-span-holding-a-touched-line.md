@@ -29,17 +29,6 @@ measured at its new location rather than dropped by `--diff-filter=ACM`. On its 
 pure `git mv` mark every method in the moved file changed, so the gate drops an added file whose
 content matches a deleted one in the same diff.
 
-**Amended 2026-09-11.** `--diff-filter=ACM` excludes `T`, so a typechange contributes no touched
-lines in either direction. A source file replaced by a symlink is the wanted answer, since a link
-holds no source to measure. A symlink replaced by a real source file is an accepted gap, and its
-methods stay unmeasured until an edit touches each of them, because the file never arrives as status
-`A`. Widening to `ACMT` is not the remedy. git renders a typechange as a delete plus an add, so the
-first direction's new side becomes the link's target text under a claimed `.cs` path, and the
-extractor follows the link and reports the target's spans under the link's path. Measuring the
-second direction needs a pass classifying the new side's mode before extraction, which is
-[issue 84](https://github.com/tvrmsmith/coding-standards/issues/84) rather than work taken here.
-Issues 25 and 75 pin both directions in `gate/test/gate_test.go`.
-
 Content is compared the way `-w` compares it, by hashing each side with every whitespace character
 dropped from each line and the line structure kept. A byte comparison would put a move-plus-reindent
 back in the changed set, which is the wall of failures `-w` exists to prevent.
@@ -58,6 +47,20 @@ other scope reads the working tree, which is the copy it measures. An added path
 read suppresses the drop for the whole run, because an uncounted digest would let a readable sibling
 look accounted for. A deleted submodule is skipped rather than read, since a gitlink's object id
 names a commit in another repository.
+
+**Amended 2026-09-11.** `--diff-filter=ACM` excludes `T`, so a typechange contributes no touched
+lines in either direction. A source file replaced by a symlink is the wanted answer, since a link
+holds no source to measure. A symlink replaced by a real source file is an accepted gap, and its
+methods stay unmeasured until an edit touches each of them, because the file never arrives as status
+`A`. Widening to `ACMT` is not the remedy. git renders a typechange as a delete plus an add, so in
+the first direction the new side is the link's own blob, one line holding the path it points at,
+under a name still claiming `.cs`. That line falls inside no span, so the guaranteed effect is
+`touched_lines_outside_spans` going 0 to 1 at exit 0, and where the extractor follows the link and
+the target's spans cover line 1, a method is measured under a path that does not hold it and the run
+fails on an unknown changed method. Measuring the second direction needs a pass classifying the new
+side's mode before extraction, which is
+[issue 84](https://github.com/tvrmsmith/coding-standards/issues/84) rather than work taken here.
+Issues 25 and 75 pin both directions in `gate/test/gate_test.go`.
 
 ## The gate pins every git setting its parsers depend on
 
@@ -121,8 +124,8 @@ otherwise good report.
 ## Considered options
 
 **Trimmed 2026-09-11**, with Trevor's approval, because this file's header delegates the reasoning
-to 0003 and the section then restated it. All six options and the reasoning that rejected each stay
-in [ADR 0003](0003-changed-method-is-a-span-holding-a-touched-line.md), which is preserved. Nothing
+to 0003 and the section then restated it. Every option and the reasoning that rejected each stay in
+[ADR 0003](0003-changed-method-is-a-span-holding-a-touched-line.md), which is preserved. Nothing
 here reopens them.
 
 ## Consequences
