@@ -13,7 +13,8 @@ byte-identical. A human-typed path resolves against the current working director
 A path that will not resolve refuses the run rather than passing with nothing measured:
 `coverage_source_root_erased`, then `file_ambiguous`, then a coverage path with zero candidates in
 the root, in that precedence. A human-typed path is refused as `file_unresolved` when it names
-anything other than a regular file, and when it spells a real file in a case the tree does not use.
+anything other than a regular file, and when it spells a real file in a case the tree does not use,
+among other reasons Decision lists.
 
 Case folding is rejected for coverage-path resolution, where it can merge two real files; it is not
 rejected for extension routing, which only decides whether to launch a process, nor for a repo-root
@@ -110,10 +111,10 @@ as outside on Linux, which is the property the rejection protects. That narrow f
 
 It governs the root prefix alone, at every door into containment: a coverage candidate or a report
 display name whose prefix is mis-cased places and is named where it really sits rather than being
-reported as escaping the repo, and the `--files` refusal in Decision survives as a refusal about
-spelling. Coverage-path resolution is exactly what the scoping paragraph opening "The rejection
-governs" confines the rejection to, and the fold is admitted there because `os.SameFile` supplies the
-evidence that reasoning lacked, not because the rejection is being narrowed by preference.
+reported as escaping the repo, and Decision's refusal of a mis-cased absolute root prefix survives as
+a refusal about how the root is spelled. The fold is admitted on the coverage side because
+`os.SameFile` supplies the evidence the scoping above lacked, not because the rejection is being
+narrowed by preference.
 
 Case **below** the root is still refused, unfolded, which is what keeps `case_only_path_difference` at
 exit 1 and keeps the gate from attributing coverage to a file the report did not measure.

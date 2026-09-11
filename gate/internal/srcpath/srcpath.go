@@ -486,7 +486,7 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // there is nobody to send back to the keyboard; the fold is confirmed by
 // os.SameFile, so it merges no two files (ADR 0004, amended 2026-09-11).
 //
-// Only an absolute one, which is the scope ADR 0004's amendment writes the rule
+// Only an absolute one, which is the scope ADR 0004's Decision writes the rule
 // in. A relative name carries no root prefix at all: the one weighed here came
 // from the process working directory, which is whatever path the developer's
 // shell cd'd through, so refusing would quote a name and blame a half of it that
