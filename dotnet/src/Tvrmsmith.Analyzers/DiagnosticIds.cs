@@ -36,4 +36,9 @@ public static class DiagnosticIds
     /// where the compiler's CS4014 cannot see it.
     /// </summary>
     public const string NoDroppedAsyncAssertion = "TVRM0005";
+
+    /// <summary>
+    /// <c>comment-block-length</c> — a run of non-documentation comments longer than the budget.
+    /// </summary>
+    public const string CommentBlockLength = "TVRM0006";
 }

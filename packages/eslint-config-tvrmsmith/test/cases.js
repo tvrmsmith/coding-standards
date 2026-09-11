@@ -135,6 +135,41 @@ export const cases = [
   expect(user).toMatchObject({ name: 'Ada', age: 36 })
 })`,
   },
+  // ---- base: comments, a paragraph justifying a workaround means the code is wrong ----
+  //
+  // The compliant sample is a doc comment, exempt however long it runs, because the same
+  // guideline requires documenting public API contracts. That exemption is what the whole
+  // rule rests on, so it is what this case pins.
+  {
+    rule: 'tvrmsmith/comment-block-length',
+    scope: 'source',
+    violating: `// The retry ceiling is inlined rather than read from the shared backoff helper.
+// That helper reads its ceiling from the config object, and the config object is not
+// populated yet at this point in startup, because the config loader itself goes through
+// this client. Moving the config load earlier was tried and broke the credential
+// provider, which also reads config and is constructed before the loader. The ordering
+// constraint is real but written down nowhere else, so it is written out here. Someone
+// should restructure startup so the config load does not depend on the client that
+// depends on the config, but that is larger than this fix needed. The inline value is
+// correct in the meantime. It must stay under the gateway's own timeout.
+// See also the matching note in the credential provider.
+// Last checked against the gateway config in the current release.
+export const RETRY_CEILING = 5`,
+    compliant: `/**
+ * The retry ceiling for this client.
+ *
+ * Inlined rather than read from the shared backoff helper: that helper reads its ceiling
+ * from the config object, the config loader goes through this client, and so the config
+ * is not populated yet at the point the ceiling is needed. Moving the config load earlier
+ * breaks the credential provider, which is constructed before the loader and also reads
+ * config.
+ *
+ * Invariant: must stay strictly under the gateway's own timeout. Raising one without the
+ * other reintroduces the hang this value was chosen to avoid.
+ */
+export const RETRY_CEILING = 5`,
+  },
+
   {
     rule: 'no-restricted-syntax',
     selector: noOptionalChainInExpect,

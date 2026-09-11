@@ -12,6 +12,7 @@ Flat config only.
 |---|---|---|
 | [`combine-assertions-on-same-object`](docs/rules/combine-assertions-on-same-object.md) | A1 — *Combine Assertions on the Same Object* (`test-best-practices`) | no, on purpose |
 | [`no-quantifier-assertion`](docs/rules/no-quantifier-assertion.md) | A2 — *Assertions Should Communicate Meaning* (`test-best-practices`) | no, on purpose |
+| [`comment-block-length`](docs/rules/comment-block-length.md) | *Comments* (`coding-standards`) | no, on purpose |
 
 A1 has no off-the-shelf rule at all. A2 mostly does, and `no-quantifier-assertion` covers
 what those rules leave behind: `expect(xs.every(p)).toBe(true)`, where the collection is
@@ -19,7 +20,11 @@ gone before the matcher runs. Which residue shape earned a rule was decided by m
 target repo, not by intuition. See `measure-a2-residue.mjs` in the config package, and the
 rule doc's provenance section.
 
-The enforcement mapping names three custom rules, but the other two are C#-only:
+The *Comments* guideline has no off-the-shelf rule in either ecosystem: every length rule on
+offer caps a physical line, so it flags long code and misses a long comment made of short
+lines. `comment-block-length` measures the comment instead, and exempts doc comments.
+
+The enforcement mapping names three custom assertion rules, but the other two are C#-only:
 
 - `no-suppression-before-assertion` — TypeScript needs no rule authoring;
   `@typescript-eslint/no-non-null-assertion` plus a `no-restricted-syntax` selector for
@@ -50,6 +55,11 @@ export default [
       'tvrmsmith/combine-assertions-on-same-object': 'warn',
       'tvrmsmith/no-quantifier-assertion': 'warn',
     },
+  },
+  {
+    files: ['**/*.{js,jsx,ts,tsx}'],
+    plugins: { tvrmsmith },
+    rules: { 'tvrmsmith/comment-block-length': ['warn', { max: 10 }] },
   },
 ]
 ```

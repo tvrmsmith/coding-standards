@@ -9,13 +9,22 @@ namespace Tvrmsmith.Analyzers;
 /// All of them default to <see cref="DiagnosticSeverity.Warning"/> and none is ever an
 /// error. Adoption is machine-local against code other people wrote and are not being asked to
 /// change; an error would break their builds on their machines.
+/// <see cref="CommentBlockLength"/> stays a warning for a second reason too: length is a weak
+/// proxy for what the comments guideline actually judges, so a report asks for a re-read rather
+/// than declaring a defect.
 /// </remarks>
 internal static class Descriptors
 {
     private const string Category = "Tvrmsmith.Assertions";
 
+    private const string CommentCategory = "Tvrmsmith.Comments";
+
     private const string SkillReferences =
         "https://github.com/tvrmsmith/coding-standards/blob/main/plugins/coding-standards/skills/test-best-practices/references/";
+
+    private const string CommentBlockLengthDocs =
+        "https://github.com/tvrmsmith/coding-standards/blob/main/packages/eslint-plugin-tvrmsmith/docs/rules/comment-block-length.md";
+
 
     /// <summary>TVRM0001 — <c>combine-assertions-on-same-object</c>.</summary>
     public static readonly DiagnosticDescriptor CombineAssertionsOnSameObject = new(
@@ -91,4 +100,26 @@ internal static class Descriptors
             + "not at all. The compiler's CS4014 catches this inside an async method; this rule "
             + "covers the synchronous test body it cannot see.",
         helpLinkUri: SkillReferences + "dotnet-awesome-assertions.md#assertions-must-actually-execute-custom-rule");
+
+    /// <summary>TVRM0006 — <c>comment-block-length</c>.</summary>
+    public static readonly DiagnosticDescriptor CommentBlockLength = new(
+        id: DiagnosticIds.CommentBlockLength,
+        title: "Comment block is over the length budget",
+        messageFormat:
+            "{0}-line comment block, over the {1}-line budget. Is it justifying the code below it? "
+            + "Then fix the code. Is it documenting a contract or an invariant? Then make it a doc "
+            // Multi-sentence, so RS1032 requires the trailing period the single-sentence
+            // messages above must not have.
+            + "comment, which is exempt.",
+        category: CommentCategory,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description:
+            "The comments guideline says a paragraph justifying a workaround means the code is "
+            + "wrong. Intent is not readable by a compiler, so length stands in as the one "
+            + "mechanical proxy, and it is a weak one: read the report as a prompt to re-read the "
+            + "code, not a verdict on it. Documentation comments are exempt at any length, because "
+            + "the same guideline requires documenting public API contracts, invariants, units and "
+            + "side effects.",
+        helpLinkUri: CommentBlockLengthDocs);
 }

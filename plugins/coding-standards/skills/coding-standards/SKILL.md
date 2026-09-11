@@ -92,8 +92,10 @@ comment, because the reader trusts it.
 - **Document what reading cannot recover.** Non-obvious logic, invariants, units, side effects, and
   public API contracts.
 - **Delete restatement.** `i++ // increment i` adds noise and a rot risk, nothing else.
-- **A paragraph justifying a workaround means the code is wrong.** Fix the code. The judgement is
-  whether the comment is *justifying* something, not how long it is.
+- **A paragraph justifying a workaround means the code is wrong.** Fix the code. The judgement
+  stays whether the comment is *justifying* something; length is only the tripwire that makes you
+  look. Lint warns over 10 lines (`comment-block-length`, TVRM0006), and a doc comment is exempt
+  at any length, so a report asks you to re-read the code rather than to trim the prose.
 
 ## React
 Touching `.jsx`/`.tsx`, or JSX or a `use*` hook in `.js`/`.ts` → read [`react.md`](./react.md) and
