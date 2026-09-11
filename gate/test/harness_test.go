@@ -26,7 +26,22 @@ var binDir string
 // extractorName is the binary name the gate's language map looks for.
 const extractorName = "metric-gate-csharp"
 
+// enforceDotnet is whether METRIC_GATE_REQUIRE_DOTNET forbids every skip route
+// of the case that drives the real dotnet extractor. TestMain decides it once
+// for the process, so no later reader can re-parse the variable and turn a
+// value the suite refuses into a quiet false.
+var enforceDotnet bool
+
 func TestMain(m *testing.M) {
+	// Parsed here rather than only where it is used, so a -run filter that
+	// excludes the full-stack case cannot leave a typo like
+	// METRIC_GATE_REQUIRE_DOTNET=true undetected and enforcement quietly off.
+	require, err := requireDotnet(os.LookupEnv(envRequireDotnet))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	enforceDotnet = require
 	dir, err := os.MkdirTemp("", "metric-gate-bin")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

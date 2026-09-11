@@ -24,6 +24,12 @@ env:
   # CI that does not reproduce locally is a version gap. Two jobs install node,
   # and reading the number from here is what keeps them on the same one.
   NODE_VERSION: "24"
+  # The SDK feature band still comes from dotnet/global.json. This pins the
+  # runtime line, which no project file states. Two jobs install the SDK, and
+  # reading the number from here is what stops the job that packs the tool from
+  # drifting onto a different runtime than the job that tests the same net8.0
+  # assemblies.
+  DOTNET_VERSION: "8.0.x"
 
 jobs:
   gate:
@@ -43,14 +49,69 @@ jobs:
           cache-dependency-path: |
             gate/go.mod
             gate/go.sum
+      - uses: actions/setup-dotnet@v4
+        with:
+          # Two installs, each for its own reason. global-json-file brings the
+          # SDK that packs the tool project: the test runs the pack and the
+          # tool install from dotnet/, so dotnet/global.json is an ancestor and
+          # governs the resolution here exactly as it does on a developer's
+          # machine, and that one file is the only pin. C# the local pack
+          # accepts therefore cannot red only in CI. The 8.0.x install is for
+          # the Microsoft.NETCore.App 8.x shared framework the installed net8.0
+          # tool shim launches on, which the pinned SDK does not carry. The
+          # tool asks for Major roll-forward, so a 10-only machine could run it
+          # too, but installing 8.0.x here means CI keeps exercising the 8 path
+          # and never the 10 one.
+          global-json-file: dotnet/global.json
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      # vet needs the Go toolchain and nothing else, so it carries the same
+      # explicit guard the tests do rather than inheriting the implicit
+      # success() that a failed SDK install would trip.
       - run: go vet ./...
         working-directory: gate
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
       # A vet finding is not a reason to withhold the test result, so the tests
-      # run anyway. They still need the toolchain, so a failed setup skips them
-      # rather than reporting a second broken thing.
-      - run: go test ./... -count=1
+      # run anyway. Go setup is their precondition, so a failed one skips them
+      # rather than reporting a second broken thing. A failed SDK install is
+      # not. The setup-dotnet step above carries no id and gates nothing,
+      # because a failed SDK install reds the job on its own and running the
+      # tests anyway still reports the Go suite in the same round trip rather
+      # than withholding it behind a broken install. METRIC_GATE_REQUIRE_DOTNET
+      # turns a skip of the one case that packs and installs the real dotnet
+      # extractor into a failure, because a silent skip would let that path go
+      # unexercised forever. The variable only turns a skip into a failure
+      # though, so it says nothing about a case no run selected. The PASS line
+      # is what closes that: a narrowed package pattern, a -run filter or a
+      # build tag all leave it absent, and no run can print it without the case
+      # having executed. That also covers the env key, because a key that
+      # drifted from the constant the suite reads leaves the case skipping and
+      # the line missing.
+      #
+      # The explicit -timeout replaces Go's default 10 minutes per binary. What
+      # dominates its cost is not the number of cases but that the enforcement
+      # tests re-run this binary as a child process, and every one of those
+      # children re-runs TestMain, which shells out to go build twice before
+      # the case it was asked for even starts; on top of that the full-stack
+      # case packs the tool and installs it against an empty NUGET_PACKAGES
+      # directory. The gate/test package alone measured 87s locally with a warm
+      # build cache and a populated NuGet cache, so 12m leaves room for a cold
+      # restore on a slower runner. Under the default a slow restore surfaces
+      # as an opaque panic instead.
+      - name: Run the gate suite and prove the full-stack case ran
         working-directory: gate
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        env:
+          METRIC_GATE_REQUIRE_DOTNET: "1"
+        run: |
+          set -euo pipefail
+          go test ./... -count=1 -v -timeout 12m | tee "$RUNNER_TEMP/gate-tests.txt"
+          if ! grep -qF -- '--- PASS: TestFullStackDrivesTheRealDotnetExtractor' "$RUNNER_TEMP/gate-tests.txt"; then
+            echo "The gate suite passed without TestFullStackDrivesTheRealDotnetExtractor" >&2
+            echo "reporting PASS, so the case that packs and installs the real dotnet" >&2
+            echo "extractor did not run. Either the go test line above no longer selects" >&2
+            echo "its package, the case was renamed, or enforcement is off." >&2
+            exit 1
+          fi
 
   dotnet:
     name: extractor and analyzers (dotnet)
@@ -65,7 +126,7 @@ jobs:
           # because it supplies the runtime the net8.0 test assemblies execute
           # on, which no project file states.
           global-json-file: dotnet/global.json
-          dotnet-version: 8.0.x
+          dotnet-version: ${{ env.DOTNET_VERSION }}
 
       # Each suite below runs even after an earlier one fails, so one round trip
       # reports every broken suite rather than only the first. Setup is not
@@ -134,6 +195,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
+        id: setup
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -152,6 +214,9 @@ jobs:
       # and dotnet/tests/Consumer exists to emit diagnostics rather than to be
       # run.
       - name: Compare the suites on disk against the hand-maintained list
+        # The node install is a precondition, because this step parses every
+        # manifest with node.
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           set -euo pipefail
 
