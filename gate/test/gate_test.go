@@ -788,7 +788,7 @@ func TestEveryMethodInANewlyAddedFileIsMeasured(t *testing.T) {
 
 // TestANewFileNeverAddedToTheIndexContributesNoChangedMethods is the other
 // half of the pair above: Scratch.cs is written but never `git add`ed, so
-// ADR 0003's tracked-paths-only amendment says it contributes nothing, and the
+// ADR 0007's tracked-paths-only rule says it contributes nothing, and the
 // changed set is OrderService.cs alone.
 //
 // The stub's stdout is canned and stays silent about Scratch.cs on purpose.
