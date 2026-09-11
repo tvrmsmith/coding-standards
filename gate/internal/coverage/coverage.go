@@ -122,6 +122,13 @@ type Lines map[int]bool
 // Set is the union of every discovered report, keyed by source path. A file
 // absent from the set matched no report path at all, which is what makes a
 // changed method in it unknown rather than untested.
+//
+// A present key mapping to empty Lines is a distinct answer, not a missing
+// one: every report that named the file listed it with no instrumentable
+// line at all. mergeInto seeds that entry deliberately, and join.Attribute
+// reads it as "the report never instrumented this file" and refuses to score
+// the file's changed methods. Dropping a lineless class here instead would
+// silently turn that answer back into the absent-key one.
 type Set map[srcpath.Path]Lines
 
 // Discover lists the Cobertura reports under the repo root, in a fixed order
@@ -561,6 +568,11 @@ func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath string
 		path := distinct[0]
 		lines, ok := merged[path]
 		if !ok {
+			// Seeded before the lines are folded in, so a class with no
+			// <line> at all still leaves a present key mapping to empty
+			// Lines. That entry is the answer join.Attribute reads as an
+			// uninstrumented file; skipping such a class would collapse it
+			// into the absent-key meaning.
 			lines = Lines{}
 			merged[path] = lines
 		}

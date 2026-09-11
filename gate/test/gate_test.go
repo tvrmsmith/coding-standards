@@ -925,13 +925,15 @@ func TestFileInAReportCarryingNoInstrumentableLinesIsUnknownRatherThanCovered(t 
 			"0 of 1 changed methods over CRAP threshold 30, worst score 0.00\n")
 }
 
-// TestOneLineSpanWhoseOnlyLineWasNeverHitIsMeasuredAtZero pins the boundary
-// the file_uninstrumented arm depends on. The report carries one
-// instrumentable line at the span's own line number with hits="0", so the
-// file's entry is not empty and the span reads measured at coverage 0. A
-// change that turned it unknown, or read it as structural_na treated as fully
-// covered, would fail this case.
-func TestOneLineSpanWhoseOnlyLineWasNeverHitIsMeasuredAtZero(t *testing.T) {
+// TestFileWhoseOnlyInstrumentedLineWasNeverHitIsMeasuredAtZero pins the
+// boundary the file_uninstrumented arm depends on. The file's entire coverage
+// entry is a single hits="0" line, so entry non-emptiness rests on an
+// uncovered line alone, which is what keeps the span off the
+// file_uninstrumented arm and reads it measured at coverage 0. Span length is
+// not this case's value: deleted_method already pins a one-line span at
+// coverage 0. A change that turned this unknown, or read it as structural_na
+// treated as fully covered, would fail here.
+func TestFileWhoseOnlyInstrumentedLineWasNeverHitIsMeasuredAtZero(t *testing.T) {
 	const money = "src/Ordering/Money.cs"
 	amount := span{File: money, Name: "Money.Amount", StartLine: 7, EndLine: 7, Complexity: 1}
 
@@ -946,7 +948,7 @@ func TestOneLineSpanWhoseOnlyLineWasNeverHitIsMeasuredAtZero(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(money), []span{amount}),
 	}
 
-	f.run().assertMatches(t, "one_line_span_never_hit", 0, f.baseLabel("main"),
+	f.run().assertMatches(t, "only_instrumented_line_never_hit", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 2.00\n")
 }
 
@@ -1000,6 +1002,34 @@ func TestTwoUnknownChangedMethodsAreCountedInThePlural(t *testing.T) {
 	}
 
 	f.run().assertMatches(t, "two_uninstrumented_methods", 1, f.baseLabel("main"),
+		"the gate could not score 2 changed methods, see the reason column of the table on stdout\n"+
+			"0 of 2 changed methods over CRAP threshold 30, worst score 0.00\n")
+}
+
+// TestTwoUnknownChangedMethodsCarryTheirOwnReasons pins the premise the
+// unknown message rests on: one run can produce two different unknown
+// reasons, so the message counts the methods and each row carries the reason
+// that applies to it. Ghost.cs is in no report at all and comes back
+// file_unmatched; OrderService.cs is listed with no instrumentable line and
+// comes back file_uninstrumented, both under the one plural message.
+func TestTwoUnknownChangedMethodsCarryTheirOwnReasons(t *testing.T) {
+	const ghost = "src/Ordering/Ghost.cs"
+	vanish := span{File: ghost, Name: "Ghost.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write(ghost, csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.touchLine(ghost, 7)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(ghost, orderService), []span{vanish, cancel}),
+	}
+
+	f.run().assertMatches(t, "mixed_unknown_reasons", 1, f.baseLabel("main"),
 		"the gate could not score 2 changed methods, see the reason column of the table on stdout\n"+
 			"0 of 2 changed methods over CRAP threshold 30, worst score 0.00\n")
 }
