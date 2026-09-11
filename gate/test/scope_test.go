@@ -240,6 +240,21 @@ func TestSinceNamingATagThatDoesNotPointAtACommitFailsNamingThatRef(t *testing.T
 		"no diff base: --since treetag does not name a commit\n")
 }
 
+func TestSinceNamingAPathInsideACommitFailsNamingThatRev(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+
+	// `HEAD:<path>` resolves, to the blob the path holds, so the unpeeled
+	// verify passes it through and the classification is what answers. It is
+	// the shape that catches a peel applied to the rev the developer typed
+	// rather than to the id the verify resolved: `HEAD:<path>^{}` asks git for
+	// a path spelled with a trailing `^{}`, which no tree holds, and the run
+	// would report a git failure over a path nobody typed.
+	f.runArgs("--since", "HEAD:"+orderService).assertMatches(t, "since_path_rev_not_a_commit", 1, "",
+		"no diff base: --since HEAD:"+orderService+" does not name a commit\n")
+}
+
 func TestStagedMeasuresOnlyWhatIsStaged(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))

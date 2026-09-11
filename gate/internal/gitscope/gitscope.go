@@ -303,10 +303,11 @@ func (r Repo) ResolveStaged() (Base, error) {
 // unreadable diff on every other exit code. It promises no commit id. Every
 // check here is unpeeled, so for a ref whose commit object the store lacks git
 // exits 0 and prints an id the object store does not hold, which is the fact
-// the merge base or the cat-file check that follows fails on. ResolveStaged is
-// the one of the five call sites that reads the string, and it can be handed a
-// dangling id that way. The other four discard it and want only which of the
-// two arms fired.
+// the merge base or the cat-file check that follows fails on. Two of the five
+// call sites read the string, ResolveStaged's HEAD check and ResolveRef's ref
+// check, which hands the id to objectType, and either can be handed a dangling
+// id that way. The other three discard it and want only which of the two arms
+// fired.
 //
 // Every rev-parse check the resolvers make shares this rather than spelling the
 // same two arms out each time, which is what makes one reading of noMatch the
