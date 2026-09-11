@@ -55,14 +55,18 @@ file no extractor claims. Both proceed; neither fails the run.
 fresher run already superseded (issue 32). It proceeds too, unless it is the only coverage the run
 found, in which case the run still fails with `coverage_stale`.
 
-**Amended 2026-09-09.** This corrects "Two things produce it", which names the wrong pair. Nothing
-produces a `skipped_paths` entry for a changed file whose extension no extractor handles, because
-the diff scopes never write the field at all. What writes it is a `--files` path resolving to a real
-file no extractor claims, and the coverage reports discovery could not read or found superseded.
-Those two are ordered, the `--files` paths first and the discovery skips after them. ADR 0005 fixed
-that order and this file lost it in consolidation, while `cmd/metric-gate` still enforces it with a
-deliberate append and `gate/test/golden/files_skip_before_discovery_skip.toon` still pins it.
-Merging the two lists and sorting the result reads as tidier and breaks it.
+**Amended 2026-09-11.** This corrects the producer count in both "Two things produce it" above and
+"A third thing produces `skipped_paths`" in the amendment between, which together reach three and
+name the wrong ones. There are two. The first is a `--files` path resolving to a real file no
+extractor claims. The second is coverage discovery, covering the paths it could not read, a
+directory it cannot enter among them, and the reports it found superseded. The `coverage_stale`
+caveat in that intervening amendment stands. Nothing produces an entry for a changed file whose
+extension no extractor handles, because no diff-scope selection writes the field; discovery still
+writes it under every scope, so a merge-base run does emit entries. The two are ordered, the
+`--files` paths first and the discovery skips after them. ADR 0005 fixed that order and this file
+lost it in consolidation, while `cmd/metric-gate` still enforces it with a deliberate append and
+`gate/test/golden/files_skip_before_discovery_skip.toon` still pins it. Merging the two lists and
+sorting the result reads as tidier and breaks it.
 
 One parser owns argv. Every flag the command takes, `--staged`, `--since`, `--files` and
 `--coverage`, is parsed in one place and printed in one usage block. Two parsers, each rejecting the
