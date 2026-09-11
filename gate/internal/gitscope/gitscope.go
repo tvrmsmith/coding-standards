@@ -35,8 +35,9 @@
 //
 // The diff covers tracked paths only. A brand-new source file the developer
 // has not yet `git add`ed contributes no touched lines and therefore no
-// changed methods, which ADR 0007 records as a deliberate limitation of the
-// merge-base scope rather than an oversight.
+// changed methods. ADR 0007 states this as a flat rule for every diff scope:
+// touched lines come from tracked paths only, and a file never added to the
+// index contributes nothing.
 package gitscope
 
 import (

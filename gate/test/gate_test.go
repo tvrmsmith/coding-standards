@@ -3710,7 +3710,10 @@ func TestRunOutsideAGitRepoWritesNoDocumentAndExitsOne(t *testing.T) {
 	// This is the shape the run has today, not the shape it should have.
 	// Running outside a git repo is one of the known deviations the metric-gate
 	// package doc catalogues, landing upstream of the document before a base is
-	// resolved. git's own explanation is in git's own language, but the failing
+	// resolved. Issue 86 asks whether the path gets a typed code and a document
+	// or whether ADR 0008 carves the deviation out permanently; this case goes
+	// red the day it gets a document. git's own explanation is in git's own
+	// language, but the failing
 	// argv is not, and gitError.Error carries it, so naming the invocation that
 	// failed keeps the case specific without pinning it to English. A panic or
 	// an unrelated wrapped error would satisfy "exit 1 with something on stderr"

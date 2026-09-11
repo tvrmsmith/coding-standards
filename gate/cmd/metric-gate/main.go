@@ -17,7 +17,7 @@
 // 0008 grants. This is the one place that rule is written down; the cases in
 // gate/test that pin such an exit point here rather than restate it.
 //
-// Four of them are reachable while the document is being built. Failing to
+// Four of them are reachable before the document is delivered. Failing to
 // open a git repository lands upstream of the document, before a base is
 // resolved. Failing to read the working directory while resolving a relative
 // --files name lands after that and before any method is counted. Failing to
@@ -312,7 +312,7 @@ func selectFiles(repo gitscope.Repo, names []string) (selection, error) {
 	if err != nil {
 		return failing(selected, err)
 	}
-	// ADR 0008's 2026-09-09 amendment names --files as the first of the two
+	// ADR 0008's 2026-09-11 amendment names --files as the first of the two
 	// producers of skipped_paths. A named file no extractor claims is neither
 	// measured nor an error, so it is listed rather than silently dropped.
 	selected.SkippedPaths = pathStrings(extracted.Unclaimed(resolved))
