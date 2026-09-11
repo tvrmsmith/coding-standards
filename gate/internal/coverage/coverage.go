@@ -216,16 +216,24 @@ func walkedName(root srcpath.Root, path string) (rel string, name srcpath.Name, 
 // one rule for a human-typed path. A named path may live anywhere, inside the
 // repo or outside it, and one outside has no repo-relative form, so it is named
 // by its absolute path.
-func Named(root srcpath.Root, cwd string, paths []string) []Source {
+//
+// A path srcpath cannot weigh against the repo root at all fails the run rather
+// than being named by a shape that would say where it sits. The gate does not
+// know that, and a report it cannot place is one it cannot score.
+func Named(root srcpath.Root, cwd string, paths []string) ([]Source, error) {
 	sources := make([]Source, 0, len(paths))
 	for _, path := range paths {
 		abs := path
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(cwd, abs)
 		}
-		sources = append(sources, Source{Abs: abs, Name: root.Name(abs), Origin: NamedOnCommandLine})
+		name, err := root.Name(abs)
+		if err != nil {
+			return nil, err
+		}
+		sources = append(sources, Source{Abs: abs, Name: name, Origin: NamedOnCommandLine})
 	}
-	return sources
+	return sources, nil
 }
 
 // underResultsDir reports whether any directory component of rel is the

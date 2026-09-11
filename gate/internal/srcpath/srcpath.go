@@ -212,8 +212,9 @@ func (r Root) relativize(resolved string) (Path, placement, error) {
 // Two directories that differ only in case are two inodes on a case-sensitive
 // filesystem, so `/tmp/REPO` beside a real `/tmp/repo` still reads as outside
 // on Linux, which is the property the rejection protects. EqualFold runs first
-// because it is free and because it also stops a bind mount or a hard-linked
-// directory, which is one inode under two unrelated names, from folding.
+// because it is free and because it keeps the fold to spellings of one name: two
+// unrelated names for one inode, a bind mount or a hard-linked directory, are
+// not case variants of each other and do not fold.
 //
 // Only the root prefix folds. The components below it come back as the candidate
 // spells them, which is exactly what filepath.Rel returns for a correctly
@@ -222,10 +223,13 @@ func (r Root) relativize(resolved string) (Path, placement, error) {
 // has no components below and answers ".", again the reading Rel gives for the
 // root spelled correctly.
 //
-// Below-root spelling is a separate question with a separate owner: named walks
-// it against the directory entries in spelledAsOnDisk and refuses a mismatch,
-// which is what keeps `case_only_path_difference` at exit 1. This function does
-// not answer it and must not be read as having done so.
+// Below-root spelling is a separate question. The fold stops at the root prefix,
+// so a candidate mis-cased below it keeps that mis-spelling in the Path it comes
+// back as, and the join finds no tracked path matching it: that is what keeps
+// `case_only_path_difference` at exit 1, on the coverage side that never reaches
+// named. For --files the counterpart is spelledAsOnDisk, which named walks
+// against the directory entries and refuses on a mismatch. This function answers
+// neither and must not be read as having done so.
 func (r Root) foldRootPrefix(resolved string) (Path, placement, error) {
 	sep := string(filepath.Separator)
 	rootComponents := strings.Split(r.resolved, sep)
@@ -312,16 +316,27 @@ func (n Name) String() string { return string(n) }
 // before it asks. Resolving it here instead would place a report's own relative
 // filename inside the root by accident, which is why the join belongs to the
 // caller.
-func (r Root) Name(path string) Name {
+//
+// A filesystem that will not say whether a case-differing prefix is the root is
+// none of the three, and it comes back as an error with no name at all. The path
+// may well be inside the repo, so naming it by the absolute path would quote an
+// in-repo report in the shape reserved for one outside, which is the
+// misdiagnosis issue 48 set out to remove. The gate knows nothing about where
+// the path sits and says so rather than guessing, exactly as named does with the
+// same fault.
+func (r Root) Name(path string) (Name, error) {
 	if !filepath.IsAbs(path) {
-		return Name(filepath.ToSlash(path))
+		return Name(filepath.ToSlash(path)), nil
 	}
 	resolved := resolveExisting(path)
 	rel, place, err := r.relativize(resolved)
-	if err != nil || place == outside {
-		return Name(filepath.ToSlash(resolved))
+	if err != nil && !errors.Is(err, errNoRelativeReading) {
+		return "", fmt.Errorf("weighing %s against the repo root: %w", path, err)
 	}
-	return Name(rel)
+	if err != nil || place == outside {
+		return Name(filepath.ToSlash(resolved)), nil
+	}
+	return Name(rel), nil
 }
 
 // resolveExisting resolves the symlinks of the deepest ancestor of abs that is
