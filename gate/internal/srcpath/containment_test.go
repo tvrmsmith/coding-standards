@@ -58,15 +58,15 @@ func TestRelativizeReadsAMisCasedRootPrefixAsFolded(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
 
-	// Mis-cased below the root as well as at it, and folded says nothing about
-	// the components below: only the root prefix folds, and ADR 0004 still
-	// refuses a case-only difference below it one layer up in named and in the
-	// join. A folded answer carries no path, since the candidate's spelling of
-	// those components is not one this package vouches for.
+	// Mis-cased below the root as well as at it. Only the root prefix folds, so
+	// the components below come back as the candidate spells them, upper case
+	// and all. ADR 0004 still refuses that case-only difference one layer up, in
+	// named's spelling walk and in the join, which is what this asserts by
+	// holding "SRC/a.txt" rather than the tree's "src/a.txt".
 	rel, place, err := root.relativize(filepath.Join(miscased, "SRC", "a.txt"))
 
-	if err != nil || place != folded || rel != "" {
-		t.Errorf("relativize on a mis-cased root prefix returned %q, %v, %v, want \"\", folded, nil", rel, place, err)
+	if err != nil || place != folded || rel != "SRC/a.txt" {
+		t.Errorf("relativize on a mis-cased root prefix returned %q, %v, %v, want \"SRC/a.txt\", folded, nil", rel, place, err)
 	}
 }
 
@@ -88,8 +88,8 @@ func TestRelativizeFoldsARootPrefixReachedThroughACaseDifferingSymlink(t *testin
 
 	rel, place, err := root.relativize(filepath.Join(linked, "src", "a.txt"))
 
-	if err != nil || place != folded || rel != "" {
-		t.Errorf("relativize through a case-differing symlink to the root returned %q, %v, %v, want \"\", folded, nil", rel, place, err)
+	if err != nil || place != folded || rel != "src/a.txt" {
+		t.Errorf("relativize through a case-differing symlink to the root returned %q, %v, %v, want \"src/a.txt\", folded, nil", rel, place, err)
 	}
 }
 
@@ -336,14 +336,13 @@ func TestNamedStillRefusesAPathGenuinelyOutsideTheRoot(t *testing.T) {
 	}
 }
 
-// The fold is asymmetric on purpose, and this is the other side of it. A
-// --files path is one a developer typed and can retype, so named tells them
-// which half to fix. A coverage candidate is not: nobody typed it, so there is
-// nothing to retype, and folding it in would be case folding on the
-// coverage-path side, which ADR 0004 rejects. Place therefore answers what it
-// always has, that the candidate landed nowhere. Making the coverage side fold
-// too is a decision for a dated ADR 0004 amendment, which is Trevor's call.
-func TestPlaceRefusesACandidateWhoseRootPrefixIsMisCased(t *testing.T) {
+// Place reads a folded root prefix as landing where the candidate really sits
+// (ADR 0004, amended 2026-09-11). named still refuses the same shape, because a
+// --files path is one a developer typed and can retype; a coverage candidate is
+// not, nobody typed it, and refusing it would drop a class the report really
+// measured. os.SameFile is what separates this from the folding ADR 0004
+// rejects, so no two files are merged.
+func TestPlaceLandsACandidateWhoseRootPrefixIsMisCased(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
@@ -360,19 +359,19 @@ func TestPlaceRefusesACandidateWhoseRootPrefixIsMisCased(t *testing.T) {
 	placed := root.Place(filepath.Join(miscased, "srclink", "a.cs"))
 
 	rel, in := placed.Inside()
-	if in || rel != "" {
-		t.Errorf("Place on a mis-cased root prefix returned %q, %v, want \"\", false", rel, in)
+	if !in || rel != "src/a.cs" {
+		t.Errorf("Place on a mis-cased root prefix returned %q, %v, want \"src/a.cs\", true", rel, in)
 	}
 	if placed.Resolved() != filepath.ToSlash(resolved) {
 		t.Errorf("Resolved = %q, want the resolved candidate %q", placed.Resolved(), filepath.ToSlash(resolved))
 	}
 }
 
-// The same asymmetry on a case-sensitive filesystem, so CI runs the arm that
-// makes Place read folded as landing nowhere rather than skipping it. The root's
-// own spelling is the one that differs here, which is what a candidate's own
-// resolution cannot collapse.
-func TestPlaceRefusesACandidateUnderACaseDifferingRootSpelling(t *testing.T) {
+// The same answer on a case-sensitive filesystem, so CI runs the arm that makes
+// Place land a folded candidate rather than skipping it. The root's own spelling
+// is the one that differs here, which is what a candidate's own resolution
+// cannot collapse.
+func TestPlaceLandsACandidateUnderACaseDifferingRootSpelling(t *testing.T) {
 	root, real := symlinkedMiscasedRoot(t)
 	resolved := touch(t, filepath.Join(real, "src", "a.cs"))
 	if err := os.Symlink("src", filepath.Join(real, "srclink")); err != nil {
@@ -386,8 +385,8 @@ func TestPlaceRefusesACandidateUnderACaseDifferingRootSpelling(t *testing.T) {
 	placed := root.Place(filepath.Join(real, "srclink", "a.cs"))
 
 	rel, in := placed.Inside()
-	if in || rel != "" {
-		t.Errorf("Place under a case-differing root spelling returned %q, %v, want \"\", false", rel, in)
+	if !in || rel != "src/a.cs" {
+		t.Errorf("Place under a case-differing root spelling returned %q, %v, want \"src/a.cs\", true", rel, in)
 	}
 	if placed.Resolved() != filepath.ToSlash(resolved) {
 		t.Errorf("Resolved = %q, want the resolved candidate %q", placed.Resolved(), filepath.ToSlash(resolved))
@@ -407,17 +406,16 @@ func TestNameReadsAnAbsentPathInsideTheRepoAsRepoRelative(t *testing.T) {
 	}
 }
 
-// The naming side of the same asymmetry Place holds. A --coverage report under
-// a mis-cased root prefix is still named by the absolute path the containment
-// test weighed, which is what the gate has always answered and what every
-// existing coverage golden is written against. Only named acts on the fold;
-// pulling the coverage side in with it needs a dated ADR 0004 amendment.
+// The naming side of what Place now does. A --coverage report under a mis-cased
+// root prefix sits inside the repo, so it is named repo-relative like any other:
+// naming it by the absolute path the developer's shell happened to spell would
+// print one report under two strings depending on how the run was invoked.
 //
 // It skips on Linux because this is the shape a developer types, a real
 // mis-cased spelling of a directory the filesystem folds. The case below runs
 // the same arm everywhere by putting the case difference on the root's own side
 // instead, which resolving the candidate cannot collapse.
-func TestNameReadsAPathUnderAMisCasedRootPrefixAsItsResolvedAbsolutePath(t *testing.T) {
+func TestNameReadsAPathUnderAMisCasedRootPrefixAsRepoRelative(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
 	path := filepath.Join(miscased, "TestResults", "coverage.cobertura.xml")
@@ -425,24 +423,24 @@ func TestNameReadsAPathUnderAMisCasedRootPrefixAsItsResolvedAbsolutePath(t *test
 
 	name := root.Name(path)
 
-	if name != Name(filepath.ToSlash(path)) {
-		t.Errorf("Name under a mis-cased root prefix = %q, want the resolved path %q", name, filepath.ToSlash(path))
+	if name != "TestResults/coverage.cobertura.xml" {
+		t.Errorf("Name under a mis-cased root prefix = %q, want %q", name, "TestResults/coverage.cobertura.xml")
 	}
 }
 
-// The same answer on a case-sensitive filesystem, so CI runs the arm that makes
-// Name read folded as outside rather than skipping it. The report is absent, as
-// the ones Name has to name in a failure usually are, so the resolved path it
-// comes back with is the one resolveExisting rebuilt.
-func TestNameReadsAPathUnderACaseDifferingRootSpellingAsItsResolvedAbsolutePath(t *testing.T) {
+// The same answer on a case-sensitive filesystem, so CI runs the arm that names
+// a folded path repo-relative rather than skipping it. The report is absent, as
+// the ones Name has to name in a failure usually are, so the fold is weighed
+// against the path resolveExisting rebuilt.
+func TestNameReadsAPathUnderACaseDifferingRootSpellingAsRepoRelative(t *testing.T) {
 	root, real := symlinkedMiscasedRoot(t)
 	path := filepath.Join(real, "TestResults", "coverage.cobertura.xml")
 	assertFolds(t, root, resolveExisting(path))
 
 	name := root.Name(path)
 
-	if name != Name(filepath.ToSlash(path)) {
-		t.Errorf("Name under a case-differing root spelling = %q, want the resolved path %q", name, filepath.ToSlash(path))
+	if name != "TestResults/coverage.cobertura.xml" {
+		t.Errorf("Name under a case-differing root spelling = %q, want %q", name, "TestResults/coverage.cobertura.xml")
 	}
 }
 

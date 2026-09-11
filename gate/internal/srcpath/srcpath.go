@@ -4,20 +4,19 @@
 // enforced once rather than separately in extract and coverage.
 //
 // One function, relativize, computes containment, and Place, Name and named are
-// the three entry points onto it. Issue 36 asked for one owner of the predicate,
-// and this is as far as that got: coverage no longer carries a copy, but the
-// three callers do not all read relativize's answer the same way. It reports a
-// mis-cased root prefix as folded, named refuses that with its own reason, and
-// Place and Name both read it as outside, so "outside" still means two different
-// things depending on which door the path came through. Issue 36 stays open on
-// that point. Widening the fold to the other two doors is a coverage-path
-// question ADR 0004 rejects today, so it needs a dated amendment and not a code
-// change.
+// the three entry points onto it. All three read its answer the same way: a
+// candidate whose root prefix is spelled in another case is under the root, and
+// "outside" means one thing at every door (issue 36). ADR 0004's 2026-09-11
+// amendment is what authorizes that, on the ground that the folding it rejects
+// is folding by text, which on Linux merges two real files, and not a fold
+// os.SameFile has confirmed reaches one inode.
 //
-// named carries the most user-visible policy of the three, the two distinct
-// refusal reasons a --files path can come back with, so a reader changing
-// containment has to weigh it beside the other two rather than reading Place and
-// Name alone.
+// Landing under the root is not the same as being accepted. named still refuses
+// a mis-cased root prefix, because a --files path is one a developer typed and
+// can retype, and telling them which half is misspelled is the whole of issue
+// 48. It carries the most user-visible policy of the three, the distinct refusal
+// reasons a --files path can come back with, so a reader changing containment has
+// to weigh it beside the other two rather than reading Place and Name alone.
 //
 // Place and Name differ in what has to be on disk. Place refuses a candidate that is not
 // a regular file, so that a coverage class filename of "../.." or of a bare
@@ -109,12 +108,13 @@ func (p Placed) Resolved() string { return p.resolved }
 // measured, and one such class would otherwise stand in for a whole report's
 // worth of classes that placed nothing.
 //
-// Only an exactly spelled root prefix places. A candidate whose root prefix is
-// spelled in another case lands nowhere, the same answer the gate has always
-// given it, because folding it in would be case folding on the coverage-path
-// side and ADR 0004 rejects that. named alone acts on the folded reading, and
-// widening it to here needs a dated amendment to ADR 0004 rather than a code
-// change.
+// A candidate whose root prefix is spelled in another case places where it
+// really sits, per ADR 0004's 2026-09-11 amendment. The prefix is confirmed with
+// os.SameFile, so the two names reach one directory and the candidate is one
+// file, not two merged by text. The components below the root come back as the
+// candidate spells them, which is the same thing filepath.Rel already hands back
+// for a correctly spelled prefix on a case-insensitive filesystem; Place has
+// never verified below-root spelling and does not start here.
 func (r Root) Place(candidate string) Placed {
 	placed := Placed{resolved: filepath.ToSlash(candidate)}
 	if !filepath.IsAbs(candidate) {
@@ -130,7 +130,7 @@ func (r Root) Place(candidate string) Placed {
 		return placed
 	}
 	rel, place, err := r.relativize(resolved)
-	if err != nil || place != inside {
+	if err != nil || place == outside {
 		return placed
 	}
 	placed.inside = true
@@ -171,13 +171,13 @@ func (p placement) String() string {
 // relativize reads an already resolved absolute path as a path under the root,
 // and says where it landed. Place, Name and named all ask, so the comparison
 // against the root is computed once here rather than spelled three times and
-// drifting, which is the half of issue 36 this satisfies.
+// drifting, and all three read the answer the same way, which is the whole of
+// issue 36.
 //
-// The other half is not satisfied. The three callers do not agree on what the
-// answers mean: named acts on folded and refuses it in its own words, while
-// Place and Name treat folded exactly as outside. So there is one predicate but
-// still more than one reading of "outside", and issue 36 stays open on it. Do
-// not read the single function as a single policy.
+// inside and folded are both under the root and differ only in how the root
+// prefix is spelled. A caller that acts on containment alone can treat them
+// alike; named tells them apart because it owes the developer a reason, not
+// because they sit in different places.
 //
 // An error is a question the placement could not be answered at all, and there
 // are two of them. errNoRelativeReading is the root and the candidate having no
@@ -206,7 +206,7 @@ func (r Root) relativize(resolved string) (Path, placement, error) {
 // The developer then goes looking for a location mistake instead of a spelling
 // one. This takes the first four components, `/private/tmp/CF_TEST`, folds them
 // against `/private/tmp/cf_test`, confirms with os.SameFile that the two names
-// reach one directory, and answers folded.
+// reach one directory, and answers folded with `sub/a.txt`.
 //
 // os.SameFile is what keeps this from being the text folding ADR 0004 rejects.
 // Two directories that differ only in case are two inodes on a case-sensitive
@@ -215,18 +215,17 @@ func (r Root) relativize(resolved string) (Path, placement, error) {
 // because it is free and because it also stops a bind mount or a hard-linked
 // directory, which is one inode under two unrelated names, from folding.
 //
-// Only the root prefix folds. A folded answer carries no Path: the components
-// below the root are spelled as the candidate spells them and not as the tree
-// does, and Path is a repo-relative path this package has vouched for, so
-// handing one out here would put a spelling the gate refuses into the currency
-// every later stage keys on. named, the one caller that acts on folded, refuses
-// the name and never needs them. They are what a caller acting on folded as a
-// placement would need, so the widening ADR 0004 would have to authorize is
-// this return and not the predicate.
+// Only the root prefix folds. The components below it come back as the candidate
+// spells them, which is exactly what filepath.Rel returns for a correctly
+// spelled prefix on the same filesystem, so the folded Path is no weaker than
+// the inside one beside it. A candidate that is the root under another spelling
+// has no components below and answers ".", again the reading Rel gives for the
+// root spelled correctly.
 //
-// folded is a reading, not a verdict. named is the only caller that acts on it,
-// where the path is one a developer typed and can retype; Place and Name read
-// it as outside, so nothing on the coverage-path side folds.
+// Below-root spelling is a separate question with a separate owner: named walks
+// it against the directory entries in spelledAsOnDisk and refuses a mismatch,
+// which is what keeps `case_only_path_difference` at exit 1. This function does
+// not answer it and must not be read as having done so.
 func (r Root) foldRootPrefix(resolved string) (Path, placement, error) {
 	sep := string(filepath.Separator)
 	rootComponents := strings.Split(r.resolved, sep)
@@ -245,7 +244,11 @@ func (r Root) foldRootPrefix(resolved string) (Path, placement, error) {
 	if !same {
 		return "", outside, nil
 	}
-	return "", folded, nil
+	below := components[len(rootComponents):]
+	if len(below) == 0 {
+		return ".", folded, nil
+	}
+	return Path(strings.Join(below, "/")), folded, nil
 }
 
 // isRootUnder reports whether spelling reaches the root's own directory. The
@@ -293,16 +296,15 @@ func (n Name) String() string { return string(n) }
 // classes that placed nothing, and the whole point here is to name a path that
 // may be nothing at all.
 //
-// It answers one of three shapes. A path inside the repo, spelled as the root
-// is spelled, is named repo-relative. A path the containment test does not read
-// as inside, whether it sits genuinely outside the repo or merely spells the
-// root prefix in another case, is named by the resolved absolute path that test
-// just weighed, not by the developer's own spelling: the document carries no
-// working directory (ADR 0005), so a relative name reaches a consumer that
-// cannot resolve it, and one report named from two directories would print two
-// strings. Naming a mis-cased prefix repo-relative instead would fold on the
-// coverage side, which ADR 0004 rejects, so it stays what the gate has always
-// answered here.
+// It answers one of three shapes. A path under the repo root is named
+// repo-relative, whether the root prefix is spelled as the root is or in another
+// case that os.SameFile confirms reaches the same directory: the report sits
+// where it sits, and naming it by where the developer's shell happened to spell
+// it would print one report under two strings. A path genuinely outside the repo
+// is named by the resolved absolute path the containment test just weighed, not
+// by the developer's own spelling, because the document carries no working
+// directory (ADR 0005) and a relative name reaches a consumer that cannot
+// resolve it.
 //
 // The third shape is an input that is not absolute, which comes back as its own
 // slash-separated text. That is a caller which has not joined its working
@@ -316,7 +318,7 @@ func (r Root) Name(path string) Name {
 	}
 	resolved := resolveExisting(path)
 	rel, place, err := r.relativize(resolved)
-	if err != nil || place != inside {
+	if err != nil || place == outside {
 		return Name(filepath.ToSlash(resolved))
 	}
 	return Name(rel)
@@ -431,10 +433,11 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // A name whose root prefix is spelled in another case is refused too, and it
 // says so rather than reusing the "not spelled as the file on disk is" refusal
 // below, because the mis-cased component is the root and not the file and the reader
-// has to know which half to retype. named is the only caller that acts on that
-// reading. Place and Name treat the same path as outside, because a coverage
-// candidate is not one a developer typed and folding it in would be the case
-// folding ADR 0004 rejects on the coverage-path side.
+// has to know which half to retype. named is the only caller that refuses on that
+// reading. Place and Name place and name the same path where it really sits,
+// because a coverage candidate is not one a developer typed and there is nobody
+// to send back to the keyboard; the fold is confirmed by os.SameFile, so it
+// merges no two files (ADR 0004, amended 2026-09-11).
 //
 // That refusal is weighed after the mode checks, so --files naming the repo
 // root itself answers "is a directory, not a file" in either case, and a

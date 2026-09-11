@@ -2897,6 +2897,30 @@ func TestReportBuiltInAnotherCheckoutFailsNamingTheMismatch(t *testing.T) {
 		map[string]string{"EXAMPLE": example, "ROOT": root})
 }
 
+func TestReportSourceMisCasingTheRepoRootPrefixIsMeasuredInside(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// The same tree the passing single-method case measures, with the report's
+	// <source> naming the repo root in another case. Nothing was built
+	// elsewhere: os.SameFile confirms the two spellings reach one directory, so
+	// the class sits where a correctly spelled <source> would have put it and
+	// the score is the one that case gets. Refusing this as
+	// coverage_outside_repo would blame a location for a spelling, and unlike
+	// --files there is nobody to send back to the keyboard, because the path
+	// came out of whatever the test runner was invoked with.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(sameDirectoryUpperCased(t, f.root),
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "coverage_miscased_root_prefix", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
 func TestNamedReportBuiltInAnotherCheckoutIsQuotedAbsolutely(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
