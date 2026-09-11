@@ -156,9 +156,8 @@ func measure(sc scope.Scope) (report.Document, error) {
 	}
 
 	lines, skipped, err := loadCoverage(repo.Root(), sc.Coverage, changed)
-	// The append is what enforces ADR 0008's order, the paths --files named
-	// first and coverage discovery's skips after them. Merging the two lists
-	// and sorting the result would read as tidier and would break it.
+	// The append is what enforces ADR 0008's skipped_paths order, which
+	// gate/test/golden/files_skip_before_discovery_skip.toon pins.
 	doc.SkippedPaths = append(doc.SkippedPaths, skipped...)
 	if failure, ok := asFailure(err); ok {
 		doc.Failure = failure
