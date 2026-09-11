@@ -362,11 +362,7 @@ func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (co
 		if err != nil {
 			return nil, nil, fmt.Errorf("resolving --coverage paths against the working directory: %w", err)
 		}
-		sources, err := coverage.Named(root, cwd, named)
-		if err != nil {
-			return nil, nil, err
-		}
-		set, _, err := coverage.Load(root, sources, newest, now)
+		set, _, err := coverage.Load(root, coverage.Named(root, cwd, named), newest, now)
 		return set, nil, err
 	}
 	sources, skipped, err := coverage.Discover(root)
