@@ -22,6 +22,13 @@
 // rather than part of it. Both happen after the changed methods are counted, so
 // the gate did examine a repository and still emits nothing. Issue 31 gives them
 // typed codes and moves them inside the document.
+//
+// A third error lands the same way and stays outside issue 31's scope: stdout
+// refusing the write that carries the document, a full disk or a closed
+// descriptor among the causes. It happens after the document is built, so the
+// gate did produce one, and it still exits 1 with no typed code, because the
+// document is the thing that could not be delivered. Issue 31 has nowhere to
+// move it to.
 package main
 
 import (
@@ -56,14 +63,39 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	stdout, err := doc.Stdout()
+	code, err := emit(os.Stdout, os.Stderr, doc)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
 	}
-	os.Stdout.Write(stdout)
-	io.WriteString(os.Stderr, doc.Stderr())
-	os.Exit(doc.ExitCode())
+	os.Exit(code)
+}
+
+// emit writes doc to stdout and stderr and reports the exit code that goes
+// with them. A caller reads exit 0 as approval, so this is the one place a
+// failure to deliver the document has to turn into something other than
+// doc.ExitCode(): a run that produced no document must never look like a
+// pass.
+//
+// This is a known deviation from ADR 0008: the failure carries no typed
+// error.code, because the code would have nowhere to be printed, stdout
+// being the thing that is unusable. See the package doc above.
+func emit(stdout, stderr io.Writer, doc report.Document) (int, error) {
+	body, err := doc.Stdout()
+	if err != nil {
+		return 1, err
+	}
+	n, err := stdout.Write(body)
+	if err != nil {
+		return 1, fmt.Errorf("writing the document to stdout: %w", err)
+	}
+	if n != len(body) {
+		return 1, fmt.Errorf("writing the document to stdout: wrote %d of %d bytes", n, len(body))
+	}
+	// The document already reached the caller by this point, so a failure
+	// writing the human summary has nowhere left to complain. It is dropped
+	// rather than turned into a second exit-1 cause.
+	io.WriteString(stderr, doc.Stderr())
+	return doc.ExitCode(), nil
 }
 
 // measure runs the gate over the repo containing the working directory,

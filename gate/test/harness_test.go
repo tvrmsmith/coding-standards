@@ -10,6 +10,7 @@ package gate_test
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -205,6 +206,14 @@ func (f *fixture) runWithEnv(extra ...string) runResult {
 	return f.exec(binDir, f.root, nil, append([]string{"METRIC_GATE_STUB=" + f.stubConfigPath()}, extra...)...)
 }
 
+// runWithStdout is run with out standing in for the gate's stdout, which is
+// how a case points the write at something other than an in-memory buffer,
+// a broken descriptor like /dev/full among them.
+func (f *fixture) runWithStdout(out io.Writer) runResult {
+	f.t.Helper()
+	return f.execWithStdout(binDir, f.root, nil, out, "METRIC_GATE_STUB="+f.stubConfigPath())
+}
+
 // runIn executes the gate against the binary and extractor sitting in dir
 // rather than the shared stub-based binDir, so a case that needs its own
 // installation cannot disturb the rest of the suite.
@@ -264,14 +273,26 @@ func (f *fixture) stubConfigPath() string {
 // does not mean to pin what a relative path resolves against.
 func (f *fixture) exec(dir, workdir string, args []string, extraEnv ...string) runResult {
 	f.t.Helper()
+	var stdout strings.Builder
+	result := f.execWithStdout(dir, workdir, args, &stdout, extraEnv...)
+	result.stdout = stdout.String()
+	return result
+}
+
+// execWithStdout is exec with the gate's stdout pointed at out rather than a
+// strings.Builder the harness owns, which is how a case can hand the gate a
+// descriptor it cannot write to. result.stdout is left unset; the caller
+// reads out itself, since out is not always something that can be read back.
+func (f *fixture) execWithStdout(dir, workdir string, args []string, out io.Writer, extraEnv ...string) runResult {
+	f.t.Helper()
 	cmd := exec.Command(filepath.Join(dir, "metric-gate"), args...)
 	cmd.Dir = workdir
 	cmd.Env = append(os.Environ(), append(append([]string{}, gitEnv...), extraEnv...)...)
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
+	var stderr strings.Builder
+	cmd.Stdout = out
 	cmd.Stderr = &stderr
 	err := cmd.Run()
-	result := runResult{stdout: stdout.String(), stderr: stderr.String()}
+	result := runResult{stderr: stderr.String()}
 	switch e := err.(type) {
 	case nil:
 	case *exec.ExitError:

@@ -3727,6 +3727,40 @@ func inRepo(t *testing.T, dir string) bool {
 	return cmd.Run() == nil
 }
 
+// TestStdoutRefusingTheWriteExitsOneRatherThanTheDocumentsOwnCode uses
+// /dev/full, a character device that answers every write with ENOSPC, to
+// force the real failure issue 81 describes: the document builds and the run
+// would otherwise pass, but the write that was supposed to deliver it never
+// lands. A run reading exit 0 back would have approved a change nobody saw.
+func TestStdoutRefusingTheWriteExitsOneRatherThanTheDocumentsOwnCode(t *testing.T) {
+	info, err := os.Stat("/dev/full")
+	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		t.Skip("/dev/full is not available as a character device on this platform")
+	}
+	full, err := os.OpenFile("/dev/full", os.O_WRONLY, 0)
+	if err != nil {
+		t.Skipf("opening /dev/full: %v", err)
+	}
+	defer full.Close()
+
+	f := newFixture(t, "main")
+	f.stub = stubConfig{Extensions: []string{".cs"}}
+	f.write("docs/notes.md", "first\n")
+	f.write("src/Ordering/OrderService.cs", csharpFile(80))
+	f.commitAll("initial")
+	f.write("docs/notes.md", "first\nsecond\n")
+
+	// This is the same docs-only fixture TestDocsOnlyChangePassesWithNoCoverageReportPresent
+	// runs, which exits 0 today. Pointing its stdout at /dev/full is what turns
+	// that pass into the reported error the issue is about.
+	result := f.runWithStdout(full)
+
+	if result.exitCode != 1 || !strings.Contains(result.stderr, "writing the document to stdout") {
+		t.Errorf("gate with stdout refusing every write: got exit %d, stderr %q; want exit 1, stderr naming the write failure",
+			result.exitCode, result.stderr)
+	}
+}
+
 func TestOriginHeadOutranksLocalMainAsTheDiffBase(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
