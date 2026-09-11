@@ -23,8 +23,8 @@ func passingDocument() report.Document {
 
 // exceedingDocument is a document that renders and carries a score over the
 // threshold, so its own exit code is 2 rather than 0. It is what pins emit
-// passing doc.ExitCode() through on a healthy writer instead of returning a
-// constant that happens to match the passing case.
+// passing doc.ExitCode() through instead of returning a constant that happens
+// to match the passing case.
 func exceedingDocument() report.Document {
 	measurement := crap.Measurement{Complexity: crap.Threshold + 10, Coverage: 0.1}
 	score := measurement.Score()
@@ -86,28 +86,27 @@ func TestEmitReturnsExitOneOnAShortWriteThatReportsNoError(t *testing.T) {
 }
 
 func TestEmitKeepsTheDocumentsCodeWhenOnlyTheStderrSummaryFails(t *testing.T) {
+	doc := exceedingDocument()
+	wantStdout, err := doc.Stdout()
+	if err != nil {
+		t.Fatalf("doc.Stdout(): %v", err)
+	}
+
 	var stdout bytes.Buffer
-	code, err := emit(&stdout, erroringWriter{err: errors.New("closed")}, passingDocument())
+	code, err := emit(&stdout, erroringWriter{err: errors.New("closed")}, doc)
 
-	// The document already reached the caller, so the summary going nowhere
-	// is dropped rather than becoming a second exit-1 cause.
-	if code != 0 {
-		t.Errorf("code = %d, want 0", code)
-	}
-	if err != nil {
-		t.Errorf("err = %v, want nil", err)
-	}
-}
-
-func TestEmitPassesTheDocumentsOwnCodeThroughOnAHealthyWriter(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	code, err := emit(&stdout, &stderr, exceedingDocument())
-
-	if err != nil {
-		t.Errorf("err = %v, want nil", err)
-	}
+	// The document reached the caller before the summary failed, so the
+	// summary going nowhere is dropped rather than becoming a second exit-1
+	// cause, and the document's own 2 is still what comes back. A document
+	// that exits 2 is what separates that from returning a constant.
 	if code != 2 {
 		t.Errorf("code = %d, want 2", code)
+	}
+	if err != nil {
+		t.Errorf("err = %v, want nil", err)
+	}
+	if stdout.String() != string(wantStdout) {
+		t.Errorf("stdout = %q, want %q", stdout.String(), wantStdout)
 	}
 }
 
