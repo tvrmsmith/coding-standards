@@ -201,6 +201,27 @@ func TestNamedRefusesAPathItCannotWeighAgainstTheRepoRoot(t *testing.T) {
 	}
 }
 
+// A case-differing prefix that names nothing on disk is not the root under
+// another spelling, and it is not a fault either. Root.Name is the road to it:
+// resolveExisting climbs past components that are absent, so a --coverage
+// report named under a REPO directory that does not exist arrives here with a
+// prefix os.Stat cannot find. The answer is outside with no error, where a root
+// that will not stat is a fault the caller hears about instead.
+func TestRelativizeReadsAnAbsentCaseDifferingPrefixAsOutside(t *testing.T) {
+	root := containmentRoot(t)
+	absent := filepath.Join(filepath.Dir(root.Dir()), strings.ToUpper(filepath.Base(root.Dir())))
+	if _, err := os.Stat(absent); err == nil {
+		t.Skipf("the filesystem folded %s onto the root, so the prefix is on disk and this is the fold's own case", absent)
+	}
+	resolved := resolveExisting(filepath.Join(absent, "TestResults", "coverage.cobertura.xml"))
+
+	rel, place, err := root.relativize(resolved)
+
+	if err != nil || place != outside || rel != "" {
+		t.Errorf("relativize on an absent case-differing prefix returned %q, %v, %v, want \"\", outside, nil", rel, place, err)
+	}
+}
+
 func TestNamedRefusesAMisCasedRootPrefixAsASpellingRatherThanALocation(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
@@ -334,6 +355,7 @@ func TestPlaceRefusesACandidateWhoseRootPrefixIsMisCased(t *testing.T) {
 	// says Place got past the absolute and symlink checks ahead of the fold,
 	// rather than turning back at one of them with the candidate as typed.
 	resolved := filepath.Join(miscased, "src", "a.cs")
+	assertFolds(t, root, resolved)
 
 	placed := root.Place(filepath.Join(miscased, "srclink", "a.cs"))
 
@@ -356,6 +378,7 @@ func TestPlaceRefusesACandidateUnderACaseDifferingRootSpelling(t *testing.T) {
 	if err := os.Symlink("src", filepath.Join(real, "srclink")); err != nil {
 		t.Fatal(err)
 	}
+	assertFolds(t, root, resolved)
 
 	// Typed through a relative link, as the macOS twin does, so Resolved
 	// answering the link-free path says Place got past the absolute and symlink
@@ -398,6 +421,7 @@ func TestNameReadsAPathUnderAMisCasedRootPrefixAsItsResolvedAbsolutePath(t *test
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
 	path := filepath.Join(miscased, "TestResults", "coverage.cobertura.xml")
+	assertFolds(t, root, resolveExisting(path))
 
 	name := root.Name(path)
 
@@ -413,6 +437,7 @@ func TestNameReadsAPathUnderAMisCasedRootPrefixAsItsResolvedAbsolutePath(t *test
 func TestNameReadsAPathUnderACaseDifferingRootSpellingAsItsResolvedAbsolutePath(t *testing.T) {
 	root, real := symlinkedMiscasedRoot(t)
 	path := filepath.Join(real, "TestResults", "coverage.cobertura.xml")
+	assertFolds(t, root, resolveExisting(path))
 
 	name := root.Name(path)
 
@@ -494,10 +519,35 @@ func symlinkedMiscasedRoot(t *testing.T) (Root, string) {
 	return Root{resolved: link}, real
 }
 
+// assertFolds pins that the containment test reads resolved as folded, which is
+// what makes a Place or Name case beside it a case about the fold. Those two
+// answer a folded path exactly as they answer one genuinely outside the repo,
+// landing nowhere and named absolute, so on their own their assertions hold
+// just as well when the fold arm is deleted or its guards inverted.
+func assertFolds(t *testing.T, root Root, resolved string) {
+	t.Helper()
+	_, place, err := root.relativize(resolved)
+	if err != nil || place != folded {
+		t.Fatalf("relativize on %s returned %v, %v, want folded, nil; this case is not exercising the fold", resolved, place, err)
+	}
+}
+
 // miscasedRoot is root's own directory with the last component upper-cased,
 // skipping the case when that name does not reach the same directory. That is
 // stricter than probing the filesystem once, since a temp root can sit under a
 // case-sensitive component on a machine whose home is case-insensitive.
+//
+// Every case that starts from a Root NewRoot itself can build skips on a
+// case-sensitive filesystem, and that is the shipped behaviour: NewRoot runs
+// EvalSymlinks over the whole path, so a real Root's resolved field is always
+// symlink-free and spelled exactly as the tree spells it, and no name that
+// differs from it in case reaches the same directory on Linux. The fold is
+// therefore macOS-only by construction. The cases that do run on Linux
+// hand-build a Root the constructor cannot produce, so they exercise the arm's
+// logic and not a state a Linux user reaches, and the end-to-end golden
+// gate/test/golden/files_miscased_root_prefix.toon is never rendered on
+// ubuntu-latest, so it can drift with the document schema without a test going
+// red. Trevor has accepted that residual risk.
 func miscasedRoot(t *testing.T, root Root) string {
 	t.Helper()
 	dir := root.Dir()
