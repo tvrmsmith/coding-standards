@@ -153,16 +153,16 @@ var errNoSuchRev = errors.New("rev does not resolve")
 // list, which sends the developer after a missing branch while every ref that
 // list names is sitting in the repo.
 //
-// The candidate is verified unpeeled, where ResolveRef peels with `^{commit}`.
-// A peel reads the object the ref names, and git exits 1 on an object its store
-// does not hold, the same code an absent branch gives. Peeled here, a rung
-// whose commit is missing reads as a rung the repo does not carry, the walk
+// The candidate is verified unpeeled, the check ResolveRef makes about its one
+// ref too. A peel reads the object the ref names, and git exits 1 on an object
+// its store does not hold, the same code an absent branch gives. Peeled here, a
+// rung whose commit is missing reads as a rung the repo does not carry, the walk
 // skips it, and the run ends at the tried-refs list naming a branch that is
 // sitting in the repo, which is the failure this resolver exists to close.
 // Unpeeled, the check answers about the ref alone and merge-base is what
-// classifies the object. ResolveRef verifies its one ref unpeeled the same way
-// and asks `cat-file -t` about the object separately, since --since can name a
-// tag and "does not name a commit" is the answer that flag owes its caller.
+// classifies the object. ResolveRef classifies afterwards instead, with
+// `cat-file -t <sha>^{}` over the id its verify resolved, since --since can name
+// a tag and "does not name a commit" is the answer that flag owes its caller.
 //
 // git resolves refs/tags/<name> ahead of refs/heads/<name>, so a lightweight
 // tag shadowing a rung and pointing at a tree or a blob resolves at the
@@ -223,16 +223,20 @@ func (r Repo) ResolveBase() (Base, error) {
 //
 // The ref check is unpeeled, matching ResolveBase's candidate check, so both
 // resolvers read exit 1 the same way, no such ref rather than a claim about
-// what the ref names. `cat-file -t <ref>^{}` is what classifies the object once
-// the ref itself resolves. Exit 0 naming anything but a commit is the "does not
-// name a commit" answer --since owes a caller who chose the ref by hand, a
-// lightweight tag on a tree for one. Every non-zero exit is git failing to
-// answer, which is what a branch whose commit object the store lacks gives, and
-// separating those two is the whole point of asking: the peel this check
-// replaces exits 1 on both and reported the damaged store as a ref naming no
-// commit. `^{}` rather than `-t <ref>` because the latter answers "tag" for an
-// annotated tag whose target commit is gone, which is that same conflation one
-// object further out.
+// what the ref names. objectType is what classifies the object once the ref
+// itself resolves. Exit 0 naming anything but a commit is the "does not name a
+// commit" answer --since owes a caller who chose the ref by hand, a lightweight
+// tag on a tree for one. Every non-zero exit is git failing to answer, which is
+// what a branch whose commit object the store lacks gives, and separating those
+// two is the whole point of asking: the peel this check replaces exits 1 on
+// both and reported the damaged store as a ref naming no commit.
+//
+// It is the id the verify already resolved that gets peeled, not the rev the
+// developer typed. `--since HEAD:src/Order.cs` names a blob and resolves, and
+// pasting `^{}` onto that text asks git for a path called `src/Order.cs^{}`,
+// which does not exist and comes back as a git failure that never happened over
+// a path nobody typed. The id has no such second reading, so the blob answers
+// "blob" and the run says the rev does not name a commit.
 //
 // Only the argv shape reaches a caller from these two checks today, and
 // since_ref_unreadable pins it. `--quiet` is what makes an absent ref exit 1 at
@@ -251,17 +255,18 @@ func (r Repo) ResolveBase() (Base, error) {
 // made with `git checkout --orphan` reports the diff as unparseable for a run
 // that never reached a diff, when what the repo has is no commit on this branch.
 func (r Repo) ResolveRef(ref string) (Base, error) {
-	if _, err := r.verifyRev(ref); err != nil {
+	oid, err := r.verifyRev(ref)
+	if err != nil {
 		if errors.Is(err, errNoSuchRev) {
 			return Base{}, NoBaseError{Ref: ref}
 		}
 		return Base{}, err
 	}
-	objType, err := r.git("cat-file", "-t", ref+"^{}")
+	objType, err := r.objectType(oid)
 	if err != nil {
-		return Base{}, unreadableDiff(err)
+		return Base{}, err
 	}
-	if strings.TrimSpace(objType) != "commit" {
+	if objType != "commit" {
 		return Base{}, NoBaseError{Ref: ref}
 	}
 	if _, err := r.verifyRev("HEAD"); err != nil {
@@ -303,9 +308,11 @@ func (r Repo) ResolveStaged() (Base, error) {
 // dangling id that way. The other four discard it and want only which of the
 // two arms fired.
 //
-// Every resolver's every check shares this rather than spelling the same two
-// arms out each time, which is what makes one reading of noMatch the reading
-// all three hold. ResolveRef's HEAD check is the reason it is worth sharing: no
+// Every rev-parse check the resolvers make shares this rather than spelling the
+// same two arms out each time, which is what makes one reading of noMatch the
+// reading all three hold. objectType is the one check that does not, and it
+// says at its own definition why its non-zero exits read differently.
+// ResolveRef's HEAD check is the reason this one is worth sharing: no
 // fixture makes git read a named ref and then fail to answer about HEAD at all,
 // since every damaged HEAD real git will produce is either exit 1 or a
 // repository it refuses to open at all, so a second copy of the unreadable arm
@@ -320,6 +327,28 @@ func (r Repo) verifyRev(rev string) (string, error) {
 		if noMatch(err) {
 			return "", errNoSuchRev
 		}
+		return "", unreadableDiff(err)
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// objectType names the type of the object oid peels to, `commit` for a commit
+// and for an annotated tag on one, `tree` or `blob` for a lightweight tag on
+// either.
+//
+// It is the one check in the package that does not read exit 1 as git answering
+// no, because `cat-file -t` has no such answer to give: an object the store does
+// not hold is exit 128, so every non-zero exit here is git failing to answer and
+// comes back as an unreadable diff carrying its words. Routed through verifyRev's
+// reading instead, the missing object would come back as a no and put the
+// resolver back on the misreport issue 68 removed.
+//
+// The argument peels rather than being asked about bare, since `-t <tag oid>`
+// answers "tag" for an annotated tag whose target commit the store lacks, which
+// is that same conflation one object further out.
+func (r Repo) objectType(oid string) (string, error) {
+	out, err := r.git("cat-file", "-t", oid+"^{}")
+	if err != nil {
 		return "", unreadableDiff(err)
 	}
 	return strings.TrimSpace(out), nil
