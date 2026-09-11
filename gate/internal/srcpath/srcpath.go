@@ -138,6 +138,12 @@ func (r Root) Place(candidate string) Placed {
 	return placed
 }
 
+// errNoRelativeReading is the root and the candidate sharing no common root at
+// all, a second drive letter on Windows. filepath.Rel's own error is dropped
+// for it because that text quotes two absolute paths the developer never typed;
+// named answers in the gate's words instead.
+var errNoRelativeReading = errors.New("no path relative to the repo root")
+
 // placement is where a candidate sits with respect to the root.
 type placement int
 
@@ -173,14 +179,17 @@ func (p placement) String() string {
 // still more than one reading of "outside", and issue 36 stays open on it. Do
 // not read the single function as a single policy.
 //
-// The error is the root and the candidate having no relative reading at all, a
-// second drive letter on Windows rather than a location above the root. It is a
-// separate answer because it is not a placement, and a caller that reports it
-// says so in its own words.
+// An error is a question the placement could not be answered at all, and there
+// are two of them. errNoRelativeReading is the root and the candidate having no
+// relative reading, a second drive letter on Windows rather than a location
+// above the root. The other is the filesystem refusing to say whether a
+// case-differing prefix is the root, which sameDir carries up verbatim. They are
+// separate answers because neither is a placement, and named tells them apart to
+// pick its words.
 func (r Root) relativize(resolved string) (Path, placement, error) {
 	rel, err := filepath.Rel(r.resolved, resolved)
 	if err != nil {
-		return "", outside, err
+		return "", outside, errNoRelativeReading
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return r.foldRootPrefix(resolved)
@@ -197,7 +206,7 @@ func (r Root) relativize(resolved string) (Path, placement, error) {
 // The developer then goes looking for a location mistake instead of a spelling
 // one. This takes the first four components, `/private/tmp/CF_TEST`, folds them
 // against `/private/tmp/cf_test`, confirms with os.SameFile that the two names
-// reach one directory, and answers folded with `sub/a.txt`.
+// reach one directory, and answers folded.
 //
 // os.SameFile is what keeps this from being the text folding ADR 0004 rejects.
 // Two directories that differ only in case are two inodes on a case-sensitive
@@ -206,9 +215,14 @@ func (r Root) relativize(resolved string) (Path, placement, error) {
 // because it is free and because it also stops a bind mount or a hard-linked
 // directory, which is one inode under two unrelated names, from folding.
 //
-// Only the root prefix folds. The components below it come back as the
-// candidate spells them, so a case-only difference there is still refused one
-// layer up.
+// Only the root prefix folds. A folded answer carries no Path: the components
+// below the root are spelled as the candidate spells them and not as the tree
+// does, and Path is a repo-relative path this package has vouched for, so
+// handing one out here would put a spelling the gate refuses into the currency
+// every later stage keys on. named, the one caller that acts on folded, refuses
+// the name and never needs them. They are what a caller acting on folded as a
+// placement would need, so the widening ADR 0004 would have to authorize is
+// this return and not the predicate.
 //
 // folded is a reading, not a verdict. named is the only caller that acts on it,
 // where the path is one a developer typed and can retype; Place and Name read
@@ -221,35 +235,54 @@ func (r Root) foldRootPrefix(resolved string) (Path, placement, error) {
 		return "", outside, nil
 	}
 	prefix := strings.Join(components[:len(rootComponents)], sep)
-	if !strings.EqualFold(prefix, r.resolved) || !sameDir(prefix, r.resolved) {
+	if !strings.EqualFold(prefix, r.resolved) {
 		return "", outside, nil
 	}
-	below := components[len(rootComponents):]
-	if len(below) == 0 {
-		return ".", folded, nil
+	same, err := sameDir(prefix, r.resolved)
+	if err != nil {
+		return "", outside, err
 	}
-	return Path(strings.Join(below, "/")), folded, nil
+	if !same {
+		return "", outside, nil
+	}
+	return "", folded, nil
 }
 
-// sameDir reports whether two names reach one directory. A name it cannot stat
-// is not the root under another spelling, since the root is a directory the
-// gate has already resolved.
-func sameDir(a, b string) bool {
+// sameDir reports whether two names reach one directory. A name that is not
+// there is not the root under another spelling, so it answers false. Any other
+// stat failure is the filesystem declining to answer, EACCES on a parent or the
+// root deleted mid-call, and it travels up rather than reading as two genuinely
+// distinct directories: that reading would refuse a path that is in fact inside
+// the repo as being outside it, which is the misdiagnosis issue 48 set out to
+// remove.
+func sameDir(a, b string) (bool, error) {
 	infoA, err := os.Stat(a)
 	if err != nil {
-		return false
+		return false, absenceIsNoError(err)
 	}
 	infoB, err := os.Stat(b)
 	if err != nil {
-		return false
+		return false, absenceIsNoError(err)
 	}
-	return os.SameFile(infoA, infoB)
+	return os.SameFile(infoA, infoB), nil
 }
 
-// Name is a path as the gate's document names it, repo-relative when it sits
-// under the root and the resolved absolute path when it does not. It is a
-// display string and not a Path, because a path outside the repo has no
-// repo-relative form and must not be mistaken for one.
+// absenceIsNoError drops a stat failure that is the name not being there, which
+// is an answer about the path, and keeps every other one, which is a failure to
+// look.
+func absenceIsNoError(err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+// Name is a path as the gate's document names it, in one of three shapes:
+// repo-relative when it sits under the root, the resolved absolute path when it
+// does not, and its own slash-separated text when it was handed over without a
+// working directory joined on. It is a display string and not a Path, because a
+// path outside the repo has no repo-relative form and must not be mistaken for
+// one.
 type Name string
 
 // String renders the name as it appears in the gate's output.
@@ -387,7 +420,10 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // not there. A parent directory the process cannot enter, a symlink cycle or a
 // component that is not a directory carry what the operating system said
 // instead, since sending the developer after a typo that is not there is the
-// misdiagnosis NoBaseError.Unrelated was added to avoid. A path the root cannot
+// misdiagnosis NoBaseError.Unrelated was added to avoid. A filesystem that
+// declines to say whether a case-differing prefix is the root travels the same
+// way, since the gate then knows nothing about where the path sits and must not
+// guess at either refusal below. A path the root cannot
 // be relativized against at all, a second drive letter on Windows rather than a
 // location above the root, says that in the gate's own words rather than
 // carrying filepath.Rel's, which quote two absolute paths the developer never
@@ -428,8 +464,11 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 		return "", unreadable(name, err)
 	}
 	rel, place, err := r.relativize(resolved)
-	if err != nil {
+	if errors.Is(err, errNoRelativeReading) {
 		return "", &UnresolvedError{Name: name, Reason: "has no path relative to the repo root"}
+	}
+	if err != nil {
+		return "", unreadable(name, err)
 	}
 	if place == outside {
 		return "", &UnresolvedError{Name: name, Reason: "is outside the repo root"}

@@ -173,7 +173,7 @@ func Discover(root srcpath.Root) (sources []Source, skipped []string, err error)
 		if !underResultsDir(rel) {
 			return nil
 		}
-		sources = append(sources, Source{Abs: path, Name: srcpath.Name(filepath.ToSlash(rel)), Origin: Discovered})
+		sources = append(sources, Source{Abs: path, Name: walkedName(root, path), Origin: Discovered})
 		return nil
 	})
 	if err != nil {
