@@ -28,14 +28,14 @@ var binDir string
 const extractorName = "metric-gate-csharp"
 
 // enforceDotnet is whether METRIC_GATE_REQUIRE_DOTNET forbids every skip route
-// of the case that drives the real dotnet extractor. TestMain decides it once
+// of the cases that drive the real dotnet toolchain. TestMain decides it once
 // for the process, so no later reader can re-parse the variable and turn a
 // value the suite refuses into a quiet false.
 var enforceDotnet bool
 
 func TestMain(m *testing.M) {
 	// Parsed here rather than only where it is used, so a -run filter that
-	// excludes the full-stack case cannot leave a typo like
+	// excludes the full-stack cases cannot leave a typo like
 	// METRIC_GATE_REQUIRE_DOTNET=true undetected and enforcement quietly off.
 	require, err := requireDotnet(os.LookupEnv(envRequireDotnet))
 	if err != nil {

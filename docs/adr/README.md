@@ -42,6 +42,6 @@ what a reader is expected to read in full, so it has to be readable in one sitti
 they scroll when the block is not enough. A decision that will not fit is more than one decision.
 0007, 0008 and 0009 run 193 to 240 words in the block and 784 to 1499 in the file.
 
-0004 is at both triggers, five amendments and 2252 words, and is the next one to consolidate.
+0004 is past both triggers, six amendments and 2606 words, and is the next one to consolidate.
 
 If an ADR looks wrong, that is a decision to escalate to the user, not an edit to make.
