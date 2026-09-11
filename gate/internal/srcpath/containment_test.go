@@ -436,6 +436,63 @@ func TestPlaceLandsACandidateUnderACaseDifferingRootSpelling(t *testing.T) {
 	}
 }
 
+// The policy the fold's docs record for Place: a root the filesystem will not
+// stat lands the candidate nowhere, the same as one genuinely outside, because
+// Placed carries no reason and named is the only door with words for the fault.
+// The class goes unmeasured rather than the run failing. Removing the link that
+// is this Root's own directory is what makes isRootUnder's second stat fail
+// while the candidate below the real directory still resolves.
+func TestPlaceLandsNowhereWhenTheRepoRootCannotBeStatted(t *testing.T) {
+	root, real := symlinkedMiscasedRoot(t)
+	resolved := touch(t, filepath.Join(real, "src", "a.cs"))
+	assertFolds(t, root, resolved)
+	if err := os.Remove(root.Dir()); err != nil {
+		t.Fatal(err)
+	}
+
+	placed := root.Place(resolved)
+
+	rel, in := placed.Inside()
+	if in || rel != "" {
+		t.Errorf("Place against a root it cannot stat returned %q, %v, want \"\", false", rel, in)
+	}
+	if placed.Resolved() != filepath.ToSlash(resolved) {
+		t.Errorf("Resolved = %q, want the resolved candidate %q", placed.Resolved(), filepath.ToSlash(resolved))
+	}
+}
+
+// The same policy at Name, on every filesystem: a report the gate cannot weigh
+// against the root is named by its absolute path, the shape a path outside the
+// repo gets. Naming it repo-relative would claim a placement the gate does not
+// have, and erroring would exit with no document at all. This is the shape the
+// doc calls out as nearer at Name than at Place, a --coverage report that is not
+// on disk yet under a prefix whose parent denies search.
+func TestNameNamesAReportItCannotWeighAgainstTheRepoRootByItsAbsolutePath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root searches a directory whose mode denies it, so there is no stat failure to provoke")
+	}
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := mkdir(t, filepath.Join(tmp, "parent"))
+	root, err := NewRoot(mkdir(t, filepath.Join(parent, "repo")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(parent, "REPO", "TestResults", "coverage.cobertura.xml")
+	if err := os.Chmod(parent, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+
+	name := root.Name(path)
+
+	if name != Name(filepath.ToSlash(path)) {
+		t.Errorf("Name on a report it cannot weigh against the root = %q, want the absolute path %q", name, filepath.ToSlash(path))
+	}
+}
+
 // Name exists beside Place because a --coverage report the gate has to name in
 // a failure very often names nothing on disk, and Place refuses anything that
 // is not a regular file.

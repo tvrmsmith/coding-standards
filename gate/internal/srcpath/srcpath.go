@@ -17,10 +17,12 @@
 // answers a developer with a reason. Place and Name read it as outside, because
 // neither has a channel to carry a reason: Place answers a bool and Name one
 // display string, and the alternatives cost more than the fault is worth, an
-// exit with no document at all or a new error code. The fault is narrow at both,
-// since the candidate's own EvalSymlinks and stat have to have succeeded first,
-// leaving the root itself moving or becoming unreadable mid-run. Widening Placed
-// to carry it is issue 36 follow-up work.
+// exit with no document at all or a new error code. How near the fault is
+// differs between the two, and each door's own doc says which: Place has already
+// resolved and statted the candidate by then, so what is left is the root
+// itself, while Name resolves as far as the path exists and reaches the fault
+// for a report that is not on disk at all. Widening Placed to carry it is issue
+// 36 follow-up work.
 //
 // Landing under the root is not the same as being accepted. named still refuses
 // a mis-cased root prefix, because a --files path is one a developer typed and
@@ -347,10 +349,13 @@ func (n Name) String() string { return string(n) }
 // a coverage-side filesystem failure, and a new code saying the gate could not
 // weigh the path is a change to ADR 0008's list. named is the one door that
 // words the fault distinctly, "could not be weighed against the repo root",
-// because it already answers a developer with a reason. The same reading applies
-// at Place, and the fault is narrow at both: the candidate's own EvalSymlinks
-// has to have succeeded first, so what remains is the root itself moving or
-// becoming unreadable mid-run.
+// because it already answers a developer with a reason. Place reads it the same
+// way as here, but it is further from the fault than Name is: Place has resolved
+// and statted the candidate before it asks, where resolveExisting climbs past a
+// component that is not there, so a --coverage report that does not exist yet
+// under a case-differing prefix whose parent denies search reaches this arm and
+// is named absolute. It is the report's own name that suffers, and the run still
+// carries a document saying so.
 func (r Root) Name(path string) Name {
 	if !filepath.IsAbs(path) {
 		return Name(filepath.ToSlash(path))
