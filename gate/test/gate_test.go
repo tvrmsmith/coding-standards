@@ -728,11 +728,12 @@ func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) 
 // `.cs` symlink replaced in the working tree by a real source file full of
 // methods. The gate drops it, same as the other direction, and this case
 // exists so that drop stays a decision rather than an accident. The blind
-// spot it accepts is one commit wide: the next ordinary edit to the now-real
-// file arrives as status M, with every method in it measured normally. That
-// is a small price for ADR 0003's boast of no special cases for move,
-// rename, delete or new file, and paying it here keeps the filter one rule
-// covering both typechange directions rather than one rule per direction.
+// spot it accepts is not one commit wide. Under ADR 0007 a changed method is
+// a working-tree span holding a touched line, so a later status M edit to the
+// now-real file measures only the methods holding the edited lines, and every
+// other method in the file stays unmeasured until something touches it. The
+// file never arrives as status A, which is the only route that measures all
+// of it, so the gap persists.
 //
 // Widening the filter to ACMT is not the fix, verified against real git.
 // With T included, git renders a typechange as a delete plus an add pair, so
@@ -744,9 +745,10 @@ func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) 
 // link's path, so a change the gate correctly ignores today would start
 // failing the run instead. Measuring the direction this case covers needs a
 // mode-aware pass classifying the new side of a typechange before anything
-// reaches the extractor, not a flag edit, and the risk runs the wrong way: a
-// false failure no edit clears is worse than a commit measured one edit
-// late.
+// reaches the extractor, not a flag edit. That pass is the work this change
+// does not take on, so the gap above is accepted rather than closed: a false
+// failure no edit clears is worse than methods that go unmeasured until an
+// edit reaches them.
 func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
@@ -754,12 +756,12 @@ func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) 
 	f.commitAll("initial")
 	f.removeFile(orderFile)
 	f.write(orderFile, csharpFile(80))
+	handed := filepath.Join(t.TempDir(), "handed")
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderFile), []span{orderTotal}),
+		StdinLog:   handed,
 	}
-	handed := filepath.Join(t.TempDir(), "handed")
-	f.stub.StdinLog = handed
 
 	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
 		"no changed methods, nothing to measure\n")
@@ -769,13 +771,15 @@ func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) 
 	// StdinLog. A --capabilities probe cannot create the file either: the
 	// stub answers --capabilities and returns before it drains stdin
 	// (gate/test/stub/main.go), so even a capabilities-only invocation leaves
-	// this file absent. Its continued absence is what falsifies a
-	// regression that starts handing the extractor work it should not get:
-	// widen the filter to ACMT and the new side becomes a real, claimed
-	// Order.cs with 80 touched lines, the extractor is handed Order.cs, and
-	// the empty_changed_set golden stops matching.
-	if _, err := os.Stat(handed); !os.IsNotExist(err) {
-		t.Fatalf("expected no StdinLog file, got err=%v", err)
+	// this file absent. An ACMT widen is caught by the golden above, not by
+	// this check. What this check adds on its own is the case the golden
+	// cannot see: a change that hands the extractor the typechange path while
+	// still emitting an empty document.
+	switch _, err := os.Stat(handed); {
+	case err == nil:
+		t.Errorf("the extractor was handed %q, want nothing", readFile(t, handed))
+	case !errors.Is(err, fs.ErrNotExist):
+		t.Fatalf("stating %s answered neither way: %v", handed, err)
 	}
 }
 
