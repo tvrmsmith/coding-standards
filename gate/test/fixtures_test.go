@@ -492,8 +492,10 @@ func (f *fixture) setExecutable(rel string) {
 	}
 }
 
-// symlinkTo puts a symbolic link at the repo-relative rel pointing at the
-// absolute target, and skips the case on a filesystem that will not make one.
+// symlinkTo puts a symbolic link at the repo-relative rel pointing at target,
+// and skips the case on a filesystem that will not make one. target reaches
+// os.Symlink verbatim, so it is either absolute or relative to rel's own
+// directory, never relative to the repo root.
 func (f *fixture) symlinkTo(target, rel string) {
 	f.t.Helper()
 	full := filepath.Join(f.root, filepath.FromSlash(rel))

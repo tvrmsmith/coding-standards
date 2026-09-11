@@ -688,9 +688,12 @@ func TestMethodMovedWithinOneFileIsMeasuredAtItsNewLocation(t *testing.T) {
 // ACM excludes that a live case can still produce: widening the letter set to
 // ACMD, or any other combination of A/C/M/D, still excludes T, so what this
 // case actually pins is the filter's presence, not its exact letters. A
-// symlink genuinely should not be measured as source, which is why the flag
-// stays pinned whole rather than narrowed to only the letters this suite
-// happens to exercise, the alternative issue 25 considered and rejected.
+// source file that becomes a symlink genuinely should not be measured, which
+// is why the flag stays pinned whole rather than narrowed to only the letters
+// this suite happens to exercise, the alternative issue 25 considered and
+// rejected. That reaches only the typechange: a `.cs` symlink added outright
+// arrives as status A, passes ACM, and is handed to the extractor like any
+// other new file.
 func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderFile, csharpFile(80))
@@ -788,7 +791,7 @@ func TestEveryMethodInANewlyAddedFileIsMeasured(t *testing.T) {
 //
 // The stub's stdout is canned and stays silent about Scratch.cs on purpose.
 // Issue 26 asks for an over-threshold span on the untracked file, but
-// extract.collect (gate/internal/extract/extract.go:408) exits 1 with
+// extract.collect (gate/internal/extract/extract.go) exits 1 with
 // extractor_path_mismatch on a span for a path the gate never handed out.
 // Under correct behaviour the untracked file is never handed to the
 // extractor, so a canned span for it would red this case for the wrong
