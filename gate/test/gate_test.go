@@ -2795,13 +2795,12 @@ func TestAChangedFileMissingFromTheWorkingTreeCurrentlyStopsTheRunOutsideTheDocu
 		t.Fatalf("%s is still readable, which the case needs it not to be", orderService)
 	}
 
-	// This is the shape the run has today, not the shape it should have. ADR
-	// 0008 carves one case out of its one-TOON-document rule, a malformed
-	// command line, and a changed file the gate cannot stat is not that one, so
-	// the empty stdout below is a known deviation this case pins rather than a
-	// rule 0008 grants. It lands after the changed methods are counted. Issue 31
-	// gives the failure a typed code, and moves it inside the document; this
-	// case goes red the day it does, which is what it is here for.
+	// This is the shape the run has today, not the shape it should have. A
+	// changed file the gate cannot stat is one of the known deviations the
+	// metric-gate package doc catalogues, landing after the changed methods are
+	// counted. Issue 31 gives the failure a typed code, and moves it inside the
+	// document; this case goes red the day it does, which is what it is here
+	// for.
 	result := f.runWithArgs()
 	if result.exitCode != 1 || result.stdout != "" {
 		t.Errorf("gate exited %d with stdout %q, want exit 1 and nothing on stdout", result.exitCode, result.stdout)
@@ -2833,9 +2832,9 @@ func TestCoverageFlagTakesAValueBeginningWithOneDashAsAPath(t *testing.T) {
 		f.baseLabel("main"), "0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
-// assertUsageError checks the shape ADR 0008 gives the one failure it carves
-// out of the one-TOON-document rule, a malformed command line: exit 1, nothing
-// on stdout, and the cause plus the usage line on stderr.
+// assertUsageError checks the shape ADR 0008 gives a malformed command line,
+// the one documentless exit the metric-gate package doc records as sanctioned:
+// exit 1, nothing on stdout, and the cause plus the usage line on stderr.
 func assertUsageError(t *testing.T, result runResult, stderr string) {
 	t.Helper()
 	if result.exitCode == 1 && result.stdout == "" && result.stderr == stderr {
@@ -3708,17 +3707,14 @@ func TestRunOutsideAGitRepoWritesNoDocumentAndExitsOne(t *testing.T) {
 
 	result := f.run()
 
-	// This is the shape the run has today, not the shape it should have. ADR
-	// 0008 carves one case out of its one-TOON-document rule, a malformed
-	// command line, and running outside a git repo is not that one, so the empty
-	// stdout below is a known deviation this case pins rather than a rule 0008
-	// grants. The failure does land upstream of the document, before a base is
+	// This is the shape the run has today, not the shape it should have.
+	// Running outside a git repo is one of the known deviations the metric-gate
+	// package doc catalogues, landing upstream of the document before a base is
 	// resolved. git's own explanation is in git's own language, but the failing
-	// argv is not, and
-	// gitError.Error carries it, so naming the invocation that failed keeps the
-	// case specific without pinning it to English. A panic or an unrelated
-	// wrapped error would satisfy "exit 1 with something on stderr" and must not
-	// satisfy this.
+	// argv is not, and gitError.Error carries it, so naming the invocation that
+	// failed keeps the case specific without pinning it to English. A panic or
+	// an unrelated wrapped error would satisfy "exit 1 with something on stderr"
+	// and must not satisfy this.
 	if result.exitCode != 1 || result.stdout != "" || !strings.Contains(result.stderr, "rev-parse") {
 		t.Errorf("gate outside a repo: got exit %d, stdout %q, stderr %q; want exit 1, empty stdout, a failed rev-parse on stderr",
 			result.exitCode, result.stdout, result.stderr)

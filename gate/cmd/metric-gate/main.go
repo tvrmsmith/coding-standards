@@ -10,29 +10,30 @@
 // counts, and the exit code is 0 pass, 1 tool error, 2 threshold exceeded.
 //
 // Any error that is not typed as a report.Failure writes its cause to stderr,
-// leaves stdout empty, and exits 1. ADR 0008 sanctions that shape for one
-// failure only, a malformed command line, which "exits 1 with empty stdout and
+// leaves stdout empty, and exits 1. ADR 0008 carves out exactly one exit of
+// that shape, a malformed command line, which "exits 1 with empty stdout and
 // no typed code, because argv failed before the run had a shape to report".
+// Every other exit of that shape is a known deviation rather than something
+// 0008 grants. This is the one place that rule is written down; the cases in
+// gate/test that pin such an exit point here rather than restate it.
 //
-// Four errors measure returns take that shape, and 0008 sanctions none of
-// them. Failing
-// to open a git repository lands upstream of the document, before a base is
-// resolved. Failing to read the working directory while
-// resolving a relative --files name lands after that and before any method is
-// counted. Failing to stat a changed file and failing to read the working
-// directory a --coverage path resolves against land after the changed methods
-// are counted, so the gate did examine a repository and still emits nothing.
-// All four are known deviations from the contract rather than part of it, and
-// issue 31 gives the last two typed codes and moves them inside the document.
-// Encoding the document is a fifth exit of the same shape, unreachable by
-// construction, since the encoder rejects only a value type or a row width
-// the document's fixed shape never produces.
+// Four of them are reachable while the document is being built. Failing to
+// open a git repository lands upstream of the document, before a base is
+// resolved. Failing to read the working directory while resolving a relative
+// --files name lands after that and before any method is counted. Failing to
+// stat a changed file and failing to read the working directory a --coverage
+// path resolves against land after the changed methods are counted, so the
+// gate did examine a repository and still emits nothing. Issue 31 gives the
+// last two typed codes and moves them inside the document. Other untyped
+// returns exist, in the encoder and in coverage discovery, but no input
+// reaches them.
 //
-// A sixth error stays outside issue 31's scope and is the one exception to the
-// empty stdout above: stdout refusing the write that carries the document, a
-// full disk or a closed descriptor among the causes. It happens after the
-// document is built, so the gate did produce one, and it still exits 1 with no
-// typed code, because the document is the thing that could not be delivered.
+// One more is reachable after the document is built, and it stays outside
+// issue 31's scope as the one exception to the empty stdout above: stdout
+// refusing the write that carries the document, a full disk or a closed
+// descriptor among the causes. The gate did produce a document, and it still
+// exits 1 with no typed code, because the document is the thing that could
+// not be delivered.
 // A write that came up short leaves a truncated document behind, so on this
 // cause alone stdout may hold part of a document rather than nothing, and the
 // exit code is the only signal a caller can trust. Issue 31 has nowhere to move
