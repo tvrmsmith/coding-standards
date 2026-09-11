@@ -207,11 +207,15 @@ func (f *fixture) runWithEnv(extra ...string) runResult {
 }
 
 // runWithStdout is run with out standing in for the gate's stdout, which is
-// how a case points the write at something other than an in-memory buffer,
-// a broken descriptor like /dev/full among them.
-func (f *fixture) runWithStdout(out io.Writer) runResult {
+// how a case points the write at a broken descriptor like /dev/full. It takes
+// an *os.File because that is the only thing os/exec hands the child as its
+// own descriptor: any other writer gets a pipe os/exec copies from, so the
+// child's writes all succeed and no write failure ever reaches the gate. What
+// out received is the caller's to read, since /dev/full and its kind cannot be
+// read back, so only the exit code and stderr come back here.
+func (f *fixture) runWithStdout(out *os.File) (int, string) {
 	f.t.Helper()
-	return f.execWithStdout(binDir, f.root, nil, out, "METRIC_GATE_STUB="+f.stubConfigPath())
+	return f.execTo(binDir, f.root, nil, out, "METRIC_GATE_STUB="+f.stubConfigPath())
 }
 
 // runIn executes the gate against the binary and extractor sitting in dir
@@ -274,16 +278,15 @@ func (f *fixture) stubConfigPath() string {
 func (f *fixture) exec(dir, workdir string, args []string, extraEnv ...string) runResult {
 	f.t.Helper()
 	var stdout strings.Builder
-	result := f.execWithStdout(dir, workdir, args, &stdout, extraEnv...)
-	result.stdout = stdout.String()
-	return result
+	exitCode, stderr := f.execTo(dir, workdir, args, &stdout, extraEnv...)
+	return runResult{exitCode: exitCode, stdout: stdout.String(), stderr: stderr}
 }
 
-// execWithStdout is exec with the gate's stdout pointed at out rather than a
-// strings.Builder the harness owns, which is how a case can hand the gate a
-// descriptor it cannot write to. result.stdout is left unset; the caller
-// reads out itself, since out is not always something that can be read back.
-func (f *fixture) execWithStdout(dir, workdir string, args []string, out io.Writer, extraEnv ...string) runResult {
+// execTo starts the gate with its stdout pointed at out and reports the two
+// things it learns whatever out is, the exit code and stderr. Assembling a
+// whole runResult is exec's job alone, so no caller can read an unset stdout
+// field as the gate having printed nothing.
+func (f *fixture) execTo(dir, workdir string, args []string, out io.Writer, extraEnv ...string) (int, string) {
 	f.t.Helper()
 	cmd := exec.Command(filepath.Join(dir, "metric-gate"), args...)
 	cmd.Dir = workdir
@@ -292,15 +295,15 @@ func (f *fixture) execWithStdout(dir, workdir string, args []string, out io.Writ
 	cmd.Stdout = out
 	cmd.Stderr = &stderr
 	err := cmd.Run()
-	result := runResult{stderr: stderr.String()}
+	exitCode := 0
 	switch e := err.(type) {
 	case nil:
 	case *exec.ExitError:
-		result.exitCode = e.ExitCode()
+		exitCode = e.ExitCode()
 	default:
 		f.t.Fatalf("running metric-gate: %v", err)
 	}
-	return result
+	return exitCode, stderr.String()
 }
 
 // assertMatches checks the run against a golden file and the expected exit

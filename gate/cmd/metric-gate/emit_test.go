@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -17,6 +18,22 @@ import (
 func passingDocument() report.Document {
 	return report.Document{Scope: scope.ModeMergeBase, Metric: &report.Metric{
 		Name: crap.Name, Display: crap.DisplayName, Threshold: crap.Threshold,
+	}}
+}
+
+// exceedingDocument is a document that renders and carries a score over the
+// threshold, so its own exit code is 2 rather than 0. It is what pins emit
+// passing doc.ExitCode() through on a healthy writer instead of returning a
+// constant that happens to match the passing case.
+func exceedingDocument() report.Document {
+	coverage, score := 0.1, float64(crap.Threshold+10)
+	return report.Document{Scope: scope.ModeMergeBase, ChangedMethods: 1, Metric: &report.Metric{
+		Name: crap.Name, Display: crap.DisplayName, Threshold: crap.Threshold,
+		Rows: []report.Row{{
+			File: "src/Ordering/OrderService.cs", Start: 1, End: 20, Name: "Place",
+			Complexity: 20, Coverage: &coverage, Score: &score,
+			State: report.StateMeasured, Action: crap.ActionNone,
+		}},
 	}}
 }
 
@@ -46,13 +63,49 @@ func TestEmitReturnsExitOneWhenStdoutWriteFails(t *testing.T) {
 }
 
 func TestEmitReturnsExitOneOnAShortWriteThatReportsNoError(t *testing.T) {
-	code, err := emit(shortWriter{}, &bytes.Buffer{}, passingDocument())
+	doc := passingDocument()
+	body, err := doc.Stdout()
+	if err != nil {
+		t.Fatalf("doc.Stdout(): %v", err)
+	}
+
+	code, err := emit(shortWriter{}, &bytes.Buffer{}, doc)
 
 	if code != 1 {
 		t.Errorf("code = %d, want 1", code)
 	}
-	if err == nil {
-		t.Error("err = nil, want a short-write error")
+	// The counts are asserted, not just a non-nil error, so a render failure
+	// or any other exit-1 cause cannot satisfy this case in the short write's
+	// place.
+	want := fmt.Sprintf("wrote %d of %d bytes", len(body)-1, len(body))
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("err = %v, want it to report %q", err, want)
+	}
+}
+
+func TestEmitKeepsTheDocumentsCodeWhenOnlyTheStderrSummaryFails(t *testing.T) {
+	var stdout bytes.Buffer
+	code, err := emit(&stdout, erroringWriter{err: errors.New("closed")}, passingDocument())
+
+	// The document already reached the caller, so the summary going nowhere
+	// is dropped rather than becoming a second exit-1 cause.
+	if code != 0 {
+		t.Errorf("code = %d, want 0", code)
+	}
+	if err != nil {
+		t.Errorf("err = %v, want nil", err)
+	}
+}
+
+func TestEmitPassesTheDocumentsOwnCodeThroughOnAHealthyWriter(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code, err := emit(&stdout, &stderr, exceedingDocument())
+
+	if err != nil {
+		t.Errorf("err = %v, want nil", err)
+	}
+	if code != 2 {
+		t.Errorf("code = %d, want 2", code)
 	}
 }
 

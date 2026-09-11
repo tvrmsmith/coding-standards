@@ -73,8 +73,9 @@ func main() {
 // emit writes doc to stdout and stderr and reports the exit code that goes
 // with them. A caller reads exit 0 as approval, so this is the one place a
 // failure to deliver the document has to turn into something other than
-// doc.ExitCode(): a run that produced no document must never look like a
-// pass.
+// doc.ExitCode(). A run that could not render its document, and a run that
+// rendered one and could not deliver it, must both look like something other
+// than a pass.
 //
 // This is a known deviation from ADR 0008: the failure carries no typed
 // error.code, because the code would have nowhere to be printed, stdout
@@ -88,6 +89,10 @@ func emit(stdout, stderr io.Writer, doc report.Document) (int, error) {
 	if err != nil {
 		return 1, fmt.Errorf("writing the document to stdout: %w", err)
 	}
+	// io.Writer obliges a short write to report an error and os.File honours
+	// that, so this branch only fires for a writer that breaks the contract.
+	// A caller must never read exit 0 as approval, so emit checks the count
+	// itself rather than trusting the writer.
 	if n != len(body) {
 		return 1, fmt.Errorf("writing the document to stdout: wrote %d of %d bytes", n, len(body))
 	}

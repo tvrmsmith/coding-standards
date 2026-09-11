@@ -3753,11 +3753,11 @@ func TestStdoutRefusingTheWriteExitsOneRatherThanTheDocumentsOwnCode(t *testing.
 	// This is the same docs-only fixture TestDocsOnlyChangePassesWithNoCoverageReportPresent
 	// runs, which exits 0 today. Pointing its stdout at /dev/full is what turns
 	// that pass into the reported error the issue is about.
-	result := f.runWithStdout(full)
+	exitCode, stderr := f.runWithStdout(full)
 
-	if result.exitCode != 1 || !strings.Contains(result.stderr, "writing the document to stdout") {
+	if exitCode != 1 || !strings.Contains(stderr, "writing the document to stdout") {
 		t.Errorf("gate with stdout refusing every write: got exit %d, stderr %q; want exit 1, stderr naming the write failure",
-			result.exitCode, result.stderr)
+			exitCode, stderr)
 	}
 }
 
