@@ -985,7 +985,7 @@ func TestSinceNamingARevisionGitWillNotEvaluateReportsAnUnreadableDiff(t *testin
 	// not exist it would send the developer looking for a branch they never
 	// typed.
 	f.runArgs("--since", "HEAD@{99}").assertMatches(t, "since_ref_unreadable", 1, "",
-		"could not read the diff: git rev-parse --verify --quiet HEAD@{99}^{commit}: exit status 128\n")
+		"could not read the diff: git rev-parse --verify --quiet HEAD@{99}: exit status 128\n")
 }
 
 func TestStagedLooksForPureMovesInTheIndexRatherThanTheWorkingTree(t *testing.T) {
@@ -1128,6 +1128,27 @@ func TestSinceReportsAMergeBaseGitCannotWalkAsAnUnreadableDiff(t *testing.T) {
 	cause := f.gitStderr("merge-base", "HEAD", "other")
 
 	f.runArgs("--since", "other").assertMatchesWith(t, "since_merge_base_unreadable", 1, "",
+		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": cause})
+}
+
+func TestSinceNamingABranchWhoseCommitObjectIsGoneReportsAnUnreadableDiff(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.git("branch", "other")
+	f.touchLine(orderService, 62)
+	f.commitAll("second")
+	f.removeLooseObject(f.git("rev-parse", "other"))
+
+	// other resolves at the unpeeled check, since that check never reads the
+	// commit it names, and the object cat-file -t asks about is the first
+	// thing that touches the missing object. Left classified by the old
+	// `^{commit}` peel this would come back as a ref that does not name a
+	// commit, sending the developer after a branch that is sitting right
+	// there in refs/heads.
+	cause := f.gitStderr("cat-file", "-t", "other^{}")
+
+	f.runArgs("--since", "other").assertMatchesWith(t, "since_ref_object_unreadable", 1, "",
 		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": cause})
 }
 

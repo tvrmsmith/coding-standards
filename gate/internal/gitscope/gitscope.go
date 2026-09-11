@@ -160,8 +160,9 @@ var errNoSuchRev = errors.New("rev does not resolve")
 // skips it, and the run ends at the tried-refs list naming a branch that is
 // sitting in the repo, which is the failure this resolver exists to close.
 // Unpeeled, the check answers about the ref alone and merge-base is what
-// classifies the object. ResolveRef keeps the peel because --since can name a
-// tag, and "does not name a commit" is the answer that flag owes its caller.
+// classifies the object. ResolveRef verifies its one ref unpeeled the same way
+// and asks `cat-file -t` about the object separately, since --since can name a
+// tag and "does not name a commit" is the answer that flag owes its caller.
 //
 // git resolves refs/tags/<name> ahead of refs/heads/<name>, so a lightweight
 // tag shadowing a rung and pointing at a tree or a blob resolves at the
@@ -220,13 +221,18 @@ func (r Repo) ResolveBase() (Base, error) {
 // typed as an unreadable diff, because reported as a name that does not exist
 // it would send the developer hunting a typo.
 //
-// The `^{commit}` peel is what makes "does not name a commit" the answer a tag
-// on a tree gets, which is the answer --since owes a caller who chose the ref by
-// hand. It cannot separate that ref from one whose own commit object is gone,
-// since git exits 1 on both, so `--since main` in a store missing main's commit
-// says main does not name a commit while the default scope, which verifies its
-// candidates unpeeled, reports the object merge-base could not read. Issue 68
-// tracks that gap.
+// The ref check is unpeeled, matching ResolveBase's candidate check, so both
+// resolvers read exit 1 the same way, no such ref rather than a claim about
+// what the ref names. `cat-file -t <ref>^{}` is what classifies the object once
+// the ref itself resolves. Exit 0 naming anything but a commit is the "does not
+// name a commit" answer --since owes a caller who chose the ref by hand, a
+// lightweight tag on a tree for one. Every non-zero exit is git failing to
+// answer, which is what a branch whose commit object the store lacks gives, and
+// separating those two is the whole point of asking: the peel this check
+// replaces exits 1 on both and reported the damaged store as a ref naming no
+// commit. `^{}` rather than `-t <ref>` because the latter answers "tag" for an
+// annotated tag whose target commit is gone, which is that same conflation one
+// object further out.
 //
 // Only the argv shape reaches a caller from these two checks today, and
 // since_ref_unreadable pins it. `--quiet` is what makes an absent ref exit 1 at
@@ -245,11 +251,18 @@ func (r Repo) ResolveBase() (Base, error) {
 // made with `git checkout --orphan` reports the diff as unparseable for a run
 // that never reached a diff, when what the repo has is no commit on this branch.
 func (r Repo) ResolveRef(ref string) (Base, error) {
-	if _, err := r.verifyRev(ref + "^{commit}"); err != nil {
+	if _, err := r.verifyRev(ref); err != nil {
 		if errors.Is(err, errNoSuchRev) {
 			return Base{}, NoBaseError{Ref: ref}
 		}
 		return Base{}, err
+	}
+	objType, err := r.git("cat-file", "-t", ref+"^{}")
+	if err != nil {
+		return Base{}, unreadableDiff(err)
+	}
+	if strings.TrimSpace(objType) != "commit" {
+		return Base{}, NoBaseError{Ref: ref}
 	}
 	if _, err := r.verifyRev("HEAD"); err != nil {
 		if errors.Is(err, errNoSuchRev) {
@@ -283,12 +296,12 @@ func (r Repo) ResolveStaged() (Base, error) {
 
 // verifyRev resolves rev, answering errNoSuchRev when git exits 1 and an
 // unreadable diff on every other exit code. It promises no commit id. Every
-// check here is unpeeled but the ref check ResolveRef makes, so for a ref whose
-// commit object the store lacks git exits 0 and prints an id the object store
-// does not hold, which is the fact the merge base that follows fails on.
-// ResolveStaged is the one of the five call sites that reads the string, and it
-// can be handed a dangling id that way. The other four discard it and want only
-// which of the two arms fired.
+// check here is unpeeled, so for a ref whose commit object the store lacks git
+// exits 0 and prints an id the object store does not hold, which is the fact
+// the merge base or the cat-file check that follows fails on. ResolveStaged is
+// the one of the five call sites that reads the string, and it can be handed a
+// dangling id that way. The other four discard it and want only which of the
+// two arms fired.
 //
 // Every resolver's every check shares this rather than spelling the same two
 // arms out each time, which is what makes one reading of noMatch the reading
