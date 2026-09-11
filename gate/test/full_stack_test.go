@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -104,28 +105,53 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 
 // realExtractorCases names every case that drives the real dotnet toolchain
 // and so decides on METRIC_GATE_REQUIRE_DOTNET. The child selection and the
-// child's RUN lines are both derived from it, so adding a case here is the one
-// edit that puts it under the enforcement rows below. The same names appear in
-// ci.yml, which greps the verbose log for each one's PASS line.
+// per-case outcome lines the enforcement rows assert are both derived from it,
+// so adding a case here is the one edit that puts it under those rows. ci.yml
+// retypes the same names in the loop that greps the verbose log for each one's
+// PASS line; it does not read them from here, and
+// TestCILoopsOverEveryRealExtractorCase is what makes a name missing there
+// impossible to merge.
 var realExtractorCases = []string{
 	"TestFullStackDrivesTheRealDotnetExtractor",
 	"TestFullStackScoresAReportCoverletWrote",
+}
+
+// requireRealDotnet is the decision every case in realExtractorCases makes
+// before it touches dotnet, held in one place so a case added to the slice
+// without it cannot run the toolchain unasked. Nothing here reads the machine.
+// A run that means to drive the real toolchain says so and then reds on a
+// machine that cannot serve it; a run that does not say so skips before the
+// first dotnet call.
+func requireRealDotnet(t *testing.T) {
+	t.Helper()
+	if !enforceDotnet {
+		t.Skip(reasonUnset)
+	}
+	if testing.Short() {
+		t.Fatalf("%s=1 forbids skipping: %s", envRequireDotnet, reasonShort)
+	}
 }
 
 // childCase selects those cases in a child and nothing else. Widening this
 // pattern would let the child re-enter the forking tests and fork forever.
 var childCase = "^(" + strings.Join(realExtractorCases, "|") + ")$"
 
-// childRan is what -test.v prints once a child is past TestMain and into each
-// selected case. Asserting them is what separates "the child failed for the
-// reason under test" from "the child never built" or "-run matched nothing".
-var childRan = runLines(realExtractorCases)
+// childSkipped and childFailed are the -test.v outcome lines every selected
+// case prints on the two routes the enforcement rows drive. Asserting one line
+// per name is what separates "each case took the route under test" from "one
+// case did and the other's guard is gone", which a bare "--- SKIP" over the
+// whole output cannot tell apart.
+var (
+	childSkipped = outcomeLines("SKIP", realExtractorCases)
+	childFailed  = outcomeLines("FAIL", realExtractorCases)
+)
 
-// runLines is the -test.v RUN line for each named case.
-func runLines(names []string) []string {
+// outcomeLines is the -test.v result line each named case prints for the given
+// outcome.
+func outcomeLines(outcome string, names []string) []string {
 	lines := make([]string, len(names))
 	for i, name := range names {
-		lines[i] = "=== RUN   " + name
+		lines[i] = "--- " + outcome + ": " + name + " ("
 	}
 	return lines
 }
@@ -182,19 +208,19 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 		{
 			name:  "the unset run skips without touching dotnet",
 			short: long,
-			wants: []string{"--- SKIP", reasonUnset},
+			wants: slices.Concat(childSkipped, []string{reasonUnset}),
 		},
 		{
 			name:  "-short does not change the unset run",
 			short: short,
-			wants: []string{"--- SKIP", reasonUnset},
+			wants: slices.Concat(childSkipped, []string{reasonUnset}),
 		},
 		{
 			name:    "-short fails when enforcement forbids the skip",
 			require: "1",
 			short:   short,
 			wantErr: true,
-			wants:   []string{envRequireDotnet, "forbids skipping", reasonShort},
+			wants:   slices.Concat(childFailed, []string{envRequireDotnet, "forbids skipping", reasonShort}),
 		},
 	}
 
@@ -207,7 +233,6 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 			if !c.wantErr && err != nil {
 				t.Fatalf("child failed with %v, want a pass. output:\n%s", err, out)
 			}
-			mustContain(t, out, childRan...)
 			mustContain(t, out, c.wants...)
 		})
 	}
@@ -256,11 +281,14 @@ func childEnv(require string) []string {
 	return env
 }
 
-// TestFullStackDrivesTheRealDotnetExtractor is the only case in the suite
-// that runs the real dotnet tool extractor end to end instead of the stub.
-// Its fixture and golden are pinned to match fail_single_method's numbers, so
-// if the real tool and the stub ever disagree about a span or a complexity,
-// this is what catches it.
+// TestFullStackDrivesTheRealDotnetExtractor is one of the two cases in the
+// suite that run the real dotnet tool extractor end to end instead of the
+// stub, and they pin different halves of the contract: this one pins spans and
+// complexity against the stub's numbers, and
+// TestFullStackScoresAReportCoverletWrote pins the coverage report's format
+// against the producer that writes it. Its fixture and golden are pinned to
+// match fail_single_method's numbers, so if the real tool and the stub ever
+// disagree about a span or a complexity, this is what catches it.
 //
 // The coverage report it hands the gate is still synthetic. coverlet.collector,
 // the producer the C# extractor targets, writes its timestamp attribute as
@@ -269,16 +297,7 @@ func childEnv(require string) []string {
 // staleness rule. Collecting real coverage means running dotnet test, which is
 // issue 21's work and not this case's.
 func TestFullStackDrivesTheRealDotnetExtractor(t *testing.T) {
-	// Nothing here asks the machine what it carries. A run that means to drive
-	// the real extractor says so, and then a machine that cannot serve it reds
-	// at the pack rather than skipping green; a run that does not say so skips
-	// before the first dotnet call.
-	if !enforceDotnet {
-		t.Skip(reasonUnset)
-	}
-	if testing.Short() {
-		t.Fatalf("%s=1 forbids skipping: %s", envRequireDotnet, reasonShort)
-	}
+	requireRealDotnet(t)
 
 	fullStackBinDir := installRealExtractor(t)
 
