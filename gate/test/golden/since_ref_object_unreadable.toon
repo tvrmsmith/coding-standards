@@ -8,4 +8,4 @@ touched_lines_outside_spans: 0
 skipped_paths: []
 error:
   code: diff_unparseable
-  message: "could not read the diff: git rev-parse --verify --quiet HEAD@{99}: exit status 128"
+  message: "could not read the diff: {{CAUSE}}"
