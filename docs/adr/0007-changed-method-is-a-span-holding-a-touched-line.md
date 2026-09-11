@@ -81,9 +81,10 @@ caller cannot detect.
 Any git exit other than 1, at any check, reports an unreadable diff carrying git's words. Candidates
 verify **unpeeled**, because `<ref>^{commit}` exits 1 on a missing object.
 
-**Amended 2026-09-11.** `--since <ref>` verifies its ref unpeeled the same way, then asks `cat-file -t
-<ref>^{}` about the object. A branch whose commit object is gone now reports an unreadable diff
-instead of the "does not name a commit" answer that check used to give it.
+**Amended 2026-09-11.** `--since <ref>` verifies its ref unpeeled too, then classifies with
+`cat-file -t` on the id that verify resolved, `^{}` appended to that id and never to the typed ref,
+which for `<rev>:<path>` builds a pathspec rather than a peel. A missing commit object now reports
+an unreadable diff rather than "does not name a commit".
 
 `--files` carries no line information, so every method in a listed file is changed and `base` is
 null. `--staged` reports index line numbers while the extractor parses the disk copy, so the gate
