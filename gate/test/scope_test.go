@@ -230,13 +230,29 @@ func TestSinceNamingATagThatDoesNotPointAtACommitFailsNamingThatRef(t *testing.T
 	// nothing the run can diff against.
 	f.git("tag", "treetag", f.git("rev-parse", "HEAD^{tree}"))
 
-	// The `^{commit}` peel on this check is what turns that into the answer
-	// --since owes its caller. Dropped, as it is on the default walk's
-	// candidate check, the tag resolves, merge-base fails to name a commit, and
-	// the developer is told the diff could not be read for a ref they named by
-	// hand and can fix by naming another.
+	// The tag resolves at the unpeeled check, and `cat-file -t <sha>^{}`
+	// answering `tree` is what turns that into the answer --since owes its
+	// caller. Dropped, as that classification is on the default walk's
+	// candidate check, merge-base is what fails, at exit 128, and the developer
+	// is told the diff could not be read for a ref they named by hand and can
+	// fix by naming another.
 	f.runArgs("--since", "treetag").assertMatches(t, "since_tag_not_a_commit", 1, "",
 		"no diff base: --since treetag does not name a commit\n")
+}
+
+func TestSinceNamingAPathInsideACommitFailsNamingThatRev(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+
+	// `HEAD:<path>` resolves, to the blob the path holds, so the unpeeled
+	// verify passes it through and the classification is what answers. It is
+	// the shape that catches a peel applied to the rev the developer typed
+	// rather than to the id the verify resolved: `HEAD:<path>^{}` asks git for
+	// a path spelled with a trailing `^{}`, which no tree holds, and the run
+	// would report a git failure over a path nobody typed.
+	f.runArgs("--since", "HEAD:"+orderService).assertMatches(t, "since_path_rev_not_a_commit", 1, "",
+		"no diff base: --since HEAD:"+orderService+" does not name a commit\n")
 }
 
 func TestStagedMeasuresOnlyWhatIsStaged(t *testing.T) {
@@ -985,7 +1001,7 @@ func TestSinceNamingARevisionGitWillNotEvaluateReportsAnUnreadableDiff(t *testin
 	// not exist it would send the developer looking for a branch they never
 	// typed.
 	f.runArgs("--since", "HEAD@{99}").assertMatches(t, "since_ref_unreadable", 1, "",
-		"could not read the diff: git rev-parse --verify --quiet HEAD@{99}^{commit}: exit status 128\n")
+		"could not read the diff: git rev-parse --verify --quiet HEAD@{99}: exit status 128\n")
 }
 
 func TestStagedLooksForPureMovesInTheIndexRatherThanTheWorkingTree(t *testing.T) {
@@ -1129,6 +1145,75 @@ func TestSinceReportsAMergeBaseGitCannotWalkAsAnUnreadableDiff(t *testing.T) {
 
 	f.runArgs("--since", "other").assertMatchesWith(t, "since_merge_base_unreadable", 1, "",
 		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": cause})
+}
+
+func TestSinceNamingABranchWhoseCommitObjectIsGoneReportsAnUnreadableDiff(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.git("branch", "other")
+	f.touchLine(orderService, 62)
+	f.commitAll("second")
+	gone := f.git("rev-parse", "other")
+	f.removeLooseObject(gone)
+
+	// other resolves at the unpeeled check, since that check never reads the
+	// commit it names, and the peel cat-file -t asks about is the first thing
+	// that touches the missing object. Left classified by the old `^{commit}`
+	// peel this would come back as a ref that does not name a commit, sending
+	// the developer after a branch that is sitting right there in refs/heads.
+	cause := f.gitStderr("cat-file", "-t", gone+"^{}")
+
+	f.runArgs("--since", "other").assertMatchesWith(t, "since_ref_object_unreadable", 1, "",
+		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
+}
+
+func TestSinceNamingAnAnnotatedTagResolvesTheBaseThroughIt(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.git("tag", "-a", "release", "-m", "the release")
+
+	f.git("checkout", "--quiet", "-b", "feature")
+	f.touchLine(orderService, 62)
+	f.commitAll("edit Cancel")
+
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// An annotated tag is a tag object, not a commit, so it resolves only
+	// because the run peels it. The `^{commit}` verify used to do that; the
+	// classification check is what does it now, and this case is red if that
+	// peel is ever dropped and --since <annotated tag> starts reporting a ref
+	// that does not name a commit.
+	f.runArgs("--since", "release").assertMatches(t, "since_single_method", 0, f.baseLabel("release"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestSinceNamingAnAnnotatedTagWhoseCommitObjectIsGoneReportsAnUnreadableDiff(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.git("tag", "-a", "other", "-m", "the tag")
+	tagged := f.git("rev-parse", "other^{commit}")
+	tagObject := f.git("rev-parse", "other")
+	f.touchLine(orderService, 62)
+	f.commitAll("second")
+	f.removeLooseObject(tagged)
+
+	// The tag object itself is intact, so the unpeeled verify answers with its
+	// id and only the peel reaches the commit that is gone. This is what the
+	// `^{}` buys over asking about the tag object bare, which answers `tag` at
+	// exit 0 and would put the run back on "does not name a commit" for a store
+	// that is damaged rather than a ref that is wrong.
+	cause := f.gitStderr("cat-file", "-t", tagObject+"^{}")
+
+	f.runArgs("--since", "other").assertMatchesWith(t, "since_ref_object_unreadable", 1, "",
+		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
 }
 
 func TestStagedReportsAHeadGitCannotReadAsAnUnreadableDiff(t *testing.T) {

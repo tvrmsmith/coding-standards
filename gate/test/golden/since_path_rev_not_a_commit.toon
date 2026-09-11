@@ -7,5 +7,5 @@ changed_methods: 0
 touched_lines_outside_spans: 0
 skipped_paths: []
 error:
-  code: diff_unparseable
-  message: "could not read the diff: git rev-parse --verify --quiet HEAD@{99}: exit status 128"
+  code: no_diff_base
+  message: "no diff base: --since HEAD:src/Ordering/OrderService.cs does not name a commit"
