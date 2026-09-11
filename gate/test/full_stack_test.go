@@ -1,12 +1,10 @@
 package gate_test
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -21,14 +19,10 @@ const pointsFixture = "../../dotnet/tests/Tvrmsmith.MetricGate.CSharp.Tests/fixt
 // the stub.
 const dotnetProject = "../../dotnet/src/Tvrmsmith.MetricGate.CSharp"
 
-// dotnetDir is the directory every dotnet command here runs in, relative to
-// this package. dotnet/global.json sits at its root, so the muxer resolves
-// that pin for the probe and for the pack alike and one file governs both.
+// dotnetDir is the directory the pack and the install run in, relative to this
+// package. dotnet/global.json sits at its root, so the muxer resolves that pin
+// for both and one file governs which SDK builds the tool.
 const dotnetDir = "../../dotnet"
-
-// globalJSONPath names the same pin the way a reader of a failure message
-// finds it, from the repository root rather than from this package.
-const globalJSONPath = "dotnet/global.json"
 
 // envRequireDotnet names the variable CI sets to forbid every skip route, so
 // the one case that drives the real extractor cannot lapse into a green skip.
@@ -42,97 +36,14 @@ const envRequireDotnet = "METRIC_GATE_REQUIRE_DOTNET"
 // on a developer's machine.
 const envWorkflowEnforcement = "METRIC_GATE_WORKFLOW_ENFORCEMENT"
 
-// reasonShort is why TestFullStackDrivesTheRealDotnetExtractor skips under
-// -short, or fails there when METRIC_GATE_REQUIRE_DOTNET forbids the skip.
+// reasonShort is why TestFullStackDrivesTheRealDotnetExtractor fails under
+// -short once METRIC_GATE_REQUIRE_DOTNET forbids every skip route.
 const reasonShort = "full-stack case packs and installs a dotnet tool, skipped with -short"
 
-// runtimeFramework is the shared framework the installed tool shim launches
-// on. Naming it keeps Microsoft.AspNetCore.App and Microsoft.WindowsDesktop.App
-// out of the answer.
-const runtimeFramework = "Microsoft.NETCore.App"
-
-// runtimeFloorMajor is the oldest major that can run the tool. The project
-// targets net8.0 and asks for Major roll-forward, so the shim starts on 8 and
-// on anything newer, and only a runtime below the target is too old.
-const runtimeFloorMajor = 8
-
-// reasonNoUsableRuntime is why TestFullStackDrivesTheRealDotnetExtractor
-// skips, or fails when METRIC_GATE_REQUIRE_DOTNET forbids the skip. An SDK
-// alone is not enough: a machine can carry a compiler that packs the tool and
-// no shared framework the packed shim will start on.
-var reasonNoUsableRuntime = fmt.Sprintf(
-	"no %s runtime of major %d or newer for the extractor tool", runtimeFramework, runtimeFloorMajor)
-
-// reasonNoPinnedSDK is the other half. The case packs the tool project before
-// it installs it, and the pack resolves dotnet/global.json, so a machine whose
-// SDKs all fall outside that pin reds at dotnet pack instead of saying what it
-// is missing.
-var reasonNoPinnedSDK = "no dotnet SDK matching the pin in " + globalJSONPath + " to pack the extractor tool with"
-
-// listsUsableRuntime reports whether dotnet --list-runtimes output names a
-// shared framework the packed shim can launch on.
-func listsUsableRuntime(out string) bool {
-	for _, line := range strings.Split(out, "\n") {
-		if major, ok := frameworkMajor(strings.TrimSpace(line)); ok && major >= runtimeFloorMajor {
-			return true
-		}
-	}
-	return false
-}
-
-// frameworkMajor reads the major version off one dotnet --list-runtimes line,
-// reporting false for a line naming some other framework or carrying no
-// version this can read.
-func frameworkMajor(line string) (int, bool) {
-	rest, ok := strings.CutPrefix(line, runtimeFramework+" ")
-	if !ok {
-		return 0, false
-	}
-	version, _, _ := strings.Cut(strings.TrimSpace(rest), " ")
-	major, err := strconv.Atoi(firstSegment(version))
-	if err != nil {
-		return 0, false
-	}
-	return major, true
-}
-
-// firstSegment is the part of a version before its first dot, which is the
-// major on every shape dotnet prints, "8.0.27" and "10.0.0-preview.1" alike.
-func firstSegment(version string) string {
-	segment, _, _ := strings.Cut(version, ".")
-	return segment
-}
-
-// TestListsUsableRuntimeMatchesTheFrameworkAtOrAboveTheFloor pins the lines
-// that count as a runtime the shim can start on and the near misses that must
-// not.
-func TestListsUsableRuntimeMatchesTheFrameworkAtOrAboveTheFloor(t *testing.T) {
-	cases := []struct {
-		name string
-		out  string
-		want bool
-	}{
-		{"finds the framework among other lines", "Microsoft.AspNetCore.App 8.0.27 [/x]\nMicrosoft.NETCore.App 8.0.27 [/x]\n", true},
-		{"finds the floor itself as the only line", "Microsoft.NETCore.App 8.0.0 [/x]", true},
-		{"finds it past leading whitespace", "  Microsoft.NETCore.App 8.0.27 [/x]\n", true},
-		{"accepts a 10 runtime, which Major roll-forward reaches", "Microsoft.NETCore.App 10.0.8 [/x]\n", true},
-		{"accepts a bare major with a carriage return after it", "Microsoft.NETCore.App 10\r\n", true},
-		{"rejects a runtime below the floor", "Microsoft.NETCore.App 7.0.20 [/x]\n", false},
-		{"rejects the framework the shim cannot roll back to", "Microsoft.NETCore.App 6.0.36 [/x]\n", false},
-		{"rejects the aspnet framework", "Microsoft.AspNetCore.App 8.0.27 [/x]\n", false},
-		{"rejects the windows desktop framework", "Microsoft.WindowsDesktop.App 8.0.27 [/x]\n", false},
-		{"rejects a line carrying no readable version", "Microsoft.NETCore.App preview [/x]\n", false},
-		{"rejects empty output", "", false},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := listsUsableRuntime(c.out); got != c.want {
-				t.Errorf("listsUsableRuntime = %v, want %v", got, c.want)
-			}
-		})
-	}
-}
+// reasonUnset is why the case skips when nothing enforces it. It states the
+// one thing a reader has to do to make the case run, because the case asks
+// nothing of the machine before it decides.
+var reasonUnset = "set " + envRequireDotnet + "=1 to run the full-stack case"
 
 // requireDotnet reads a METRIC_GATE_REQUIRE_DOTNET value and whether it was
 // set at all. It takes both instead of reading the environment so every value
@@ -193,70 +104,6 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 			}
 		})
 	}
-}
-
-// dotnetOutput runs one dotnet command in dir and returns its trimmed stdout,
-// its trimmed stderr, and the error. The two streams stay apart because only
-// stdout carries the answer: a first-run banner or a restore warning on stderr
-// would otherwise make an empty answer look like a real one.
-func dotnetOutput(dir string, args ...string) (string, string, error) {
-	cmd := exec.Command("dotnet", args...)
-	cmd.Dir = dir
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), err
-}
-
-// installedSDKs describes what the machine actually carries, unfiltered by the
-// pin. It exists for a failure message, so a reader sees the gap between the
-// pin and the disk rather than only that there was one.
-func installedSDKs() string {
-	listed, _, err := dotnetOutput(".", "--list-sdks")
-	switch {
-	case err != nil:
-		return fmt.Sprintf("dotnet --list-sdks also failed, with %v", err)
-	case listed == "":
-		return "dotnet --list-sdks printed nothing"
-	default:
-		return "dotnet --list-sdks printed " + strconv.Quote(listed)
-	}
-}
-
-// probeDotnet answers one question: can this machine both pack the extractor
-// tool and launch the shim the pack installs. nil means yes. Anything else is
-// the reason the case skips, already worded for a reader, naming the check
-// that failed and what dotnet actually reported.
-//
-// Both halves are asked because neither implies the other. An SDK outside the
-// pin, or no SDK at all, reds at dotnet pack, and an SDK alone says nothing
-// about which shared frameworks are on disk for the shim to start on.
-//
-// The SDK half runs where installRealExtractor packs, so the muxer resolves
-// dotnet/global.json for both and the probe asks the question the pack will
-// ask rather than a looser one.
-func probeDotnet() error {
-	version, stderr, err := dotnetOutput(dotnetDir, "--version")
-	switch {
-	case errors.Is(err, exec.ErrNotFound):
-		return fmt.Errorf("%s, and no dotnet to ask: %v", reasonNoPinnedSDK, err)
-	case err != nil:
-		return fmt.Errorf("%s, dotnet --version under %s failed with %v and said %q; %s",
-			reasonNoPinnedSDK, globalJSONPath, err, stderr, installedSDKs())
-	case version == "":
-		return fmt.Errorf("%s, dotnet --version printed nothing, so this dotnet carries a runtime and no compiler; %s",
-			reasonNoPinnedSDK, installedSDKs())
-	}
-
-	listed, stderr, err := dotnetOutput(".", "--list-runtimes")
-	switch {
-	case err != nil:
-		return fmt.Errorf("%s, dotnet --list-runtimes failed with %v and said %q", reasonNoUsableRuntime, err, stderr)
-	case !listsUsableRuntime(listed):
-		return fmt.Errorf("%s, dotnet --list-runtimes printed %q", reasonNoUsableRuntime, listed)
-	}
-	return nil
 }
 
 // lookupPair finds key in a block of KEY=VALUE lines, the shape the wiring job
@@ -341,14 +188,19 @@ const childCase = "^TestFullStackDrivesTheRealDotnetExtractor$"
 // reason under test" from "the child never built" or "-run matched nothing".
 const childRan = "=== RUN   TestFullStackDrivesTheRealDotnetExtractor"
 
+// childTimeout bounds a child. A test binary invoked directly, rather than
+// through `go test`, defaults -test.timeout to 0, so without this a child that
+// blocks holds CombinedOutput open until the parent's own timeout panics and
+// reports nothing about which child hung.
+const childTimeout = "-test.timeout=2m"
+
 // runChild runs a child copy of this test binary with
-// METRIC_GATE_REQUIRE_DOTNET set to require, or dropped when require is empty,
-// plus any extra environment entries laid over that. It returns the child's
-// combined output and its exit error.
-func runChild(t *testing.T, require string, extraEnv []string, args ...string) (string, error) {
+// METRIC_GATE_REQUIRE_DOTNET set to require, or dropped when require is empty.
+// It returns the child's combined output and its exit error.
+func runChild(t *testing.T, require string, args ...string) (string, error) {
 	t.Helper()
-	cmd := exec.Command(os.Args[0], args...)
-	cmd.Env = append(childEnv(require), extraEnv...)
+	cmd := exec.Command(os.Args[0], append([]string{childTimeout}, args...)...)
+	cmd.Env = childEnv(require)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -364,103 +216,15 @@ func mustContain(t *testing.T, out string, wants ...string) {
 	}
 }
 
-// stubDotnetPath writes a shell stub named dotnet into a temporary directory
-// and returns a PATH that finds it first. The stubs stick to shell builtins so
-// what they answer does not depend on what else the PATH carries.
-func stubDotnetPath(t *testing.T, body string) string {
-	t.Helper()
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "dotnet"), []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return "PATH=" + dir + string(os.PathListSeparator) + os.Getenv("PATH")
-}
-
-// toolOnlyPath returns a PATH holding a symlink to each named tool and nothing
-// else, which is how a child runs with no dotnet reachable at all while
-// TestMain still finds the go toolchain it rebuilds the binaries with.
-func toolOnlyPath(t *testing.T, tools ...string) string {
-	t.Helper()
-	dir := t.TempDir()
-	for _, tool := range tools {
-		found, err := exec.LookPath(tool)
-		if err != nil {
-			t.Fatalf("locating %s, which a PATH holding only %v needs: %v", tool, tools, err)
-		}
-		if err := os.Symlink(found, filepath.Join(dir, tool)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return "PATH=" + dir
-}
-
 // TestRequireDotnetDecidesTheFullStackOutcome runs the full-stack case in a
-// child copy of this test binary against machines that cannot serve it, with
-// METRIC_GATE_REQUIRE_DOTNET set and unset. Only a real run proves the fatal
-// route is reachable at all, and each subtest asserts the arm-specific tail of
-// the probe's reason rather than the prefix all the arms share, so a stub that
-// never executes reds instead of passing having proven nothing.
+// child copy of this test binary with METRIC_GATE_REQUIRE_DOTNET set and
+// unset. The case asks the machine nothing before it decides, so the variable
+// and -short are the whole input, and only a real run proves the fatal route
+// is reachable at all rather than dead behind a skip.
 func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 	if testing.Short() {
 		t.Skip("forks child test binaries that each rebuild the gate, skipped with -short")
 	}
-
-	// A dotnet with no compiler: it answers --list-runtimes with a framework
-	// the shim could start on and has no SDK for the pack, so --version prints
-	// nothing. Before the probe asked about the SDK this machine ran the case
-	// and red at dotnet pack.
-	noSDK := stubDotnetPath(t, "#!/bin/sh\n"+
-		"case \"$1\" in\n"+
-		"--list-runtimes) echo 'Microsoft.NETCore.App 8.0.27 [/x/shared/Microsoft.NETCore.App]' ;;\n"+
-		"esac\n")
-
-	// The mirror image: a compiler matching the pin, and the only shared
-	// framework on disk is older than the floor, so the packed shim has
-	// nothing to launch on even though the pack itself would succeed.
-	oldRuntime := stubDotnetPath(t, "#!/bin/sh\n"+
-		"case \"$1\" in\n"+
-		"--version) echo '10.0.100' ;;\n"+
-		"--list-sdks) echo '10.0.100 [/x/sdk]' ;;\n"+
-		"--list-runtimes) echo 'Microsoft.NETCore.App 6.0.36 [/x/shared/Microsoft.NETCore.App]' ;;\n"+
-		"esac\n")
-
-	// The shape a runner mispinned against dotnet/global.json really produces:
-	// the muxer exits non-zero and writes the resolution failure to stderr,
-	// while --list-sdks still names what is on disk.
-	const badPinMessage = "A compatible .NET SDK was not found. Specified version 8.0.100"
-	const badPinInstalled = "9.0.100 [/x/sdk]"
-	badPin := stubDotnetPath(t, "#!/bin/sh\n"+
-		"case \"$1\" in\n"+
-		"--version) echo '"+badPinMessage+"' >&2; exit 1 ;;\n"+
-		"--list-sdks) echo '"+badPinInstalled+"' ;;\n"+
-		"esac\n")
-
-	// A first-run banner on stderr with nothing on stdout, which is what a
-	// freshly extracted dotnet prints. The answer is still empty, so the probe
-	// must read stdout alone: conflating the streams would turn the banner into
-	// a version number and let this machine through to a pack it cannot do.
-	const bannerMessage = "Welcome to .NET"
-	banner := stubDotnetPath(t, "#!/bin/sh\n"+
-		"case \"$1\" in\n"+
-		"--version) echo '"+bannerMessage+"' >&2 ;;\n"+
-		"--list-runtimes) echo 'Microsoft.NETCore.App 8.0.27 [/x/shared/Microsoft.NETCore.App]' ;;\n"+
-		"esac\n")
-
-	// A compiler matching the pin whose runtime query itself fails, so the probe
-	// learns nothing about the shared frameworks rather than learning there are
-	// none.
-	const listRuntimesMessage = "The command could not be loaded"
-	brokenRuntimeList := stubDotnetPath(t, "#!/bin/sh\n"+
-		"case \"$1\" in\n"+
-		"--version) echo '8.0.100' ;;\n"+
-		"--list-sdks) echo '8.0.100 [/x/sdk]' ;;\n"+
-		"--list-runtimes) echo '"+listRuntimesMessage+"' >&2; exit 1 ;;\n"+
-		"esac\n")
-
-	// No dotnet on the PATH at all, which is the arm errors.Is(exec.ErrNotFound)
-	// answers. go stays reachable because the child re-runs TestMain, which
-	// rebuilds both binaries before the selected case starts.
-	noDotnet := toolOnlyPath(t, "go")
 
 	// -test.short is passed explicitly in every row, so what a child does never
 	// depends on the flags this parent happens to run under.
@@ -468,84 +232,20 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 
 	cases := []struct {
 		name    string
-		env     []string
 		require string
 		short   string
 		wantErr bool
 		wants   []string
 	}{
 		{
-			name:    "the enforced run fails instead of skipping",
-			env:     []string{noSDK},
-			require: "1",
-			short:   long,
-			wantErr: true,
-			wants:   []string{envRequireDotnet, "forbids skipping", reasonNoPinnedSDK, "printed nothing"},
-		},
-		{
-			name:  "the unset run skips and passes",
-			env:   []string{noSDK},
+			name:  "the unset run skips without touching dotnet",
 			short: long,
-			wants: []string{"--- SKIP", reasonNoPinnedSDK, "printed nothing"},
+			wants: []string{"--- SKIP", reasonUnset},
 		},
 		{
-			name:    "a failing --version reports what dotnet said and what is installed",
-			env:     []string{badPin},
-			require: "1",
-			short:   long,
-			wantErr: true,
-			wants:   []string{"forbids skipping", reasonNoPinnedSDK, badPinMessage, badPinInstalled},
-		},
-		{
-			name:  "a failing --version skips the unenforced run",
-			env:   []string{badPin},
-			short: long,
-			wants: []string{"--- SKIP", reasonNoPinnedSDK, badPinMessage},
-		},
-		{
-			name:    "a banner on stderr is not an answer on stdout",
-			env:     []string{banner},
-			require: "1",
-			short:   long,
-			wantErr: true,
-			wants:   []string{"forbids skipping", reasonNoPinnedSDK, "printed nothing"},
-		},
-		{
-			name:    "a failing --list-runtimes reports what dotnet said",
-			env:     []string{brokenRuntimeList},
-			require: "1",
-			short:   long,
-			wantErr: true,
-			wants:   []string{"forbids skipping", reasonNoUsableRuntime, "failed with", listRuntimesMessage},
-		},
-		{
-			name:    "no dotnet on the PATH at all fails the enforced run",
-			env:     []string{noDotnet, "CGO_ENABLED=0"},
-			require: "1",
-			short:   long,
-			wantErr: true,
-			wants:   []string{"forbids skipping", reasonNoPinnedSDK, "no dotnet to ask"},
-		},
-		{
-			name:    "a runtime below the floor is not enough for the enforced run",
-			env:     []string{oldRuntime},
-			require: "1",
-			short:   long,
-			wantErr: true,
-			wants:   []string{"forbids skipping", reasonNoUsableRuntime, "Microsoft.NETCore.App 6.0.36"},
-		},
-		{
-			name:  "a runtime below the floor skips the unenforced run",
-			env:   []string{oldRuntime},
-			short: long,
-			wants: []string{"--- SKIP", reasonNoUsableRuntime, "Microsoft.NETCore.App 6.0.36"},
-		},
-		{
-			// -short never reaches the probe, so these two rows run against
-			// whatever dotnet the machine has and still decide the same way.
-			name:  "-short skips when nothing forbids it",
+			name:  "-short does not change the unset run",
 			short: short,
-			wants: []string{"--- SKIP", reasonShort},
+			wants: []string{"--- SKIP", reasonUnset},
 		},
 		{
 			name:    "-short fails when enforcement forbids the skip",
@@ -558,7 +258,7 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			out, err := runChild(t, c.require, c.env, "-test.run", childCase, "-test.v", c.short)
+			out, err := runChild(t, c.require, "-test.run", childCase, "-test.v", c.short)
 			if c.wantErr && err == nil {
 				t.Fatalf("child exited zero, want a failure. output:\n%s", out)
 			}
@@ -581,7 +281,7 @@ func TestTestMainRefusesAnUnusableRequireDotnet(t *testing.T) {
 	}
 
 	t.Run("a value nobody meant fails the package", func(t *testing.T) {
-		out, err := runChild(t, "true", nil, "-test.run", "^$")
+		out, err := runChild(t, "true", "-test.run", "^$")
 		if err == nil {
 			t.Fatalf("child exited zero, want a failure. output:\n%s", out)
 		}
@@ -589,7 +289,7 @@ func TestTestMainRefusesAnUnusableRequireDotnet(t *testing.T) {
 	})
 
 	t.Run("the unset variable runs the package", func(t *testing.T) {
-		if out, err := runChild(t, "", nil, "-test.run", "^$"); err != nil {
+		if out, err := runChild(t, "", "-test.run", "^$"); err != nil {
 			t.Fatalf("child failed with %v, want a pass. output:\n%s", err, out)
 		}
 	})
@@ -626,25 +326,17 @@ func childEnv(require string) []string {
 // staleness rule. Collecting real coverage means running dotnet test, which is
 // issue 21's work and not this case's.
 func TestFullStackDrivesTheRealDotnetExtractor(t *testing.T) {
-	require, err := requireDotnet(os.LookupEnv(envRequireDotnet))
-	if err != nil {
-		t.Fatal(err)
+	// Nothing here asks the machine what it carries. A run that means to drive
+	// the real extractor says so, and then a machine that cannot serve it reds
+	// at the pack rather than skipping green; a run that does not say so skips
+	// before the first dotnet call. TestMain has already rejected any value of
+	// the variable other than "1" and absent, so the error here cannot fire.
+	require, _ := requireDotnet(os.LookupEnv(envRequireDotnet))
+	if !require {
+		t.Skip(reasonUnset)
 	}
-	// reason is empty only when nothing stands in the way, so a skip or a
-	// fatal always states one. A -short run cannot use the probe's answer, so
-	// it never pays for the subprocess and the first-run initialization dotnet
-	// may do behind it.
-	var reason string
 	if testing.Short() {
-		reason = reasonShort
-	} else if err := probeDotnet(); err != nil {
-		reason = err.Error()
-	}
-	if reason != "" {
-		if require {
-			t.Fatalf("%s=1 forbids skipping: %s", envRequireDotnet, reason)
-		}
-		t.Skip(reason)
+		t.Fatalf("%s=1 forbids skipping: %s", envRequireDotnet, reasonShort)
 	}
 
 	fullStackBinDir := installRealExtractor(t)
