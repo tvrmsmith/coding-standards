@@ -4,12 +4,23 @@
 // enforced once rather than separately in extract and coverage.
 //
 // One function, relativize, computes containment, and Place, Name and named are
-// the three entry points onto it. All three read its answer the same way: a
+// the three entry points onto it. All three read its placements the same way: a
 // candidate whose root prefix is spelled in another case is under the root, and
 // "outside" means one thing at every door (issue 36). ADR 0004's 2026-09-11
 // amendment is what authorizes that, on the ground that the folding it rejects
 // is folding by text, which on Linux merges two real files, and not a fold
 // os.SameFile has confirmed reaches one inode.
+//
+// They part on relativize's other answer, a filesystem that will not say whether
+// a case-differing prefix is the root. named words that one distinctly, as the
+// path having "could not be weighed against the repo root", since it already
+// answers a developer with a reason. Place and Name read it as outside, because
+// neither has a channel to carry a reason: Place answers a bool and Name one
+// display string, and the alternatives cost more than the fault is worth, an
+// exit with no document at all or a new error code. The fault is narrow at both,
+// since the candidate's own EvalSymlinks and stat have to have succeeded first,
+// leaving the root itself moving or becoming unreadable mid-run. Widening Placed
+// to carry it is issue 36 follow-up work.
 //
 // Landing under the root is not the same as being accepted. named still refuses
 // a mis-cased root prefix, because a --files path is one a developer typed and
@@ -115,6 +126,14 @@ func (p Placed) Resolved() string { return p.resolved }
 // candidate spells them, which is the same thing filepath.Rel already hands back
 // for a correctly spelled prefix on a case-insensitive filesystem; Place has
 // never verified below-root spelling and does not start here.
+//
+// A filesystem that will not say whether that prefix is the root lands nowhere,
+// the same as a candidate genuinely outside. Placed carries a bool and no reason,
+// and ADR 0004 already ignores one candidate that does not land whatever the
+// reason, so the class goes unmeasured rather than the run failing on a fault
+// only named has the words for. It is narrow: EvalSymlinks and os.Stat on the
+// candidate have both succeeded by then, so what is left is the root itself
+// moving or becoming unreadable mid-run.
 func (r Root) Place(candidate string) Placed {
 	placed := Placed{resolved: filepath.ToSlash(candidate)}
 	if !filepath.IsAbs(candidate) {
@@ -266,7 +285,9 @@ func (r Root) foldRootPrefix(resolved string) (Path, placement, error) {
 // Every other stat failure on spelling travels up too, EACCES on a parent among
 // them. Reading one as two genuinely distinct directories would refuse a path
 // that is in fact inside the repo as being outside it, which is the
-// misdiagnosis issue 48 set out to remove.
+// misdiagnosis issue 48 set out to remove. Only named acts on that distinction,
+// with a refusal worded about the root; Place and Name have no reason to carry
+// and read the fault as outside, which their own docs record.
 func (r Root) isRootUnder(spelling string) (bool, error) {
 	spelled, err := os.Stat(spelling)
 	if err != nil {
@@ -318,25 +339,28 @@ func (n Name) String() string { return string(n) }
 // caller.
 //
 // A filesystem that will not say whether a case-differing prefix is the root is
-// none of the three, and it comes back as an error with no name at all. The path
-// may well be inside the repo, so naming it by the absolute path would quote an
-// in-repo report in the shape reserved for one outside, which is the
-// misdiagnosis issue 48 set out to remove. The gate knows nothing about where
-// the path sits and says so rather than guessing, exactly as named does with the
-// same fault.
-func (r Root) Name(path string) (Name, error) {
+// read as the second shape, the resolved absolute path, the same as a path
+// genuinely outside. That is a known limitation and not an oversight. Name
+// answers one display string and has no channel to carry a reason, and the two
+// ways out both cost more than the fault is worth here: erroring would exit the
+// run with no document at all, which ADR 0005's 2026-09-02 amendment rejects for
+// a coverage-side filesystem failure, and a new code saying the gate could not
+// weigh the path is a change to ADR 0008's list. named is the one door that
+// words the fault distinctly, "could not be weighed against the repo root",
+// because it already answers a developer with a reason. The same reading applies
+// at Place, and the fault is narrow at both: the candidate's own EvalSymlinks
+// has to have succeeded first, so what remains is the root itself moving or
+// becoming unreadable mid-run.
+func (r Root) Name(path string) Name {
 	if !filepath.IsAbs(path) {
-		return Name(filepath.ToSlash(path)), nil
+		return Name(filepath.ToSlash(path))
 	}
 	resolved := resolveExisting(path)
 	rel, place, err := r.relativize(resolved)
-	if err != nil && !errors.Is(err, errNoRelativeReading) {
-		return "", fmt.Errorf("weighing %s against the repo root: %w", path, err)
-	}
 	if err != nil || place == outside {
-		return Name(filepath.ToSlash(resolved)), nil
+		return Name(filepath.ToSlash(resolved))
 	}
-	return Name(rel), nil
+	return Name(rel)
 }
 
 // resolveExisting resolves the symlinks of the deepest ancestor of abs that is
