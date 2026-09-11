@@ -452,10 +452,10 @@ func TestEncode_TableFloatCellCarriesTheRoundingPastTheDecimalPoint(t *testing.T
 // bytes are copied from, and the spec §2 ruling on Column.Precision
 // that corrected it (round, then render canonically; no padded trailing
 // zeros), are in ADR 0005, the superseded record 0008 consolidates;
-// issue 89 tracks giving 0008 a worked example that would retire the
-// citation. Two
-// cells depart from that example, which was written against a --since
-// run and prints scope: since and base: main@9f3c110. The merge-base
+// issue 89 tracks giving 0008 a worked example, which would retire the
+// citation. Two cells depart from the 0005 example, which was written
+// against a --since run and prints scope: since and base: main@9f3c110.
+// The merge-base
 // scope token is fixed live by ADR 0008 ("scope is one of merge-base,
 // staged, since, files"), and the base label is this test's own
 // concrete ref, since no ADR fixes one for the default mode. No cell is

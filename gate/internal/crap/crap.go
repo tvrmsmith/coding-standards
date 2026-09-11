@@ -26,7 +26,8 @@ var DeclaredInputs = []string{"coverage"}
 
 // The two fix instructions and their absence. ADR 0008 requires action to be a
 // typed cell rather than prose; the raise_coverage, split_method and none
-// spelling is in ADR 0005, the superseded record 0008 consolidates.
+// spelling is in ADR 0005, the superseded record 0008 consolidates; issue 65
+// tracks enumerating those tokens in 0008, which would retire the citation.
 const (
 	ActionSplitMethod   = "split_method"
 	ActionRaiseCoverage = "raise_coverage"
