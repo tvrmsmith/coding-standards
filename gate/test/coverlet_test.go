@@ -83,8 +83,11 @@ func (f *fixture) writeCoverletFixture() {
 	// read rather than retyped so the two cannot drift apart.
 	f.write("global.json", readFixture(f.t, filepath.Join(dotnetDir, "global.json")))
 
-	// The build writes generated .cs files under obj/, and without this they
-	// land in the changed set and the gate measures them.
+	// Nothing in the asserted document depends on this. The gate's changed set
+	// comes from a diff against the base commit, which lists tracked paths
+	// only, so the build output under bin/ and obj/ could never reach it. The
+	// file is here so the fixture repo a reader lands in mid-debug reports a
+	// clean tree rather than pages of build output.
 	f.write(".gitignore", "bin/\nobj/\n")
 
 	// A hand-written solution file is what lets the case run the literal
@@ -119,9 +122,15 @@ func (f *fixture) writeCoverletFixture() {
 </Project>
 `)
 
+	// RollForward matches the packed tool's own setting, so a machine carrying
+	// the pinned SDK band and no 8.x shared framework launches the testhost on
+	// the runtime it has instead of failing the run outright. It moves nothing
+	// in the golden, because Roslyn still compiles for net8.0 and the
+	// instrumentable-line count is its output, not the testhost's.
 	f.write("tests/Tests.csproj", `<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>`+coverletFixtureFramework+`</TargetFramework>
+    <RollForward>Major</RollForward>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
