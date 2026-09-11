@@ -36,6 +36,11 @@ const envRequireDotnet = "METRIC_GATE_REQUIRE_DOTNET"
 // on a developer's machine.
 const envWorkflowEnforcement = "METRIC_GATE_WORKFLOW_ENFORCEMENT"
 
+// envGitHubActions is the variable every GitHub Actions runner sets, which is
+// how the wiring case tells a developer's machine, where skipping is right,
+// from CI, where an unset block means a step stopped extracting it.
+const envGitHubActions = "GITHUB_ACTIONS"
+
 // reasonShort is why TestFullStackDrivesTheRealDotnetExtractor fails under
 // -short once METRIC_GATE_REQUIRE_DOTNET forbids every skip route.
 const reasonShort = "full-stack case packs and installs a dotnet tool, skipped with -short"
@@ -157,9 +162,17 @@ func TestLookupPairFindsTheKeyAnywhereInTheBlock(t *testing.T) {
 // METRIC_GATE_WORKFLOW_ENFORCEMENT, and this searches it for the constant the
 // suite actually reads. Rename one without the other and the mismatch reds here
 // rather than turning enforcement off in silence.
+//
+// The skip is for a developer's machine only. Under GitHub Actions an absent
+// block means the step that extracts it was renamed or deleted, which would
+// otherwise leave this case a permanent silent skip, so there it fails.
 func TestTheWorkflowEnablesEnforcement(t *testing.T) {
 	block, ok := os.LookupEnv(envWorkflowEnforcement)
 	if !ok {
+		if os.Getenv(envGitHubActions) != "" {
+			t.Fatalf("%s is unset under %s, so no step handed this case the gate job's env block: the step that extracts it was renamed or deleted and nothing is checking that CI still enables enforcement",
+				envWorkflowEnforcement, envGitHubActions)
+		}
 		t.Skipf("%s is unset, so there is no extracted workflow env block to search; the CI wiring job sets it", envWorkflowEnforcement)
 	}
 
@@ -329,10 +342,8 @@ func TestFullStackDrivesTheRealDotnetExtractor(t *testing.T) {
 	// Nothing here asks the machine what it carries. A run that means to drive
 	// the real extractor says so, and then a machine that cannot serve it reds
 	// at the pack rather than skipping green; a run that does not say so skips
-	// before the first dotnet call. TestMain has already rejected any value of
-	// the variable other than "1" and absent, so the error here cannot fire.
-	require, _ := requireDotnet(os.LookupEnv(envRequireDotnet))
-	if !require {
+	// before the first dotnet call.
+	if !enforceDotnet {
 		t.Skip(reasonUnset)
 	}
 	if testing.Short() {

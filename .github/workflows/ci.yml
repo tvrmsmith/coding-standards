@@ -64,6 +64,29 @@ jobs:
           # and never the 10 one.
           global-json-file: dotnet/global.json
           dotnet-version: ${{ env.DOTNET_VERSION }}
+      # TestTheWorkflowEnablesEnforcement compares the key the suite reads
+      # against the env block of the test step below, and under GITHUB_ACTIONS
+      # it fails rather than skips when no step hands it that block. Extracting
+      # it here, in the job that runs the suite, is what gives the case its
+      # teeth: delete this step and the gate suite reds instead of quietly
+      # asserting nothing. yq parses the workflow, so reformatting cannot break
+      # it, and tostring keeps an unquoted value from failing on a type error.
+      - name: Hand the test step's env block to the suite
+        run: |
+          set -euo pipefail
+          {
+            echo "METRIC_GATE_WORKFLOW_ENFORCEMENT<<WORKFLOW_ENV_EOF"
+            yq '
+              .jobs.gate.steps[]
+              | select(.id == "tests")
+              | (.env // {})
+              | to_entries
+              | .[]
+              | .key + "=" + (.value | tostring)
+            ' .github/workflows/ci.yml
+            echo "WORKFLOW_ENV_EOF"
+          } >> "$GITHUB_ENV"
+
       # vet needs the Go toolchain and nothing else, so it carries the same
       # explicit guard the tests do rather than inheriting the implicit
       # success() that a failed SDK install would trip.
@@ -182,10 +205,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
+        id: setup
         with:
           node-version: ${{ env.NODE_VERSION }}
       - uses: actions/setup-go@v5
-        id: setup
+        id: gosetup
         with:
           go-version-file: gate/go.mod
 
@@ -200,17 +224,51 @@ jobs:
       # for its own constant. Naming no key here is the point: each half reads
       # the artifact it owns, and a second variable landing in that step cannot
       # point the Go side at the wrong one.
+      #
+      # The variable only upgrades a skip to a failure, so it proves nothing
+      # about a suite that never ran. This step therefore also reads the
+      # selected step's command and working directory, which is what ties the
+      # variable to a real `go test` over the gate module. One evasion stays
+      # open: a step disabled with `if: false` still satisfies every check here.
       - name: The gate job's enforcement variable is the one the suite reads
+        if: ${{ !cancelled() && steps.gosetup.outcome == 'success' }}
         run: |
           set -euo pipefail
 
+          step() {
+            yq "[.jobs.gate.steps[] | select(.id == \"tests\") | $1] | join(\"\")" \
+              .github/workflows/ci.yml
+          }
+
+          command=$(step '.run // ""')
+          workdir=$(step '.working-directory // ""')
+
+          if [[ -z "$command" ]]; then
+            echo "No step with id 'tests' in the gate job runs a command, so there is no" >&2
+            echo "suite for the enforcement variable to govern and this step proved nothing." >&2
+            exit 1
+          fi
+          if [[ "$command" != *"go test"* ]]; then
+            echo "The gate job's step with id 'tests' runs '$command', which is not a go test" >&2
+            echo "run, so the enforcement variable below governs nothing." >&2
+            exit 1
+          fi
+          if [[ "$workdir" != gate ]]; then
+            echo "The gate job's step with id 'tests' runs in '$workdir' rather than gate, so" >&2
+            echo "the enforcement variable below does not reach the gate suite." >&2
+            exit 1
+          fi
+
+          # tostring keeps an unquoted `METRIC_GATE_REQUIRE_DOTNET: 1`, which
+          # GitHub accepts and coerces, from failing this step on a type error
+          # while the workflow is semantically unchanged.
           entries=$(yq '
             .jobs.gate.steps[]
             | select(.id == "tests")
             | (.env // {})
             | to_entries
             | .[]
-            | .key + "=" + .value
+            | .key + "=" + (.value | tostring)
           ' .github/workflows/ci.yml)
 
           if [[ -z "$entries" ]]; then
@@ -258,10 +316,10 @@ jobs:
       # run.
       - name: Compare the suites on disk against the hand-maintained list
         # The step above is a peer, not a precondition, so a drifted env-var
-        # name still reports whether a suite landed unwired. Setup is a
-        # precondition, because this step reads the checkout with git and runs
-        # node. The id sits on the last of the setup steps, so its success
-        # answers for the checkout and the node install before it.
+        # name still reports whether a suite landed unwired. The node install is
+        # a precondition, because this step parses every manifest with node. The
+        # Go install is not, so a failed toolchain download cannot suppress the
+        # answer to whether a suite landed unwired.
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           set -euo pipefail
