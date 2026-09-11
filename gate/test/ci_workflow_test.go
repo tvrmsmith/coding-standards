@@ -2,9 +2,13 @@ package gate_test
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -53,6 +57,111 @@ func TestCILoopsOverEveryRealExtractorCase(t *testing.T) {
 				ciWorkflow, name)
 		}
 	}
+}
+
+// TestCIPassCheckRedsTheJob runs the gate job's step out of ci.yml under bash,
+// so what is under test is what the check does rather than which tokens its
+// script contains. The runner's side of the contract is supplied here: bash,
+// a RUNNER_TEMP to write the log into, and a `go` on PATH standing in for the
+// toolchain, which is what lets the case choose the verbose log the check then
+// has to judge.
+func TestCIPassCheckRedsTheJob(t *testing.T) {
+	script := passCheckScript(t)
+
+	last := len(realExtractorCases) - 1
+	renamed := slices.Clone(realExtractorCases)
+	renamed[last] += "Twice"
+
+	cases := []struct {
+		name    string
+		ran     []string
+		goExit  int
+		wantErr bool
+		names   []string
+	}{
+		{
+			name: "every case reported PASS, so the check lets the job through",
+			ran:  realExtractorCases,
+		},
+		{
+			name:    "a case with no PASS line reds the job and is named",
+			ran:     realExtractorCases[:last],
+			wantErr: true,
+			names:   []string{realExtractorCases[last]},
+		},
+		{
+			name:    "a longer name that starts with a case's name does not stand in for it",
+			ran:     renamed,
+			wantErr: true,
+			names:   []string{realExtractorCases[last]},
+		},
+		{
+			name:    "a failing test run reds the job even with every PASS line present",
+			ran:     realExtractorCases,
+			goExit:  1,
+			wantErr: true,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			stderr, err := runPassCheck(t, script, verboseLog(c.ran), c.goExit)
+			if c.wantErr && err == nil {
+				t.Fatalf("the check exited zero, want a failure. stderr:\n%s", stderr)
+			}
+			if !c.wantErr && err != nil {
+				t.Fatalf("the check failed with %v, want it to let the job through. stderr:\n%s", err, stderr)
+			}
+			for _, name := range c.names {
+				if !strings.Contains(stderr, name) {
+					t.Errorf("the check reds without naming %s, so the log says nothing about which case did not run. stderr:\n%s", name, stderr)
+				}
+			}
+		})
+	}
+}
+
+// verboseLog is what `go test -v` writes for a run in which every named case
+// passed. It is the input the PASS check reads, and building it here is what
+// lets a case withhold one name's result without running the suite.
+func verboseLog(passed []string) string {
+	var b strings.Builder
+	for _, name := range passed {
+		fmt.Fprintf(&b, "=== RUN   %s\n--- PASS: %s (1.23s)\n", name, name)
+	}
+	b.WriteString("PASS\nok  \tgithub.com/tvrmsmith/coding-standards/gate/test\t1.234s\n")
+	return b.String()
+}
+
+// runPassCheck executes the workflow step's own script under bash with a `go`
+// on PATH that replays log and exits goExit. It returns the script's stderr,
+// which is where the check reports a case that did not run, and its exit
+// error.
+func runPassCheck(t *testing.T, script, log string, goExit int) (string, error) {
+	t.Helper()
+
+	runnerTemp := t.TempDir()
+	logPath := filepath.Join(runnerTemp, "go-test-output.txt")
+	if err := os.WriteFile(logPath, []byte(log), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	binDir := t.TempDir()
+	stub := "#!/bin/sh\ncat " + logPath + "\nexit " + strconv.Itoa(goExit) + "\n"
+	if err := os.WriteFile(filepath.Join(binDir, "go"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Dir = t.TempDir()
+	cmd.Env = append(os.Environ(),
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"RUNNER_TEMP="+runnerTemp)
+	var stderr strings.Builder
+	cmd.Stdout = io.Discard
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stderr.String(), err
 }
 
 // passCheckScript is the run script of the gate job's PASS check step. It
