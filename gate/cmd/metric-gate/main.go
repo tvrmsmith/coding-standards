@@ -1,8 +1,8 @@
 // Command metric-gate scores the methods a change touched against a metric
 // threshold. Its scope defaults to the merge base of HEAD and the default
 // branch, and --staged, --since <ref> or --files <path>... pick another
-// (ADR 0005, issue 14). --coverage <path>, repeatable, names the coverage
-// reports to read in place of discovery. The rest of ADR 0005's command line
+// (ADR 0008, issue 14). --coverage <path>, repeatable, names the coverage
+// reports to read in place of discovery. The rest of ADR 0008's command line
 // lands with its own issues, and any other argument is a usage error. Package
 // scope owns the whole of argv, so the usage block one prints lists every
 // flag. Stdout is one TOON document, stderr is the human summary, one line
@@ -10,28 +10,33 @@
 // counts, and the exit code is 0 pass, 1 tool error, 2 threshold exceeded.
 //
 // Any error that is not typed as a report.Failure writes its cause to stderr,
-// leaves stdout empty, and exits 1. ADR 0005 sanctions that shape for a failure
-// upstream of the document, a command line the gate refuses to guess at or not
-// being in a git repo at all, and its 2026-09-05 amendment records the
-// command-line case, because a run whose arguments never parsed never chose a
-// repository to examine.
+// leaves stdout empty, and exits 1. ADR 0008 carves out exactly one exit of
+// that shape, a malformed command line, which "exits 1 with empty stdout and
+// no typed code, because argv failed before the run had a shape to report".
+// Every other exit of that shape is a known deviation rather than something
+// 0008 grants. This is the one place that rule is written down; the cases in
+// gate/test that pin such an exit point here rather than restate it.
 //
-// Two of those errors land downstream of the document instead, failing to stat
-// a changed file and failing to read the working directory a --coverage path
-// resolves against, and that shape is a known deviation from the contract
-// rather than part of it. Both happen after the changed methods are counted, so
-// the gate did examine a repository and still emits nothing. Issue 31 gives them
-// typed codes and moves them inside the document.
+// Four of them are reachable before the document is delivered. Failing to
+// open a git repository lands upstream of the document, before a base is
+// resolved. Failing to read the working directory while resolving a relative
+// --files name lands after that and before any method is counted. Failing to
+// stat a changed file and failing to read the working directory a --coverage
+// path resolves against land after the changed methods are counted, so the
+// gate did examine a repository and still emits nothing. Issue 31 gives the
+// last two typed codes and moves them inside the document. Other untyped
+// returns exist, in the encoder and in coverage discovery, but no input
+// reaches them.
 //
-// A third error stays outside issue 31's scope and is the one exception to the
-// empty stdout above: stdout refusing the write that carries the document, a
-// full disk or a closed descriptor among the causes. It happens after the
-// document is built, so the gate did produce one, and it still exits 1 with no
-// typed code, because the document is the thing that could not be delivered.
-// A write that came up short leaves a truncated document behind, so on this
-// cause alone stdout may hold part of a document rather than nothing, and the
-// exit code is the only signal a caller can trust. Issue 31 has nowhere to move
-// it to.
+// One more is reachable after the document is built, and it stays outside
+// issue 31's scope as the one exception to the empty stdout above: stdout
+// refusing the write that carries the document, a full disk or a closed
+// descriptor among the causes. The gate did produce a document, and it still
+// exits 1 with no typed code, because the document is the thing that could not
+// be delivered. A write that came up short leaves a truncated document behind,
+// so on this cause alone stdout may hold part of a document rather than
+// nothing, and the exit code is the only signal a caller can trust. Issue 31
+// has nowhere to move it to.
 package main
 
 import (
@@ -142,7 +147,7 @@ func measure(sc scope.Scope) (report.Document, error) {
 	extracted, changed := selected.Extracted, selected.Changed
 	doc.ChangedMethods = len(changed)
 	metric := report.Metric{Name: crap.Name, Display: crap.DisplayName, Threshold: crap.Threshold}
-	// ADR 0003: an empty changed-method set exits 0 before resolving any
+	// ADR 0007: an empty changed-method set exits 0 before resolving any
 	// input, because a metric with nothing to compute is not asking for one.
 	if len(changed) == 0 {
 		doc.Metric = &metric
@@ -150,9 +155,8 @@ func measure(sc scope.Scope) (report.Document, error) {
 	}
 
 	lines, skipped, err := loadCoverage(repo.Root(), sc.Coverage, changed)
-	// The append is what enforces ADR 0005's order, the paths --files named
-	// first and coverage discovery's skips after them. Merging the two lists
-	// and sorting the result would read as tidier and would break it.
+	// The append is what enforces ADR 0008's skipped_paths order, which
+	// gate/test/golden/files_skip_before_discovery_skip.toon pins.
 	doc.SkippedPaths = append(doc.SkippedPaths, skipped...)
 	if failure, ok := asFailure(err); ok {
 		doc.Failure = failure
@@ -268,7 +272,7 @@ func selectDiff(repo gitscope.Repo, sc scope.Scope) (selection, error) {
 // extraction failed on, so a dirty staged source file unrelated to the crash
 // still overrides the extractor's cause. extract.Extract fails atomically, so
 // there is no per-path failure set to narrow to. Narrowing further would mean
-// parsing paths out of the extractor's cause text, which the ADR 0006
+// parsing paths out of the extractor's cause text, which the ADR 0009
 // extractor contract does not promise, and the override would then stop
 // firing for every cause that carries no path.
 func dirtyBehindExtraction(repo gitscope.Repo, base gitscope.Base, files []srcpath.Path) *report.Failure {
@@ -280,7 +284,7 @@ func dirtyBehindExtraction(repo gitscope.Repo, base gitscope.Base, files []srcpa
 }
 
 // selectFiles resolves names, --files' argument list, into a selection. This
-// is the shape ADR 0003 gives --files instead of a diff: every method in a
+// is the shape ADR 0007 gives --files instead of a diff: every method in a
 // listed file is changed, there is no base to record, and
 // touched_lines_outside_spans has nothing to count.
 func selectFiles(repo gitscope.Repo, names []string) (selection, error) {
@@ -293,7 +297,8 @@ func selectFiles(repo gitscope.Repo, names []string) (selection, error) {
 	if err != nil {
 		// Only a refusal about the path itself carries the typed code, whose
 		// message the reader expects to name a path. Anything else, a lost
-		// working directory for instance, is upstream of the document.
+		// working directory for instance, is one of the known deviations the
+		// package doc above catalogues.
 		var unresolved *srcpath.UnresolvedError
 		if errors.As(err, &unresolved) {
 			selected.Failure = &report.Failure{Code: report.CodeFileUnresolved, Message: unresolved.Error()}
@@ -306,9 +311,9 @@ func selectFiles(repo gitscope.Repo, names []string) (selection, error) {
 	if err != nil {
 		return failing(selected, err)
 	}
-	// ADR 0005's amendment predicted --files as a second producer of
-	// skipped_paths: a named file no extractor claims is neither measured
-	// nor an error, so it is listed rather than silently dropped.
+	// ADR 0008's 2026-09-11 amendment names --files as the first of the two
+	// producers of skipped_paths. A named file no extractor claims is neither
+	// measured nor an error, so it is listed rather than silently dropped.
 	selected.SkippedPaths = pathStrings(extracted.Unclaimed(resolved))
 	selected.Extracted = extracted
 	selected.Changed = join.AllSpans(extracted)

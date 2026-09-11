@@ -446,11 +446,19 @@ func TestEncode_TableFloatCellCarriesTheRoundingPastTheDecimalPoint(t *testing.T
 	}
 }
 
-// TestEncode_ADR0005WorkedExample is the fixed-bytes contract from
-// ADR 0005 ("The machine document is the only output"), as amended
-// after the spec §2 ruling on Column.Precision (round, then render
-// canonically; no padded trailing zeros). Every byte here comes from
-// that document, not from re-deriving the expected value in this test.
+// TestEncode_ADR0005WorkedExample is a fixed-bytes contract. The live
+// rule, that stdout is one TOON document of a fixed shape, is ADR 0008
+// ("The machine document is the only output"). The worked example these
+// bytes are copied from, and the spec §2 ruling on Column.Precision
+// that corrected it (round, then render canonically; no padded trailing
+// zeros), are in ADR 0005, the superseded record 0008 consolidates;
+// issue 89 tracks giving 0008 a worked example, which would retire the
+// citation. Two cells depart from the 0005 example, which was written
+// against a --since run and prints scope: since and base: main@9f3c110.
+// The merge-base scope token is fixed live by ADR 0008 ("scope is one
+// of merge-base, staged, since, files"), and the base label is this
+// test's own concrete ref, since no ADR fixes one for the default mode.
+// No cell is re-derived by running the encoder.
 func TestEncode_ADR0005WorkedExample(t *testing.T) {
 	doc := toon.Doc{Fields: []toon.Field{
 		{Key: "status", Value: "fail"},

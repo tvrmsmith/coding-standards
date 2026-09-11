@@ -1,5 +1,5 @@
 // Command metric-gate-csharp is a stub extractor for the gate's black-box
-// suite. It answers the ADR 0006 wire contract from a canned config file
+// suite. It answers the ADR 0009 wire contract from a canned config file
 // named by METRIC_GATE_STUB, so a case can pin capabilities, the exit code,
 // and the JSON body without a .NET SDK present.
 //
@@ -92,7 +92,7 @@ func loadConfig() (config, error) {
 	return cfg, nil
 }
 
-// writeCapabilities answers --capabilities in the ADR 0006 wire format.
+// writeCapabilities answers --capabilities in the ADR 0009 wire format.
 func writeCapabilities(cfg config) {
 	if cfg.CapabilitiesStdout != "" {
 		fmt.Print(cfg.CapabilitiesStdout)

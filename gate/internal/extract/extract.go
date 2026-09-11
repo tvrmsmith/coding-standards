@@ -1,5 +1,5 @@
 // Package extract runs the language-specific half of the measurement
-// (ADR 0006). It locates an extractor from a built-in table keyed by
+// (ADR 0009). It locates an extractor from a built-in table keyed by
 // language, asks the located binary for its extension list, hands it the
 // changed files on stdin, and checks that every path it echoes back is one
 // the gate gave it.
@@ -23,7 +23,7 @@ import (
 	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
 )
 
-// languages is the built-in table ADR 0006 fixes: a language yields a binary
+// languages is the built-in table ADR 0009 fixes: a language yields a binary
 // *name*, looked up beside the gate. Nothing on PATH, no repo config file, and
 // no environment variable participates.
 //
@@ -111,7 +111,7 @@ func (r Result) Unclaimed(paths []srcpath.Path) []srcpath.Path {
 }
 
 // Extract runs every located extractor over the changed files it claims. It
-// returns a *report.Failure for every exit-1 cause in ADR 0006's contract.
+// returns a *report.Failure for every exit-1 cause in ADR 0009's contract.
 func Extract(root srcpath.Root, changed []srcpath.Path) (Result, error) {
 	// An extractor no changed file could possibly belong to is never located
 	// and never launched. A docs-only change therefore passes with an empty
@@ -271,7 +271,7 @@ func (e extractor) run(changed []srcpath.Path) (spans []Span, claimed []srcpath.
 	// the extensions the row declares, so a binary that then claims none of
 	// them disagrees with the table. Returning an empty result here would score
 	// nothing and exit 0 `pass` on a real source change, which is the silent
-	// outcome ADR 0006 rejects.
+	// outcome ADR 0009 rejects.
 	if len(claimed) == 0 {
 		return nil, nil, &report.Failure{
 			Code:    report.CodeExtractorCapabilitiesMismatch,
@@ -296,7 +296,7 @@ func (e extractor) run(changed []srcpath.Path) (spans []Span, claimed []srcpath.
 	return spans, claimed, nil
 }
 
-// capabilities asks the located binary for its extension list. ADR 0006 puts
+// capabilities asks the located binary for its extension list. ADR 0009 puts
 // the list on the binary rather than in the table, because a table that
 // disagrees with the binary is a silent misroute.
 func (e extractor) capabilities() (capabilities, error) {
@@ -312,7 +312,7 @@ func (e extractor) capabilities() (capabilities, error) {
 		}
 	}
 	// The table picked this binary for a language, so a binary answering with
-	// a different one is the misroute ADR 0006 puts the list on the binary to
+	// a different one is the misroute ADR 0009 puts the list on the binary to
 	// catch, not a language the gate should quietly go along with.
 	if caps.Language != e.language {
 		return capabilities{}, &report.Failure{
@@ -419,7 +419,7 @@ func (e extractor) collect(parsed extraction, handed []srcpath.Path) ([]Span, er
 	for _, file := range parsed.Files {
 		status[file.File] = file.Status
 	}
-	// ADR 0003 makes per-file status an obligation so the gate can tell
+	// ADR 0007 makes per-file status an obligation so the gate can tell
 	// "nothing here" from "I failed". A path the gate handed in and the
 	// extractor never reported on is neither, and silently scoring its file
 	// with zero spans would let every method in it go unmeasured under a

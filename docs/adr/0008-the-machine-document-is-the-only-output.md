@@ -42,6 +42,11 @@ The document is a fixed shape rather than a shape that grows with the run. The s
 always present. `action` and `target_coverage` are typed cells in the table rather than prose, so a
 consumer reading "raise coverage to 0.8" reads `0.8` and not a sentence.
 
+**Amended 2026-09-09.** A table with no rows encodes as `crap: []`, since with no elements there is
+no uniform shape to declare. This qualifies "Its field list is fixed and does not vary with the
+outcome". ADR 0005 fixed that encoding and this file lost it in consolidation, while `internal/toon`
+still implements it.
+
 `skipped_paths` lists paths no extractor claimed. Two things produce it: a changed file whose
 extension no extractor in the language table handles, and a `--files` path that resolves to a real
 file no extractor claims. Both proceed; neither fails the run.
@@ -49,6 +54,19 @@ file no extractor claims. Both proceed; neither fails the run.
 **Amended 2026-09-09.** A third thing produces `skipped_paths`: a discovered coverage report a
 fresher run already superseded (issue 32). It proceeds too, unless it is the only coverage the run
 found, in which case the run still fails with `coverage_stale`.
+
+**Amended 2026-09-11.** This corrects the producer count in both "Two things produce it" above and
+"A third thing produces `skipped_paths`" in the amendment between, which together reach three and
+name the wrong ones. There are two. The first is a `--files` path resolving to a real file no
+extractor claims. The second is coverage discovery, covering the paths it could not read, a
+directory it cannot enter among them, and the reports it found superseded. The `coverage_stale`
+caveat in that intervening amendment stands. Nothing produces an entry for a changed file whose
+extension no extractor handles, because no diff-scope selection writes the field; discovery still
+writes it under every scope, so a merge-base run does emit entries. The two are ordered, the
+`--files` paths first and the discovery skips after them. ADR 0005 fixed that order and this file
+lost it in consolidation, while `cmd/metric-gate` still enforces it with a deliberate append and
+`gate/test/golden/files_skip_before_discovery_skip.toon` still pins it. Merging the two lists and
+sorting the result reads as tidier and breaks it.
 
 One parser owns argv. Every flag the command takes, `--staged`, `--since`, `--files` and
 `--coverage`, is parsed in one place and printed in one usage block. Two parsers, each rejecting the

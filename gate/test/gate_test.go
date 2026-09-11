@@ -70,7 +70,7 @@ func TestFileMovedWithNoContentChangeReportsNoChangedMethods(t *testing.T) {
 	f.write(origin, csharpFile(20))
 	f.commitAll("initial")
 	// `--no-renames` splits this into a delete plus an add carrying the whole
-	// file, and ADR 0003 says a rename with no content change touches nothing.
+	// file, and ADR 0007 says a rename with no content change touches nothing.
 	f.git("mv", origin, moved)
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
@@ -612,7 +612,7 @@ func TestMethodMovedToANewPathAndEditedIsScoredAtItsNewLocation(t *testing.T) {
 	f.write(origin, csharpFile(20))
 	f.commitAll("initial")
 	// git scores this as a rename, which status R would drop from an
-	// ACM-filtered diff; ADR 0003 says the method appears as added lines at
+	// ACM-filtered diff; ADR 0007 says the method appears as added lines at
 	// its new location instead.
 	f.git("mv", origin, moved)
 	f.touchLine(moved, 7)
@@ -766,9 +766,9 @@ func TestEveryMethodInANewlyAddedFileIsMeasured(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.write(fresh, csharpFile(20))
-	// `git add` is required, not incidental. ADR 0003's tracked-paths-only
-	// amendment says touched lines come from tracked paths only, so an
-	// unstaged new file contributes nothing.
+	// `git add` is required, not incidental. ADR 0007's tracked-paths-only
+	// rule says touched lines come from tracked paths only, so an unstaged
+	// new file contributes nothing.
 	// TestANewFileNeverAddedToTheIndexContributesNoChangedMethods is the
 	// other half of the pair: it never adds its new file at all and pins the
 	// same rule from that side.
@@ -788,7 +788,7 @@ func TestEveryMethodInANewlyAddedFileIsMeasured(t *testing.T) {
 
 // TestANewFileNeverAddedToTheIndexContributesNoChangedMethods is the other
 // half of the pair above: Scratch.cs is written but never `git add`ed, so
-// ADR 0003's tracked-paths-only amendment says it contributes nothing, and the
+// ADR 0007's tracked-paths-only rule says it contributes nothing, and the
 // changed set is OrderService.cs alone.
 //
 // The stub's stdout is canned and stays silent about Scratch.cs on purpose.
@@ -1499,7 +1499,7 @@ func TestADiffGitRefusesToPrintIsATypedDocumentNotAnEmptyStdout(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	// Base resolution reads commits and still succeeds, so the document exists
-	// and ADR 0005 requires it on stdout. The diff itself reads the old side's
+	// and ADR 0008 requires it on stdout. The diff itself reads the old side's
 	// blob, which is gone, so git exits 128 before printing a patch.
 	blob := f.git("rev-parse", "HEAD:"+orderService)
 	f.touchLine(orderService, 62)
@@ -2795,11 +2795,12 @@ func TestAChangedFileMissingFromTheWorkingTreeCurrentlyStopsTheRunOutsideTheDocu
 		t.Fatalf("%s is still readable, which the case needs it not to be", orderService)
 	}
 
-	// This is the shape the run has today, not the shape it should have: ADR
-	// 0005 sanctions a documentless exit 1 only for a failure upstream of the
-	// document, and this one lands after the changed methods are counted. Issue
-	// 31 gives the failure a typed code, and moves it inside the document; this
-	// case goes red the day it does, which is what it is here for.
+	// This is the shape the run has today, not the shape it should have. A
+	// changed file the gate cannot stat is one of the known deviations the
+	// metric-gate package doc catalogues, landing after the changed methods are
+	// counted. Issue 31 gives the failure a typed code, and moves it inside the
+	// document; this case goes red the day it does, which is what it is here
+	// for.
 	result := f.runWithArgs()
 	if result.exitCode != 1 || result.stdout != "" {
 		t.Errorf("gate exited %d with stdout %q, want exit 1 and nothing on stdout", result.exitCode, result.stdout)
@@ -2831,9 +2832,9 @@ func TestCoverageFlagTakesAValueBeginningWithOneDashAsAPath(t *testing.T) {
 		f.baseLabel("main"), "0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
-// assertUsageError checks the shape ADR 0005 gives a failure upstream of the
-// document: exit 1, nothing on stdout, and the cause plus the usage line on
-// stderr.
+// assertUsageError checks the shape ADR 0008 gives a malformed command line,
+// the one documentless exit the metric-gate package doc records as sanctioned:
+// exit 1, nothing on stdout, and the cause plus the usage line on stderr.
 func assertUsageError(t *testing.T, result runResult, stderr string) {
 	t.Helper()
 	if result.exitCode == 1 && result.stdout == "" && result.stderr == stderr {
@@ -3706,13 +3707,16 @@ func TestRunOutsideAGitRepoWritesNoDocumentAndExitsOne(t *testing.T) {
 
 	result := f.run()
 
-	// This failure is upstream of the document, so ADR 0005's one-TOON-document
-	// rule cannot apply: there is no base and no scope to report. git's own
-	// explanation is in git's own language, but the failing argv is not, and
-	// gitError.Error carries it, so naming the invocation that failed keeps the
-	// case specific without pinning it to English. A panic or an unrelated
-	// wrapped error would satisfy "exit 1 with something on stderr" and must not
-	// satisfy this.
+	// This is the shape the run has today, not the shape it should have.
+	// Running outside a git repo is one of the known deviations the metric-gate
+	// package doc catalogues, landing upstream of the document before a base is
+	// resolved. Issue 86 asks whether the path gets a typed code and a document
+	// or whether ADR 0008 carves the deviation out permanently; this case goes
+	// red the day it gets a document. git's own explanation is in git's own
+	// language, but the failing argv is not, and gitError.Error carries it, so
+	// naming the invocation that failed keeps the case specific without pinning
+	// it to English. A panic or an unrelated wrapped error would satisfy "exit 1
+	// with something on stderr" and must not satisfy this.
 	if result.exitCode != 1 || result.stdout != "" || !strings.Contains(result.stderr, "rev-parse") {
 		t.Errorf("gate outside a repo: got exit %d, stdout %q, stderr %q; want exit 1, empty stdout, a failed rev-parse on stderr",
 			result.exitCode, result.stdout, result.stderr)
