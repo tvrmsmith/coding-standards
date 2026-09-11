@@ -53,7 +53,7 @@ when what is left still crowds out the decision.
 what a reader is expected to read in full, so it has to be readable in one sitting; the file is what
 they scroll when the block is not enough. A decision that will not fit is more than one decision.
 0007, 0008 and 0009 run 193 to 240 words in the block and 784 to 1499 in the file. 0004 is folded and
-still over the file target, at 236 words in the block and 2285 in the file.
+still over the file target, at 236 words in the block and 2334 in the file.
 
 **Length alone licenses nothing.** An ADR over either target is recorded here and left as it stands.
 Only the amendment count triggers consolidation, so a long file with few amendments stays long. A

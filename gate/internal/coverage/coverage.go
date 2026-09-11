@@ -500,7 +500,7 @@ var sourceLinkScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
 
 // mergeInto resolves each class to a source path and folds its lines into the
 // set. Resolution runs per report, with that report's own <sources>. ADR
-// 0004's Consequences (issue 16) puts three checks ahead of the join,
+// 0004's Consequences puts three checks ahead of the join,
 // in precedence order: an erased source root voids the whole report before
 // any candidate is built, a class resolving to more than one path inside the
 // root contradicts itself, and a report that lands no class inside the root at
