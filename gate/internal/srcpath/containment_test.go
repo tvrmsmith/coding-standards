@@ -2,6 +2,7 @@ package srcpath
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -103,6 +104,38 @@ func TestRelativizeReadsAnAncestorOfTheRootAsOutside(t *testing.T) {
 
 	if err != nil || place != outside || rel != "" {
 		t.Errorf("relativize on an ancestor of the root returned %q, %v, %v, want \"\", outside, nil", rel, place, err)
+	}
+}
+
+// A filesystem that will not say whether the case-differing prefix is the root
+// is not the same answer as two distinct directories. Reading it as one would
+// refuse a path that is in fact inside the repo as being outside it, so the
+// failure travels up instead and named words it about the root. This runs on
+// every filesystem, since dropping the search bit on the parent denies the stat
+// whether or not the two spellings fold.
+func TestRelativizeReportsAPrefixTheFilesystemWillNotStat(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root searches a directory whose mode denies it, so there is no stat failure to provoke")
+	}
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := mkdir(t, filepath.Join(tmp, "parent"))
+	root, err := NewRoot(mkdir(t, filepath.Join(parent, "repo")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := filepath.Join(parent, "REPO", "a.txt")
+	if err := os.Chmod(parent, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+
+	rel, place, err := root.relativize(candidate)
+
+	if !errors.Is(err, fs.ErrPermission) || place != outside || rel != "" {
+		t.Errorf("relativize on a prefix the filesystem will not stat returned %q, %v, %v, want \"\", outside, a permission error", rel, place, err)
 	}
 }
 
@@ -236,8 +269,8 @@ func TestPlaceRefusesACandidateWhoseRootPrefixIsMisCased(t *testing.T) {
 	}
 	// Typed through a relative link, which resolves to the same mis-cased prefix
 	// with the link spelled out. Resolved answering the link-free path is what
-	// says Place read the file and weighed containment, rather than turning back
-	// at the absolute, symlink or regular-file check ahead of it.
+	// says Place got past the absolute and symlink checks ahead of the fold,
+	// rather than turning back at one of them with the candidate as typed.
 	resolved := filepath.Join(miscased, "src", "a.cs")
 
 	placed := root.Place(filepath.Join(miscased, "srclink", "a.cs"))
@@ -257,16 +290,22 @@ func TestPlaceRefusesACandidateWhoseRootPrefixIsMisCased(t *testing.T) {
 // resolution cannot collapse.
 func TestPlaceRefusesACandidateUnderACaseDifferingRootSpelling(t *testing.T) {
 	root, real := symlinkedMiscasedRoot(t)
-	candidate := touch(t, filepath.Join(real, "src", "a.cs"))
+	resolved := touch(t, filepath.Join(real, "src", "a.cs"))
+	if err := os.Symlink("src", filepath.Join(real, "srclink")); err != nil {
+		t.Fatal(err)
+	}
 
-	placed := root.Place(candidate)
+	// Typed through a relative link, as the macOS twin does, so Resolved
+	// answering the link-free path says Place got past the absolute and symlink
+	// checks rather than turning back at one of them with the candidate as typed.
+	placed := root.Place(filepath.Join(real, "srclink", "a.cs"))
 
 	rel, in := placed.Inside()
 	if in || rel != "" {
 		t.Errorf("Place under a case-differing root spelling returned %q, %v, want \"\", false", rel, in)
 	}
-	if placed.Resolved() != filepath.ToSlash(candidate) {
-		t.Errorf("Resolved = %q, want the resolved candidate %q", placed.Resolved(), filepath.ToSlash(candidate))
+	if placed.Resolved() != filepath.ToSlash(resolved) {
+		t.Errorf("Resolved = %q, want the resolved candidate %q", placed.Resolved(), filepath.ToSlash(resolved))
 	}
 }
 

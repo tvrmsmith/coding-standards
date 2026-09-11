@@ -183,7 +183,7 @@ func (p placement) String() string {
 // are two of them. errNoRelativeReading is the root and the candidate having no
 // relative reading, a second drive letter on Windows rather than a location
 // above the root. The other is the filesystem refusing to say whether a
-// case-differing prefix is the root, which sameDir carries up verbatim. They are
+// case-differing prefix is the root, which isRootUnder carries up verbatim. They are
 // separate answers because neither is a placement, and named tells them apart to
 // pick its words.
 func (r Root) relativize(resolved string) (Path, placement, error) {
@@ -238,7 +238,7 @@ func (r Root) foldRootPrefix(resolved string) (Path, placement, error) {
 	if !strings.EqualFold(prefix, r.resolved) {
 		return "", outside, nil
 	}
-	same, err := sameDir(prefix, r.resolved)
+	same, err := r.isRootUnder(prefix)
 	if err != nil {
 		return "", outside, err
 	}
@@ -248,33 +248,31 @@ func (r Root) foldRootPrefix(resolved string) (Path, placement, error) {
 	return "", folded, nil
 }
 
-// sameDir reports whether two names reach one directory. A name that is not
-// there is not the root under another spelling, so it answers false. Any other
-// stat failure is the filesystem declining to answer, EACCES on a parent or the
-// root deleted mid-call, and it travels up rather than reading as two genuinely
-// distinct directories: that reading would refuse a path that is in fact inside
-// the repo as being outside it, which is the misdiagnosis issue 48 set out to
-// remove.
-func sameDir(a, b string) (bool, error) {
-	infoA, err := os.Stat(a)
+// isRootUnder reports whether spelling reaches the root's own directory. The
+// two names are not interchangeable, which is why this hangs off the Root
+// rather than comparing two strings: spelling is a candidate's prefix and may
+// be nothing at all, which answers false, since a name that is not there is not
+// the root under another spelling. The root is a directory the gate resolved at
+// startup, so any failure to stat it, including its absence, is a fault that
+// travels up.
+//
+// Every other stat failure on spelling travels up too, EACCES on a parent among
+// them. Reading one as two genuinely distinct directories would refuse a path
+// that is in fact inside the repo as being outside it, which is the
+// misdiagnosis issue 48 set out to remove.
+func (r Root) isRootUnder(spelling string) (bool, error) {
+	spelled, err := os.Stat(spelling)
 	if err != nil {
-		return false, absenceIsNoError(err)
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
 	}
-	infoB, err := os.Stat(b)
+	root, err := os.Stat(r.resolved)
 	if err != nil {
-		return false, absenceIsNoError(err)
+		return false, err
 	}
-	return os.SameFile(infoA, infoB), nil
-}
-
-// absenceIsNoError drops a stat failure that is the name not being there, which
-// is an answer about the path, and keeps every other one, which is a failure to
-// look.
-func absenceIsNoError(err error) error {
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	return err
+	return os.SameFile(spelled, root), nil
 }
 
 // Name is a path as the gate's document names it, in one of three shapes:
@@ -421,13 +419,14 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // component that is not a directory carry what the operating system said
 // instead, since sending the developer after a typo that is not there is the
 // misdiagnosis NoBaseError.Unrelated was added to avoid. A filesystem that
-// declines to say whether a case-differing prefix is the root travels the same
-// way, since the gate then knows nothing about where the path sits and must not
-// guess at either refusal below. A path the root cannot
-// be relativized against at all, a second drive letter on Windows rather than a
-// location above the root, says that in the gate's own words rather than
-// carrying filepath.Rel's, which quote two absolute paths the developer never
-// typed.
+// declines to say whether a case-differing prefix is the root is refused in its
+// own words rather than as the name being unreadable, because the name resolved
+// a moment earlier and what failed is the root: the gate then knows nothing
+// about where the path sits and must not guess at either refusal below. A path
+// the root cannot be relativized against at all, a second drive letter on
+// Windows rather than a location above the root, says that in the gate's own
+// words rather than carrying filepath.Rel's, which quote two absolute paths the
+// developer never typed.
 //
 // A name whose root prefix is spelled in another case is refused too, and it
 // says so rather than reusing the "not spelled as the file on disk is" refusal
@@ -468,7 +467,7 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 		return "", &UnresolvedError{Name: name, Reason: "has no path relative to the repo root"}
 	}
 	if err != nil {
-		return "", unreadable(name, err)
+		return "", &UnresolvedError{Name: name, Reason: "could not be weighed against the repo root, " + errnoText(err)}
 	}
 	if place == outside {
 		return "", &UnresolvedError{Name: name, Reason: "is outside the repo root"}
@@ -499,21 +498,26 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 	return rel, nil
 }
 
-// unreadable is the refusal for a filesystem failure that is not the path
-// being absent, ENOTDIR from a name typed through a file, ELOOP from a symlink
-// cycle, or EACCES on a parent directory.
-//
-// The reason carries the errno's own words rather than the whole fs.PathError,
-// because that error quotes an absolute path the developer never typed and
-// which reads differently on every machine, and the name they did type already
-// opens the message.
+// unreadable is the refusal for a filesystem failure reading the name itself
+// and not something else, ENOTDIR from a name typed through a file, ELOOP from
+// a symlink cycle, or EACCES on a parent directory. A failure statting the repo
+// root or a case-differing spelling of it is not one of those, and named words
+// that one about the root instead, since "<name> could not be read" would
+// accuse a name the gate resolved successfully.
 func unreadable(name string, err error) *UnresolvedError {
-	cause := err
+	return &UnresolvedError{Name: name, Reason: "could not be read, " + errnoText(err)}
+}
+
+// errnoText is what the operating system said, without the fs.PathError around
+// it, because that error quotes an absolute path the developer never typed and
+// which reads differently on every machine. Each refusal names the path it is
+// about in its own words instead.
+func errnoText(err error) string {
 	var pathErr *fs.PathError
 	if errors.As(err, &pathErr) {
-		cause = pathErr.Err
+		return pathErr.Err.Error()
 	}
-	return &UnresolvedError{Name: name, Reason: "could not be read, " + cause.Error()}
+	return err.Error()
 }
 
 // spelledAsOnDisk reports whether every component of rel is spelled the way the
