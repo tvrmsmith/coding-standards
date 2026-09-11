@@ -222,6 +222,23 @@ func TestSinceNamingARefThatDoesNotExistFailsNamingThatRef(t *testing.T) {
 		"no diff base: --since nope does not name a commit\n")
 }
 
+func TestSinceNamingATagThatDoesNotPointAtACommitFailsNamingThatRef(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	// A lightweight tag on a tree, which is a ref that resolves while naming
+	// nothing the run can diff against.
+	f.git("tag", "treetag", f.git("rev-parse", "HEAD^{tree}"))
+
+	// The `^{commit}` peel on this check is what turns that into the answer
+	// --since owes its caller. Dropped, as it is on the default walk's
+	// candidate check, the tag resolves, merge-base fails to name a commit, and
+	// the developer is told the diff could not be read for a ref they named by
+	// hand and can fix by naming another.
+	f.runArgs("--since", "treetag").assertMatches(t, "since_tag_not_a_commit", 1, "",
+		"no diff base: --since treetag does not name a commit\n")
+}
+
 func TestStagedMeasuresOnlyWhatIsStaged(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))

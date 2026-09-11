@@ -3790,10 +3790,190 @@ func TestRemoteMainWithUnrelatedHistoryFallsThroughToLocalMain(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// origin/main resolves but shares no history with HEAD, so its merge-base
-	// fails and ResolveBase skips it. The local main label together with the
-	// one changed method from the working-tree edit is what shows the walk
-	// fell through to the next candidate that does share history.
+	// origin/main resolves but its merge-base against HEAD exits 1, which is git
+	// answering that the two share no ancestor, and that answer is what
+	// ResolveBase skips the candidate on. The helper's own exit-1 guard is what
+	// proves the fixture produces that arm rather than a git failure, which the
+	// walk no longer falls through. The local main label together with the one
+	// changed method from the working-tree edit is what shows the walk fell
+	// through to the next candidate that does share history.
 	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+func TestBranchWithNoCommitInARepoHoldingHistorySaysSoRatherThanNamingEveryRef(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.git("checkout", "--quiet", "--orphan", "fresh")
+	// The rung the case turns on, asserted rather than assumed. The HEAD check
+	// short-circuits ahead of the walk, so this document is byte-identical to
+	// the one an empty repo emits and the case would go on passing if the
+	// history it is named for stopped being there.
+	f.git("rev-parse", "--verify", "--quiet", "main^{commit}")
+
+	// main still resolves, so the walk reaches merge-base, and merge-base
+	// against an unborn HEAD exits 128 rather than the exit 1 that means no
+	// common ancestor. Without the HEAD check ahead of the walk this would come
+	// back as a diff the gate could not read, for a run that never reached a
+	// diff, or as the tried-refs list naming a branch that is sitting right
+	// there.
+	f.run().assertMatches(t, "base_no_commits", 1, "",
+		"no diff base: this branch has no commit\n")
+}
+
+func TestARefStoreGitCannotReadReportsAnUnreadableDiffRatherThanNamingEveryRef(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.corruptPackedRefs()
+
+	// Every ref read now exits 128 rather than the exit 1 that means no such
+	// ref. Read as no such ref, the run would hand the developer a list of
+	// candidates their repo actually has and send them hunting a missing
+	// branch, while what is broken is the ref store the list was read from.
+	cause := f.gitStderr("rev-parse", "--verify", "--quiet", "HEAD")
+
+	f.run().assertMatchesWith(t, "base_head_unreadable", 1, "",
+		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
+}
+
+func TestAMergeBaseGitCannotWalkReportsAnUnreadableDiffRatherThanTryingTheNextRef(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	// A branch whose name is no BaseCandidates rung, so main is the candidate
+	// the walk reaches and HEAD is a commit main does not carry.
+	f.git("checkout", "--quiet", "-b", "topic")
+	f.touchLine(orderService, 62)
+	f.commitAll("second")
+	f.removeLooseObject(f.git("rev-parse", "HEAD"))
+
+	// The object git cannot read is HEAD's own commit rather than the rung's,
+	// which is the walk itself failing and is what this case pins that the
+	// missing-candidate case does not. Both checks answer about a ref rather
+	// than about an object, so merge-base is the first thing to touch the
+	// missing one. Left to fall through, git failing to walk would read as git
+	// answering that main shares no ancestor with HEAD, the walk would try the
+	// remaining rungs, and a repo with nothing else to reach would name every
+	// candidate rather than the object it cannot read.
+	cause := f.gitStderr("merge-base", "HEAD", "main")
+
+	f.run().assertMatchesWith(t, "base_merge_base_unreadable", 1, "",
+		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
+}
+
+func TestBeforeTheFirstCommitTheDefaultScopeSaysSoRatherThanNamingEveryRef(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+
+	// No commit anywhere, so no candidate resolves either, and the tried-refs
+	// list is what the walk alone would print. The HEAD check ahead of it is
+	// what turns that into the branch's own answer, which is the same one
+	// --staged gives from the same check.
+	f.run().assertMatches(t, "base_no_commits", 1, "",
+		"no diff base: this branch has no commit\n")
+}
+
+func TestACandidateWhoseCommitObjectIsGoneReportsAnUnreadableDiffRatherThanNamingEveryRef(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.git("checkout", "--quiet", "-b", "topic")
+	f.touchLine(orderService, 62)
+	f.commitAll("second")
+	// main's own commit, which HEAD reaches only through the parent link, so
+	// removing it leaves HEAD readable and main's object gone.
+	f.removeLooseObject(f.git("rev-parse", "main"))
+
+	// `rev-parse --verify --quiet main^{commit}` exits 1 on a missing object,
+	// the same code an absent branch gives, so a peeled candidate check reads a
+	// rung git cannot read as a rung the repo does not carry, skips it, and
+	// ends at the tried-refs list naming main while main is sitting right
+	// there. Unpeeled, the check answers about the ref and merge-base is what
+	// classifies the object.
+	cause := f.gitStderr("merge-base", "HEAD", "main")
+
+	f.run().assertMatchesWith(t, "base_merge_base_unreadable", 1, "",
+		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
+}
+
+func TestATagShadowingACandidateWithANonCommitReportsAnUnreadableDiffRatherThanSkippingTheRung(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.git("checkout", "--quiet", "-b", "topic")
+	f.touchLine(orderService, 62)
+	f.commitAll("second")
+	// git resolves refs/tags/main ahead of refs/heads/main, so this tag is what
+	// the main rung names from here on, and it names a tree rather than a
+	// commit.
+	f.git("tag", "main", f.git("rev-parse", "HEAD^{tree}"))
+
+	// The unpeeled candidate check is what lets the tag resolve at all, since a
+	// `^{commit}` peel exits 1 on it and the walk would skip the rung and end
+	// at the tried-refs list naming main. Unpeeled, merge-base is what
+	// classifies the object, at exit 128, and the run names the object it
+	// cannot read rather than resolving a base through some other rung than the
+	// one the developer's repo says main is.
+	cause := f.gitStderr("merge-base", "HEAD", "main")
+
+	f.run().assertMatchesWith(t, "base_merge_base_unreadable", 1, "",
+		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
+}
+
+func TestAnUnreadableRungStopsTheRunRatherThanResolvingABaseThroughALaterOne(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	// addOrigin leaves refs/remotes/origin/HEAD unset, so origin/main is the
+	// first rung the walk resolves and the broken one is the one it reaches.
+	f.addOrigin("main")
+	// A commit only origin/main carries, so dropping its object breaks that
+	// rung alone and leaves local main whole.
+	f.git("checkout", "--quiet", "-b", "remote-tip")
+	f.touchLine(orderService, 40)
+	f.commitAll("remote tip")
+	remoteTip := f.git("rev-parse", "HEAD")
+	f.git("push", "--quiet", "origin", "remote-tip:main")
+	f.git("checkout", "--quiet", "main")
+	f.git("branch", "--quiet", "-D", "remote-tip")
+	f.git("checkout", "--quiet", "-b", "topic")
+	f.touchLine(orderService, 62)
+	f.commitAll("second")
+	// Two refs rather than one, so the base the run refuses to resolve is not
+	// the broken rung's own commit.
+	f.requireDistinctCommits("origin/main", "main")
+	// A healthy later rung is what the case needs, and it is read back rather
+	// than assumed. Local main has to be an ancestor of HEAD for the walk to
+	// have a good base one rung down, and without that this case would go green
+	// on a repo where nothing usable followed, which is the hole the
+	// neighbouring cases have.
+	if fallback := f.baseLabel("main"); fallback != "main@"+f.git("rev-parse", "main")[:7] {
+		t.Fatalf("local main is %s rather than a base behind HEAD, so the walk has no healthy rung to fall through to", fallback)
+	}
+	f.removeLooseObject(remoteTip)
+	// A coverage report and an extractor the run never reaches, so that a walk
+	// which fell through would answer with a measurement over local main rather
+	// than stopping at some later complaint. That leaves the null base the
+	// golden carries as the thing this case fails on, which is the difference
+	// between refusing and resolving.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// origin/main resolves, local main is a base one rung down that the walk
+	// could reach, and the run still refuses. Refusing is the point. A base
+	// resolved through a rung other than the one the developer's own repo says
+	// their work forked from is a wrong answer nothing in the output would show
+	// them, where the object git cannot read names what is really broken. The
+	// null base the golden carries is what separates the two, since a walk that
+	// regained its old continue would report a base here.
+	cause := f.gitStderr("merge-base", "HEAD", "origin/main")
+
+	f.run().assertMatchesWith(t, "base_merge_base_unreadable", 1, "",
+		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
 }
