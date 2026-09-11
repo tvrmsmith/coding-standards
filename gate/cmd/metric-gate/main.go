@@ -23,12 +23,15 @@
 // the gate did examine a repository and still emits nothing. Issue 31 gives them
 // typed codes and moves them inside the document.
 //
-// A third error lands the same way and stays outside issue 31's scope: stdout
-// refusing the write that carries the document, a full disk or a closed
-// descriptor among the causes. It happens after the document is built, so the
-// gate did produce one, and it still exits 1 with no typed code, because the
-// document is the thing that could not be delivered. Issue 31 has nowhere to
-// move it to.
+// A third error stays outside issue 31's scope and is the one exception to the
+// empty stdout above: stdout refusing the write that carries the document, a
+// full disk or a closed descriptor among the causes. It happens after the
+// document is built, so the gate did produce one, and it still exits 1 with no
+// typed code, because the document is the thing that could not be delivered.
+// A write that came up short leaves a truncated document behind, so on this
+// cause alone stdout may hold part of a document rather than nothing, and the
+// exit code is the only signal a caller can trust. Issue 31 has nowhere to move
+// it to.
 package main
 
 import (
@@ -66,6 +69,7 @@ func main() {
 	code, err := emit(os.Stdout, os.Stderr, doc)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 	os.Exit(code)
 }
@@ -83,7 +87,7 @@ func main() {
 func emit(stdout, stderr io.Writer, doc report.Document) (int, error) {
 	body, err := doc.Stdout()
 	if err != nil {
-		return 1, err
+		return 1, fmt.Errorf("rendering the document: %w", err)
 	}
 	n, err := stdout.Write(body)
 	if err != nil {

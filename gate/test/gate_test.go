@@ -1,7 +1,9 @@
 package gate_test
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -3733,13 +3735,23 @@ func inRepo(t *testing.T, dir string) bool {
 // would otherwise pass, but the write that was supposed to deliver it never
 // lands. A run reading exit 0 back would have approved a change nobody saw.
 func TestStdoutRefusingTheWriteExitsOneRatherThanTheDocumentsOwnCode(t *testing.T) {
+	// The only tolerated reason to skip is a platform without /dev/full at
+	// all. Any other stat failure, and any failure to open it, is a broken
+	// environment, and a silent skip there would leave the one end-to-end
+	// proof of this behaviour unguarded while CI stayed green.
 	info, err := os.Stat("/dev/full")
-	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
-		t.Skip("/dev/full is not available as a character device on this platform")
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skip("/dev/full does not exist on this platform")
+	}
+	if err != nil {
+		t.Fatalf("stat /dev/full: %v", err)
+	}
+	if info.Mode()&os.ModeCharDevice == 0 {
+		t.Skip("/dev/full is not a character device on this platform")
 	}
 	full, err := os.OpenFile("/dev/full", os.O_WRONLY, 0)
 	if err != nil {
-		t.Skipf("opening /dev/full: %v", err)
+		t.Fatalf("opening /dev/full: %v", err)
 	}
 	defer full.Close()
 

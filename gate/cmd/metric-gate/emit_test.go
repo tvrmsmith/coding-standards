@@ -26,13 +26,15 @@ func passingDocument() report.Document {
 // passing doc.ExitCode() through on a healthy writer instead of returning a
 // constant that happens to match the passing case.
 func exceedingDocument() report.Document {
-	coverage, score := 0.1, float64(crap.Threshold+10)
+	measurement := crap.Measurement{Complexity: crap.Threshold + 10, Coverage: 0.1}
+	score := measurement.Score()
 	return report.Document{Scope: scope.ModeMergeBase, ChangedMethods: 1, Metric: &report.Metric{
 		Name: crap.Name, Display: crap.DisplayName, Threshold: crap.Threshold,
 		Rows: []report.Row{{
 			File: "src/Ordering/OrderService.cs", Start: 1, End: 20, Name: "Place",
-			Complexity: 20, Coverage: &coverage, Score: &score,
-			State: report.StateMeasured, Action: crap.ActionNone,
+			Complexity: measurement.Complexity, Coverage: &measurement.Coverage, Score: &score,
+			State: report.StateMeasured, Action: measurement.Action(),
+			TargetCoverage: measurement.TargetCoverage(),
 		}},
 	}}
 }
