@@ -298,7 +298,8 @@ func selectFiles(repo gitscope.Repo, names []string) (selection, error) {
 	if err != nil {
 		// Only a refusal about the path itself carries the typed code, whose
 		// message the reader expects to name a path. Anything else, a lost
-		// working directory for instance, is upstream of the document.
+		// working directory for instance, is one of the known deviations the
+		// package doc above catalogues.
 		var unresolved *srcpath.UnresolvedError
 		if errors.As(err, &unresolved) {
 			selected.Failure = &report.Failure{Code: report.CodeFileUnresolved, Message: unresolved.Error()}
