@@ -742,13 +742,15 @@ func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) 
 // symlink target's text as one line under an equally claimed `.cs` path.
 // The second of those is what makes the flag edit wrong. The extractor is
 // handed a link, follows it, and emits the target file's spans under the
-// link's path, so a change the gate correctly ignores today would start
-// failing the run instead. Measuring the direction this case covers needs a
+// link's path, so a change the gate correctly ignores today would come back
+// measured under the wrong file, with the link's own line landing outside
+// every span. That answer is wrong whatever the run's exit code turns out to
+// be. Measuring the direction this case covers needs a
 // mode-aware pass classifying the new side of a typechange before anything
 // reaches the extractor, not a flag edit. That pass is the work this change
-// does not take on, so the gap above is accepted rather than closed: a false
-// failure no edit clears is worse than methods that go unmeasured until an
-// edit reaches them.
+// does not take on, so the gap above is accepted rather than closed. Spans
+// reported under a path that does not hold them is worse than methods that go
+// unmeasured until an edit reaches them.
 func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
@@ -756,6 +758,11 @@ func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) 
 	f.commitAll("initial")
 	f.removeFile(orderFile)
 	f.write(orderFile, csharpFile(80))
+	// Every assertion below is an absence, so a setup that stopped producing a
+	// typechange would pass while testing nothing.
+	if got := f.git("diff", "--name-status", "main", "--", orderFile); got != "T\t"+orderFile {
+		t.Fatalf("git reports %q for %s, so this case is not exercising a typechange", got, orderFile)
+	}
 	handed := filepath.Join(t.TempDir(), "handed")
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
