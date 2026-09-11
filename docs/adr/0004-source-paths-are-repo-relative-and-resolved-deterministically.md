@@ -13,13 +13,15 @@ byte-identical. A human-typed path resolves against the current working director
 A path that will not resolve refuses the run rather than passing with nothing measured:
 `coverage_source_root_erased`, then `file_ambiguous`, then a coverage path with zero candidates in
 the root, in that precedence. A human-typed path is refused as `file_unresolved` when it names
-anything other than a regular file, when it spells a real file in a case the tree does not use, and
-when it is absolute and mis-cases the repo-root prefix. Case folding is rejected for
-coverage-path resolution, where it can merge two real files; it is not rejected for extension
-routing, which only decides whether to launch a process, nor for a repo-root prefix that
-`os.SameFile` confirms reaches the root directory, which merges nothing.
+anything other than a regular file, and when it spells a real file in a case the tree does not use.
 
-Sections below carry the reasoning.
+Case folding is rejected for coverage-path resolution, where it can merge two real files; it is not
+rejected for extension routing, which only decides whether to launch a process, nor for a repo-root
+prefix that `os.SameFile` confirms reaches the root directory, which merges nothing. So an absolute
+human-typed path that mis-cases the repo-root prefix places inside the repo on the strength of that
+fold, and is then refused for its spelling rather than for its location.
+
+Sections below carry the reasoning, one dated amendment, and the fold history.
 
 ## Decision
 
@@ -36,7 +38,8 @@ Two narrowings on what counts as landing inside:
   resolves nowhere at all. A class filename of `..`, `../..`, or a bare directory name joins onto an
   in-root `<source>` to name a directory, which sits inside the root without naming any source the
   report measured, and one such class would otherwise stand in for a whole report's worth of classes
-  that placed nothing, suppressing the zero-in-root diagnostic.
+  that placed nothing, suppressing the zero-in-root diagnostic. This is the same reasoning as landing
+  outside the root, applied to what the path turns out to be rather than to where it landed.
 - An **already absolute** filename is its own only candidate, and no `<source>` is joined onto it.
   Coverlet emits one when no computed source root prefixes the document. Joining would name a path no
   report ever carried, `/src/src/app/Order.cs` off `<source>` `/src`, and the outside-repo diagnostic
@@ -107,10 +110,10 @@ as outside on Linux, which is the property the rejection protects. That narrow f
 
 It governs the root prefix alone, at every door into containment: a coverage candidate or a report
 display name whose prefix is mis-cased places and is named where it really sits rather than being
-reported as escaping the repo, and the `--files` refusal above survives as a refusal about spelling.
-Coverage-path resolution is what the paragraph above scopes the rejection to, and the fold is admitted
-there because `os.SameFile` supplies the evidence that reasoning lacked, not because the rejection is
-being narrowed by preference.
+reported as escaping the repo, and the `--files` refusal in Decision survives as a refusal about
+spelling. Coverage-path resolution is exactly what the scoping paragraph opening "The rejection
+governs" confines the rejection to, and the fold is admitted there because `os.SameFile` supplies the
+evidence that reasoning lacked, not because the rejection is being narrowed by preference.
 
 Case **below** the root is still refused, unfolded, which is what keeps `case_only_path_difference` at
 exit 1 and keeps the gate from attributing coverage to a file the report did not measure.
@@ -159,11 +162,12 @@ The rule is unconditional. Whether a candidate failed because it landed outside 
 file is gone from disk makes no difference at report level, and the two were tried as separate signals
 and reverted: a real coverlet report on Unix carries `<source>/</source>`, which resolves, so no on-disk
 signal tells "built in another checkout" apart from "deleted since the test run", and splitting them
-left the container case undiagnosed. A single unplaceable path is still ignored in silence, per the
-"unresolvable report path" paragraph below. It is only a
-report with nothing left that fails. A report carrying no `<class>` element at all raises nothing, since
-it placed nothing to be outside; a changed method it fails to cover still fails the run as
-`unknown_changed_method`.
+left the container case undiagnosed.
+
+**Only a report with nothing left fails.** A single unplaceable path is still ignored in silence, per
+the "unresolvable report path" rule below. A report carrying no `<class>` element at all raises
+nothing, since it placed nothing to be outside; a changed method it fails to cover still fails the run
+as `unknown_changed_method`.
 
 The **example path** is the first candidate of the first class carrying a filename, symlink-resolved when
 it resolved and as the join built it when it did not. It is the best available reading of a path the gate
@@ -188,8 +192,9 @@ that issue 6 unions every discovered report rather than taking the newest.
 
 Accepted with six dated amendments. On 2026-09-11 four were folded into the text they corrected, one
 was dropped, and one was kept. The first 2026-09-03 entry scoped the case-folding rejection to
-coverage-path resolution. The 2026-09-05 and 2026-09-07 entries added the human-typed refusals that
-came with [issue 14](https://github.com/tvrmsmith/coding-standards/issues/14). The 2026-09-04 entry
+coverage-path resolution. The 2026-09-05 entry added the human-typed refusals that came with
+[issue 14](https://github.com/tvrmsmith/coding-standards/issues/14), and the 2026-09-07 entry widened
+the first of them from directories to every non-regular inode. The 2026-09-04 entry
 recorded three exit-1 rules arriving, and the second 2026-09-03 entry, which had deferred those same
 rules to [issue 16](https://github.com/tvrmsmith/coding-standards/issues/16), went rather than folded:
 the deferral it recorded closed when the rules landed, and Consequences now states them directly.

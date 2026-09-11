@@ -27,12 +27,13 @@ and a landed changelog entry retires; a decision and its reasons do not. Three w
 Write a paragraph opening with `**Amended YYYY-MM-DD.**` at the start of a line, and place it next
 to the text it corrects, so a reader meets the correction where they meet the claim.
 
-**Fold** an amendment once what it records has landed. Rewrite the section it corrects so that
-section states the current fact directly, carrying over every fact and every reason the amendment
-held; only the changelog hop goes. Add a `## History` section naming what was folded and when, so
-nothing about the file's past is lost. An amendment stays dated and separate while it records
-something still in flight, or where it narrowed a decision rather than recording one arriving. 0004
-was folded this way on 2026-09-11, from six dated entries and 2513 words down to one entry.
+**Fold** an amendment once what it records has landed, one of two ways. Fold it by rewriting the
+section it corrects, so that section states the current fact directly and only the changelog hop
+goes. Drop it instead when what it recorded was an in-flight state rather than a fact, a deferral
+that has since closed, and the section it pointed at now states the rule outright. Either way, add a
+`## History` section naming every entry, how each one went, and when. An amendment stays dated and
+separate while it records something still in flight, or where it narrowed a decision rather than
+recording one arriving. 0004 was folded this way on 2026-09-11, from six dated entries down to one.
 
 **Supersede** when the decision itself changes, and when amendments have accumulated past the point
 where the file can be read straight through. Write a new numbered ADR stating the rule in one pass.
@@ -49,6 +50,10 @@ when what is left still crowds out the decision.
 what a reader is expected to read in full, so it has to be readable in one sitting; the file is what
 they scroll when the block is not enough. A decision that will not fit is more than one decision.
 0007, 0008 and 0009 run 193 to 240 words in the block and 784 to 1499 in the file. 0004 is folded and
-still over the file target, at 201 words in the block and 2215 in the file.
+still over the file target, at 231 words in the block and 2286 in the file.
+
+**Length alone licenses nothing.** An ADR over either target is recorded here and left as it stands.
+Only the amendment count triggers consolidation, so a long file with few amendments stays long. A
+decision is not rewritten because its file is big.
 
 If an ADR looks wrong, that is a decision to escalate to the user, not an edit to make.
