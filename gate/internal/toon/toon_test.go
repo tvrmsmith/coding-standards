@@ -455,8 +455,8 @@ func TestEncode_TableFloatCellCarriesTheRoundingPastTheDecimalPoint(t *testing.T
 // which the ADR README keeps on disk for its history. Every cell comes
 // from that example except scope and base, because the example was
 // written against a --since run and prints scope: since and
-// base: main@9f3c110. The merge-base scope token comes from ADR 0005's
-// 2026-09-02 amendment, which fixes that token and nothing else. The
+// base: main@9f3c110. The merge-base scope token is fixed live by ADR
+// 0008 ("scope is one of merge-base, staged, since, files"). The
 // base label is this test's own concrete ref, since no ADR fixes one
 // for the default mode. No cell is re-derived by running the encoder.
 func TestEncode_ADR0005WorkedExample(t *testing.T) {

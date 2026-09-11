@@ -14,7 +14,8 @@
 // failure only, a malformed command line, which "exits 1 with empty stdout and
 // no typed code, because argv failed before the run had a shape to report".
 //
-// Four other errors take that shape, and 0008 sanctions none of them. Failing
+// Four errors measure returns take that shape, and 0008 sanctions none of
+// them. Failing
 // to open a git repository lands upstream of the document, before a base is
 // resolved. Failing to read the working directory while
 // resolving a relative --files name lands after that and before any method is
@@ -23,8 +24,11 @@
 // are counted, so the gate did examine a repository and still emits nothing.
 // All four are known deviations from the contract rather than part of it, and
 // issue 31 gives the last two typed codes and moves them inside the document.
+// Encoding the document is a fifth exit of the same shape, unreachable by
+// construction, since the encoder rejects only a value type or a row width
+// the document's fixed shape never produces.
 //
-// A fifth error stays outside issue 31's scope and is the one exception to the
+// A sixth error stays outside issue 31's scope and is the one exception to the
 // empty stdout above: stdout refusing the write that carries the document, a
 // full disk or a closed descriptor among the causes. It happens after the
 // document is built, so the gate did produce one, and it still exits 1 with no
@@ -307,9 +311,9 @@ func selectFiles(repo gitscope.Repo, names []string) (selection, error) {
 	if err != nil {
 		return failing(selected, err)
 	}
-	// ADR 0008 names --files as a second producer of skipped_paths: a named
-	// file no extractor claims is neither measured nor an error, so it is
-	// listed rather than silently dropped.
+	// ADR 0008's 2026-09-09 amendment names --files as the first of the two
+	// producers of skipped_paths. A named file no extractor claims is neither
+	// measured nor an error, so it is listed rather than silently dropped.
 	selected.SkippedPaths = pathStrings(extracted.Unclaimed(resolved))
 	selected.Extracted = extracted
 	selected.Changed = join.AllSpans(extracted)

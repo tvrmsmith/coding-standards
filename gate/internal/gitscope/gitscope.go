@@ -145,7 +145,7 @@ var errNoSuchRev = errors.New("rev does not resolve")
 // the first candidate that both exists and shares history with HEAD.
 //
 // It draws the line ResolveRef and ResolveStaged draw. Exit 1 is git answering
-// no, either an absent rung or two histories sharing no commit, and ADR 0003's
+// no, either an absent rung or two histories sharing no commit, and ADR 0007's
 // walk answers both by trying the next candidate. Every other exit code is git
 // failing to answer, a ref store it cannot read or an object the walk needs and
 // the store does not hold, and it comes back typed as an unreadable diff
