@@ -42,7 +42,6 @@ what a reader is expected to read in full, so it has to be readable in one sitti
 they scroll when the block is not enough. A decision that will not fit is more than one decision.
 Neither ceiling is checked mechanically yet, which is [issue 87](https://github.com/tvrmsmith/coding-standards/issues/87).
 
-0004 is at both triggers, five amendments and past the word ceiling, and is the next one to
-consolidate.
+0004 is past both triggers, six amendments and 2513 words, and is the next one to consolidate.
 
 If an ADR looks wrong, that is a decision to escalate to the user, not an edit to make.
