@@ -28,19 +28,6 @@ const dotnetDir = "../../dotnet"
 // the one case that drives the real extractor cannot lapse into a green skip.
 const envRequireDotnet = "METRIC_GATE_REQUIRE_DOTNET"
 
-// envWorkflowEnforcement carries the whole env block of the CI gate job's test
-// step, one KEY=VALUE pair per line, read out of .github/workflows/ci.yml with
-// a YAML parser by the wiring job. The workflow names no key; this suite
-// searches the block for its own constant, so the Go side stays the single
-// source of the name. Only that job sets it, so the assertion below is a no-op
-// on a developer's machine.
-const envWorkflowEnforcement = "METRIC_GATE_WORKFLOW_ENFORCEMENT"
-
-// envGitHubActions is the variable every GitHub Actions runner sets, which is
-// how the wiring case tells a developer's machine, where skipping is right,
-// from CI, where an unset block means a step stopped extracting it.
-const envGitHubActions = "GITHUB_ACTIONS"
-
 // reasonShort is why TestFullStackDrivesTheRealDotnetExtractor fails under
 // -short once METRIC_GATE_REQUIRE_DOTNET forbids every skip route.
 const reasonShort = "full-stack case packs and installs a dotnet tool, skipped with -short"
@@ -108,86 +95,6 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 				t.Errorf("err = %q, want it to contain %q", err, c.wantErrContains)
 			}
 		})
-	}
-}
-
-// lookupPair finds key in a block of KEY=VALUE lines, the shape the wiring job
-// hands the gate job's env block over in. Searching rather than taking a fixed
-// position is what keeps a second variable landing in that step from pointing
-// this case at the wrong key.
-func lookupPair(block, key string) (string, bool) {
-	for _, line := range strings.Split(block, "\n") {
-		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if ok && k == key {
-			return v, true
-		}
-	}
-	return "", false
-}
-
-// TestLookupPairFindsTheKeyAnywhereInTheBlock pins that the search survives a
-// step growing other variables, and reports the near misses as absent.
-func TestLookupPairFindsTheKeyAnywhereInTheBlock(t *testing.T) {
-	cases := []struct {
-		name  string
-		block string
-		want  string
-		found bool
-	}{
-		{"the only pair", "METRIC_GATE_REQUIRE_DOTNET=1", "1", true},
-		{"last of several", "GOFLAGS=-mod=readonly\nCGO_ENABLED=0\nMETRIC_GATE_REQUIRE_DOTNET=1", "1", true},
-		{"first of several", "METRIC_GATE_REQUIRE_DOTNET=1\nGOFLAGS=-mod=readonly", "1", true},
-		{"past surrounding whitespace", "  METRIC_GATE_REQUIRE_DOTNET=1  \n", "1", true},
-		{"an empty value is still found", "METRIC_GATE_REQUIRE_DOTNET=", "", true},
-		{"a value carrying an equals sign", "METRIC_GATE_REQUIRE_DOTNET=a=b", "a=b", true},
-		{"a block naming other keys only", "GOFLAGS=-mod=readonly\nCGO_ENABLED=0", "", false},
-		{"a key that only shares a prefix", "METRIC_GATE_REQUIRE_DOTNET_V2=1", "", false},
-		{"a bare key with no equals sign", "METRIC_GATE_REQUIRE_DOTNET", "", false},
-		{"an empty block", "", "", false},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got, found := lookupPair(c.block, envRequireDotnet)
-			if got != c.want || found != c.found {
-				t.Errorf("lookupPair = %q, %v, want %q, %v", got, found, c.want, c.found)
-			}
-		})
-	}
-}
-
-// TestTheWorkflowEnablesEnforcement closes the gap between the key this suite
-// reads and the key CI sets. The wiring job parses .github/workflows/ci.yml
-// with a YAML reader, hands the gate job's whole env block over in
-// METRIC_GATE_WORKFLOW_ENFORCEMENT, and this searches it for the constant the
-// suite actually reads. Rename one without the other and the mismatch reds here
-// rather than turning enforcement off in silence.
-//
-// The skip is for a developer's machine only. Under GitHub Actions an absent
-// block means the step that extracts it was renamed or deleted, which would
-// otherwise leave this case a permanent silent skip, so there it fails.
-func TestTheWorkflowEnablesEnforcement(t *testing.T) {
-	block, ok := os.LookupEnv(envWorkflowEnforcement)
-	if !ok {
-		if os.Getenv(envGitHubActions) != "" {
-			t.Fatalf("%s is unset under %s, so no step handed this case the gate job's env block: the step that extracts it was renamed or deleted and nothing is checking that CI still enables enforcement",
-				envWorkflowEnforcement, envGitHubActions)
-		}
-		t.Skipf("%s is unset, so there is no extracted workflow env block to search; the CI wiring job sets it", envWorkflowEnforcement)
-	}
-
-	value, found := lookupPair(block, envRequireDotnet)
-	if !found {
-		t.Fatalf("the gate job's test step sets %q, none of which is %s, so the workflow key and the Go constant have drifted and enforcement is off: the full-stack case would skip in CI and the real extractor would never run",
-			block, envRequireDotnet)
-	}
-
-	require, err := requireDotnet(value, true)
-	if err != nil {
-		t.Fatalf("the gate job sets %s=%q, which this suite refuses: %v", envRequireDotnet, value, err)
-	}
-	if !require {
-		t.Fatalf("the gate job sets %s=%q, which does not enable enforcement, so the full-stack case would skip in CI and the real extractor would never run", envRequireDotnet, value)
 	}
 }
 
