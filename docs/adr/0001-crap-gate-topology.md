@@ -18,8 +18,8 @@ on `(file, name, startLine, endLine, signature)`, because two overloads can occu
 [ADR 0009](0009-the-csharp-extractor-is-written-in-house.md).
 
 Structural n/a is earned, not assumed: a span with no instrumentable line is structural n/a only
-when its file's report entry lists instrumentable lines elsewhere, since an entry with none at all
-means the report never instrumented that file.
+when its file lists instrumentable lines elsewhere across the union of every report the gate
+merged, since an entry with none at all there means no report instrumented that file.
 
 Sections below carry the reasoning and four dated amendments.
 
@@ -49,6 +49,14 @@ A method whose span contains no instrumentable lines is treated as fully covered
 
 **Amended 2026-09-02.** "Exceed a fraction of the changed set" is superseded. **Any single `unknown` fails the run**, with no tolerated fraction and no tunable. A fraction needs a number, and no evidence sets one: the honest default is zero, at which point the fraction is a knob whose only safe position is off. Worse, a tolerance means the gate can pass while holding a method it could not measure, which is the same class of silent false pass the span join exists to prevent. The typed reason and the exclusion from scoring both stand, and [ADR 0005](0005-the-machine-document-is-the-only-output.md) keeps the table present on that failure so the reader sees which method broke.
 
+**Amended 2026-09-09.** "Treated as fully covered rather than unknown" needs one qualification.
+Structural n/a is earned rather than assumed. A file carrying no instrumentable line at all across
+the union of every report the gate merged was never instrumented, so its changed methods are
+unknown under the new typed reason `file_uninstrumented`, not trivially covered. Absence of lines
+inside a span of a file some report did instrument stays structural n/a, because coverlet lists
+every instrumentable line of an instrumented class including the ones nobody hit, so absence there
+really is a span with nothing to instrument.
+
 **Amended 2026-09-02.** "No method name, signature, or mangled CLR identifier appears in the join" holds for
 **attribution**, which is what that sentence is about, and needs one qualification for **identity**. Coverage is
 still attributed to the smallest span containing a line, with nothing but `(file path, start line, end line)`
@@ -63,13 +71,6 @@ overload a hit belongs to. Nothing about the async and state-machine reasoning c
 identifier still never appears on either side. (This paragraph first spelled the tuple without `name`. That was a
 transcription error, not a narrower decision: `class C { int A() => 1; int B() => 2; }` gives two methods one file,
 one line range and one empty parameter spelling, so dropping `name` would reject valid C# as a duplicated span.)
-
-**Amended 2026-09-09.** Structural n/a is now earned rather than assumed. A file the coverage
-report lists with no instrumentable line at all was never instrumented, so its changed methods are
-unknown under the new typed reason `file_uninstrumented`, not trivially covered. Absence of lines
-inside a span of a file the report did instrument stays structural n/a, because coverlet lists
-every instrumentable line of an instrumented class including the ones nobody hit, so absence there
-really is a span with nothing to instrument.
 
 Adding a second language means writing an extractor, not touching the gate. That was the reason for the seam and it is the reason ReportGenerator lost.
 
