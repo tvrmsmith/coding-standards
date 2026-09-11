@@ -708,9 +708,26 @@ func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) 
 	// extractor ever claims it, and only a live typechange exercises status T.
 	f.removeFile(orderFile)
 	f.symlinkTo(filepath.Base(orderService), orderFile)
+	// Every assertion below is an absence, so a setup that stopped producing a
+	// typechange would pass while testing nothing. `git diff --name-status`
+	// renders both directions as T, so the two checks after it pin which
+	// direction this is, real file committed and symlink in the working tree.
+	if got := f.git("diff", "--name-status", "main", "--", orderFile); got != "T\t"+orderFile {
+		t.Fatalf("git reports %q for %s, so this case is not exercising a typechange", got, orderFile)
+	}
+	if got := f.git("ls-tree", "main", "--", orderFile); strings.HasPrefix(got, "120000 ") {
+		t.Fatalf("main holds %q for %s, want a real file", got, orderFile)
+	}
+	if info, err := os.Lstat(filepath.Join(f.root, filepath.FromSlash(orderFile))); err != nil {
+		t.Fatal(err)
+	} else if info.Mode()&fs.ModeSymlink == 0 {
+		t.Fatalf("the working tree holds %s as a real file, want a symlink", orderFile)
+	}
+	handed := filepath.Join(t.TempDir(), "handed")
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderFile), []span{orderTotal}),
+		StdinLog:   handed,
 	}
 
 	// Under ACM, git reports Order.cs as status T and it never reaches the
@@ -721,6 +738,20 @@ func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) 
 	// from matching.
 	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
 		"no changed methods, nothing to measure\n")
+
+	// The changed set is empty, so the gate exits before it ever spawns the
+	// extractor for extraction, and the stub never runs the path that writes
+	// StdinLog. This direction is the dangerous handing, since an extractor
+	// given the link path follows it and reports the target's spans under
+	// Order.cs, so the check catches a regression that hands over the path
+	// while still emitting an empty document, which the golden alone cannot
+	// see.
+	switch _, err := os.Stat(handed); {
+	case err == nil:
+		t.Errorf("the extractor was handed %q, want nothing", readFile(t, handed))
+	case !errors.Is(err, fs.ErrNotExist):
+		t.Fatalf("stating %s answered neither way: %v", handed, err)
+	}
 }
 
 // TestASymlinkReplacedByASourceFileContributesNoChangedMethods pins the
@@ -739,13 +770,16 @@ func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) 
 // With T included, git renders a typechange as a delete plus an add pair, so
 // this direction's new side is the whole real source file, every line of it
 // claimed under Order.cs, while the case above gets a new side holding the
-// symlink target's text as one line under an equally claimed `.cs` path.
-// The second of those is what makes the flag edit wrong. The extractor is
-// handed a link, follows it, and emits the target file's spans under the
-// link's path, so a change the gate correctly ignores today would come back
-// measured under the wrong file, with the link's own line landing outside
-// every span. That answer is wrong whatever the run's exit code turns out to
-// be. Measuring the direction this case covers needs a
+// link's own text, the path it points at, as one line under an equally
+// claimed `.cs` path. The second of those is what makes the flag edit wrong.
+// The extractor is handed the link path, follows it, and reports the target
+// file's spans under the link's path. Touched line 1 then falls inside no
+// span, so the guaranteed effect is touched_lines_outside_spans going 0 to 1
+// and nothing measured, at exit 0. Where the target's spans do cover the
+// link's first line, the worse effect follows. A method is measured under a
+// path that does not hold it, the coverage lookup against that path finds
+// nothing, and the run fails as an unknown changed method. Measuring the
+// direction this case covers needs a
 // mode-aware pass classifying the new side of a typechange before anything
 // reaches the extractor, not a flag edit. That pass is the work this change
 // does not take on, so the gap above is accepted rather than closed. Spans
@@ -759,9 +793,19 @@ func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) 
 	f.removeFile(orderFile)
 	f.write(orderFile, csharpFile(80))
 	// Every assertion below is an absence, so a setup that stopped producing a
-	// typechange would pass while testing nothing.
+	// typechange would pass while testing nothing. `git diff --name-status`
+	// renders both directions as T, so the two checks after it pin which
+	// direction this is, symlink committed and real file in the working tree.
 	if got := f.git("diff", "--name-status", "main", "--", orderFile); got != "T\t"+orderFile {
 		t.Fatalf("git reports %q for %s, so this case is not exercising a typechange", got, orderFile)
+	}
+	if got := f.git("ls-tree", "main", "--", orderFile); !strings.HasPrefix(got, "120000 ") {
+		t.Fatalf("main holds %q for %s, want a symlink", got, orderFile)
+	}
+	if info, err := os.Lstat(filepath.Join(f.root, filepath.FromSlash(orderFile))); err != nil {
+		t.Fatal(err)
+	} else if info.Mode()&fs.ModeSymlink != 0 {
+		t.Fatalf("the working tree still holds %s as a symlink, want a real file", orderFile)
 	}
 	handed := filepath.Join(t.TempDir(), "handed")
 	f.stub = stubConfig{
