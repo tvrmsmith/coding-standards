@@ -330,6 +330,14 @@ func (r Repo) verifyRev(rev string) (string, error) {
 // whitespace ignored, is the only match for a path the same diff deleted is
 // dropped afterwards, and only a move that also edited the file is measured.
 //
+// ACM also excludes T, so a typechange contributes no touched lines. Both
+// directions are dropped on purpose, a source file replaced by a symlink and a
+// symlink replaced by a source file, because widening the letters to ACMT
+// would hand the extractor a link path it follows, reporting the target's
+// spans under the link's name. See ADR 0007's 2026-09-11 amendment and issue
+// 84, which holds the mode-aware pass that would measure the dropped
+// direction.
+//
 // Nothing gets out of here untyped. Base resolution has already succeeded, so
 // the document exists and ADR 0005's one-document rule binds: every cause below
 // this line, a git invocation that failed as much as a patch the parser refused,

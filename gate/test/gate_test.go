@@ -708,21 +708,7 @@ func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) 
 	// extractor ever claims it, and only a live typechange exercises status T.
 	f.removeFile(orderFile)
 	f.symlinkTo(filepath.Base(orderService), orderFile)
-	// Every assertion below is an absence, so a setup that stopped producing a
-	// typechange would pass while testing nothing. `git diff --name-status`
-	// renders both directions as T, so the two checks after it pin which
-	// direction this is, real file committed and symlink in the working tree.
-	if got := f.git("diff", "--name-status", "main", "--", orderFile); got != "T\t"+orderFile {
-		t.Fatalf("git reports %q for %s, so this case is not exercising a typechange", got, orderFile)
-	}
-	if got := f.git("ls-tree", "main", "--", orderFile); !strings.HasPrefix(got, "100644 ") {
-		t.Fatalf("main holds %q for %s, want a real file", got, orderFile)
-	}
-	if info, err := os.Lstat(filepath.Join(f.root, filepath.FromSlash(orderFile))); err != nil {
-		t.Fatal(err)
-	} else if info.Mode()&fs.ModeSymlink == 0 {
-		t.Fatalf("the working tree holds %s as a real file, want a symlink", orderFile)
-	}
+	f.assertTypechange("main", orderFile, realFile, symlink)
 	handed := filepath.Join(t.TempDir(), "handed")
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
@@ -739,22 +725,53 @@ func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) 
 	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
 		"no changed methods, nothing to measure\n")
 
-	// The changed set is empty, so the gate exits before it ever spawns the
-	// extractor for extraction, and the stub never runs the path that writes
-	// StdinLog. Today the golden already reds on any handing of Order.cs,
-	// since the extractor's file list is the touched-line key set and a
-	// touched line either lands inside Order.Total's 60-64 span or outside
-	// it. This check states the rule directly instead of inferring it from an
-	// empty document, and it holds if a later change decouples the
-	// extractor's input from the touched-line key set, which the mode-aware
-	// pass in issue 84 would do. This direction is the dangerous handing,
-	// since an extractor given the link path follows it and reports the
-	// target's spans under Order.cs.
-	switch _, err := os.Stat(handed); {
-	case err == nil:
-		t.Errorf("the extractor was handed %q, want nothing", readFile(t, handed))
-	case !errors.Is(err, fs.ErrNotExist):
-		t.Fatalf("stating %s answered neither way: %v", handed, err)
+	// Today the golden already reds on any handing of Order.cs, since the
+	// extractor's file list is the touched-line key set and a touched line
+	// either lands inside Order.Total's 60-64 span or outside it. This check
+	// states the rule directly instead of inferring it from an empty
+	// document, and it holds if a later change decouples the extractor's
+	// input from the touched-line key set, which the mode-aware pass in issue
+	// 84 would do. This direction is the dangerous handing, since an
+	// extractor given the link path follows it and reports the target's spans
+	// under Order.cs.
+	assertNotHandedToExtractor(t, handed)
+}
+
+// TestATypechangeIsWithheldWhileTheRestOfTheDiffIsMeasured is the positive
+// control the two cases either side of it cannot be. Both of those assert an
+// absence against the empty_changed_set golden, which is also what a run that
+// extracted nothing at all produces, so a change that skipped extraction for
+// an unrelated reason would leave them green for the wrong reason. Here the
+// same typechange sits beside an ordinary edit, so the run measures something
+// real and the document is non-empty, and the drop becomes a live extractor
+// withholding one path rather than an extractor that never ran. The symlink
+// points at OrderService.cs, so an extractor handed Order.cs would follow it
+// and report OrderService.Cancel a second time under Order.cs.
+func TestATypechangeIsWithheldWhileTheRestOfTheDiffIsMeasured(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderFile, csharpFile(80))
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.removeFile(orderFile)
+	f.symlinkTo(filepath.Base(orderService), orderFile)
+	f.touchLine(orderService, 62)
+	f.assertTypechange("main", orderFile, realFile, symlink)
+	// Two thirds of Cancel's three instrumentable lines are covered, the same
+	// arithmetic pass_single_method holds.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	handed := filepath.Join(t.TempDir(), "handed")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+		StdinLog:   handed,
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+
+	if got := readFile(t, handed); got != orderService+"\n" {
+		t.Errorf("the extractor was handed %q, want the one line %q", got, orderService+"\n")
 	}
 }
 
@@ -796,21 +813,7 @@ func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) 
 	f.commitAll("initial")
 	f.removeFile(orderFile)
 	f.write(orderFile, csharpFile(80))
-	// Every assertion below is an absence, so a setup that stopped producing a
-	// typechange would pass while testing nothing. `git diff --name-status`
-	// renders both directions as T, so the two checks after it pin which
-	// direction this is, symlink committed and real file in the working tree.
-	if got := f.git("diff", "--name-status", "main", "--", orderFile); got != "T\t"+orderFile {
-		t.Fatalf("git reports %q for %s, so this case is not exercising a typechange", got, orderFile)
-	}
-	if got := f.git("ls-tree", "main", "--", orderFile); !strings.HasPrefix(got, "120000 ") {
-		t.Fatalf("main holds %q for %s, want a symlink", got, orderFile)
-	}
-	if info, err := os.Lstat(filepath.Join(f.root, filepath.FromSlash(orderFile))); err != nil {
-		t.Fatal(err)
-	} else if info.Mode()&fs.ModeSymlink != 0 {
-		t.Fatalf("the working tree still holds %s as a symlink, want a real file", orderFile)
-	}
+	f.assertTypechange("main", orderFile, symlink, realFile)
 	handed := filepath.Join(t.TempDir(), "handed")
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
@@ -821,24 +824,14 @@ func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) 
 	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
 		"no changed methods, nothing to measure\n")
 
-	// The changed set is empty, so the gate exits before it ever spawns the
-	// extractor for extraction, and the stub never runs the path that writes
-	// StdinLog. A --capabilities probe cannot create the file either: the
-	// stub answers --capabilities and returns before it drains stdin
-	// (gate/test/stub/main.go), so even a capabilities-only invocation leaves
-	// this file absent. An ACMT widen is caught by the golden above, and so
-	// is any other handing of Order.cs today, since the extractor's file list
-	// is the touched-line key set. This check states the rule directly, that
-	// a dropped path never reaches the extractor, instead of inferring it
-	// from an empty document, and it holds if a later change decouples the
+	// An ACMT widen is caught by the golden above, and so is any other
+	// handing of Order.cs today, since the extractor's file list is the
+	// touched-line key set. This check states the rule directly, that a
+	// dropped path never reaches the extractor, instead of inferring it from
+	// an empty document, and it holds if a later change decouples the
 	// extractor's input from that key set, which the mode-aware pass in issue
 	// 84 would do.
-	switch _, err := os.Stat(handed); {
-	case err == nil:
-		t.Errorf("the extractor was handed %q, want nothing", readFile(t, handed))
-	case !errors.Is(err, fs.ErrNotExist):
-		t.Fatalf("stating %s answered neither way: %v", handed, err)
-	}
+	assertNotHandedToExtractor(t, handed)
 }
 
 // TestDeletingAMethodAttributesTheZeroLengthHunkToTheLineBeforeIt pins which

@@ -516,6 +516,74 @@ func (f *fixture) removeFile(rel string) {
 	}
 }
 
+// fileKind is which of the two things a path can be across a typechange, a
+// real file or a symbolic link. It carries both notations the precondition
+// needs, the mode git records in a tree and the bit os.Lstat reports, so a
+// case states which end is the symlink once and cannot pair the two halves
+// contradictorily.
+type fileKind struct {
+	gitMode   string
+	gitName   string
+	treeName  string
+	isSymlink bool
+}
+
+var (
+	realFile = fileKind{gitMode: "100644 ", gitName: "a non-executable regular file", treeName: "a real file", isSymlink: false}
+	symlink  = fileKind{gitMode: "120000 ", gitName: "a symlink", treeName: "a symlink", isSymlink: true}
+)
+
+// assertTypechange fails the case unless rel is a live typechange against
+// base, committed as committed and standing in the working tree as tree.
+//
+// A typechange case asserts an absence, so a setup that stopped producing one
+// would pass while testing nothing. `git diff --name-status` renders both
+// directions as T, so the two kinds are what pin which direction the case is.
+func (f *fixture) assertTypechange(base, rel string, committed, tree fileKind) {
+	f.t.Helper()
+	if got := f.git("diff", "--name-status", base, "--", rel); got != "T\t"+rel {
+		f.t.Fatalf("git reports %q for %s, so this case is not exercising a typechange", got, rel)
+	}
+	if got := f.git("ls-tree", base, "--", rel); !strings.HasPrefix(got, committed.gitMode) {
+		f.t.Fatalf("%s holds %q for %s, want %s", base, got, rel, committed.gitName)
+	}
+	info, err := os.Lstat(filepath.Join(f.root, filepath.FromSlash(rel)))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if got := info.Mode()&fs.ModeSymlink != 0; got != tree.isSymlink {
+		f.t.Fatalf("the working tree holds %s as %s, want %s", rel, symlinkKind(got).treeName, tree.treeName)
+	}
+}
+
+// symlinkKind turns an observed symlink bit back into the kind that describes
+// it, so a failure message names what the working tree actually holds.
+func symlinkKind(isSymlink bool) fileKind {
+	if isSymlink {
+		return symlink
+	}
+	return realFile
+}
+
+// assertNotHandedToExtractor fails the case unless the stub's stdin log at
+// handed is absent, which is how a case pins that a dropped path never reached
+// the extractor at all.
+//
+// An empty changed set makes the gate exit before it spawns the extractor for
+// extraction, so the stub never runs the path that writes the log. A
+// --capabilities probe cannot create the file either: the stub answers
+// --capabilities and returns before it drains stdin (gate/test/stub/main.go),
+// so even a capabilities-only invocation leaves it absent.
+func assertNotHandedToExtractor(t *testing.T, handed string) {
+	t.Helper()
+	switch _, err := os.Stat(handed); {
+	case err == nil:
+		t.Errorf("the extractor was handed %q, want nothing", readFile(t, handed))
+	case !errors.Is(err, fs.ErrNotExist):
+		t.Fatalf("stating %s answered neither way: %v", handed, err)
+	}
+}
+
 // denyReadFile makes the file at rel unreadable, so reading the report fails
 // on the file itself rather than on its contents. Root ignores the mode, so a
 // case relying on this skips there.
