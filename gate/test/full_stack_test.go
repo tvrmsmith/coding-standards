@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -136,24 +135,23 @@ func requireRealDotnet(t *testing.T) {
 // pattern would let the child re-enter the forking tests and fork forever.
 var childCase = "^(" + strings.Join(realExtractorCases, "|") + ")$"
 
-// childSkipped and childFailed are the -test.v outcome lines every selected
-// case prints on the two routes the enforcement rows drive. Asserting one line
-// per name is what separates "each case took the route under test" from "one
-// case did and the other's guard is gone", which a bare "--- SKIP" over the
-// whole output cannot tell apart.
-var (
-	childSkipped = outcomeLines("SKIP", realExtractorCases)
-	childFailed  = outcomeLines("FAIL", realExtractorCases)
-)
-
-// outcomeLines is the -test.v result line each named case prints for the given
-// outcome.
-func outcomeLines(outcome string, names []string) []string {
-	lines := make([]string, len(names))
-	for i, name := range names {
-		lines[i] = "--- " + outcome + ": " + name + " ("
+// caseBlock is the -test.v output one named case produced, from its RUN line
+// up to the result line for the given outcome. Everything the case logged
+// lands in there, so matching a reason against the block rather than against
+// the whole child output is what stops one case's message from standing in for
+// a sibling that took some other route entirely. A case that never ran, or ran
+// and reached a different outcome, has no block and is an error.
+func caseBlock(out, name, outcome string) (string, error) {
+	start := strings.Index(out, "=== RUN   "+name+"\n")
+	if start < 0 {
+		return "", fmt.Errorf("the child printed no RUN line for %s, so the case never started", name)
 	}
-	return lines
+	rest := out[start:]
+	end := strings.Index(rest, "--- "+outcome+": "+name+" (")
+	if end < 0 {
+		return "", fmt.Errorf("the child printed no %q line for %s, so the case took some other route", outcome, name)
+	}
+	return rest[:end], nil
 }
 
 // childTimeout bounds a child. A test binary invoked directly, rather than
@@ -198,29 +196,36 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 	// depends on the flags this parent happens to run under.
 	const long, short = "-test.short=false", "-test.short=true"
 
+	// outcome and wants are asserted against each case's own block, so every
+	// name in realExtractorCases has to reach that outcome for its own
+	// documented reason and no sibling's message can cover for it.
 	cases := []struct {
 		name    string
 		require string
 		short   string
 		wantErr bool
+		outcome string
 		wants   []string
 	}{
 		{
-			name:  "the unset run skips without touching dotnet",
-			short: long,
-			wants: slices.Concat(childSkipped, []string{reasonUnset}),
+			name:    "the unset run skips without touching dotnet",
+			short:   long,
+			outcome: "SKIP",
+			wants:   []string{reasonUnset},
 		},
 		{
-			name:  "-short does not change the unset run",
-			short: short,
-			wants: slices.Concat(childSkipped, []string{reasonUnset}),
+			name:    "-short does not change the unset run",
+			short:   short,
+			outcome: "SKIP",
+			wants:   []string{reasonUnset},
 		},
 		{
 			name:    "-short fails when enforcement forbids the skip",
 			require: "1",
 			short:   short,
 			wantErr: true,
-			wants:   slices.Concat(childFailed, []string{envRequireDotnet, "forbids skipping", reasonShort}),
+			outcome: "FAIL",
+			wants:   []string{envRequireDotnet, "forbids skipping", reasonShort},
 		},
 	}
 
@@ -233,7 +238,19 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 			if !c.wantErr && err != nil {
 				t.Fatalf("child failed with %v, want a pass. output:\n%s", err, out)
 			}
-			mustContain(t, out, c.wants...)
+			for _, name := range realExtractorCases {
+				block, err := caseBlock(out, name, c.outcome)
+				if err != nil {
+					t.Errorf("%v. output:\n%s", err, out)
+					continue
+				}
+				for _, want := range c.wants {
+					if !strings.Contains(block, want) {
+						t.Errorf("%s reached %s but said nothing containing %q. what it printed:\n%s",
+							name, c.outcome, want, block)
+					}
+				}
+			}
 		})
 	}
 }
@@ -283,7 +300,7 @@ func childEnv(require string) []string {
 
 // TestFullStackDrivesTheRealDotnetExtractor is one of the two cases in the
 // suite that run the real dotnet tool extractor end to end instead of the
-// stub, and they pin different halves of the contract: this one pins spans and
+// stub, and they pin different halves of the contract. This one pins spans and
 // complexity against the stub's numbers, and
 // TestFullStackScoresAReportCoverletWrote pins the coverage report's format
 // against the producer that writes it. Its fixture and golden are pinned to
@@ -294,8 +311,9 @@ func childEnv(require string) []string {
 // the producer the C# extractor targets, writes its timestamp attribute as
 // ten-digit epoch seconds, which is the one representation the gate reads, so
 // building the report here rather than collecting one costs no coverage of the
-// staleness rule. Collecting real coverage means running dotnet test, which is
-// issue 21's work and not this case's.
+// staleness rule. Coverage a real dotnet test run produced is what
+// TestFullStackScoresAReportCoverletWrote scores, which is why this case can
+// stay on a report it builds and keep its span numbers exact.
 func TestFullStackDrivesTheRealDotnetExtractor(t *testing.T) {
 	requireRealDotnet(t)
 
