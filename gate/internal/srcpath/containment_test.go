@@ -139,6 +139,68 @@ func TestRelativizeReportsAPrefixTheFilesystemWillNotStat(t *testing.T) {
 	}
 }
 
+// EqualFold is what keeps the fold to spellings of one name. Two unrelated
+// names for one inode, a bind mount or a hard-linked directory as a container
+// hands them out, are one directory to os.SameFile and not a mis-spelling of
+// anything, so folding them would answer "is not spelled as the repo root is"
+// about a path with nothing mis-spelled.
+//
+// A test can make neither a bind mount nor a hard link to a directory, so the
+// Root here is hand-built with a symlink for its resolved directory, outside
+// NewRoot's invariant on purpose: NewRoot resolves the whole path, so no Root
+// the gate builds looks like this. It stands in for the alias, and the shape a
+// user reaches is the mount, not the link.
+func TestRelativizeRefusesAnAliasOfTheRootSpelledUnderAnUnrelatedName(t *testing.T) {
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := mkdir(t, filepath.Join(tmp, "repo"))
+	alias := filepath.Join(tmp, "elsewhere")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Fatal(err)
+	}
+	root := Root{resolved: alias}
+
+	rel, place, err := root.relativize(filepath.Join(real, "a.txt"))
+
+	if err != nil || place != outside || rel != "" {
+		t.Errorf("relativize on an alias of the root under an unrelated name returned %q, %v, %v, want \"\", outside, nil", rel, place, err)
+	}
+}
+
+// The repo root going away between NewRoot and the fold, which is the one way a
+// --files path can reach named and still leave the gate unable to weigh it
+// against the root: every earlier arm resolved the name itself, so what fails
+// here is the root. The developer hears that rather than "is outside the repo
+// root", which is the misdiagnosis issue 48 set out to remove, and it is an
+// UnresolvedError so it lands under file_unresolved like every other refusal
+// about a path.
+//
+// symlinkedMiscasedRoot skips this on a filesystem that folds case, where
+// removing the link leaves the root's own spelling still reaching the
+// directory.
+func TestNamedRefusesAPathItCannotWeighAgainstTheRepoRoot(t *testing.T) {
+	root, real := symlinkedMiscasedRoot(t)
+	name := touch(t, filepath.Join(real, "src", "a.cs"))
+	if err := os.Remove(root.Dir()); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := root.named(name, dirNames{})
+
+	var unresolved *UnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("named returned %v, want an *UnresolvedError", err)
+	}
+	if !strings.HasPrefix(unresolved.Reason, "could not be weighed against the repo root, ") {
+		t.Errorf("Reason = %q, want it to open with %q", unresolved.Reason, "could not be weighed against the repo root, ")
+	}
+	if unresolved.Name != name {
+		t.Errorf("Name = %q, want the name as typed, %q", unresolved.Name, name)
+	}
+}
+
 func TestNamedRefusesAMisCasedRootPrefixAsASpellingRatherThanALocation(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
