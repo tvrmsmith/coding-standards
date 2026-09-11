@@ -118,7 +118,8 @@ func TestChangedSkipsATouchedFileNoExtractorClaimed(t *testing.T) {
 // lists the file but names no instrumentable line inside it never
 // instrumented the file at all, so the span cannot be read as trivially
 // covered the way an instrumented file's empty span is. It must come back
-// unknown, not structural_na, and carry no coverage.
+// unknown, not structural_na, and leave Coverage at its zero value rather
+// than the 1 the structural_na arm sets.
 func TestAttributeReportsFileUninstrumentedForAFileWithNoInstrumentableLines(t *testing.T) {
 	span := extract.Span{File: "src/a.cs", Name: "Empty", StartLine: 1, EndLine: 5}
 	lines := coverage.Set{"src/a.cs": coverage.Lines{}}

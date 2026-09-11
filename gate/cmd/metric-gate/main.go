@@ -445,14 +445,12 @@ func rowFor(method join.Method) report.Row {
 }
 
 // unknownMessage names how many changed methods the join could not attribute.
-// It stays silent on why, because the reasons differ per row and the reason
-// column carries the one that applies.
 func unknownMessage(unknown int) string {
 	noun := "changed methods"
 	if unknown == 1 {
 		noun = "changed method"
 	}
-	return fmt.Sprintf("the gate could not score %d %s, see the reason column of the table on stdout", unknown, noun)
+	return fmt.Sprintf("%d %s could not be attributed to a coverage report", unknown, noun)
 }
 
 // changedFiles lists the files the diff touched, in a fixed order so the

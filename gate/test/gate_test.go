@@ -897,7 +897,7 @@ func TestChangedMethodInAFileNoReportPathMatchedFails(t *testing.T) {
 	}
 
 	f.run().assertMatches(t, "unknown_changed_method", 1, f.baseLabel("main"),
-		"the gate could not score 1 changed method, see the reason column of the table on stdout\n"+
+		"1 changed method could not be attributed to a coverage report\n"+
 			"0 of 2 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
@@ -921,7 +921,7 @@ func TestFileInAReportCarryingNoInstrumentableLinesIsUnknownRatherThanCovered(t 
 	}
 
 	f.run().assertMatches(t, "file_uninstrumented", 1, f.baseLabel("main"),
-		"the gate could not score 1 changed method, see the reason column of the table on stdout\n"+
+		"1 changed method could not be attributed to a coverage report\n"+
 			"0 of 1 changed methods over CRAP threshold 30, worst score 0.00\n")
 }
 
@@ -964,8 +964,8 @@ func TestFileWhoseOnlyInstrumentedLineWasNeverHitIsMeasuredAtZero(t *testing.T) 
 // before tests/Unit.Tests, which is empty. The empty entry landing second is
 // what makes a union that replaced or went sticky per report fail here, and
 // the invariant it pins is that an empty entry contributes nothing to the
-// union rather than erasing another report's lines. Rename either directory
-// so the empty report sorts first and the case still passes while quietly
+// union rather than erasing another report's lines. Renaming either directory
+// so the empty report sorts first would leave the case passing while quietly
 // losing that discrimination.
 func TestFileWithNoLinesInOneReportIsStillMeasuredFromAnother(t *testing.T) {
 	f := newFixture(t, "main")
@@ -985,9 +985,36 @@ func TestFileWithNoLinesInOneReportIsStillMeasuredFromAnother(t *testing.T) {
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.00\n")
 }
 
-// TestTwoUnknownChangedMethodsAreCountedInThePlural pins the plural noun of
-// the unknown message, which every other unknown case leaves untested because
-// each of them changes exactly one method.
+// TestFileWithNoLinesInTheFirstReportIsStillMeasuredFromALaterOne pins the
+// opposite merge direction to the case above. Here tests/Alpha.Tests, which
+// is empty, sorts before tests/Zulu.Tests, which carries the hit lines, so
+// the union starts from a pre-seeded empty entry that a later report has to
+// upgrade with real lines. That direction is the one the file_uninstrumented
+// arm makes load-bearing: an entry left empty here turns a covered method
+// into exit 1.
+func TestFileWithNoLinesInTheFirstReportIsStillMeasuredFromALaterOne(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService}))
+	f.write("tests/Zulu.Tests/TestResults/run/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "empty_entry_union", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.00\n")
+}
+
+// TestTwoUnknownChangedMethodsAreCountedInThePlural pins two changed methods
+// in one file, both under the file_uninstrumented arm, reported as two rows
+// under a single plural message. The sibling mixed-reason case pins two
+// unknowns of different reasons across two files; this one pins that a single
+// empty entry disqualifies every span in its file rather than the first.
 func TestTwoUnknownChangedMethodsAreCountedInThePlural(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
@@ -1002,16 +1029,15 @@ func TestTwoUnknownChangedMethodsAreCountedInThePlural(t *testing.T) {
 	}
 
 	f.run().assertMatches(t, "two_uninstrumented_methods", 1, f.baseLabel("main"),
-		"the gate could not score 2 changed methods, see the reason column of the table on stdout\n"+
+		"2 changed methods could not be attributed to a coverage report\n"+
 			"0 of 2 changed methods over CRAP threshold 30, worst score 0.00\n")
 }
 
-// TestTwoUnknownChangedMethodsCarryTheirOwnReasons pins the premise the
-// unknown message rests on: one run can produce two different unknown
-// reasons, so the message counts the methods and each row carries the reason
-// that applies to it. Ghost.cs is in no report at all and comes back
-// file_unmatched; OrderService.cs is listed with no instrumentable line and
-// comes back file_uninstrumented, both under the one plural message.
+// TestTwoUnknownChangedMethodsCarryTheirOwnReasons pins that one run can
+// produce two different unknown reasons and that each row carries its own.
+// Ghost.cs is in no report at all and comes back file_unmatched;
+// OrderService.cs is listed with no instrumentable line and comes back
+// file_uninstrumented, both counted by the one plural message.
 func TestTwoUnknownChangedMethodsCarryTheirOwnReasons(t *testing.T) {
 	const ghost = "src/Ordering/Ghost.cs"
 	vanish := span{File: ghost, Name: "Ghost.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
@@ -1030,7 +1056,7 @@ func TestTwoUnknownChangedMethodsCarryTheirOwnReasons(t *testing.T) {
 	}
 
 	f.run().assertMatches(t, "mixed_unknown_reasons", 1, f.baseLabel("main"),
-		"the gate could not score 2 changed methods, see the reason column of the table on stdout\n"+
+		"2 changed methods could not be attributed to a coverage report\n"+
 			"0 of 2 changed methods over CRAP threshold 30, worst score 0.00\n")
 }
 
@@ -2203,7 +2229,7 @@ func TestMethodWhoseOnlyCoverageWasSupersededIsUnknownNotMisscored(t *testing.T)
 	}
 
 	f.run().assertMatches(t, "superseded_report_was_sole_coverage", 1, f.baseLabel("main"),
-		"the gate could not score 1 changed method, see the reason column of the table on stdout\n"+
+		"1 changed method could not be attributed to a coverage report\n"+
 			"0 of 2 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
@@ -3385,7 +3411,7 @@ func TestCaseOnlyPathDifferenceIsRefusedRatherThanGuessed(t *testing.T) {
 	}
 
 	f.run().assertMatches(t, "case_only_path_difference", 1, f.baseLabel("main"),
-		"the gate could not score 1 changed method, see the reason column of the table on stdout\n"+
+		"1 changed method could not be attributed to a coverage report\n"+
 			"0 of 2 changed methods over CRAP threshold 30, worst score 10.75\n")
 }
 
@@ -3544,7 +3570,7 @@ func TestReportCarryingNoClassesDoesNotTripTheOutsideRepoDiagnostic(t *testing.T
 	}
 
 	f.run().assertMatches(t, "report_with_no_classes", 1, f.baseLabel("main"),
-		"the gate could not score 1 changed method, see the reason column of the table on stdout\n"+
+		"1 changed method could not be attributed to a coverage report\n"+
 			"0 of 1 changed methods over CRAP threshold 30, worst score 0.00\n")
 }
 

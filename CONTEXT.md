@@ -144,8 +144,12 @@ What the join could establish about one method span.
 | structural n/a | the span holds no instrumentable lines | treated as fully covered |
 | unknown | the span could not be attributed at all | excluded from scoring, fails the run, exit 1, with a typed reason |
 
-`structural n/a` is what makes trivial members exclude themselves. `unknown` means the join broke,
-never that the code is untested, because a coverage report lists methods nobody called.
+`structural n/a` is what makes trivial members exclude themselves, where the report instruments
+nothing inside them. It is not the only path: default coverlet emits a `hits="0"` line per
+auto-property getter, so such a getter reads `measured` at coverage 0, and it is the CRAP
+arithmetic, not the state, that keeps it blameless, complexity 1 at coverage 0 scoring 2 against a
+threshold of 30. `unknown` means the join broke, never that the code is untested, because a
+coverage report lists methods nobody called.
 
 `structural n/a` is earned, not assumed: a file listed with no instrumentable line at all across the
 union of every report the gate merged is a broken join, not a file of trivial members, so it reads

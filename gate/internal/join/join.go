@@ -202,19 +202,11 @@ func Attribute(all []extract.Span, changed []extract.Span, lines coverage.Set) [
 	for _, span := range changed {
 		fileLines, matched := lines[span.File]
 		if !matched {
-			methods = append(methods, Method{
-				Span:   span,
-				State:  report.StateUnknown,
-				Reason: report.ReasonFileUnmatched,
-			})
+			methods = append(methods, unknown(span, report.ReasonFileUnmatched))
 			continue
 		}
 		if len(fileLines) == 0 {
-			methods = append(methods, Method{
-				Span:   span,
-				State:  report.StateUnknown,
-				Reason: report.ReasonFileUninstrumented,
-			})
+			methods = append(methods, unknown(span, report.ReasonFileUninstrumented))
 			continue
 		}
 		instrumentable, covered := attributedTo(span, byFile[span.File], fileLines)
@@ -229,6 +221,12 @@ func Attribute(all []extract.Span, changed []extract.Span, lines coverage.Set) [
 		})
 	}
 	return methods
+}
+
+// unknown builds the method a broken join produces: the typed reason set and
+// Coverage left at its zero value, which the score never reads.
+func unknown(span extract.Span, reason string) Method {
+	return Method{Span: span, State: report.StateUnknown, Reason: reason}
 }
 
 // attributedTo counts the instrumentable lines the smallest-containing-span
