@@ -70,6 +70,21 @@ func TestRelativizeReadsAMisCasedRootPrefixAsFolded(t *testing.T) {
 	}
 }
 
+// The same passthrough on a case-sensitive filesystem, so ubuntu-latest holds
+// the property rather than skipping it: the fold stops at the root prefix and
+// "SRC" comes back as the candidate spells it, which is what leaves the join
+// with nothing to match and keeps case_only_path_difference at exit 1.
+// relativize stats the prefix alone, so the file below it need not exist.
+func TestRelativizeLeavesComponentsBelowACaseDifferingRootSpellingAsSpelled(t *testing.T) {
+	root, real := symlinkedMiscasedRoot(t)
+
+	rel, place, err := root.relativize(filepath.Join(real, "SRC", "a.txt"))
+
+	if err != nil || place != folded || rel != "SRC/a.txt" {
+		t.Errorf("relativize on a mis-cased component below a case-differing root returned %q, %v, %v, want \"SRC/a.txt\", folded, nil", rel, place, err)
+	}
+}
+
 // The repo root itself under another spelling has no components below the
 // prefix, and it reads as ".", the same reading Rel gives for the root spelled
 // correctly. The two named cases that reach this arm stop at "is a directory,
@@ -427,10 +442,10 @@ func TestPlaceLandsACandidateUnderACaseDifferingRootSpelling(t *testing.T) {
 func TestNameReadsAnAbsentPathInsideTheRepoAsRepoRelative(t *testing.T) {
 	root := containmentRoot(t)
 
-	name, err := root.Name(filepath.Join(root.Dir(), "TestResults", "coverage.cobertura.xml"))
+	name := root.Name(filepath.Join(root.Dir(), "TestResults", "coverage.cobertura.xml"))
 
-	if err != nil || name != "TestResults/coverage.cobertura.xml" {
-		t.Errorf("Name on an absent path inside the repo = %q, %v, want %q, nil", name, err, "TestResults/coverage.cobertura.xml")
+	if name != "TestResults/coverage.cobertura.xml" {
+		t.Errorf("Name on an absent path inside the repo = %q, want %q", name, "TestResults/coverage.cobertura.xml")
 	}
 }
 
@@ -441,40 +456,10 @@ func TestNameReadsAnAbsentPathInsideTheRepoAsRepoRelative(t *testing.T) {
 func TestNameReadsAPathThatIsNotAbsoluteAsItsOwnText(t *testing.T) {
 	root := containmentRoot(t)
 
-	name, err := root.Name(filepath.Join("TestResults", "coverage.xml"))
+	name := root.Name(filepath.Join("TestResults", "coverage.xml"))
 
-	if err != nil || name != "TestResults/coverage.xml" {
-		t.Errorf("Name on a path that is not absolute = %q, %v, want %q, nil", name, err, "TestResults/coverage.xml")
-	}
-}
-
-// A filesystem that will not say whether the case-differing prefix is the root
-// leaves the gate knowing nothing about where the report sits. Naming it by the
-// absolute path would say it is outside the repo when it may well be inside, so
-// Name answers no name at all and the caller fails the run.
-func TestNameRefusesAPathItCannotWeighAgainstTheRepoRoot(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root searches a directory whose mode denies it, so there is no stat failure to provoke")
-	}
-	tmp, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	parent := mkdir(t, filepath.Join(tmp, "parent"))
-	root, err := NewRoot(mkdir(t, filepath.Join(parent, "repo")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(parent, "REPO", "TestResults", "coverage.xml")
-	if err := os.Chmod(parent, 0o000); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(parent, 0o755) })
-
-	name, err := root.Name(path)
-
-	if !errors.Is(err, fs.ErrPermission) || name != "" {
-		t.Errorf("Name on a prefix the filesystem will not stat = %q, %v, want \"\", a permission error", name, err)
+	if name != "TestResults/coverage.xml" {
+		t.Errorf("Name on a path that is not absolute = %q, want %q", name, "TestResults/coverage.xml")
 	}
 }
 
@@ -493,10 +478,10 @@ func TestNameReadsAPathUnderAMisCasedRootPrefixAsRepoRelative(t *testing.T) {
 	path := filepath.Join(miscased, "TestResults", "coverage.cobertura.xml")
 	assertFolds(t, root, resolveExisting(path))
 
-	name, err := root.Name(path)
+	name := root.Name(path)
 
-	if err != nil || name != "TestResults/coverage.cobertura.xml" {
-		t.Errorf("Name under a mis-cased root prefix = %q, %v, want %q, nil", name, err, "TestResults/coverage.cobertura.xml")
+	if name != "TestResults/coverage.cobertura.xml" {
+		t.Errorf("Name under a mis-cased root prefix = %q, want %q", name, "TestResults/coverage.cobertura.xml")
 	}
 }
 
@@ -509,10 +494,10 @@ func TestNameReadsAPathUnderACaseDifferingRootSpellingAsRepoRelative(t *testing.
 	path := filepath.Join(real, "TestResults", "coverage.cobertura.xml")
 	assertFolds(t, root, resolveExisting(path))
 
-	name, err := root.Name(path)
+	name := root.Name(path)
 
-	if err != nil || name != "TestResults/coverage.cobertura.xml" {
-		t.Errorf("Name under a case-differing root spelling = %q, %v, want %q, nil", name, err, "TestResults/coverage.cobertura.xml")
+	if name != "TestResults/coverage.cobertura.xml" {
+		t.Errorf("Name under a case-differing root spelling = %q, want %q", name, "TestResults/coverage.cobertura.xml")
 	}
 }
 
@@ -527,10 +512,10 @@ func TestNameReadsAPathOutsideTheRepoAsItsResolvedAbsolutePath(t *testing.T) {
 
 	// Named through the link, so the answer being the resolved path rather than
 	// the typed one is visible rather than a coincidence of the two matching.
-	name, err := root.Name(filepath.Join(link, "coverage.xml"))
+	name := root.Name(filepath.Join(link, "coverage.xml"))
 
-	if err != nil || name != Name(filepath.ToSlash(real)) {
-		t.Errorf("Name on a path outside the repo = %q, %v, want the resolved path %q, nil", name, err, filepath.ToSlash(real))
+	if name != Name(filepath.ToSlash(real)) {
+		t.Errorf("Name on a path outside the repo = %q, want the resolved path %q", name, filepath.ToSlash(real))
 	}
 }
 
@@ -550,10 +535,10 @@ func TestNameReadsAPathTypedThroughASymlinkedRootAsRepoRelative(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	name, err := root.Name(filepath.Join(link, "repo", "TestResults", "coverage.xml"))
+	name := root.Name(filepath.Join(link, "repo", "TestResults", "coverage.xml"))
 
-	if err != nil || name != "TestResults/coverage.xml" {
-		t.Errorf("Name on a path through the root's own symlink = %q, %v, want %q, nil", name, err, "TestResults/coverage.xml")
+	if name != "TestResults/coverage.xml" {
+		t.Errorf("Name on a path through the root's own symlink = %q, want %q", name, "TestResults/coverage.xml")
 	}
 }
 
