@@ -19,6 +19,10 @@ const pointsFixture = "../../dotnet/tests/Tvrmsmith.MetricGate.CSharp.Tests/fixt
 // the stub.
 const dotnetProject = "../../dotnet/src/Tvrmsmith.MetricGate.CSharp"
 
+// extractorPackage is the package id the tool project packs under, which is
+// also the id the install resolves and the name of the .nupkg on disk.
+const extractorPackage = "Tvrmsmith.MetricGate.CSharp"
+
 // dotnetDir is the directory the pack and the install run in, relative to this
 // package. dotnet/global.json sits at its root, so the muxer resolves that pin
 // for both and one file governs which SDK builds the tool.
@@ -330,10 +334,58 @@ func installRealExtractor(t *testing.T) string {
 		t.Fatalf("dotnet pack: %v\n%s", err, out)
 	}
 
+	// The install names the version the pack just produced and reads a config
+	// whose source list is packDir and nothing else. Either alone leaves a
+	// hole: --add-source appends to the machine's sources rather than replacing
+	// them, and an unversioned install takes the highest version any source
+	// offers, so an id this repo has never published could be claimed on
+	// nuget.org and installed here instead of the tool under test.
+	version := packedVersion(t, packDir)
 	install := dotnet("tool", "install",
-		"--tool-path", dir, "--add-source", packDir, "Tvrmsmith.MetricGate.CSharp")
+		"--tool-path", dir,
+		"--configfile", localFeedConfig(t, packDir),
+		"--version", version,
+		extractorPackage)
 	if out, err := install.CombinedOutput(); err != nil {
-		t.Fatalf("dotnet tool install: %v\n%s", err, out)
+		t.Fatalf("dotnet tool install %s %s: %v\n%s", extractorPackage, version, err, out)
 	}
 	return dir
+}
+
+// packedVersion is the version of the one extractor package in packDir, read
+// off the file dotnet pack just wrote so the csproj stays the only place the
+// version is stated.
+func packedVersion(t *testing.T, packDir string) string {
+	t.Helper()
+	found, err := filepath.Glob(filepath.Join(packDir, extractorPackage+".*.nupkg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != 1 {
+		t.Fatalf("dotnet pack wrote %d %s packages into %s, want exactly one: %v",
+			len(found), extractorPackage, packDir, found)
+	}
+	name := filepath.Base(found[0])
+	return strings.TrimSuffix(strings.TrimPrefix(name, extractorPackage+"."), ".nupkg")
+}
+
+// localFeedConfig writes a NuGet config whose only source is packDir and
+// returns its path. It is written into a temporary directory rather than the
+// repository, which carries no NuGet config on purpose, and <clear/> is what
+// drops the machine's own sources instead of adding to them.
+func localFeedConfig(t *testing.T, packDir string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "NuGet.config")
+	body := `<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="pack-output" value="` + packDir + `" />
+  </packageSources>
+</configuration>
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
