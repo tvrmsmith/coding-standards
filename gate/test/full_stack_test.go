@@ -2,9 +2,13 @@ package gate_test
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -107,12 +111,105 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 // per-case outcome lines the enforcement rows assert are both derived from it,
 // so adding a case here is the one edit that puts it under those rows. ci.yml
 // retypes the same names in the loop that greps the verbose log for each one's
-// PASS line; it does not read them from here, and
-// TestCILoopsOverEveryRealExtractorCase is what makes a name missing there
-// impossible to merge.
+// PASS line, and it does not read them from here.
+//
+// The slice, that loop and the cases themselves are pinned to each other in
+// both directions. TestCILoopsOverEveryRealExtractorCase makes a name missing
+// from ci.yml impossible to merge, and
+// TestRealExtractorCasesNamesEveryCaseThatDrivesTheToolchain makes a case
+// missing from this slice impossible to merge.
 var realExtractorCases = []string{
 	"TestFullStackDrivesTheRealDotnetExtractor",
 	"TestFullStackScoresAReportCoverletWrote",
+}
+
+// realExtractorHelpers are the two calls that make a case one that drives the
+// real toolchain. requireRealDotnet is the decision and installRealExtractor
+// is the act, so either one is enough to earn a place in realExtractorCases,
+// and looking for both is what catches the case that installs without asking.
+var realExtractorHelpers = []string{"requireRealDotnet", "installRealExtractor"}
+
+// TestRealExtractorCasesNamesEveryCaseThatDrivesTheToolchain closes the slice
+// against what this package's cases actually do. Without it a third case can
+// call the helpers and stay out of the slice, and then CI never proves it ran
+// and its skip and fatal routes go unasserted, which is the hole the PASS
+// check closes one level up. The check reads the package's own Go source
+// through go/parser, so it matches a call in the AST and never a name sitting
+// in a comment or a string literal. That is why this case can name both
+// helpers above without matching itself.
+func TestRealExtractorCasesNamesEveryCaseThatDrivesTheToolchain(t *testing.T) {
+	drive := casesDrivingTheRealToolchain(t)
+
+	for _, name := range drive {
+		if !slices.Contains(realExtractorCases, name) {
+			t.Errorf("%s calls one of %v but realExtractorCases does not name it, so CI never proves it ran and the enforcement rows never assert its skip and fatal routes",
+				name, realExtractorHelpers)
+		}
+	}
+	for _, name := range realExtractorCases {
+		if !slices.Contains(drive, name) {
+			t.Errorf("realExtractorCases names %s, but no case in this package calls any of %v. It was renamed or deleted, so CI is waiting on a PASS line no run can print",
+				name, realExtractorHelpers)
+		}
+	}
+}
+
+// casesDrivingTheRealToolchain is every top-level test function in this
+// package whose body calls a realExtractorHelpers function, read off the
+// parsed source rather than the file's text.
+func casesDrivingTheRealToolchain(t *testing.T) []string {
+	t.Helper()
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fset := token.NewFileSet()
+	var drive []string
+	parsed := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, entry.Name(), nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed++
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv != nil || fn.Body == nil || !strings.HasPrefix(fn.Name.Name, "Test") {
+				continue
+			}
+			if callsAny(fn.Body, realExtractorHelpers) {
+				drive = append(drive, fn.Name.Name)
+			}
+		}
+	}
+	if parsed == 0 {
+		t.Fatal("this case parsed no _test.go files, so it asserted nothing. It reads the package directory, which go test makes the working directory")
+	}
+	slices.Sort(drive)
+	return drive
+}
+
+// callsAny reports whether body calls any of the named functions directly,
+// closures inside it included.
+func callsAny(body *ast.BlockStmt, names []string) bool {
+	called := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if fn, ok := call.Fun.(*ast.Ident); ok && slices.Contains(names, fn.Name) {
+			called = true
+			return false
+		}
+		return true
+	})
+	return called
 }
 
 // requireRealDotnet is the decision every case in realExtractorCases makes

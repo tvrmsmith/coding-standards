@@ -106,8 +106,13 @@ func (f *fixture) writeCoverletFixture() {
 	// ContinuousIntegrationBuild and DeterministicSourcePaths are pinned off
 	// rather than left to the environment. Either one on erases the source
 	// root, which is ADR 0004's coverage_source_root_erased case, covered by
-	// the hand-built helper; inheriting them would make this case emit a
-	// different document on CI than on a laptop. ImplicitUsings is on because
+	// the hand-built helper. Inheriting them would make this case emit a
+	// different document on CI than on a laptop, and MSBuild reads an
+	// environment variable as a property, so a runner exporting either name
+	// decides for a project that does not state it. Both projects carry the
+	// pins, because coverlet reports the test assembly's own sources into the
+	// same Cobertura document and the gate refuses the whole report on the
+	// first class whose filename lost its root. ImplicitUsings is on because
 	// Points.cs names Exception without a using.
 	f.write("src/Lib.csproj", `<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
@@ -134,6 +139,8 @@ func (f *fixture) writeCoverletFixture() {
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
+    <ContinuousIntegrationBuild>false</ContinuousIntegrationBuild>
+    <DeterministicSourcePaths>false</DeterministicSourcePaths>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="`+testSdkVersion+`" />
