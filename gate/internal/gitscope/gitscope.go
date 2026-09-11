@@ -102,8 +102,10 @@ func (b Base) Label() string { return b.Ref + "@" + b.Commit[:7] }
 // again in any of those tells the caller nothing new.
 type NoBaseError struct {
 	// Ref is the ref --since named. It is empty when the default candidates
-	// are what failed, and empty whenever NoCommits is true, which ResolveRef
-	// reports from its HEAD check and ResolveStaged from its only one.
+	// are what failed, and empty whenever NoCommits is true, which every
+	// resolver reports from its HEAD check, ResolveRef and ResolveBase from the
+	// one they make before reaching a merge base and ResolveStaged from its
+	// only one.
 	Ref string
 	// NoCommits marks a branch git resolves no commit for, which is what
 	// --staged hits before the first commit and what a branch made with
@@ -132,16 +134,77 @@ func (e NoBaseError) Error() string {
 	}
 }
 
+// errNoSuchRev is git exiting 1 on a `rev-parse --verify`, which is git
+// answering that it resolves no such rev. It never reaches a caller of this
+// package: each resolver catches it at the check it made and says what the no
+// means there, since the same exit code is an ordinary absent rung to
+// ResolveBase's walk and a branch with no commit on it to ResolveStaged.
+var errNoSuchRev = errors.New("rev does not resolve")
+
 // ResolveBase walks BaseCandidates and returns the merge base of HEAD and
 // the first candidate that both exists and shares history with HEAD.
+//
+// It draws the line ResolveRef and ResolveStaged draw. Exit 1 is git answering
+// no, either an absent rung or two histories sharing no commit, and ADR 0003's
+// walk answers both by trying the next candidate. Every other exit code is git
+// failing to answer, a ref store it cannot read or an object the walk needs and
+// the store does not hold, and it comes back typed as an unreadable diff
+// carrying git's own words. Walked past, it would render as the tried-refs
+// list, which sends the developer after a missing branch while every ref that
+// list names is sitting in the repo.
+//
+// The candidate is verified unpeeled, where ResolveRef peels with `^{commit}`.
+// A peel reads the object the ref names, and git exits 1 on an object its store
+// does not hold, the same code an absent branch gives. Peeled here, a rung
+// whose commit is missing reads as a rung the repo does not carry, the walk
+// skips it, and the run ends at the tried-refs list naming a branch that is
+// sitting in the repo, which is the failure this resolver exists to close.
+// Unpeeled, the check answers about the ref alone and merge-base is what
+// classifies the object. ResolveRef keeps the peel because --since can name a
+// tag, and "does not name a commit" is the answer that flag owes its caller.
+//
+// git resolves refs/tags/<name> ahead of refs/heads/<name>, so a lightweight
+// tag shadowing a rung and pointing at a tree or a blob resolves at the
+// unpeeled check and merge-base is what classifies it, at exit 128, and the run
+// reports an unreadable diff naming that object rather than walking on. That is
+// the wanted answer: the state is self-inflicted and the message names the real
+// object, where a silent skip would hand back a base resolved through a
+// different rung than the developer's own repo says it is on.
+//
+// HEAD is verified before the walk, the check ResolveRef makes and for the
+// reason its comment gives. merge-base against an unborn HEAD exits 128, so
+// left to fall through, a branch made with `git checkout --orphan` in a repo
+// holding a full history would report the diff as unparseable for a run that
+// never reached a diff.
 func (r Repo) ResolveBase() (Base, error) {
+	if _, err := r.verifyRev("HEAD"); err != nil {
+		if errors.Is(err, errNoSuchRev) {
+			return Base{}, NoBaseError{NoCommits: true}
+		}
+		return Base{}, err
+	}
 	for _, ref := range BaseCandidates {
-		if _, err := r.git("rev-parse", "--verify", "--quiet", ref+"^{commit}"); err != nil {
-			continue
+		if _, err := r.verifyRev(ref); err != nil {
+			if errors.Is(err, errNoSuchRev) {
+				continue
+			}
+			// No fixture reaches this arm, and swapping it for a continue
+			// leaves the whole suite green. The ref store is the only place a
+			// ref read fails to answer at all, since every damaged loose ref
+			// real git will produce is the exit 1 that means no such ref, and a
+			// damaged store fails every read alike, so the HEAD check above
+			// returns before the walk starts. It is kept because a continue
+			// here is the swallowing this resolver exists to remove, and which
+			// arm a fixture can reach is a property of today's git rather than
+			// of the rule.
+			return Base{}, err
 		}
 		mergeBase, err := r.git("merge-base", "HEAD", ref)
 		if err != nil {
-			continue
+			if noMatch(err) {
+				continue
+			}
+			return Base{}, unreadableDiff(err)
 		}
 		return Base{Ref: ref, Commit: strings.TrimSpace(mergeBase)}, nil
 	}
@@ -153,26 +216,45 @@ func (r Repo) ResolveBase() (Base, error) {
 //
 // Every invocation tells exit 1, which is git answering the question with no,
 // from every other exit code, which is git failing to answer it. A rev spec git
-// refuses to evaluate, `--since main@{9}` against a shorter reflog, or an object
-// store missing a commit the merge base has to walk, reported as a name that
-// does not exist would send the developer hunting a typo, so it comes back
-// typed as an unreadable diff instead.
+// refuses to evaluate, `--since main@{9}` against a shorter reflog, comes back
+// typed as an unreadable diff, because reported as a name that does not exist
+// it would send the developer hunting a typo.
 //
-// The merge base carries git's own words. The two `rev-parse --verify` checks
-// carry the failed command rather than a sentence, because `--quiet` is what
-// makes an absent ref exit 1 at all and it silences git on every other exit
-// code with it.
+// The `^{commit}` peel is what makes "does not name a commit" the answer a tag
+// on a tree gets, which is the answer --since owes a caller who chose the ref by
+// hand. It cannot separate that ref from one whose own commit object is gone,
+// since git exits 1 on both, so `--since main` in a store missing main's commit
+// says main does not name a commit while the default scope, which verifies its
+// candidates unpeeled, reports the object merge-base could not read. Issue 68
+// tracks that gap.
+//
+// Only the argv shape reaches a caller from these two checks today, and
+// since_ref_unreadable pins it. `--quiet` is what makes an absent ref exit 1 at
+// all, and it also swallows what rev-parse itself would say about a rev it
+// declined to resolve, `--since main@{9}` against a shorter reflog for one,
+// which leaves the failed command as the only thing to report. A fatal raised
+// under rev-parse rather than by it still reaches stderr, a ref store git
+// cannot parse for one, which base_head_unreadable pins from the default
+// scope's own HEAD check, and cause prefers that sentence. Simplifying cause to
+// the argv form on the strength of the first case would drop git's own account
+// of the second, which is the half that names what is broken.
 //
 // HEAD is verified before the merge base is asked for, the same check
-// ResolveStaged makes, because merge-base against an unborn HEAD exits 128 with
-// "Not a valid object name HEAD". Left to fall through, a branch made with
-// `git checkout --orphan` reports the diff as unparseable for a run that never
-// reached a diff, when what the repo has is no commit on this branch.
+// ResolveBase and ResolveStaged make, because merge-base against an unborn HEAD
+// exits 128 with "Not a valid object name HEAD". Left to fall through, a branch
+// made with `git checkout --orphan` reports the diff as unparseable for a run
+// that never reached a diff, when what the repo has is no commit on this branch.
 func (r Repo) ResolveRef(ref string) (Base, error) {
-	if _, err := r.verifyCommit(ref+"^{commit}", NoBaseError{Ref: ref}); err != nil {
+	if _, err := r.verifyRev(ref + "^{commit}"); err != nil {
+		if errors.Is(err, errNoSuchRev) {
+			return Base{}, NoBaseError{Ref: ref}
+		}
 		return Base{}, err
 	}
-	if _, err := r.verifyCommit("HEAD", NoBaseError{NoCommits: true}); err != nil {
+	if _, err := r.verifyRev("HEAD"); err != nil {
+		if errors.Is(err, errNoSuchRev) {
+			return Base{}, NoBaseError{NoCommits: true}
+		}
 		return Base{}, err
 	}
 	mergeBase, err := r.git("merge-base", "HEAD", ref)
@@ -189,27 +271,41 @@ func (r Repo) ResolveRef(ref string) (Base, error) {
 // against. It draws the same line ResolveRef does: exit 1 is a branch with no
 // commit on it, and anything else is git failing to read the one it has.
 func (r Repo) ResolveStaged() (Base, error) {
-	commit, err := r.verifyCommit("HEAD", NoBaseError{NoCommits: true})
+	commit, err := r.verifyRev("HEAD")
 	if err != nil {
+		if errors.Is(err, errNoSuchRev) {
+			return Base{}, NoBaseError{NoCommits: true}
+		}
 		return Base{}, err
 	}
 	return Base{Ref: "HEAD", Commit: commit, Staged: true}, nil
 }
 
-// verifyCommit resolves rev to a commit id, answering absent when git exits 1
-// and an unreadable diff on every other exit code.
+// verifyRev resolves rev, answering errNoSuchRev when git exits 1 and an
+// unreadable diff on every other exit code. It promises no commit id. Every
+// check here is unpeeled but the ref check ResolveRef makes, so for a ref whose
+// commit object the store lacks git exits 0 and prints an id the object store
+// does not hold, which is the fact the merge base that follows fails on.
+// ResolveStaged is the one of the five call sites that reads the string, and it
+// can be handed a dangling id that way. The other four discard it and want only
+// which of the two arms fired.
 //
-// The three calls share this rather than spelling the same two arms out each
-// time. ResolveRef's HEAD check is the reason it is worth sharing: no fixture
-// makes git read a named ref and then fail to answer about HEAD at all, since
-// every damaged HEAD real git will produce is either exit 1 or a repository it
-// refuses to open at all, so a second copy of the unreadable arm there could
-// not be reached by a test.
-func (r Repo) verifyCommit(rev string, absent NoBaseError) (string, error) {
+// Every resolver's every check shares this rather than spelling the same two
+// arms out each time, which is what makes one reading of noMatch the reading
+// all three hold. ResolveRef's HEAD check is the reason it is worth sharing: no
+// fixture makes git read a named ref and then fail to answer about HEAD at all,
+// since every damaged HEAD real git will produce is either exit 1 or a
+// repository it refuses to open at all, so a second copy of the unreadable arm
+// there could not be reached by a test.
+//
+// The no comes back as one sentinel rather than as an error the caller hands
+// in, because what exit 1 means is the caller's to say and what exit 1 is is
+// this helper's.
+func (r Repo) verifyRev(rev string) (string, error) {
 	out, err := r.git("rev-parse", "--verify", "--quiet", rev)
 	if err != nil {
 		if noMatch(err) {
-			return "", absent
+			return "", errNoSuchRev
 		}
 		return "", unreadableDiff(err)
 	}
