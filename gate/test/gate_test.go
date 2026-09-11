@@ -982,6 +982,165 @@ func TestChangedMethodInAFileNoReportPathMatchedFails(t *testing.T) {
 			"0 of 2 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
+// TestFileInAReportCarryingNoInstrumentableLinesIsUnknownRatherThanCovered
+// pins issue 17's earned structural_na: a <class> with no <line> at all is
+// a report that never instrumented the file, not a file of trivial members,
+// so its changed method comes back unknown with the typed reason rather
+// than structural_na treated as fully covered.
+func TestFileInAReportCarryingNoInstrumentableLinesIsUnknownRatherThanCovered(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	// a <class> for the file with no <line> at all, which is a report that
+	// never instrumented it rather than a file of trivial members
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "file_uninstrumented", 1, f.baseLabel("main"),
+		"1 changed method could not be attributed to a coverage report\n"+
+			"0 of 1 changed methods over CRAP threshold 30, worst score 0.00\n")
+}
+
+// TestFileWhoseOnlyInstrumentedLineWasNeverHitIsMeasuredAtZero pins the
+// boundary the file_uninstrumented arm depends on. The file's entire coverage
+// entry is a single hits="0" line, so entry non-emptiness rests on an
+// uncovered line alone, which is what keeps the span off the
+// file_uninstrumented arm and reads it measured at coverage 0. Span length is
+// not this case's value: deleted_method already pins a one-line span at
+// coverage 0. A change that turned this unknown, or read it as structural_na
+// treated as fully covered, would fail here.
+func TestFileWhoseOnlyInstrumentedLineWasNeverHitIsMeasuredAtZero(t *testing.T) {
+	const money = "src/Ordering/Money.cs"
+	amount := span{File: money, Name: "Money.Amount", StartLine: 7, EndLine: 7, Complexity: 1}
+
+	f := newFixture(t, "main")
+	f.write(money, csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(money, 7)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: money, lines: spanCoverage(7, 1, 0)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(money), []span{amount}),
+	}
+
+	f.run().assertMatches(t, "only_instrumented_line_never_hit", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 2.00\n")
+}
+
+// TestFileWithNoLinesInOneReportIsStillMeasuredFromAnother pins where the
+// emptiness rule lives. The gate judges it in the join, over the union of
+// every report it consumed, so one report listing the file with no line
+// cannot make the method unknown while another report carries its coverage.
+// An implementation that judged emptiness per report inside mergeInto would
+// fail this case; the current one keeps it measured.
+//
+// The fixture directory names carry the case. Discovery sorts reports by
+// path, so tests/Integration.Tests, which carries the hit lines, merges
+// before tests/Unit.Tests, which is empty. The empty entry landing second is
+// what makes a union that replaced or went sticky per report fail here, and
+// the invariant it pins is that an empty entry contributes nothing to the
+// union rather than erasing another report's lines. Renaming either directory
+// so the empty report sorts first would leave the case passing while quietly
+// losing that discrimination.
+func TestFileWithNoLinesInOneReportIsStillMeasuredFromAnother(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("tests/Unit.Tests/TestResults/run/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService}))
+	f.write("tests/Integration.Tests/TestResults/run/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "empty_entry_union", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.00\n")
+}
+
+// TestFileWithNoLinesInTheFirstReportIsStillMeasuredFromALaterOne pins the
+// opposite merge direction to the case above. Here tests/Alpha.Tests, which
+// is empty, sorts before tests/Zulu.Tests, which carries the hit lines, so
+// the union starts from a pre-seeded empty entry that a later report has to
+// upgrade with real lines. That direction is the one the file_uninstrumented
+// arm makes load-bearing: an entry left empty here turns a covered method
+// into exit 1.
+func TestFileWithNoLinesInTheFirstReportIsStillMeasuredFromALaterOne(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService}))
+	f.write("tests/Zulu.Tests/TestResults/run/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "empty_entry_union", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.00\n")
+}
+
+// TestTwoUnknownChangedMethodsAreCountedInThePlural pins two changed methods
+// in one file, both under the file_uninstrumented arm, reported as two rows
+// under a single plural message. The sibling mixed-reason case pins two
+// unknowns of different reasons across two files; this one pins that a single
+// empty entry disqualifies every span in its file rather than the first.
+func TestTwoUnknownChangedMethodsAreCountedInThePlural(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 45)
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.run().assertMatches(t, "two_uninstrumented_methods", 1, f.baseLabel("main"),
+		"2 changed methods could not be attributed to a coverage report\n"+
+			"0 of 2 changed methods over CRAP threshold 30, worst score 0.00\n")
+}
+
+// TestTwoUnknownChangedMethodsCarryTheirOwnReasons pins that one run can
+// produce two different unknown reasons and that each row carries its own.
+// Ghost.cs is in no report at all and comes back file_unmatched;
+// OrderService.cs is listed with no instrumentable line and comes back
+// file_uninstrumented, both counted by the one plural message.
+func TestTwoUnknownChangedMethodsCarryTheirOwnReasons(t *testing.T) {
+	const ghost = "src/Ordering/Ghost.cs"
+	vanish := span{File: ghost, Name: "Ghost.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write(ghost, csharpFile(20))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.touchLine(ghost, 7)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(ghost, orderService), []span{vanish, cancel}),
+	}
+
+	f.run().assertMatches(t, "mixed_unknown_reasons", 1, f.baseLabel("main"),
+		"2 changed methods could not be attributed to a coverage report\n"+
+			"0 of 2 changed methods over CRAP threshold 30, worst score 0.00\n")
+}
+
 func TestFileTheExtractorCouldNotParseFails(t *testing.T) {
 	const broken = "src/Ordering/Broken.cs"
 

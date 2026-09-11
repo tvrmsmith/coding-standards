@@ -69,6 +69,12 @@ const (
 // meaning.
 const ReasonFileUnmatched = "file_unmatched"
 
+// ReasonFileUninstrumented is the typed reason on an unknown row: the
+// changed method's file matched a report path, but that path's entry lists
+// no instrumentable line at all, so the report never instrumented the file
+// and the span cannot be read as trivially covered.
+const ReasonFileUninstrumented = "file_uninstrumented"
+
 // Failure is one typed exit-1 cause: the `error` block of the document, and
 // the stderr line when there is no table.
 type Failure struct {

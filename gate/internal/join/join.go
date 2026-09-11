@@ -169,20 +169,44 @@ type Method struct {
 // the smallest span containing it and a container must not absorb the lines
 // of a local function nested inside it.
 //
-// A span whose file matched no report path is unknown; a span holding no
-// instrumentable line is structural_na, treated as fully covered, which is
-// what makes trivial members exclude themselves arithmetically.
+// A span whose file matched no report path is unknown. A span whose file
+// matched but whose entry lists no instrumentable line at all is unknown too,
+// because the report never instrumented that file rather than having found
+// it trivial, and reading it as covered would be the same broken join issue
+// 17 exists to close. Only once the file is confirmed instrumented does an
+// empty span turn structural_na, treated as fully covered, which is what
+// makes trivial members exclude themselves arithmetically.
+//
+// Under default coverlet options a file of nothing but trivial members does
+// not reach the second arm. Measured against a real `dotnet test
+// --collect:"XPlat Code Coverage"` run over a record with only positional
+// members and a class with two auto-implemented properties, none of them
+// touched by a test, coverlet emits a <class> per type carrying class-level
+// <lines> with one hits="0" entry per auto-property getter. So such a file is
+// instrumented and its entry is never empty, and its getters read measured at
+// coverage 0.
+//
+// Two shapes still reach the arm. Coverlet run with SkipAutoProps=true
+// suppresses exactly the auto-property getter lines that evidence rests on.
+// And a producer that writes lines solely under <methods>, leaving the
+// class-level element empty, which coverlet, the producer this gate reads,
+// does not do. Under either one a changed method in such a file exits 1
+// rather than scoring as covered. That is the accepted cost of refusing to
+// read an uninstrumented file as covered. A file whose only type carries
+// [ExcludeFromCodeCoverage] is not one of them: coverlet leaves its <class>
+// out of the report altogether, so the set holds no entry for the file and
+// its spans take the first arm, file_unmatched, which also exits 1.
 func Attribute(all []extract.Span, changed []extract.Span, lines coverage.Set) []Method {
 	byFile := groupByFile(all)
 	methods := make([]Method, 0, len(changed))
 	for _, span := range changed {
 		fileLines, matched := lines[span.File]
 		if !matched {
-			methods = append(methods, Method{
-				Span:   span,
-				State:  report.StateUnknown,
-				Reason: report.ReasonFileUnmatched,
-			})
+			methods = append(methods, unknown(span, report.ReasonFileUnmatched))
+			continue
+		}
+		if len(fileLines) == 0 {
+			methods = append(methods, unknown(span, report.ReasonFileUninstrumented))
 			continue
 		}
 		instrumentable, covered := attributedTo(span, byFile[span.File], fileLines)
@@ -197,6 +221,12 @@ func Attribute(all []extract.Span, changed []extract.Span, lines coverage.Set) [
 		})
 	}
 	return methods
+}
+
+// unknown builds the method a broken join produces: the typed reason set and
+// Coverage left at its zero value, which the score never reads.
+func unknown(span extract.Span, reason string) Method {
+	return Method{Span: span, State: report.StateUnknown, Reason: reason}
 }
 
 // attributedTo counts the instrumentable lines the smallest-containing-span
