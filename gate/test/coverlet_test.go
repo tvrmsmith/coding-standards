@@ -14,9 +14,19 @@ import (
 const coverletFixtureFramework = "net8.0"
 
 // Package versions the fixture pins. They are literals rather than a floating
-// range because the report shape is this case's input: a coverlet bump can
+// range because the report shape is this case's input. A coverlet bump can
 // change an attribute spelling or the <sources> shape, and this case exists to
-// notice that. Bumping one here is the deliberate act that reds it.
+// notice that, so bumping coverletVersion here is a deliberate act that can
+// red the case. It is not the only thing that can.
+//
+// The golden's coverage 0.75 is 15 of 20 instrumentable lines, and the
+// instrumentable-line count comes from Roslyn's sequence-point emission rather
+// than from coverlet. The fixture copies dotnet/global.json, which rolls
+// forward to the latest 10.0.x feature band, so a new SDK release can move that
+// count and red this case with no commit in this repo. That exposure is
+// accepted: pinning the fixture's own global.json exactly would break the case
+// on any machine without that precise band and decouple it from the one pin the
+// tool pack uses. Re-baseline the golden when a compiler band moves it.
 const (
 	testSdkVersion     = "17.11.1"
 	xunitVersion       = "2.9.2"
@@ -41,16 +51,7 @@ const (
 //
 // The ordering below is load-bearing, and each step says why.
 func TestFullStackScoresAReportCoverletWrote(t *testing.T) {
-	// Same terms as TestFullStackDrivesTheRealDotnetExtractor. A run that means
-	// to drive the real toolchain says so and then reds on a machine that
-	// cannot serve it; a run that does not say so skips before the first dotnet
-	// call.
-	if !enforceDotnet {
-		t.Skip(reasonUnset)
-	}
-	if testing.Short() {
-		t.Fatalf("%s=1 forbids skipping: %s", envRequireDotnet, reasonShort)
-	}
+	requireRealDotnet(t)
 
 	toolDir := installRealExtractor(t)
 

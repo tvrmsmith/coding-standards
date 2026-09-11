@@ -43,9 +43,8 @@ jobs:
           # The version lives in go.mod so the runner and a developer's machine
           # cannot disagree about it.
           go-version-file: gate/go.mod
-          # gate declares no requires yet, so there is no go.sum on disk. Both
-          # files are listed so the cache key starts covering dependencies the
-          # day gate gains one.
+          # Both files are listed so the cache key covers the module graph and
+          # the checksums of the one dependency gate declares.
           cache-dependency-path: |
             gate/go.mod
             gate/go.sum
@@ -106,11 +105,16 @@ jobs:
         run: |
           set -euo pipefail
           go test ./... -count=1 -v -timeout 12m | tee "$RUNNER_TEMP/gate-tests.txt"
-          # One name per case in the suite's realExtractorCases list. Adding a
-          # case there adds a line here.
+          # One name per case in the suite's realExtractorCases list. The names
+          # are retyped here rather than read out of the Go source, so
+          # TestCILoopsOverEveryRealExtractorCase is what makes a name missing
+          # from this loop impossible to merge. The pattern is anchored because
+          # Go's verbose output always follows the name with a space and a
+          # parenthesised duration, so an unanchored match would let a longer
+          # name that starts with this one stand in for it.
           for name in TestFullStackDrivesTheRealDotnetExtractor \
                       TestFullStackScoresAReportCoverletWrote; do
-            if ! grep -qF -- "--- PASS: $name" "$RUNNER_TEMP/gate-tests.txt"; then
+            if ! grep -qE -- "^--- PASS: $name \(" "$RUNNER_TEMP/gate-tests.txt"; then
               echo "The gate suite passed without $name reporting PASS, so a case" >&2
               echo "that drives the real dotnet toolchain did not run. Either the go" >&2
               echo "test line above no longer selects its package, the case was" >&2
