@@ -46,7 +46,7 @@ in source paths, so extractor output is already in the canonical form, and a mis
 
 **Human-typed paths** on `--files` and `--coverage` resolve against the process cwd, then relativize.
 A `--coverage` path may live anywhere, since a report is not repo content. A `--files` path outside
-the repo root is exit 1, and three further refusals share the `file_unresolved` code:
+the repo root is exit 1, and three of its refusals share the `file_unresolved` code:
 
 - A path resolving inside the root that names anything other than a regular file. The gate says "is a
   directory, not a file" for a directory and "is not a regular file" for a fifo, socket or device
@@ -55,7 +55,8 @@ the repo root is exit 1, and three further refusals share the `file_unresolved` 
   file that no coverage report is keyed by, so the run would measure a file the report cannot cover.
   `srcpath.Root` checks the spelling component by component against the directory entries and names
   the path as the developer typed it. Canonicalizing to git's spelling instead of refusing stays
-  available as a later relaxation.
+  available as a later relaxation. This applies the case-folding rejection below to a path the
+  developer typed, a new application of that rejection rather than a widening of it.
 - An **absolute** path whose repo-root prefix is mis-cased, refused as "is not spelled as the repo
   root is" rather than "is outside the repo root", so the developer retypes the half that is wrong
   instead of hunting a location mistake. A relative path carries no root prefix the developer typed,
@@ -91,7 +92,7 @@ on Linux, where two spellings really are two files.
 
 The rejection governs **coverage-path resolution**, where a candidate is matched against a file on disk.
 It does not govern **extension routing**, where the gate only decides whether a changed path is worth
-handing to an extractor at all. [ADR 0006](0006-the-csharp-extractor-is-written-in-house.md) folds case
+handing to an extractor at all. [ADR 0009](0009-the-csharp-extractor-is-written-in-house.md) folds case
 there, because a touched `Order.CS` matched no row and passed with `changed_methods: 0`, and because the
 only cost of over-claiming is a process launch that finds nothing.
 
@@ -107,7 +108,9 @@ places and is named where it really sits rather than being reported as escaping 
 unfolded, which is what keeps `case_only_path_difference` at exit 1 and keeps the gate from attributing
 coverage to a file the report did not measure. `strings.EqualFold` runs ahead of the `os.SameFile`
 confirmation, so a bind mount or a hard-linked directory, one inode reached under two unrelated names,
-does not fold either.
+does not fold either. Coverage-path resolution is what the paragraph above scopes the rejection to, and
+the fold is admitted there because `os.SameFile` supplies the evidence that reasoning lacked, not
+because the rejection is being narrowed by preference.
 
 **A `--source-root` escape hatch** for reports whose root has been erased. Rejected as configuration with
 no user. The failure names the MSBuild property to turn off, and the day someone hits it the flag is a
@@ -120,10 +123,9 @@ before writing, so a Windows-produced report already carries forward slashes, wi
 confined to `<source>`.
 
 Three exit-1 rules land here, typed `coverage_source_root_erased`, `file_ambiguous` and
-`coverage_outside_repo` in [ADR 0005](0005-the-machine-document-is-the-only-output.md). They are checked
-per report, in discovery order, and within one report in that precedence: erased source root first, over
-the whole class list and before any candidate is built, then a class resolving to two paths inside the
-root, then the report placing no class inside it.
+`coverage_outside_repo` in [ADR 0008](0008-the-machine-document-is-the-only-output.md). They are checked
+per report, in discovery order, and within one report in the order the three paragraphs below run. The
+erased source root is tested over the whole class list before any candidate is built.
 
 **A report whose source root has been erased fails the run, exit 1.** `DeterministicReport=true` emits
 `<sources/>` empty with filenames rooted at a `/_/` placeholder, and `UseSourceLink=true` emits one
@@ -133,6 +135,13 @@ first, `/_1/`, `/_2/` and so on, so the detector matches `^/_[0-9]*/`. `Determin
 over every class ahead of `UseSourceLink`, so a report carrying both shapes names the first, whatever
 order its classes appear in. Stripping `/_/` and assuming the remainder is repo-relative is probably
 correct and is still a guess, which is the thing this ADR refuses.
+
+**A class yielding more than one candidate inside the repo root fails, naming both.** This is close to
+unreachable: coverlet's `GetBasePaths` groups documents by path root, and on Unix every path shares root
+`/`, so a Unix report has exactly one `<source>`. Multiple sources need multiple drive letters or UNC
+shares, and two of those cannot both sit inside one repo. The assertion costs three lines and can only
+fire when that reasoning is wrong. It is the only surviving meaning of the reason `file_ambiguous`,
+which now says the report contradicted itself rather than that a fuzzy match had two hits.
 
 **A report contributing zero classes inside the repo root fails, naming that report, an example path,
 and the repo root.** This is the git-worktree case: a report produced in the main checkout and gated
@@ -158,13 +167,6 @@ anchored to an absolute path is quoted and named as such, since a bare relative 
 path inside the repo, and a report whose classes carry no filename to join says so instead of quoting
 nothing.
 
-**A class yielding more than one candidate inside the repo root fails, naming both.** This is close to
-unreachable: coverlet's `GetBasePaths` groups documents by path root, and on Unix every path shares root
-`/`, so a Unix report has exactly one `<source>`. Multiple sources need multiple drive letters or UNC
-shares, and two of those cannot both sit inside one repo. The assertion costs three lines and can only
-fire when that reasoning is wrong. It is the only surviving meaning of the reason `file_ambiguous`,
-which now says the report contradicted itself rather than that a fuzzy match had two hits.
-
 **An unresolvable report path is ignored, not fatal.** `filepath.EvalSymlinks` errors on a path that no
 longer exists, and a report describes a moment in the past, so a file deleted since the test run is none
 of the gate's business. The changed-set side always exists, because `--diff-filter=ACM` over the working
@@ -178,9 +180,13 @@ that issue 6 unions every discovered report rather than taking the newest.
 
 ## History
 
-Accepted with five dated amendments, which were folded into the sections they corrected on 2026-09-11
-once each had landed: the two 2026-09-03 entries scoping the case-folding rejection and deferring three
-rules to [issue 16](https://github.com/tvrmsmith/coding-standards/issues/16), the 2026-09-04 entry
-recording those rules arriving, and the 2026-09-05 and 2026-09-07 entries adding the human-typed
-refusals that came with [issue 14](https://github.com/tvrmsmith/coding-standards/issues/14). No decision changed in the fold and no fact was dropped. The 2026-09-11 amendment stays dated
-because it narrowed a rejection rather than recording one landing.
+Accepted with six dated amendments, five of which were folded into the text they corrected on
+2026-09-11 once each had landed. The first 2026-09-03 entry scoped the case-folding rejection to
+coverage-path resolution. The 2026-09-05 and 2026-09-07 entries added the human-typed refusals that
+came with [issue 14](https://github.com/tvrmsmith/coding-standards/issues/14). The 2026-09-04 entry
+recorded three exit-1 rules arriving, and the second 2026-09-03 entry, which had deferred those same
+rules to [issue 16](https://github.com/tvrmsmith/coding-standards/issues/16), went rather than folded:
+the deferral it recorded closed when the rules landed, and Consequences now states them directly.
+
+No decision changed in the fold. The 2026-09-11 amendment stays dated because it narrowed a rejection
+rather than recording one landing.

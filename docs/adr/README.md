@@ -20,8 +20,9 @@ by 0007, [0005](0005-the-machine-document-is-the-only-output.md) by 0008,
 
 ## Conventions
 
-An accepted ADR keeps every decision it made and every reason it gave, through any edit. Nothing is
-deleted, and no rule is restated to taste. Three ways to change one.
+An accepted ADR keeps every decision it made and every reason it gave, through any edit. Text moves
+and a landed changelog entry retires; a decision, a reason, and the wording of a rule do not. Three
+ways to change one.
 
 **Amend** when the decision stands and the text is wrong, incomplete, or overtaken by a detail.
 Write a paragraph opening with `**Amended YYYY-MM-DD.**` at the start of a line, and place it next
@@ -32,7 +33,7 @@ section states the current fact directly, carrying over every fact and every rea
 held; only the changelog hop goes. Add a `## History` section naming what was folded and when, so
 nothing about the file's past is lost. An amendment stays dated and separate while it records
 something still in flight, or where it narrowed a decision rather than recording one arriving. 0004
-was folded this way on 2026-09-11, from six dated entries and 2513 words to one and 2111.
+was folded this way on 2026-09-11, from six dated entries and 2513 words to one and 2189.
 
 **Supersede** when the decision itself changes, and when amendments have accumulated past the point
 where the file can be read straight through. Write a new numbered ADR stating the rule in one pass.
@@ -48,9 +49,7 @@ when what is left still crowds out the decision.
 **The `## Current rule` block stays under 250 words**, and the whole file under 1500. The block is
 what a reader is expected to read in full, so it has to be readable in one sitting; the file is what
 they scroll when the block is not enough. A decision that will not fit is more than one decision.
-Neither ceiling is checked mechanically yet, which is [issue 87](https://github.com/tvrmsmith/coding-standards/issues/87).
-
-The enforced limits live in the `adr-size.sh` hook, at 400 words for the block, 2500 for the file, and
-five dated entries. The tighter numbers above are the target, not the gate.
+0007, 0008 and 0009 run 193 to 240 words in the block and 784 to 1499 in the file. 0004 is folded and
+still over the file target, at 185 words in the block and 2189 in the file.
 
 If an ADR looks wrong, that is a decision to escalate to the user, not an edit to make.
