@@ -3,6 +3,7 @@ package gate_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -420,6 +421,65 @@ func TestFilesNamingAFileInTheWrongCaseRefusesRatherThanMeasuresIt(t *testing.T)
 	f.runArgs("--files", "src/ordering/OrderService.cs").
 		assertMatches(t, "files_wrong_case", 1, "",
 			"src/ordering/OrderService.cs is not spelled as the file on disk is\n")
+}
+
+func TestFilesNamingAMisCasedRepoRootPrefixRefusesTheSpellingNotTheLocation(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	singleFileCoverageAndStub(t, f)
+	miscasedRoot := sameDirectoryUpperCased(t, f.root)
+
+	// Issue 48. The file is the fixture's own, correctly cased below the root,
+	// and only the root prefix is typed in another case. EvalSymlinks keeps
+	// that case, so filepath.Rel reads the path as escaping and the gate used
+	// to answer "is outside the repo root", sending the developer after a
+	// location mistake when what they have is a spelling one.
+	typed := filepath.Join(miscasedRoot, filepath.FromSlash(orderService))
+	f.runArgs("--files", typed).
+		assertMatchesWith(t, "files_miscased_root_prefix", 1, "",
+			typed+" is not spelled as the repo root is\n",
+			map[string]string{"PATH": typed})
+}
+
+// sameDirectoryUpperCased is dir with every letter of its text upper-cased,
+// skipping the case unless that name reaches the same directory. os.SameFile is
+// stricter than probing the filesystem once with caseInsensitiveFilesystem,
+// because a temp root can sit under a case-sensitive component on a machine
+// whose own volume folds case, and then only some of the prefix folds.
+//
+// The skip fires on CI, which is ubuntu-latest, because this case goes end to
+// end through a real mis-cased spelling and that needs a filesystem that folds.
+// It is the shape a developer actually types, so it stays, and it is the only
+// coverage the shipped refusal has: nothing verifies it on ubuntu-latest, and
+// the golden gate/test/golden/files_miscased_root_prefix.toon is never rendered
+// there, so it can drift with the document schema without a test going red.
+// Trevor has accepted that residual risk.
+//
+// The fold is macOS-only by construction, not by an omission a job could close.
+// NewRoot runs EvalSymlinks over the whole path, so a real Root's resolved field
+// is symlink-free and spelled exactly as the tree spells it, and on a
+// case-sensitive filesystem no other spelling reaches that directory. The unit
+// cases in gate/internal/srcpath do run the folded arm on Linux, but they
+// hand-build a Root the constructor cannot produce, so they test the arm's logic
+// rather than a state a Linux user reaches. Symlinking an upper-cased name onto
+// the fixture repo here would not help: EvalSymlinks collapses the link and
+// nothing folds.
+func sameDirectoryUpperCased(t *testing.T, dir string) string {
+	t.Helper()
+	upper := strings.ToUpper(dir)
+	if upper == dir {
+		t.Skip("the fixture root has no letter to re-case, so there is no mis-cased prefix to type")
+	}
+	want, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.Stat(upper)
+	if err != nil || !os.SameFile(want, got) {
+		t.Skipf("the filesystem is case sensitive, so %s does not name the fixture root", upper)
+	}
+	return upper
 }
 
 func TestFilesNamingAPathThroughAFileFailsInTheDocument(t *testing.T) {
