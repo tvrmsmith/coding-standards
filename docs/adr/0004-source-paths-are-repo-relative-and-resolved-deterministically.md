@@ -22,7 +22,7 @@ prefix that `os.SameFile` confirms reaches the root directory, which merges noth
 human-typed path that mis-cases the repo-root prefix places inside the repo on the strength of that
 fold, and is then refused for its spelling rather than for its location.
 
-Sections below carry the reasoning, the dated amendments, and the fold history.
+Sections below carry the reasoning and the fold history.
 
 ## Decision
 
@@ -50,9 +50,9 @@ Two narrowings on what counts as landing inside:
 in source paths, so extractor output is already in the canonical form, and a mismatch is exit 1.
 
 **Human-typed paths** on `--files` and `--coverage` resolve against the process cwd, then relativize.
-A `--coverage` path may live anywhere, since a report is not repo content. A `--files` path outside
-the repo root is exit 1. Three further `--files` refusals, on paths that do resolve inside the root,
-share the `file_unresolved` code:
+A `--coverage` path may live anywhere, since a report is not repo content. Every `--files` refusal is exit 1 under the
+`file_unresolved` code, the one for a path outside the repo root included. Three more refuse a path
+that does resolve inside the root:
 
 - A path resolving inside the root that names anything other than a regular file. The gate says "is a
   directory, not a file" for a directory and "is not a regular file" for a fifo, socket or device
@@ -107,12 +107,13 @@ files. Folding a repo-root prefix **verified by `os.SameFile`** cannot: two dire
 case are two inodes on a case-sensitive filesystem, so `/tmp/REPO` beside a real `/tmp/repo` still reads
 as outside on Linux, which is the property the rejection protects. That narrow fold is now taken, with
 [issue 48](https://github.com/tvrmsmith/coding-standards/issues/48) and
-[issue 36](https://github.com/tvrmsmith/coding-standards/issues/36).
+[issue 36](https://github.com/tvrmsmith/coding-standards/issues/36). The half of this entry that
+refused an absolute `--files` path with a mis-cased root prefix now lives in Decision's third
+`--files` bullet, as a refusal about how the root is spelled.
 
-It governs the root prefix alone, at every door into containment: a coverage candidate or a report
-display name whose prefix is mis-cased places and is named where it really sits rather than being
-reported as escaping the repo, and Decision's refusal of a mis-cased absolute root prefix survives as
-a refusal about how the root is spelled. The fold is admitted on the coverage side because
+The fold governs the root prefix alone, at every door into containment: a coverage candidate or a
+report display name whose prefix is mis-cased places and is named where it really sits rather than
+being reported as escaping the repo. The fold is admitted on the coverage side because
 `os.SameFile` supplies the evidence the scoping above lacked, not because the rejection is being
 narrowed by preference.
 
@@ -191,17 +192,21 @@ that issue 6 unions every discovered report rather than taking the newest.
 
 ## History
 
-Accepted with six dated amendments. On 2026-09-11 four were folded into the text they corrected, one
-was dropped, and one was folded in part and kept. The first 2026-09-03 entry scoped the case-folding rejection to
-coverage-path resolution. The 2026-09-05 entry added the human-typed refusals that came with
-[issue 14](https://github.com/tvrmsmith/coding-standards/issues/14), and the 2026-09-07 entry widened
-the first of them from directories to every non-regular inode. The 2026-09-04 entry
-recorded three exit-1 rules arriving, and the second 2026-09-03 entry, which had deferred those same
-rules to [issue 16](https://github.com/tvrmsmith/coding-standards/issues/16), went rather than folded:
-the deferral it recorded closed when the rules landed, and Consequences now states them directly.
+Accepted with six dated amendments, all of them disposed of on 2026-09-11.
 
-No decision changed in the fold. The 2026-09-11 amendment went both ways. The half of it that refused
-an absolute `--files` path with a mis-cased root prefix had landed, so it moved into Decision's third
-`--files` bullet and the entry now back-references it. What stays dated is the narrowing of the
-coverage-side case-folding rejection, because narrowing a rejection is not the same as recording one
-arriving.
+- **2026-09-03**, first entry. Scoped the case-folding rejection to coverage-path resolution, once
+  ADR 0009 landed the fold for extension routing. **Folded**, because it recorded that arriving.
+- **2026-09-03**, second entry. Deferred three exit-1 rules to
+  [issue 16](https://github.com/tvrmsmith/coding-standards/issues/16). **Dropped**, because the
+  deferral closed when the rules landed and Consequences now states them directly.
+- **2026-09-04**. Recorded those three exit-1 rules arriving. **Folded**.
+- **2026-09-05**. Added the human-typed refusals that came with
+  [issue 14](https://github.com/tvrmsmith/coding-standards/issues/14). **Folded**.
+- **2026-09-07**. Widened the first of those refusals from directories to every non-regular inode.
+  **Folded**.
+- **2026-09-11**. **Folded in part, kept in part.** The half refusing an absolute `--files` path with
+  a mis-cased root prefix had landed, so it moved into Decision's third `--files` bullet. The half
+  that narrows the coverage-side case-folding rejection, without any fold to record arriving, stays
+  dated.
+
+No decision changed in the fold.
