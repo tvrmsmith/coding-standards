@@ -12,7 +12,7 @@ byte-identical. A human-typed path resolves against the current working director
 
 A path that will not resolve refuses the run rather than passing with nothing measured:
 `coverage_source_root_erased`, then `file_ambiguous`, then a coverage path with zero candidates in
-the root, in that precedence. A human-typed path is refused as `file_unresolved` when it names
+the root, in that precedence. A `--files` path is refused as `file_unresolved` when it names
 anything other than a regular file, and when it spells a real file in a case the tree does not use,
 among other reasons Decision lists.
 
@@ -20,9 +20,10 @@ Case folding is rejected for coverage-path resolution, where it can merge two re
 rejected for extension routing, which only decides whether to launch a process, nor for a repo-root
 prefix that `os.SameFile` confirms reaches the root directory, which merges nothing. So an absolute
 human-typed path that mis-cases the repo-root prefix places inside the repo on the strength of that
-fold, and is then refused for its spelling rather than for its location.
+fold, and once it resolves to a regular file it is refused for its spelling rather than for its
+location.
 
-Sections below carry the reasoning and the fold history.
+Sections below carry the reasoning, what is still amended, and the fold history.
 
 ## Decision
 
@@ -50,9 +51,9 @@ Two narrowings on what counts as landing inside:
 in source paths, so extractor output is already in the canonical form, and a mismatch is exit 1.
 
 **Human-typed paths** on `--files` and `--coverage` resolve against the process cwd, then relativize.
-A `--coverage` path may live anywhere, since a report is not repo content. Every `--files` refusal is exit 1 under the
-`file_unresolved` code, the one for a path outside the repo root included. Three more refuse a path
-that does resolve inside the root:
+A `--coverage` path may live anywhere, since a report is not repo content. Every `--files` refusal about the path is exit 1
+under the `file_unresolved` code, the one for a path outside the repo root included. Three more
+refuse a path that does resolve inside the root:
 
 - A path resolving inside the root that names anything other than a regular file. The gate says "is a
   directory, not a file" for a directory and "is not a regular file" for a fifo, socket or device
@@ -192,7 +193,7 @@ that issue 6 unions every discovered report rather than taking the newest.
 
 ## History
 
-Accepted with six dated amendments, all of them disposed of on 2026-09-11.
+Accepted with six dated amendments, four folded on 2026-09-11, one dropped, and one folded in part.
 
 - **2026-09-03**, first entry. Scoped the case-folding rejection to coverage-path resolution, once
   ADR 0009 landed the fold for extension routing. **Folded**, because it recorded that arriving.
@@ -206,7 +207,7 @@ Accepted with six dated amendments, all of them disposed of on 2026-09-11.
   **Folded**.
 - **2026-09-11**. **Folded in part, kept in part.** The half refusing an absolute `--files` path with
   a mis-cased root prefix had landed, so it moved into Decision's third `--files` bullet. The half
-  that narrows the coverage-side case-folding rejection, without any fold to record arriving, stays
-  dated.
+  that narrows the coverage-side case-folding rejection stays dated, because a narrowing is a
+  standing qualification of the rule above it rather than something a section can absorb.
 
 No decision changed in the fold.
