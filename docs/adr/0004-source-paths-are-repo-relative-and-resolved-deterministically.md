@@ -157,7 +157,7 @@ shares, which cannot both sit inside one repo. The assertion costs three lines a
 that reasoning is wrong. It is the code's only surviving meaning, that the report contradicted itself
 rather than that a fuzzy match had two hits.
 
-**A report placing no class inside the root fails, naming the report, an example resolved path, and
+**A report placing no class inside the root fails, naming the report, an example path, and
 the root**, as `coverage_outside_repo`. This is the git-worktree case, where a report produced in the
 main checkout resolves entirely outside `show-toplevel` and would otherwise present as a wall of
 unknown methods. Reading `git rev-parse --git-common-dir` and accepting the main checkout's paths was
