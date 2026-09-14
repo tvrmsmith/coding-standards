@@ -477,7 +477,7 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // words rather than carrying filepath.Rel's, which quote two absolute paths the
 // developer never typed.
 //
-// An absolute name whose root prefix is spelled in another case is refused too,
+// A name whose root prefix the developer spelled in another case is refused too,
 // and it says so rather than reusing the "not spelled as the file on disk is"
 // refusal below, because the mis-cased component is the root and not the file and
 // the reader has to know which half to retype. named is the only caller that
@@ -486,14 +486,17 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // there is nobody to send back to the keyboard; the fold is confirmed by
 // os.SameFile, so it merges no two files (ADR 0004, amended 2026-09-11).
 //
-// Only an absolute one, which is the scope ADR 0004's amendment writes the rule
-// in. A relative name carries no root prefix at all: the one weighed here came
-// from the process working directory, which is whatever path the developer's
-// shell cd'd through, so refusing would quote a name and blame a half of it that
-// is not in the string they typed and cannot be retyped. The fold is accepted
-// there and the name goes on to spelledAsOnDisk, which walks every component
-// below the root against the tree's own entries, so nothing is matched
-// approximately for having taken that road.
+// Spelling the prefix is the test, not typing an absolute path. A relative name
+// spells it too once it climbs above the root and descends back in: --files
+// ../../REPO/src/a.cs typed one directory inside the repo puts REPO in the
+// string the developer can retype, and refusing it is the whole point of the
+// refusal. A relative name that only descends inherits its prefix from the
+// process working directory, whatever path their shell cd'd through, so
+// refusing would quote a name and blame a half of it that is not in the string
+// they typed and cannot be retyped. typedTheRootPrefix separates the two. The
+// fold is accepted for the second, and the name goes on to spelledAsOnDisk,
+// which walks every component below the root against the tree's own entries, so
+// nothing is matched approximately for having taken that road.
 //
 // That refusal is weighed after the mode checks, so --files naming the repo
 // root itself answers "is a directory, not a file" in either case, and a
@@ -507,9 +510,12 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // about the path at all, so it travels as a plain error.
 func (r Root) named(name string, dirs dirNames) (Path, error) {
 	candidate := filepath.FromSlash(name)
-	typedAbsolute := filepath.IsAbs(candidate)
-	if !typedAbsolute {
-		cwd, err := os.Getwd()
+	// cwd stays empty for an absolute name, which is how typedTheRootPrefix
+	// tells the two apart below.
+	cwd := ""
+	if !filepath.IsAbs(candidate) {
+		var err error
+		cwd, err = os.Getwd()
 		if err != nil {
 			return "", fmt.Errorf("resolving %s against the working directory: %w", name, err)
 		}
@@ -545,8 +551,14 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 	if !info.Mode().IsRegular() {
 		return "", &UnresolvedError{Name: name, Reason: "is not a regular file"}
 	}
-	if place == folded && typedAbsolute {
-		return "", &UnresolvedError{Name: name, Reason: "is not spelled as the repo root is"}
+	if place == folded {
+		typed, err := r.typedTheRootPrefix(cwd, name)
+		if err != nil {
+			return "", &UnresolvedError{Name: name, Reason: "could not be weighed against the repo root, " + errnoText(err)}
+		}
+		if typed {
+			return "", &UnresolvedError{Name: name, Reason: "is not spelled as the repo root is"}
+		}
 	}
 	spelled, err := r.spelledAsOnDisk(filepath.FromSlash(string(rel)), dirs)
 	if err != nil {
@@ -556,6 +568,62 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 		return "", &UnresolvedError{Name: name, Reason: "is not spelled as the file on disk is"}
 	}
 	return rel, nil
+}
+
+// typedTheRootPrefix reports whether the developer's own text spelled the
+// repo-root prefix that folded, which is what makes the mis-cased half theirs to
+// retype. An absolute name always spells it, and named signals that by passing an
+// empty cwd.
+//
+// A relative name spells it exactly when it climbs above the root before
+// descending, because the directory it climbs to is where the developer's text
+// takes over from the working directory. So the question is where that directory
+// sits: outside the root, and everything from the root prefix down came out of
+// their string; inside or folded, and the prefix came from the shell. relativize
+// answers it, which keeps the one containment owner deciding this too.
+//
+// The climb is measured on the unresolved working directory because that is the
+// path filepath.Join already walked in named, and the directory it lands on is
+// resolved before relativize weighs it, so a symlinked working directory reads
+// the same here as the name itself did. A directory the filesystem will not
+// answer about is a fault and travels as one; no relative reading at all means
+// the prefix cannot have come from the working directory, so the text spelled it.
+func (r Root) typedTheRootPrefix(cwd, name string) (bool, error) {
+	if cwd == "" {
+		return true, nil
+	}
+	climbedTo := cwd
+	for i := leadingParents(name); i > 0; i-- {
+		climbedTo = filepath.Dir(climbedTo)
+	}
+	resolved, err := filepath.EvalSymlinks(climbedTo)
+	if err != nil {
+		return false, err
+	}
+	_, place, err := r.relativize(resolved)
+	if errors.Is(err, errNoRelativeReading) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return place == outside, nil
+}
+
+// leadingParents counts the ".." components a relative name opens with, which is
+// how far above the working directory it reaches before descending again.
+// filepath.Clean folds an interior climb into that prefix, so "a/../../b" counts
+// one, and it is the same normalization filepath.Join applied to build the
+// candidate.
+func leadingParents(name string) int {
+	count := 0
+	for _, component := range strings.Split(filepath.Clean(filepath.FromSlash(name)), string(filepath.Separator)) {
+		if component != ".." {
+			break
+		}
+		count++
+	}
+	return count
 }
 
 // unreadable is the refusal for a filesystem failure reading the name itself

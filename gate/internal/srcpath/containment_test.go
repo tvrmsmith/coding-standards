@@ -288,12 +288,12 @@ func TestNamedRefusesAMisCasedRootPrefixAsASpellingRatherThanALocation(t *testin
 	}
 }
 
-// The refusal is for an absolute name only. A relative one carries no root
-// prefix, so the mis-cased prefix that folds here came from the working
-// directory the shell cd'd through, and refusing "src/a.cs" for the spelling of
-// a directory that is not in the string would blame a half the developer cannot
-// retype. It is accepted, and spelledAsOnDisk still holds every component below
-// the root to the tree's own spelling.
+// A relative name that only descends carries no root prefix, so the mis-cased
+// prefix that folds here came from the working directory the shell cd'd through,
+// and refusing "src/a.cs" for the spelling of a directory that is not in the
+// string would blame a half the developer cannot retype. It is accepted, and
+// spelledAsOnDisk still holds every component below the root to the tree's own
+// spelling.
 func TestNamedAcceptsARelativeNameResolvedThroughAMisCasedWorkingDirectory(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
@@ -306,6 +306,66 @@ func TestNamedAcceptsARelativeNameResolvedThroughAMisCasedWorkingDirectory(t *te
 
 	if err != nil || rel != "src/a.cs" {
 		t.Errorf("named on a relative name under a mis-cased working directory returned %q, %v, want \"src/a.cs\", nil", rel, err)
+	}
+}
+
+// A relative name that climbs above the root and descends back in does spell the
+// prefix, so it is refused like the absolute one. This is the same developer
+// mistake issue 48 is about, typed from one directory in rather than from the
+// shell's root, and the mis-cased component is in the string they can retype.
+func TestNamedRefusesAMisCasedRootPrefixARelativeNameClimbedOutTo(t *testing.T) {
+	root := containmentRoot(t)
+	miscased := miscasedRoot(t, root)
+	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
+	t.Chdir(filepath.Join(root.Dir(), "src"))
+	name := filepath.Join("..", "..", filepath.Base(miscased), "src", "a.cs")
+
+	_, err := root.named(name, dirNames{})
+
+	var unresolved *UnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("named returned %v, want an *UnresolvedError", err)
+	}
+	if unresolved.Reason != "is not spelled as the repo root is" {
+		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is not spelled as the repo root is")
+	}
+	if unresolved.Name != name {
+		t.Errorf("Name = %q, want the name as typed, %q", unresolved.Name, name)
+	}
+}
+
+// The climbing-out refusal on a case-sensitive filesystem, so CI runs it rather
+// than skipping it.
+func TestNamedRefusesACaseDifferingRootSpellingARelativeNameClimbedOutTo(t *testing.T) {
+	root, real := symlinkedMiscasedRoot(t)
+	touch(t, filepath.Join(real, "src", "a.cs"))
+	t.Chdir(filepath.Join(real, "src"))
+	name := filepath.Join("..", "..", filepath.Base(root.Dir()), "src", "a.cs")
+
+	_, err := root.named(name, dirNames{})
+
+	var unresolved *UnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("named returned %v, want an *UnresolvedError", err)
+	}
+	if unresolved.Reason != "is not spelled as the repo root is" {
+		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is not spelled as the repo root is")
+	}
+}
+
+// The acceptance half of the same policy on a case-sensitive filesystem. Without
+// this, deleting the typedTheRootPrefix call and refusing every fold turns
+// nothing red on the Linux merge gate, since the accepting case beside it skips
+// there.
+func TestNamedAcceptsARelativeNameThatOnlyDescendsUnderACaseDifferingRootSpelling(t *testing.T) {
+	root, real := symlinkedMiscasedRoot(t)
+	touch(t, filepath.Join(real, "src", "a.cs"))
+	t.Chdir(real)
+
+	rel, err := root.named(filepath.Join("src", "a.cs"), dirNames{})
+
+	if err != nil || rel != "src/a.cs" {
+		t.Errorf("named on a relative name under a case-differing root spelling returned %q, %v, want \"src/a.cs\", nil", rel, err)
 	}
 }
 

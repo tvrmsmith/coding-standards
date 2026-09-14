@@ -158,9 +158,12 @@ outside on Linux, which is the property the rejection protects. That narrow fold
 [issue 48](https://github.com/tvrmsmith/coding-standards/issues/48) and
 [issue 36](https://github.com/tvrmsmith/coding-standards/issues/36).
 
-It governs the **root prefix alone**, on every door into containment: an absolute `--files` path whose root
-prefix is mis-cased is still exit 1, now as "is not spelled as the repo root is" rather than "is outside the
-repo root", so the developer retypes the half that is wrong instead of hunting a location mistake; and a
+It governs the **root prefix alone**, on every door into containment: a `--files` path whose root prefix the
+developer spelled mis-cased is still exit 1, now as "is not spelled as the repo root is" rather than "is
+outside the repo root", so the developer retypes the half that is wrong instead of hunting a location
+mistake. They spelled it when they typed the path absolute, and equally when they typed a relative one that
+climbs above the root and descends back in, since the mis-cased component sits in the string either way; a
+relative path that only descends inherits its prefix from the working directory and folds. And a
 coverage candidate or a report name with the same prefix places and is named where it really sits rather
 than being reported as escaping the repo. Folding on the coverage side is what the 2026-09-03 amendment
 scoped the rejection to, and it is admitted here because `os.SameFile` supplies the evidence that
