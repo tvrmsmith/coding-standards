@@ -404,9 +404,7 @@ func TestNamedRefusesAMisCasedRootPrefixTypedThroughASymlinkedAncestor(t *testin
 }
 
 // The same refusal on a case-sensitive filesystem, where the shortcut stands in
-// for the symlinked ancestor macOS supplies. The typed name is one component
-// longer than the candidate it resolves to rather than one shorter, so the pair
-// pins the alignment in both directions.
+// for the symlinked ancestor macOS supplies.
 func TestNamedRefusesACaseDifferingRootSpellingTypedThroughASymlinkedAncestor(t *testing.T) {
 	tmp, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -435,11 +433,9 @@ func TestNamedRefusesACaseDifferingRootSpellingTypedThroughASymlinkedAncestor(t 
 	assertRootSpellingRefusal(t, err, name)
 }
 
-// A name whose text climbs below the root component, which is the one climb
-// filepath.Clean has to fold away before the text is lined up. Left in, the two
-// components it cancels sit under the root rather than above it, the word the
-// developer spelled at the root lands two places off, and the mis-cased prefix
-// they plainly typed is accepted.
+// A name whose text climbs below the root component. The walk reaches the root
+// before the climb and answers there, so what the developer wrote underneath
+// changes nothing about the half they are sent back to retype.
 func TestNamedRefusesAMisCasedRootPrefixWithAClimbBelowIt(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
@@ -490,48 +486,90 @@ func TestNamedAcceptsARelativeNameUnderAMisCasedParentOfTheRoot(t *testing.T) {
 	}
 }
 
-// A repo whose root is the filesystem root, where "/" has to count as one
-// component and not as the two strings.Split reads out of it. No tree under a
-// temp directory can build that, so this drives typedTheRootPrefix directly,
-// with a name spelled exactly as the tree spells it.
-//
-// Counting "/" as two makes the root one component longer than it is, the empty
-// second one is compared against a real component of the candidate, and the
-// first word the developer typed is blamed for a mis-case that is not a
-// mis-case at all.
-func TestTypedTheRootPrefixCountsTheFilesystemRootAsOneComponent(t *testing.T) {
-	root := Root{resolved: filepath.FromSlash("/")}
-	name := filepath.FromSlash("/src/a.cs")
+// A mis-cased root prefix followed by a symlink whose target is deeper than the
+// link. The candidate then has more components than the text that named it, and
+// the mis-cased word the developer typed is still the root's own. Nothing about
+// the resolved candidate says which of its components their "REPO" produced,
+// which is why the walk asks the filesystem instead.
+func TestNamedRefusesAMisCasedRootPrefixAheadOfACountChangingSymlink(t *testing.T) {
+	root := containmentRoot(t)
+	miscased := miscasedRoot(t, root)
+	touch(t, filepath.Join(root.Dir(), "deep", "inner", "a.cs"))
+	// Stored relative, so resolving it keeps the developer's own spelling of the
+	// root and still lands two components where they typed one.
+	if err := os.Symlink(filepath.Join("deep", "inner"), filepath.Join(root.Dir(), "link")); err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Join(miscased, "link", "a.cs")
+	assertFolds(t, root, filepath.Join(miscased, "deep", "inner", "a.cs"))
 
-	typed := root.typedTheRootPrefix(typedComponents(name), filepath.FromSlash("/src/a.cs"))
+	_, err := root.named(name, dirNames{})
 
-	if typed {
-		t.Errorf("typedTheRootPrefix on %q under a root of %q returned %v, want false", name, "/", typed)
+	assertRootSpellingRefusal(t, err, name)
+}
+
+// The same shape on a case-sensitive filesystem, so the merge gate runs it.
+func TestNamedRefusesACaseDifferingRootSpellingAheadOfACountChangingSymlink(t *testing.T) {
+	root, real := symlinkedMiscasedRoot(t)
+	touch(t, filepath.Join(real, "deep", "inner", "a.cs"))
+	if err := os.Symlink(filepath.Join("deep", "inner"), filepath.Join(real, "link")); err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Join(real, "link", "a.cs")
+	assertFolds(t, root, filepath.Join(real, "deep", "inner", "a.cs"))
+
+	_, err := root.named(name, dirNames{})
+
+	assertRootSpellingRefusal(t, err, name)
+}
+
+// A symlink named something else pointing at the repo root. The prefix the
+// developer typed does reach the root, so the walk stops there, but "link" is
+// not the root's name in another case, it is a different name for the same
+// directory. There is nothing to retype, so the name is accepted. This is what
+// separates a mis-spelling from an alias.
+func TestNamedAcceptsARootReachedThroughALinkNamedSomethingElse(t *testing.T) {
+	root := containmentRoot(t)
+	miscased := miscasedRoot(t, root)
+	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
+	tmp := filepath.Dir(root.Dir())
+	if err := os.Symlink(miscased, filepath.Join(tmp, "link")); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(tmp)
+	assertFolds(t, root, filepath.Join(miscased, "src", "a.cs"))
+
+	rel, err := root.named(filepath.Join("link", "src", "a.cs"), dirNames{})
+
+	if err != nil || rel != "src/a.cs" {
+		t.Errorf("named on a name reaching the root through a link of another name returned %q, %v, want \"src/a.cs\", nil", rel, err)
 	}
 }
 
-// The high end of the range the walk keeps to. A candidate shorter than the
-// root is one the fold never hands over, since foldRootPrefix reads a candidate
-// with fewer components than the root as outside, but the predicate indexes the
-// developer's text and the check is what keeps it inside that slice rather than
-// panicking the gate on a shape a later caller could reach.
-func TestTypedTheRootPrefixStopsAtTheEndOfTheTypedText(t *testing.T) {
-	root := Root{resolved: filepath.FromSlash("/a/b/repo")}
+// The same acceptance on a case-sensitive filesystem.
+func TestNamedAcceptsACaseDifferingRootReachedThroughALinkNamedSomethingElse(t *testing.T) {
+	root, real := symlinkedMiscasedRoot(t)
+	touch(t, filepath.Join(real, "src", "a.cs"))
+	tmp := filepath.Dir(real)
+	if err := os.Symlink(real, filepath.Join(tmp, "link")); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(tmp)
+	assertFolds(t, root, filepath.Join(real, "src", "a.cs"))
 
-	typed := root.typedTheRootPrefix([]string{"b"}, filepath.FromSlash("/a/b"))
+	rel, err := root.named(filepath.Join("link", "src", "a.cs"), dirNames{})
 
-	if typed {
-		t.Errorf("typedTheRootPrefix on a candidate shorter than the root returned %v, want false", typed)
+	if err != nil || rel != "src/a.cs" {
+		t.Errorf("named on a name reaching the root through a link of another name returned %q, %v, want \"src/a.cs\", nil", rel, err)
 	}
 }
 
-// The developer's text spelling a mis-cased root component that is not the last
-// one. It differs from the accepting case below only in climbing one level
-// higher, which moves the same mis-cased parent from the shell's side of the
-// climb point to theirs, so the pair is the whole contrast the positional test
-// exists to draw. A predicate that compared only the root's last component
-// would accept both, since "repo" is spelled correctly in either.
-func TestNamedRefusesAMisCasedRootComponentAboveTheLastOneTheTextSpelled(t *testing.T) {
+// The developer's text spelling a mis-cased component above the root, with the
+// root itself spelled as the tree spells it. The gate's authority starts at the
+// root, and the walk reaches the root through that parent and answers on the
+// root's own word, so a component the developer typed above it is not the root
+// prefix and is not theirs to retype.
+func TestNamedAcceptsAMisCasedComponentTypedAboveACorrectlySpelledRoot(t *testing.T) {
 	root, real := rootUnderASymlinkedMiscasedParent(t)
 	touch(t, filepath.Join(real, "src", "a.cs"))
 	t.Chdir(filepath.Join(real, "src"))
@@ -541,24 +579,28 @@ func TestNamedRefusesAMisCasedRootComponentAboveTheLastOneTheTextSpelled(t *test
 	parent := filepath.Base(filepath.Dir(real))
 	name := filepath.Join("..", "..", "..", parent, filepath.Base(real), "src", "a.cs")
 
-	_, err := root.named(name, dirNames{})
+	rel, err := root.named(name, dirNames{})
 
-	assertRootSpellingRefusal(t, err, name)
+	if err != nil || rel != "src/a.cs" {
+		t.Errorf("named on a name spelling a mis-cased parent above the root returned %q, %v, want \"src/a.cs\", nil", rel, err)
+	}
 }
 
-// The same refusal in the shape a developer reaches on a filesystem that folds,
-// and the twin of the accepting case above it, which uses this same tree and
-// climbs one level less.
-func TestNamedRefusesAMisCasedParentOfTheRootTheTextSpelled(t *testing.T) {
+// The same acceptance in the shape a developer reaches on a filesystem that
+// folds, over the same tree as the accepting case above it, which climbs one
+// level less and so does not type the parent at all.
+func TestNamedAcceptsAMisCasedParentOfTheRootTheTextSpelled(t *testing.T) {
 	root, miscasedParent := miscasedParentRoot(t)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
 	t.Chdir(filepath.Join(root.Dir(), "src"))
 	assertFolds(t, root, filepath.Join(miscasedParent, "repo", "src", "a.cs"))
 	name := filepath.Join("..", "..", "..", filepath.Base(miscasedParent), "repo", "src", "a.cs")
 
-	_, err := root.named(name, dirNames{})
+	rel, err := root.named(name, dirNames{})
 
-	assertRootSpellingRefusal(t, err, name)
+	if err != nil || rel != "src/a.cs" {
+		t.Errorf("named on a name spelling a mis-cased parent above the root returned %q, %v, want \"src/a.cs\", nil", rel, err)
+	}
 }
 
 // A mis-case the shell introduced above the repo root, on a name that climbs.
@@ -624,11 +666,11 @@ func TestNamedAcceptsAMisCasedRootSpellingReachedThroughASymlinkedWorkingDirecto
 }
 
 // A working directory that reaches the root through a symlink shortening the
-// path. The developer spelled "repo" as the tree spells it and typed nothing
-// above it, so the mis-cased parent is not theirs and the name is accepted. Its
-// refusing twin below climbs one level further over the same tree and is what
-// pins resolving the climb point, since the accept here survives a depth
-// counted on the shell's own spelling.
+// path. The shell's own spelling is three components shorter than the resolved
+// candidate here, so a walk that located the developer's text by counting the
+// working directory would line "dev" up against a word they never typed. Asking
+// the filesystem which prefix is the root does not care how many components the
+// shortcut saved.
 func TestNamedAcceptsARelativeNameWhoseWorkingDirectoryReachesTheRootThroughASymlink(t *testing.T) {
 	root, real, shortcut := rootReachedThroughAShortcut(t)
 	touch(t, filepath.Join(real, "src", "a.cs"))
@@ -641,24 +683,6 @@ func TestNamedAcceptsARelativeNameWhoseWorkingDirectoryReachesTheRootThroughASym
 	if err != nil || rel != "src/a.cs" {
 		t.Errorf("named on a name climbing out through a symlinked working directory returned %q, %v, want \"src/a.cs\", nil", rel, err)
 	}
-}
-
-// The refusing twin over that same tree, where the text does spell the parent
-// in a case the root does not use. The shell's own spelling is three components
-// shorter than the resolved candidate here, so a walk that located the text by
-// counting the working directory would line "dev" up against a word the
-// developer never typed and drop issue 48's refusal for everyone whose shell
-// reaches the repo through a link.
-func TestNamedRefusesAMisCasedParentTypedThroughAShortcutWorkingDirectory(t *testing.T) {
-	root, real, shortcut := rootReachedThroughAShortcut(t)
-	touch(t, filepath.Join(real, "src", "a.cs"))
-	t.Chdir(filepath.Join(shortcut, "dev", "repo", "src"))
-	assertFolds(t, root, filepath.Join(real, "src", "a.cs"))
-	name := filepath.Join("..", "..", "..", filepath.Base(filepath.Dir(real)), "repo", "src", "a.cs")
-
-	_, err := root.named(name, dirNames{})
-
-	assertRootSpellingRefusal(t, err, name)
 }
 
 // A name whose descent passes through a symlink whose target spells the root in
