@@ -203,10 +203,10 @@ func Named(root srcpath.Root, cwd string, paths []string) []Source {
 // path that is genuinely outside the repo has no repo-relative form, so it is
 // named by the same resolved absolute path the containment test just weighed.
 // The developer's own spelling was rejected for that case: the document carries
-// no working directory, and ADR 0004 resolves a human-typed path against that
-// directory, so a relative name reaches a consumer that
-// cannot resolve it, and the same report named from two directories would print
-// two strings.
+// no working directory of its own, and ADR 0004 resolves a human-typed path
+// against the process working directory, so a relative name reaches a consumer
+// that cannot resolve it, and the same report named from two directories would
+// print two strings.
 //
 // It answers "is this inside the repo" itself, where srcpath's package doc
 // claims that question for srcpath alone. srcpath.Root.Place cannot answer it
