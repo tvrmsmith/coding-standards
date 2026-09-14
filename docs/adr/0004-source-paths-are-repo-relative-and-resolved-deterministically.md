@@ -78,7 +78,10 @@ practice. coverlet's fresh GUID directory and moving `timestamp` need no normali
 the decision rather than an omission, because on the success path the machine document names no
 report path and no timestamp. What the harness guarantees instead is that exactly one report exists,
 since a second `dotnet test` would leave a superseded one the gate lists in `skipped_paths`, and that
-is a GUID in the document. The case's own comment carries the rest of the report shape. The hand-written `cobertura()` helper stays as it is, because a stale,
+is a GUID in the document. The fixture pins its package versions as literals for the same reason it
+pins the SDK, so a coverlet bump that changes the report shape is a deliberate change that reds the
+case. The case's own comment carries the rest of the report shape. The hand-written `cobertura()`
+helper stays as it is, because a stale,
 unparseable or source-root-erased report is cheap to build by hand and coverlet will not produce one
 on demand.
 

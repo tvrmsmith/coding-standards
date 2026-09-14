@@ -37,9 +37,10 @@ user first, not a tidy-up to make on your own.
 **Supersede** when the decision itself changes, or when one ADR turns out to be more than one
 decision. Write a new numbered ADR stating the rule in one pass, one ADR per decision when you are
 splitting.
-Give the old file a `**Superseded YYYY-MM-DD by [ADR NNNN](...)**` paragraph under its title and
-leave everything else in it untouched. Add the new ADR to the table above and move the old row down
-to the superseded line. Nothing is deleted.
+Give the old file a `**Superseded YYYY-MM-DD by [ADR NNNN](...)**` paragraph under its title, naming
+every new ADR when you split, and leave everything else in it untouched. Add each new ADR to the
+table above and move the old row down to the superseded line. Nothing is deleted, and inbound links
+keep pointing at the old file, which carries the reader on to the new numbers.
 
 **Trim** only when the word ceiling below binds and the text to be cut already stands in another ADR
 this repo keeps. Ask the user first, because this is the one mode that deletes. Leave a paragraph
@@ -57,10 +58,9 @@ what a reader is expected to read in full, so it has to be readable in one sitti
 they scroll when the block is not enough. A decision that will not fit is more than one decision.
 Neither ceiling is checked mechanically yet, which is [issue 87](https://github.com/tvrmsmith/coding-standards/issues/87).
 
-0004 came down from 2606 words to 1790 in that consolidation, with no rule dropped. It is still over
+0004 came down from 2606 words to 1823 in that consolidation, with no rule dropped. It is still over
 1500, and the remaining excess is reasoning rather than restatement, so trimming it again buys
-little. The next move on it is a split: supersede it with more than one new ADR, one per decision,
-give 0004 a `**Superseded YYYY-MM-DD by ...**` paragraph naming all of them, and leave every inbound
-link pointing at the superseded file, which carries the reader on to the new numbers.
+little. The next move on it is a split, superseded by one new ADR per decision, under the mechanics
+above.
 
 If an ADR looks wrong, that is a decision to escalate to the user, not an edit to make.
