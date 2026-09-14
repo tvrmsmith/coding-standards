@@ -156,7 +156,8 @@ files. Folding a root prefix **verified by `os.SameFile`** cannot: two directori
 are two inodes on a case-sensitive filesystem, so `/tmp/REPO` beside a real `/tmp/repo` still reads as
 outside on Linux, which is the property the rejection protects. That narrow fold is now taken, with
 [issue 48](https://github.com/tvrmsmith/coding-standards/issues/48) and
-[issue 36](https://github.com/tvrmsmith/coding-standards/issues/36).
+[issue 36](https://github.com/tvrmsmith/coding-standards/issues/36). Taking it past `--files`, to `Place`
+and `Name`, was Trevor's to decide, and he approved it on 2026-09-14.
 
 It governs the **root prefix alone**, on every door into containment: a `--files` path whose root prefix the
 developer spelled mis-cased is still exit 1, now as "is not spelled as the repo root is" rather than "is
