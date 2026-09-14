@@ -334,6 +334,35 @@ func TestNamedRefusesAMisCasedRootPrefixARelativeNameClimbedOutTo(t *testing.T) 
 	}
 }
 
+// The same refusal reached by a name that opens with a component rather than
+// with "..", so the climb only exists once filepath.Clean has folded it into a
+// leading parent. leadingParents counting the uncleaned string reads zero
+// parents here, leaves the climb at the working directory, and accepts a name
+// whose mis-cased root prefix the developer typed, which is the refusal issue
+// 48 exists for.
+func TestNamedRefusesAMisCasedRootPrefixAnInteriorClimbReachedOutTo(t *testing.T) {
+	root := containmentRoot(t)
+	miscased := miscasedRoot(t, root)
+	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
+	t.Chdir(root.Dir())
+	// Spelled rather than joined, because filepath.Join cleans its arguments and
+	// would hand named a name whose climb is already a leading parent.
+	name := filepath.FromSlash("src/../../" + filepath.Base(miscased) + "/src/a.cs")
+
+	_, err := root.named(name, dirNames{})
+
+	var unresolved *UnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("named returned %v, want an *UnresolvedError", err)
+	}
+	if unresolved.Reason != "is not spelled as the repo root is" {
+		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is not spelled as the repo root is")
+	}
+	if unresolved.Name != name {
+		t.Errorf("Name = %q, want the name as typed, %q", unresolved.Name, name)
+	}
+}
+
 // The climbing-out refusal on a case-sensitive filesystem, so CI runs it rather
 // than skipping it.
 func TestNamedRefusesACaseDifferingRootSpellingARelativeNameClimbedOutTo(t *testing.T) {
@@ -350,6 +379,37 @@ func TestNamedRefusesACaseDifferingRootSpellingARelativeNameClimbedOutTo(t *test
 	}
 	if unresolved.Reason != "is not spelled as the repo root is" {
 		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is not spelled as the repo root is")
+	}
+	if unresolved.Name != name {
+		t.Errorf("Name = %q, want the name as typed, %q", unresolved.Name, name)
+	}
+}
+
+// The same refusal reached by a name that opens with a component rather than
+// with "..", so the climb only exists once filepath.Clean has folded it into a
+// leading parent. leadingParents counting the uncleaned string reads zero
+// parents here, leaves the climb at the working directory, and accepts a name
+// whose mis-cased root prefix the developer typed, which is the refusal issue
+// 48 exists for.
+func TestNamedRefusesACaseDifferingRootSpellingAnInteriorClimbReachedOutTo(t *testing.T) {
+	root, real := symlinkedMiscasedRoot(t)
+	touch(t, filepath.Join(real, "src", "a.cs"))
+	t.Chdir(real)
+	// Spelled rather than joined, because filepath.Join cleans its arguments and
+	// would hand named a name whose climb is already a leading parent.
+	name := filepath.FromSlash("src/../../" + filepath.Base(root.Dir()) + "/src/a.cs")
+
+	_, err := root.named(name, dirNames{})
+
+	var unresolved *UnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("named returned %v, want an *UnresolvedError", err)
+	}
+	if unresolved.Reason != "is not spelled as the repo root is" {
+		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is not spelled as the repo root is")
+	}
+	if unresolved.Name != name {
+		t.Errorf("Name = %q, want the name as typed, %q", unresolved.Name, name)
 	}
 }
 
@@ -566,6 +626,12 @@ func TestNameNamesAReportItCannotWeighAgainstTheRepoRootByItsAbsolutePath(t *tes
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+	// Name answers the absolute path for anything it reads as outside the root,
+	// so without this the case stays green if the mode stops provoking a stat
+	// failure and the fault arm is never reached.
+	if _, _, err := root.relativize(resolveExisting(path)); !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("relativize on %s returned %v, want a permission fault; this case is not exercising the fault arm", path, err)
+	}
 
 	name := root.Name(path)
 

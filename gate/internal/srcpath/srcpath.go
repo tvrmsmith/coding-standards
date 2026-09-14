@@ -506,14 +506,14 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // path above the root has nothing inside the repo to stat.
 //
 // All of them are still UnresolvedError, so every refusal about the path
-// reaches the document under one code. Losing the working directory is not
-// about the path at all, so it travels as a plain error.
+// reaches the document under one code. Losing the working directory, or being
+// unable to resolve the directory a relative name climbs out to, is not about
+// the path at all, so it travels as a plain error.
 func (r Root) named(name string, dirs dirNames) (Path, error) {
 	candidate := filepath.FromSlash(name)
-	// cwd stays empty for an absolute name, which is how typedTheRootPrefix
-	// tells the two apart below.
-	cwd := ""
-	if !filepath.IsAbs(candidate) {
+	absolute := filepath.IsAbs(candidate)
+	var cwd string
+	if !absolute {
 		var err error
 		cwd, err = os.Getwd()
 		if err != nil {
@@ -533,7 +533,7 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 		return "", &UnresolvedError{Name: name, Reason: "has no path relative to the repo root"}
 	}
 	if err != nil {
-		return "", &UnresolvedError{Name: name, Reason: "could not be weighed against the repo root, " + errnoText(err)}
+		return "", unweighable(name, err)
 	}
 	if place == outside {
 		return "", &UnresolvedError{Name: name, Reason: "is outside the repo root"}
@@ -552,9 +552,12 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 		return "", &UnresolvedError{Name: name, Reason: "is not a regular file"}
 	}
 	if place == folded {
-		typed, err := r.typedTheRootPrefix(cwd, name)
-		if err != nil {
-			return "", &UnresolvedError{Name: name, Reason: "could not be weighed against the repo root, " + errnoText(err)}
+		typed, rootFault, cwdFault := r.typedTheRootPrefix(cwd, name, absolute)
+		if cwdFault != nil {
+			return "", fmt.Errorf("resolving %s against the working directory: %w", name, cwdFault)
+		}
+		if rootFault != nil {
+			return "", unweighable(name, rootFault)
 		}
 		if typed {
 			return "", &UnresolvedError{Name: name, Reason: "is not spelled as the repo root is"}
@@ -572,8 +575,7 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 
 // typedTheRootPrefix reports whether the developer's own text spelled the
 // repo-root prefix that folded, which is what makes the mis-cased half theirs to
-// retype. An absolute name always spells it, and named signals that by passing an
-// empty cwd.
+// retype. An absolute name always spells it, which is what absolute says.
 //
 // A relative name spells it exactly when it climbs above the root before
 // descending, because the directory it climbs to is where the developer's text
@@ -585,12 +587,18 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 // The climb is measured on the unresolved working directory because that is the
 // path filepath.Join already walked in named, and the directory it lands on is
 // resolved before relativize weighs it, so a symlinked working directory reads
-// the same here as the name itself did. A directory the filesystem will not
-// answer about is a fault and travels as one; no relative reading at all means
-// the prefix cannot have come from the working directory, so the text spelled it.
-func (r Root) typedTheRootPrefix(cwd, name string) (bool, error) {
-	if cwd == "" {
-		return true, nil
+// the same here as the name itself did. No relative reading at all means the
+// prefix cannot have come from the working directory, so the text spelled it.
+//
+// The two faults leave on separate returns because one helper's single door
+// leads to two of named's codes, and which one is not readable from the error
+// value. Resolving the climbed-to directory fails about the process working
+// directory, so named reports it as a plain error, the channel losing the
+// working directory already uses. relativize fails about the repo root, so
+// named refuses it as an UnresolvedError naming the path.
+func (r Root) typedTheRootPrefix(cwd, name string, absolute bool) (typed bool, rootFault, cwdFault error) {
+	if absolute {
+		return true, nil, nil
 	}
 	climbedTo := cwd
 	for i := leadingParents(name); i > 0; i-- {
@@ -598,16 +606,16 @@ func (r Root) typedTheRootPrefix(cwd, name string) (bool, error) {
 	}
 	resolved, err := filepath.EvalSymlinks(climbedTo)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	_, place, err := r.relativize(resolved)
 	if errors.Is(err, errNoRelativeReading) {
-		return true, nil
+		return true, nil, nil
 	}
 	if err != nil {
-		return false, err
+		return false, err, nil
 	}
-	return place == outside, nil
+	return place == outside, nil, nil
 }
 
 // leadingParents counts the ".." components a relative name opens with, which is
@@ -634,6 +642,14 @@ func leadingParents(name string) int {
 // accuse a name the gate resolved successfully.
 func unreadable(name string, err error) *UnresolvedError {
 	return &UnresolvedError{Name: name, Reason: "could not be read, " + errnoText(err)}
+}
+
+// unweighable is the refusal for the other half, a filesystem failure about the
+// repo root rather than about the name. named reaches it from two places, the
+// candidate's own relativize and the one inside typedTheRootPrefix, and both
+// say it in one wording so a reader meets one message for one fault class.
+func unweighable(name string, err error) *UnresolvedError {
+	return &UnresolvedError{Name: name, Reason: "could not be weighed against the repo root, " + errnoText(err)}
 }
 
 // errnoText is what the operating system said, without the fs.PathError around
