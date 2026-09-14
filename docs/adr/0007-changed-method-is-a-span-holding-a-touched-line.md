@@ -95,7 +95,7 @@ caller cannot detect.
 Any git exit other than 1, at any check, reports an unreadable diff carrying git's words. Candidates
 verify **unpeeled**, because `<ref>^{commit}` exits 1 on a missing object.
 
-**Amended 2026-09-11.** `--since <ref>` verifies its ref unpeeled too, then classifies with
+**Amended 2026-09-14.** `--since <ref>` verifies its ref unpeeled too, then classifies with
 `cat-file -t` on the id that verify resolved, `^{}` appended to that id and never to the typed ref,
 which for `<rev>:<path>` builds a pathspec rather than a peel. A missing commit object now reports
 an unreadable diff rather than "does not name a commit", except spelled as an abbreviation, which
