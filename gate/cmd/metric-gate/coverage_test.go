@@ -68,6 +68,25 @@ func TestOnlyADeclaredCoverageInputIsDemanded(t *testing.T) {
 		}
 	})
 
+	// The gate is the union of the declarations rather than each metric's own:
+	// one declarer is enough to stop the whole run, and the metric that
+	// declared nothing neither rescues the run nor gets named as blocked.
+	t.Run("one declarer among several fails the whole run", func(t *testing.T) {
+		_, declared, _, err := loadCoverage(root, nil, changed, []metric.Selection{declaresCoverage, declaresNothing})
+
+		if !declared {
+			t.Error("declared = false, want true: one of the selections asked for coverage")
+		}
+		var failure *report.Failure
+		if !errors.As(err, &failure) || failure.Code != report.CodeCoverageMissing {
+			t.Fatalf("loadCoverage err = %v, want a report.Failure coded %s", err, report.CodeCoverageMissing)
+		}
+		const want = "DECLARES requires a coverage report"
+		if !strings.HasPrefix(failure.Message, want) {
+			t.Errorf("failure.Message = %q, want it to begin %q", failure.Message, want)
+		}
+	})
+
 	// ADR 0002 names every metric the absent report stops, not only the first,
 	// so the developer learns what the one `dotnet test` run would unblock.
 	t.Run("the failure names every metric stuck on the absent report", func(t *testing.T) {

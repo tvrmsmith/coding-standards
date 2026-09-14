@@ -63,10 +63,12 @@ func TestASelectionDeclaringNoCoverageScoresWithoutTheJoin(t *testing.T) {
 	}
 }
 
-// TestOneDeclaringMetricMakesTheJoinRunForAllOfThem pins the gate as the union
-// of the declarations rather than each metric's own. A mixed selection has a
-// coverage set loaded for it, so every metric in it is scored off that set.
-func TestOneDeclaringMetricMakesTheJoinRunForAllOfThem(t *testing.T) {
+// TestADeclaredRunScoresEveryMetricOffTheOneSet pins what attribute does once
+// the declaration is in: it reads declared and never sel.Inputs, so a mixed
+// selection is scored off the one loaded set rather than the metric that
+// declared nothing being left rowless. Whether the mixed selection loads a set
+// at all is loadCoverage's call, pinned in coverage_test.go.
+func TestADeclaredRunScoresEveryMetricOffTheOneSet(t *testing.T) {
 	selected := []metric.Selection{declaresCoverage, declaresNothing}
 
 	metrics, unknown := attribute(selected, extract.Result{Spans: []extract.Span{cancelSpan}}, []extract.Span{cancelSpan}, coveredLines, true)
