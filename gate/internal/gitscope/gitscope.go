@@ -393,8 +393,8 @@ func (r Repo) objectType(oid string) (string, error) {
 // which it follows to report the target's spans under a name that does not
 // hold them. A symlink replaced by a real source file is an accepted gap, and
 // measuring it needs a pass classifying the new side's mode before extraction,
-// which is issue 84 rather than a wider letter set. See ADR 0007's 2026-09-11
-// amendment.
+// which is issue 84 rather than a wider letter set. See ADR 0007's amendment on
+// "--diff-filter=ACM excludes T".
 //
 // Nothing gets out of here untyped. Base resolution has already succeeded, so
 // the document exists and ADR 0008's one-document rule binds: every cause below
