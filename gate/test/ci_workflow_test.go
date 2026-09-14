@@ -128,14 +128,15 @@ func TestCIDeclaresThePassCheckStep(t *testing.T) {
 
 	// The snapshot below says ci.yml still carries the reviewed script. It says
 	// nothing about which cases that script names, so the names are read out of
-	// the suite's own slice and required to appear in it. A case added to
-	// realExtractorCases and not to the workflow reds here rather than running
-	// on CI unproven.
+	// the suite's own slice and required to appear in it as whole words of the
+	// loop's list, either continued onto the next line or closing it. A bare
+	// substring would let a name that is a prefix of a listed one pass on the
+	// longer name's text while the loop's anchored grep never runs for it.
 	if len(realExtractorCases) == 0 {
 		t.Fatal("realExtractorCases is empty, so the name check below would pass over a script naming nothing")
 	}
 	for _, name := range realExtractorCases {
-		if !strings.Contains(passCheckScript, name) {
+		if !strings.Contains(passCheckScript, name+" \\") && !strings.Contains(passCheckScript, name+";") {
 			t.Errorf("%s: the %q step's script names no %s, so CI would never prove that case ran",
 				ciWorkflow, passCheckStep, name)
 		}
