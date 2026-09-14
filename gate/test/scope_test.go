@@ -1166,7 +1166,7 @@ func TestSinceNamingABranchWhoseCommitObjectIsGoneReportsAnUnreadableDiff(t *tes
 		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
 }
 
-func TestSinceNamingAShaTheStoreDoesNotHoldAnswersBySpelling(t *testing.T) {
+func TestSinceNamingAShaTheStoreDoesNotHoldReadsAFullShaAsAnUnreadableDiffAndAnAbbreviationAsNotACommit(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
