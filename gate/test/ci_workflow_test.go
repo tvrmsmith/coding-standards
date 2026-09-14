@@ -18,10 +18,11 @@ const ciWorkflow = "../../.github/workflows/ci.yml"
 const gateJob = "gate"
 
 // passCheckStep is the name: of the step that runs the suite and then proves
-// every case in realExtractorCases reported PASS. The name is how this file
+// every case the step's own loop names reported PASS. The name is how this file
 // finds the step, so the script underneath it stays free to be rewritten as
-// long as it still judges the log the same way. That the loop names both cases
-// is proven by CI itself going green with both reporting PASS, not here.
+// long as it still judges the log the same way. Nothing checks that the loop
+// names every case in realExtractorCases; the two lists are kept in sync by
+// hand.
 const passCheckStep = "Run the gate suite and prove the full-stack cases ran"
 
 // gateWorkingDir is the directory the step declares, relative to the repository
