@@ -2,13 +2,11 @@ package gate_test
 
 import (
 	"fmt"
-	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -114,70 +112,26 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 //
 // The slice, that loop and the cases themselves are pinned to each other in
 // both directions. TestCIPassCheckRedsTheJob makes a name missing from ci.yml
-// impossible to merge, and the registration below makes a case missing from
-// this slice impossible to merge.
+// impossible to merge, requireRegisteredCase makes a case that reaches the
+// toolchain without being listed here fail where it stands, and
+// TestRequireDotnetDecidesTheFullStackOutcome makes a name listed here that no
+// case implements fail, because the name produces no SKIP block to read.
 var realExtractorCases = []string{
 	"TestFullStackDrivesTheRealDotnetExtractor",
 	"TestFullStackScoresAReportCoverletWrote",
 }
 
-// registeredCases is every case that announced itself through
-// requireRealDotnet in this process. It is what closes realExtractorCases
-// against what the cases actually do: the toolchain entry points refuse a
-// caller that is not in it, and an unfiltered run then has to end with it
-// equal to the slice.
-var (
-	registeredMu    sync.Mutex
-	registeredCases = map[string]bool{}
-)
-
-// registerRealDotnetCase records the running case before requireRealDotnet
-// decides anything, so the name lands in the set whichever route the case then
-// takes, the skip, the fatal or the real run.
-func registerRealDotnetCase(name string) {
-	registeredMu.Lock()
-	defer registeredMu.Unlock()
-	registeredCases[name] = true
-}
-
-// registeredCaseNames is the recorded set, sorted, for comparison against
-// realExtractorCases.
-func registeredCaseNames() []string {
-	registeredMu.Lock()
-	defer registeredMu.Unlock()
-	names := slices.Collect(maps.Keys(registeredCases))
-	slices.Sort(names)
-	return names
-}
-
 // requireRegisteredCase is the guard on every entry point that drives the real
-// dotnet toolchain. A case that reaches one without having announced itself
-// runs dotnet unasked, gets no CI PASS line and has its skip and fatal routes
-// unasserted, so it fails here instead, naming the two edits that fix it.
+// dotnet toolchain. A case that reaches one without being listed in
+// realExtractorCases runs dotnet unasked, gets no CI PASS line and has its skip
+// and fatal routes unasserted, so it fails here instead, naming the two edits
+// that fix it.
 func requireRegisteredCase(t *testing.T, entry string) {
 	t.Helper()
-	registeredMu.Lock()
-	defer registeredMu.Unlock()
-	if !registeredCases[t.Name()] {
+	if !slices.Contains(realExtractorCases, t.Name()) {
 		t.Fatalf("%s reached %s without calling requireRealDotnet first. Call it, and add %q to realExtractorCases, or the case drives dotnet unasked and CI never proves it ran",
 			t.Name(), entry, t.Name())
 	}
-}
-
-// assertRegisteredCasesMatch compares the cases that announced themselves
-// against realExtractorCases. TestMain calls it, because no test function can:
-// ordering between test functions is not something a case may rely on, so only
-// a check that runs after m.Run has seen the whole set. It reports a message
-// rather than failing directly, since at that point there is no *testing.T
-// left to fail.
-func assertRegisteredCasesMatch() error {
-	got := registeredCaseNames()
-	want := slices.Sorted(slices.Values(realExtractorCases))
-	if slices.Equal(got, want) {
-		return nil
-	}
-	return fmt.Errorf("the cases that called requireRealDotnet are %v, but realExtractorCases names %v. A name only in the slice was renamed or deleted, so CI waits on a PASS line no run can print; a name only in the run drives dotnet without CI proving it ran",
-		got, want)
 }
 
 // requireRealDotnet is the decision every case in realExtractorCases makes
@@ -188,7 +142,6 @@ func assertRegisteredCasesMatch() error {
 // first dotnet call.
 func requireRealDotnet(t *testing.T) {
 	t.Helper()
-	registerRealDotnetCase(t.Name())
 	if !enforceDotnet {
 		t.Skip(reasonUnset)
 	}

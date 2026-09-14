@@ -1,6 +1,7 @@
 package gate_test
 
 import (
+	"encoding/xml"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -229,5 +230,79 @@ func (f *fixture) collectCoverage() {
 	if len(reports) != 1 {
 		f.t.Fatalf("the collection left %d cobertura reports under %s, want exactly one: %v",
 			len(reports), f.root, reports)
+	}
+
+	f.assertCoverletReportShape(reports[0])
+}
+
+// assertCoverletReportShape checks the report coverlet just wrote still carries
+// the shapes the case exists to score. Reading the file here is reading the
+// producer's serialized output as this case's input, not as a proxy for gate
+// behaviour: a coverlet release that stops emitting them leaves the golden's
+// numbers untouched, so without this the case would keep passing over an input
+// it was never written for.
+func (f *fixture) assertCoverletReportShape(path string) {
+	f.t.Helper()
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+
+	var report struct {
+		LineRate     string `xml:"line-rate,attr"`
+		LinesCovered string `xml:"lines-covered,attr"`
+		Classes      []struct {
+			Filename string `xml:"filename,attr"`
+			Lines    []struct {
+				Number int    `xml:"number,attr"`
+				Hits   int    `xml:"hits,attr"`
+				Branch string `xml:"branch,attr"`
+			} `xml:"lines>line"`
+			Methods []struct {
+				Lines []struct {
+					Number int `xml:"number,attr"`
+				} `xml:"lines>line"`
+			} `xml:"methods>method"`
+		} `xml:"packages>package>classes>class"`
+	}
+	if err := xml.Unmarshal(body, &report); err != nil {
+		f.t.Fatalf("%s: %v", path, err)
+	}
+
+	var branchFalse, hitsAboveOne, duplicated bool
+	for _, class := range report.Classes {
+		classLines := map[int]bool{}
+		for _, line := range class.Lines {
+			classLines[line.Number] = true
+			if line.Branch == "False" {
+				branchFalse = true
+			}
+			if line.Hits > 1 {
+				hitsAboveOne = true
+			}
+		}
+		for _, method := range class.Methods {
+			for _, line := range method.Lines {
+				if classLines[line.Number] {
+					duplicated = true
+				}
+			}
+		}
+	}
+
+	for _, shape := range []struct {
+		got  bool
+		want string
+	}{
+		{branchFalse, `a line with branch="False", the capitalised spelling no hand-built report in this suite uses`},
+		{hitsAboveOne, "a line hit more than once, which the hand-built reports never produce"},
+		{duplicated, "a <methods> line repeating a class-level line number, so the same line arrives twice"},
+		{report.LineRate != "" && report.LinesCovered != "", "line-rate and lines-covered on the root element, the summary the gate must not start trusting over the per-line hits"},
+	} {
+		if !shape.got {
+			f.t.Errorf("coverlet %s wrote %s without %s. This case scores the producer's own report, so a shape it no longer emits is coverage this case silently lost",
+				coverletVersion, path, shape.want)
+		}
 	}
 }

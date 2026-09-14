@@ -9,7 +9,6 @@ package gate_test
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -57,29 +56,7 @@ func TestMain(m *testing.M) {
 	}
 	code := m.Run()
 	os.RemoveAll(dir)
-	// Checked here because no test function can check it: nothing orders the
-	// test functions, so only a reader running after m.Run has seen every case
-	// that announced itself. A filtered run selected some subset on purpose, so
-	// the comparison is meaningless there and is skipped rather than faked.
-	if unfilteredRun() {
-		if err := assertRegisteredCasesMatch(); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			code = 1
-		}
-	}
 	os.Exit(code)
-}
-
-// unfilteredRun reports whether this process was asked to run the whole
-// package. The enforcement cases fork this binary with -test.run, and those
-// children run a subset by design.
-func unfilteredRun() bool {
-	for _, name := range []string{"test.run", "test.skip"} {
-		if f := flag.Lookup(name); f != nil && f.Value.String() != "" {
-			return false
-		}
-	}
-	return true
 }
 
 // buildBinaries compiles the gate and the stub extractor into dir.

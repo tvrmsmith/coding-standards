@@ -107,8 +107,8 @@ jobs:
           go test ./... -count=1 -v -timeout 12m | tee "$RUNNER_TEMP/gate-tests.txt"
           # One name per case in the suite's realExtractorCases list. The names
           # are retyped here rather than read out of the Go source, so
-          # TestCILoopsOverEveryRealExtractorCase is what makes a name missing
-          # from this loop impossible to merge. The pattern is anchored because
+          # TestCIPassCheckRedsTheJob is what makes a name missing from this
+          # loop impossible to merge. The pattern is anchored because
           # Go's verbose output always follows the name with a space and a
           # parenthesised duration, so an unanchored match would let a longer
           # name that starts with this one stand in for it.

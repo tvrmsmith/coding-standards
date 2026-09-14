@@ -3,6 +3,7 @@ package gate_test
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,8 +46,23 @@ const passCheckStep = "Run the gate suite and prove the full-stack cases ran"
 func TestCIPassCheckRedsTheJob(t *testing.T) {
 	script := passCheckScript(t)
 
+	// Every red-path row below is generated from realExtractorCases, so an
+	// emptied slice would leave this case asserting only that a green log
+	// passes, which an emptied shell loop also satisfies.
+	if len(realExtractorCases) == 0 {
+		t.Fatal("realExtractorCases is empty, so every membership row this case generates is vacuous")
+	}
+
 	t.Run("every case reported PASS, so the check lets the job through", func(t *testing.T) {
 		assertPassCheck(t, script, realExtractorCases, 0, false, nil)
+	})
+
+	// A log naming nothing has to red. That is what proves the check's own list
+	// is non-empty, which no row generated from realExtractorCases can show:
+	// a check that demanded no names at all would pass every other red row's
+	// input too.
+	t.Run("a log naming no case at all reds the job", func(t *testing.T) {
+		assertPassCheck(t, script, nil, 0, true, nil)
 	})
 
 	for i, name := range realExtractorCases {
@@ -62,22 +78,38 @@ func TestCIPassCheckRedsTheJob(t *testing.T) {
 		})
 	}
 
+	// goExit is 2 rather than 1 so the status the step ends on is traceable to
+	// the test run. set -o pipefail carries it out of the `go test | tee`
+	// pipeline, which is the mechanism under test here, and an exit 1 would be
+	// indistinguishable from the PASS loop's own failure path.
 	t.Run("a failing test run reds the job even with every PASS line present", func(t *testing.T) {
-		assertPassCheck(t, script, realExtractorCases, 1, true, nil)
+		assertPassCheckExit(t, script, realExtractorCases, 2, 2, nil)
 	})
 }
 
 // assertPassCheck runs the step's script over the log a run of ran would have
-// written and asserts the outcome. A failure has to be the script's own `exit
-// 1` rather than any nonzero end, so bash missing from PATH or the script
-// dying before it reaches the PASS loop cannot pass for the check working.
+// written and asserts the outcome. A red is required to be the PASS loop's own
+// `exit 1`, so bash missing from PATH or the script dying earlier cannot pass
+// for the check working. The one row that reds for another reason states its
+// own status through assertPassCheckExit.
 func assertPassCheck(t *testing.T, script string, ran []string, goExit int, wantErr bool, names []string) {
+	t.Helper()
+	if !wantErr {
+		assertPassCheckExit(t, script, ran, goExit, 0, names)
+		return
+	}
+	assertPassCheckExit(t, script, ran, goExit, 1, names)
+}
+
+// assertPassCheckExit is assertPassCheck with the status the script has to end
+// on stated rather than assumed. wantExit 0 is the job going through.
+func assertPassCheckExit(t *testing.T, script string, ran []string, goExit, wantExit int, names []string) {
 	t.Helper()
 
 	stdout, stderr, err := runPassCheck(t, script, verboseLog(ran), goExit)
 	out := fmt.Sprintf("stdout:\n%s\nstderr:\n%s", stdout, stderr)
 
-	if !wantErr {
+	if wantExit == 0 {
 		if err != nil {
 			t.Fatalf("the check failed with %v, want it to let the job through. %s", err, out)
 		}
@@ -89,11 +121,11 @@ func assertPassCheck(t *testing.T, script string, ran []string, goExit int, want
 	}
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) {
-		t.Fatalf("the check ended with %v rather than a nonzero exit status, so nothing here proves the PASS loop ran at all. %s", err, out)
+		t.Fatalf("the check ended with %v rather than a nonzero exit status, so nothing here proves the script ran at all. %s", err, out)
 	}
-	if exit.ExitCode() != 1 {
-		t.Fatalf("the check exited %d, want the 1 its own failure path reports. Another status is the script dying before it judged the log. %s",
-			exit.ExitCode(), out)
+	if exit.ExitCode() != wantExit {
+		t.Fatalf("the check exited %d, want %d. Another status is the script reddening for some reason other than the one this row drives. %s",
+			exit.ExitCode(), wantExit, out)
 	}
 	for _, name := range names {
 		if !strings.Contains(stderr, name) {
@@ -163,6 +195,7 @@ func passCheckScript(t *testing.T) string {
 			Steps []struct {
 				Name string `yaml:"name"`
 				Run  string `yaml:"run"`
+				If   string `yaml:"if"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
@@ -176,14 +209,33 @@ func passCheckScript(t *testing.T) string {
 	}
 
 	var found []string
+	var passCheckIf string
+	conditions := map[string]bool{}
 	for _, step := range job.Steps {
+		if step.If != "" {
+			conditions[step.If] = true
+		}
 		if step.Name == passCheckStep {
 			found = append(found, step.Run)
+			passCheckIf = step.If
 		}
 	}
 	if len(found) != 1 {
 		t.Fatalf("%s: the %q job holds %d steps named %q, want exactly one",
 			ciWorkflow, gateJob, len(found), passCheckStep)
+	}
+
+	// Everything below runs the script directly, so nothing else here would
+	// notice the step being gated off. A condition the step does not share with
+	// its siblings is the check quietly ceasing to run while every assertion
+	// stays green.
+	if passCheckIf == "" {
+		t.Fatalf("%s: the %q step carries no if:, so it no longer shares its siblings' guard %v",
+			ciWorkflow, passCheckStep, slices.Sorted(maps.Keys(conditions)))
+	}
+	if len(conditions) != 1 {
+		t.Fatalf("%s: the %q job's gated steps carry %d distinct if: conditions, want one they all share: %v",
+			ciWorkflow, gateJob, len(conditions), slices.Sorted(maps.Keys(conditions)))
 	}
 	return found[0]
 }
