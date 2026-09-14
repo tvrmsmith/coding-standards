@@ -1195,6 +1195,32 @@ func TestSinceNamingAShaTheStoreDoesNotHoldReadsAFullShaAsAnUnreadableDiffAndAnA
 		map[string]string{"REV": abbreviated})
 }
 
+func TestSinceNamingAFullShaTheStoreHoldsResolvesTheBaseFromIt(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	base := f.git("rev-parse", "HEAD")
+
+	f.git("checkout", "--quiet", "-b", "feature")
+	f.touchLine(orderService, 62)
+	f.commitAll("edit Cancel")
+
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// The green side of the spelling split the absent-sha case pins. A
+	// well-formed 40-hex clears the verify without the store being consulted,
+	// so the classification is the only step that ever reads this object, and
+	// this case is red if a live full sha stops coming back `commit` there and
+	// the run starts reporting a sha it can see as naming no commit.
+	f.runArgs("--since", base).assertMatches(t, "since_single_method", 0, f.baseLabel(base),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
 func TestSinceNamingAnAnnotatedTagResolvesTheBaseThroughIt(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
