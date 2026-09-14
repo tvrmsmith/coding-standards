@@ -5,7 +5,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -281,13 +280,14 @@ func (f *fixture) assertCoverletReportShape(path string) {
 	// Scoped to the one class the golden scores. coverlet reports the test
 	// assembly's own sources into the same document, so PointsTests.cs carrying
 	// a shape must not stand in for Points.cs losing it.
-	var scored []string
-	var branchFalse, hitsAboveOne, duplicated bool
+	var classFilenames []string
+	var foundScoredClass, branchFalse, hitsAboveOne, everyClassLineRepeated bool
 	for _, class := range report.Classes {
-		scored = append(scored, class.Filename)
+		classFilenames = append(classFilenames, class.Filename)
 		if !strings.HasSuffix(class.Filename, scoredClassSuffix) {
 			continue
 		}
+		foundScoredClass = true
 		classLines := map[int]bool{}
 		for _, line := range class.Lines {
 			classLines[line.Number] = true
@@ -298,20 +298,23 @@ func (f *fixture) assertCoverletReportShape(path string) {
 				hitsAboveOne = true
 			}
 		}
+		methodLines := map[int]bool{}
 		for _, method := range class.Methods {
 			for _, line := range method.Lines {
-				if classLines[line.Number] {
-					duplicated = true
-				}
+				methodLines[line.Number] = true
+			}
+		}
+		everyClassLineRepeated = len(classLines) > 0
+		for number := range classLines {
+			if !methodLines[number] {
+				everyClassLineRepeated = false
 			}
 		}
 	}
 
-	if !slices.ContainsFunc(scored, func(name string) bool {
-		return strings.HasSuffix(name, scoredClassSuffix)
-	}) {
+	if !foundScoredClass {
 		f.t.Fatalf("%s holds no class whose filename ends %s, so the shape checks below would pass over a report that never scored the fixture's own source. Classes: %v",
-			path, scoredClassSuffix, scored)
+			path, scoredClassSuffix, classFilenames)
 	}
 
 	for _, shape := range []struct {
@@ -320,8 +323,9 @@ func (f *fixture) assertCoverletReportShape(path string) {
 	}{
 		{branchFalse, `a line of the scored class with branch="False", the capitalised spelling no hand-built report in this suite uses`},
 		{hitsAboveOne, "a line of the scored class hit more than once, which the hand-built reports never produce"},
-		{duplicated, "a <methods> line of the scored class repeating a class-level line number, so the same line arrives twice"},
-		{report.LineRate != "" && report.LinesCovered != "", "line-rate and lines-covered on the root element, the summary the gate must not start trusting over the per-line hits"},
+		{everyClassLineRepeated, "a <methods> line for every class-level line number of the scored class, so the same line arrives twice"},
+		{report.LineRate != "", "line-rate on the root element, half of the summary the gate must not start trusting over the per-line hits"},
+		{report.LinesCovered != "", "lines-covered on the root element, the other half of that summary"},
 	} {
 		if !shape.got {
 			f.t.Errorf("coverlet %s wrote %s without %s. The gate reads past this shape rather than reading it, so no golden diff would report its loss",

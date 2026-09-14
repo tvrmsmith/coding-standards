@@ -112,17 +112,28 @@ jobs:
           # Go's verbose output always follows the name with a space and a
           # parenthesised duration, so an unanchored match would let a longer
           # name that starts with this one stand in for it.
-          # Every missing name is reported before the loop exits, so one run
+          # Every missing name is collected and reported together, so one run
           # names the whole gap rather than the first case alphabetically.
+          # grep's status is read rather than tested, because 1 is "no match"
+          # while 2 or more is grep failing to read the log at all, which proves
+          # nothing about the name and must not be reported as a case that
+          # did not run.
           missing=""
           for name in TestFullStackDrivesTheRealDotnetExtractor \
                       TestFullStackScoresAReportCoverletWrote; do
-            if ! grep -qE -- "^--- PASS: $name \(" "$RUNNER_TEMP/gate-tests.txt"; then
-              echo "The gate suite passed without $name reporting PASS." >&2
+            status=0
+            grep -qE -- "^--- PASS: $name \(" "$RUNNER_TEMP/gate-tests.txt" || status=$?
+            if [ "$status" -ge 2 ]; then
+              echo "grep exited $status reading $RUNNER_TEMP/gate-tests.txt, so this" >&2
+              echo "step proved nothing about whether $name ran." >&2
+              exit "$status"
+            fi
+            if [ "$status" -eq 1 ]; then
               missing="$missing $name"
             fi
           done
           if [ -n "$missing" ]; then
+            echo "The gate suite passed without these cases reporting PASS:$missing" >&2
             echo "A case that drives the real dotnet toolchain did not run. Either" >&2
             echo "the go test line above no longer selects its package, the case" >&2
             echo "was renamed, or enforcement is off." >&2

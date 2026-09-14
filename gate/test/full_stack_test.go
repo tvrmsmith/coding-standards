@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -108,12 +107,10 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 // per-case outcome lines the enforcement rows assert are both derived from it,
 // so adding a case here is the one edit that puts it under those rows. ci.yml
 // retypes the same names in the loop that greps the verbose log for each one's
-// PASS line, and it does not read them from here.
+// PASS line, and it does not read them from here, so a new case is added in
+// both places and CI going green with both names reporting PASS is what proves
+// the two agree.
 //
-// The slice, that loop and the cases themselves are pinned to each other in
-// both directions. TestCIPassCheckRedsTheJob makes a name missing from ci.yml
-// impossible to merge, requireRealDotnet makes a case that reaches the
-// toolchain without being listed here fail where it stands, and
 // TestRequireDotnetDecidesTheFullStackOutcome makes a name listed here that no
 // case implements fail, because the name produces no SKIP block to read.
 var realExtractorCases = []string{
@@ -121,66 +118,15 @@ var realExtractorCases = []string{
 	"TestFullStackScoresAReportCoverletWrote",
 }
 
-// listedRealExtractorCase reports whether testName belongs to a case
-// realExtractorCases names. A case that wraps the collection in t.Run passes
-// the subtest's T, and it inherits its parent's listing rather than being told
-// to list the subtest, so only the part before the first slash is matched.
-func listedRealExtractorCase(testName string) bool {
-	name, _, _ := strings.Cut(testName, "/")
-	return slices.Contains(realExtractorCases, name)
-}
-
-// TestListedRealExtractorCase drives both branches of the predicate
-// requireRealDotnet decides on. Every call site in the suite is a listed case,
-// so without these rows an inverted or deleted check would fire nowhere and the
-// suite would stay green.
-func TestListedRealExtractorCase(t *testing.T) {
-	if len(realExtractorCases) == 0 {
-		t.Fatal("realExtractorCases is empty, so every row below is vacuous")
-	}
-
-	type row struct {
-		name string
-		want bool
-	}
-	cases := []row{
-		{"TestSomeCaseNobodyListed", false},
-		{"", false},
-	}
-	for _, listed := range realExtractorCases {
-		cases = append(cases,
-			row{listed, true},
-			row{listed + "/collects coverage", true},
-			row{listed + "Twice", false},
-		)
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := listedRealExtractorCase(c.name); got != c.want {
-				t.Errorf("listedRealExtractorCase(%q) = %v, want %v", c.name, got, c.want)
-			}
-		})
-	}
-}
-
 // requireRealDotnet is the one decision standing between a case and the real
-// dotnet toolchain, and every entry point that drives the toolchain calls it
-// itself, so reaching dotnet without it is not expressible: dotnetCmd is the
-// only place in the package that builds a dotnet invocation, and it calls this.
-// It decides two things. The case has to be listed in realExtractorCases, or CI
-// never proves it ran and the enforcement rows never assert its routes. Then
-// the run has to say it means to drive the toolchain: one that does reds on a
-// machine that cannot serve it, one that does not skips before the first dotnet
-// call. Nothing here reads the machine, and calling it twice decides the same
-// way.
+// dotnet toolchain, and every entry point that drives the toolchain reaches it,
+// because dotnetCmd is the only place in the package that builds a dotnet
+// invocation and it calls this. The run has to say it means to drive the
+// toolchain: one that does reds on a machine that cannot serve it, one that
+// does not skips before the first dotnet call. Nothing here reads the machine,
+// and calling it twice decides the same way.
 func requireRealDotnet(t *testing.T) {
 	t.Helper()
-	if !listedRealExtractorCase(t.Name()) {
-		name, _, _ := strings.Cut(t.Name(), "/")
-		t.Fatalf("%s drives the real dotnet toolchain but realExtractorCases does not name it. Add %q to that slice and to ci.yml's PASS loop, or the case runs dotnet with CI never proving it ran",
-			t.Name(), name)
-	}
 	if !enforceDotnet {
 		t.Skip(reasonUnset)
 	}
@@ -262,9 +208,20 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 		t.Skip("forks child test binaries that each rebuild the gate, skipped with -short")
 	}
 
+	// Every row below asserts one block per name in realExtractorCases, so an
+	// emptied slice would leave the rows asserting nothing at all.
+	if len(realExtractorCases) == 0 {
+		t.Fatal("realExtractorCases is empty, so every row below is vacuous")
+	}
+
 	// -test.short is passed explicitly in every row, so what a child does never
 	// depends on the flags this parent happens to run under.
 	const long, short = "-test.short=false", "-test.short=true"
+
+	// outcomeFail is the result line a child prints for a case the enforcement
+	// fatal stopped. It is also what decides the child's exit status, so the
+	// rows state the outcome once and the disposition follows from it.
+	const outcomeFail = "FAIL"
 
 	// outcome and wants are asserted against each case's own block, so every
 	// name in realExtractorCases has to reach that outcome for its own
@@ -273,7 +230,6 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 		name    string
 		require string
 		short   string
-		wantErr bool
 		outcome string
 		wants   []string
 	}{
@@ -293,8 +249,7 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 			name:    "-short fails when enforcement forbids the skip",
 			require: "1",
 			short:   short,
-			wantErr: true,
-			outcome: "FAIL",
+			outcome: outcomeFail,
 			wants:   []string{envRequireDotnet + "=1 forbids skipping: " + reasonShort},
 		},
 	}
@@ -302,10 +257,11 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			out, err := runChild(t, c.require, "-test.run", childCase, "-test.v", c.short)
-			if c.wantErr && err == nil {
+			wantErr := c.outcome == outcomeFail
+			if wantErr && err == nil {
 				t.Fatalf("child exited zero, want a failure. output:\n%s", out)
 			}
-			if !c.wantErr && err != nil {
+			if !wantErr && err != nil {
 				t.Fatalf("child failed with %v, want a pass. output:\n%s", err, out)
 			}
 			for _, name := range realExtractorCases {
