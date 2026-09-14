@@ -247,10 +247,14 @@ func TestSinceNamingAnAnnotatedTagOverATreeFailsNamingThatRef(t *testing.T) {
 	f.git("tag", "-a", "treetag", "-m", "the tree", f.git("rev-parse", "HEAD^{tree}"))
 
 	// The one shape where the id verify hands over is itself a tag object and
-	// the peel still lands on something the run cannot diff. `cat-file -t` on
-	// the tag object bare answers `tag` at exit 0, so only the `^{}` gets
-	// `tree` out of it, and a regression dropping that peel turns a ref the
-	// developer can fix by naming another into an unreadable diff.
+	// what it wraps is still nothing the run can diff. What this case pins is
+	// the answer the developer gets for it, a ref they can fix by naming
+	// another rather than an unreadable diff. It says nothing about the `^{}`:
+	// `cat-file -t` on the tag object bare answers `tag`, which is not
+	// `commit` either, so this stays green with the peel dropped. The peel is
+	// what TestSinceNamingAnAnnotatedTagResolvesTheBaseThroughIt and
+	// TestSinceNamingAnAnnotatedTagWhoseCommitObjectIsGoneReportsAnUnreadableDiff
+	// hold, and neither is redundant with this one.
 	f.runArgs("--since", "treetag").assertMatches(t, "since_annotated_tree_tag_not_a_commit", 1, "",
 		"no diff base: --since treetag does not name a commit\n")
 }
