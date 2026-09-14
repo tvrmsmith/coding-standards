@@ -98,8 +98,8 @@ verify **unpeeled**, because `<ref>^{commit}` exits 1 on a missing object.
 **Amended 2026-09-14.** `--since <ref>` verifies its ref unpeeled too, then classifies with
 `cat-file -t` on the id that verify resolved, `^{}` appended to that id and never to the typed ref,
 which for `<rev>:<path>` builds a pathspec rather than a peel. A missing commit object now reports
-an unreadable diff rather than "does not name a commit", except spelled as an abbreviation, which
-verify cannot expand without the object and so exits 1.
+an unreadable diff rather than "does not name a commit", for a full sha or a plain ref. An
+abbreviation or an explicit peel needs the store to resolve and still exits 1.
 
 `--files` carries no line information, so every method in a listed file is changed and `base` is
 null. `--staged` reports index line numbers while the extractor parses the disk copy, so the gate
