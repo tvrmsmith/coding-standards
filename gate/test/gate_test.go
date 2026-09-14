@@ -726,7 +726,8 @@ func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) 
 		"no changed methods, nothing to measure\n")
 
 	// Today the golden already reds on any handing of Order.cs, since the
-	// extractor's file list is the touched-line key set and a touched line
+	// extractor's file list is the touched-line key set (every touched file
+	// here is .cs, so extension filtering never narrows it) and a touched line
 	// either lands inside Order.Total's 60-64 span or outside it. This check
 	// states the rule directly instead of inferring it from an empty
 	// document, and it holds if a later change decouples the extractor's
@@ -770,9 +771,7 @@ func TestATypechangeIsWithheldWhileTheRestOfTheDiffIsMeasured(t *testing.T) {
 	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 
-	if got := readFile(t, handed); got != orderService+"\n" {
-		t.Errorf("the extractor was handed %q, want the one line %q", got, orderService+"\n")
-	}
+	assertHandedToExtractor(t, handed, orderService+"\n")
 }
 
 // TestASymlinkReplacedByASourceFileContributesNoChangedMethods pins the
@@ -826,7 +825,8 @@ func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) 
 
 	// An ACMT widen is caught by the golden above, and so is any other
 	// handing of Order.cs today, since the extractor's file list is the
-	// touched-line key set. This check states the rule directly, that a
+	// touched-line key set (every touched file here is .cs, so extension
+	// filtering never narrows it). This check states the rule directly, that a
 	// dropped path never reaches the extractor, instead of inferring it from
 	// an empty document, and it holds if a later change decouples the
 	// extractor's input from that key set, which the mode-aware pass in issue
@@ -935,9 +935,7 @@ func TestANewFileNeverAddedToTheIndexContributesNoChangedMethods(t *testing.T) {
 	f.run().assertMatches(t, "untracked_new_file", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 9.65\n")
 
-	if got := readFile(t, handed); got != orderService+"\n" {
-		t.Errorf("the extractor was handed %q, want the one line %q", got, orderService+"\n")
-	}
+	assertHandedToExtractor(t, handed, orderService+"\n")
 }
 
 // TestRealCommitMixingEditMoveDeletionAdditionRenameAndReflow is the

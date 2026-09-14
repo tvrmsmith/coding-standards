@@ -516,22 +516,43 @@ func (f *fixture) removeFile(rel string) {
 	}
 }
 
-// fileKind is which of the two things a path can be across a typechange, a
-// real file or a symbolic link. It carries both notations the precondition
-// needs, the mode git records in a tree and the bit os.Lstat reports, so a
-// case states which end is the symlink once and cannot pair the two halves
-// contradictorily.
-type fileKind struct {
-	gitMode   string
-	gitName   string
-	treeName  string
-	isSymlink bool
+// fileKind is which of the two things a path stands as across a typechange, a
+// real file or a symbolic link. It is one value, so a case names which end is
+// the symlink once and both notations the precondition compares, the mode git
+// records in a tree and the bit os.Lstat reports, come off that one value.
+type fileKind int
+
+const (
+	realFile fileKind = iota
+	symlink
+)
+
+// gitMode is the tree mode git records for this kind, carrying the space that
+// ends the mode field of an `ls-tree` line. A real file is 100644 rather than
+// either regular mode, because the fixture's write only ever makes 0644 and an
+// executable blob should fail the precondition rather than pass it.
+func (k fileKind) gitMode() string {
+	if k == symlink {
+		return "120000 "
+	}
+	return "100644 "
 }
 
-var (
-	realFile = fileKind{gitMode: "100644 ", gitName: "a non-executable regular file", treeName: "a real file", isSymlink: false}
-	symlink  = fileKind{gitMode: "120000 ", gitName: "a symlink", treeName: "a symlink", isSymlink: true}
-)
+// String names the kind for a failure message.
+func (k fileKind) String() string {
+	if k == symlink {
+		return "a symlink"
+	}
+	return "a real file"
+}
+
+// lstatKind is the kind an os.Lstat mode stands for.
+func lstatKind(mode fs.FileMode) fileKind {
+	if mode&fs.ModeSymlink != 0 {
+		return symlink
+	}
+	return realFile
+}
 
 // assertTypechange fails the case unless rel is a live typechange against
 // base, committed as committed and standing in the working tree as tree.
@@ -544,25 +565,37 @@ func (f *fixture) assertTypechange(base, rel string, committed, tree fileKind) {
 	if got := f.git("diff", "--name-status", base, "--", rel); got != "T\t"+rel {
 		f.t.Fatalf("git reports %q for %s, so this case is not exercising a typechange", got, rel)
 	}
-	if got := f.git("ls-tree", base, "--", rel); !strings.HasPrefix(got, committed.gitMode) {
-		f.t.Fatalf("%s holds %q for %s, want %s", base, got, rel, committed.gitName)
+	if got := f.git("ls-tree", base, "--", rel); !strings.HasPrefix(got, committed.gitMode()) {
+		f.t.Fatalf("%s holds %q for %s, want %s at mode %s",
+			base, got, rel, committed, strings.TrimSpace(committed.gitMode()))
 	}
 	info, err := os.Lstat(filepath.Join(f.root, filepath.FromSlash(rel)))
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	if got := info.Mode()&fs.ModeSymlink != 0; got != tree.isSymlink {
-		f.t.Fatalf("the working tree holds %s as %s, want %s", rel, symlinkKind(got).treeName, tree.treeName)
+	if got := lstatKind(info.Mode()); got != tree {
+		f.t.Fatalf("the working tree holds %s as %s, want %s", rel, got, tree)
 	}
 }
 
-// symlinkKind turns an observed symlink bit back into the kind that describes
-// it, so a failure message names what the working tree actually holds.
-func symlinkKind(isSymlink bool) fileKind {
-	if isSymlink {
-		return symlink
+// assertHandedToExtractor fails the case unless the stub's stdin log at handed
+// holds exactly want, which is how a case pins the file list the gate handed
+// the extractor. An absent log means the gate never spawned the extractor for
+// extraction at all, which is reported as its own failure rather than as an
+// unreadable file, since a run that measured nothing is what a case pinning a
+// handed list exists to tell apart from one that measured the wrong thing.
+func assertHandedToExtractor(t *testing.T, handed, want string) {
+	t.Helper()
+	switch body, err := os.ReadFile(handed); {
+	case err == nil:
+		if string(body) != want {
+			t.Errorf("the extractor was handed %q, want %q", body, want)
+		}
+	case errors.Is(err, fs.ErrNotExist):
+		t.Errorf("the extractor was never invoked, so it was handed nothing; want %q", want)
+	default:
+		t.Fatalf("reading %s answered neither way: %v", handed, err)
 	}
-	return realFile
 }
 
 // assertNotHandedToExtractor fails the case unless the stub's stdin log at

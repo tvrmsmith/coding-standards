@@ -330,13 +330,15 @@ func (r Repo) verifyRev(rev string) (string, error) {
 // whitespace ignored, is the only match for a path the same diff deleted is
 // dropped afterwards, and only a move that also edited the file is measured.
 //
-// ACM also excludes T, so a typechange contributes no touched lines. Both
-// directions are dropped on purpose, a source file replaced by a symlink and a
-// symlink replaced by a source file, because widening the letters to ACMT
-// would hand the extractor a link path it follows, reporting the target's
-// spans under the link's name. See ADR 0007's 2026-09-11 amendment and issue
-// 84, which holds the mode-aware pass that would measure the dropped
-// direction.
+// ACM also excludes T, so a typechange contributes no touched lines in either
+// direction, and the two drops have different reasons. A source file replaced
+// by a symlink is the wanted answer, since a link holds no source to measure,
+// and widening the letters to ACMT would hand the extractor the link path,
+// which it follows to report the target's spans under a name that does not
+// hold them. A symlink replaced by a real source file is an accepted gap, and
+// measuring it needs a pass classifying the new side's mode before extraction,
+// which is issue 84 rather than a wider letter set. See ADR 0007's 2026-09-11
+// amendment.
 //
 // Nothing gets out of here untyped. Base resolution has already succeeded, so
 // the document exists and ADR 0005's one-document rule binds: every cause below

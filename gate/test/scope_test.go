@@ -393,9 +393,7 @@ func TestFilesNamingTheSameFileTwiceHandsItToTheGateOnce(t *testing.T) {
 		assertMatches(t, "files_with_skipped_path", 0, "",
 			"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
 
-	if got := readFile(t, handed); got != orderService+"\n" {
-		t.Errorf("the extractor was handed %q, want the one line %q", got, orderService+"\n")
-	}
+	assertHandedToExtractor(t, handed, orderService+"\n")
 }
 
 func TestFilesNamingAFileInTheWrongCaseRefusesRatherThanMeasuresIt(t *testing.T) {
