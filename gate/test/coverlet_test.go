@@ -204,7 +204,6 @@ func (f *fixture) collectCoverage() {
 	// otherwise resolve run 1's local build. These are immutable public
 	// packages, so a cold restore on every run would cost CI minutes and prove
 	// nothing.
-	cmd.Env = append(os.Environ(), gitEnv...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		f.t.Fatalf("dotnet test --collect:\"XPlat Code Coverage\": %v\n%s", err, out)
 	}
@@ -226,7 +225,7 @@ func (f *fixture) collectCoverage() {
 		return nil
 	})
 	if err != nil {
-		f.t.Fatal(err)
+		f.t.Fatalf("walking %s for the cobertura report coverlet wrote: %v", f.root, err)
 	}
 	if len(reports) != 1 {
 		f.t.Fatalf("the collection left %d cobertura reports under %s, want exactly one: %v",
@@ -281,40 +280,41 @@ func (f *fixture) assertCoverletReportShape(path string) {
 	// assembly's own sources into the same document, so PointsTests.cs carrying
 	// a shape must not stand in for Points.cs losing it.
 	var classFilenames []string
-	var foundScoredClass, branchFalse, hitsAboveOne, everyClassLineRepeated bool
-	for _, class := range report.Classes {
+	var scored []int
+	for i, class := range report.Classes {
 		classFilenames = append(classFilenames, class.Filename)
-		if !strings.HasSuffix(class.Filename, scoredClassSuffix) {
-			continue
-		}
-		foundScoredClass = true
-		classLines := map[int]bool{}
-		for _, line := range class.Lines {
-			classLines[line.Number] = true
-			if line.Branch == "False" {
-				branchFalse = true
-			}
-			if line.Hits > 1 {
-				hitsAboveOne = true
-			}
-		}
-		methodLines := map[int]bool{}
-		for _, method := range class.Methods {
-			for _, line := range method.Lines {
-				methodLines[line.Number] = true
-			}
-		}
-		everyClassLineRepeated = len(classLines) > 0
-		for number := range classLines {
-			if !methodLines[number] {
-				everyClassLineRepeated = false
-			}
+		if strings.HasSuffix(class.Filename, scoredClassSuffix) {
+			scored = append(scored, i)
 		}
 	}
+	if len(scored) != 1 {
+		f.t.Fatalf("%s holds %d classes whose filename ends %s, want exactly one. None and the shape checks below would pass over a report that never scored the fixture's own source; more than one and a shape lost by one entry would be hidden by a sibling carrying it. Classes: %v",
+			path, len(scored), scoredClassSuffix, classFilenames)
+	}
 
-	if !foundScoredClass {
-		f.t.Fatalf("%s holds no class whose filename ends %s, so the shape checks below would pass over a report that never scored the fixture's own source. Classes: %v",
-			path, scoredClassSuffix, classFilenames)
+	class := report.Classes[scored[0]]
+	var branchFalse, hitsAboveOne bool
+	classLines := map[int]bool{}
+	for _, line := range class.Lines {
+		classLines[line.Number] = true
+		if line.Branch == "False" {
+			branchFalse = true
+		}
+		if line.Hits > 1 {
+			hitsAboveOne = true
+		}
+	}
+	methodLines := map[int]bool{}
+	for _, method := range class.Methods {
+		for _, line := range method.Lines {
+			methodLines[line.Number] = true
+		}
+	}
+	everyClassLineRepeated := len(classLines) > 0
+	for number := range classLines {
+		if !methodLines[number] {
+			everyClassLineRepeated = false
+		}
 	}
 
 	for _, shape := range []struct {

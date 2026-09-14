@@ -106,14 +106,14 @@ jobs:
           set -euo pipefail
           go test ./... -count=1 -v -timeout 12m | tee "$RUNNER_TEMP/gate-tests.txt"
           # One name per case in the suite's realExtractorCases list. The names
-          # are retyped here rather than read out of the Go source, and nothing
-          # checks that the two lists agree: what this loop catches is a name
-          # listed here that stopped reporting PASS, so a case added to
-          # realExtractorCases and not here goes unnoticed. Add it in both
-          # places. The pattern is anchored because Go's verbose output always
-          # follows the name with a space and a parenthesised duration, so an
-          # unanchored match would let a longer name that starts with this one
-          # stand in for it.
+          # are retyped here rather than read out of the Go source, so add a new
+          # case in both places. TestCIDeclaresThePassCheckStep parses this file
+          # and compares the names below to that slice, so the two cannot drift
+          # apart unnoticed; what this loop itself catches is a name listed here
+          # that stopped reporting PASS. The pattern is anchored because Go's
+          # verbose output always follows the name with a space and a
+          # parenthesised duration, so an unanchored match would let a longer
+          # name that starts with this one stand in for it.
           # Every missing name is collected and reported together, so one run
           # names the whole gap rather than the first case alphabetically.
           # grep's status is read rather than tested, because 1 is "no match"

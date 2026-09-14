@@ -107,10 +107,10 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 // per-case outcome lines the enforcement rows assert are both derived from it,
 // so adding a case here is the one edit that puts it under those rows. ci.yml
 // retypes the same names in the loop that greps the verbose log for each one's
-// PASS line, and it does not read them from here. Nothing checks that the two
-// lists agree, so a new case is added in both places by hand: CI going green
-// proves every name that loop retypes reported PASS, not that the loop covers
-// every name here.
+// PASS line, and it does not read them from here, so a new case is added in
+// both places by hand. TestCIDeclaresThePassCheckStep reads that loop's names
+// back out of the workflow and compares them to this slice, so a case added
+// here and not there reds rather than going unproven on CI.
 //
 // TestRequireDotnetDecidesTheFullStackOutcome makes a name listed here that no
 // case implements fail, because the name produces no SKIP block to read.
