@@ -2,14 +2,13 @@ package gate_test
 
 import (
 	"encoding/xml"
-	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/coverage"
+	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
 )
 
 // coverletFixtureFramework is the target framework both fixture projects
@@ -73,8 +72,6 @@ const (
 //
 // The ordering below is load-bearing, and each step says why.
 func TestFullStackScoresAReportCoverletWrote(t *testing.T) {
-	requireRealDotnet(t)
-
 	toolDir := installRealExtractor(t)
 
 	f := newFixture(t, "main")
@@ -219,38 +216,22 @@ func (f *fixture) collectCoverage() {
 	// an opaque golden diff, so the count is checked here where the cause can
 	// be named.
 	//
-	// The count is of the reports the gate would discover, not of every file
-	// whose name ends .cobertura.xml, so the name and the TestResults
-	// requirement come from the gate's own discovery rather than being retyped.
-	// A coverlet release that renames the report or writes it elsewhere then
-	// reds here, naming the cause, instead of leaving exactly one match for a
-	// guard the gate's walk disagrees with.
-	var reports []string
-	err = filepath.WalkDir(f.root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return fmt.Errorf("%s: %w", path, err)
-		}
-		if d.IsDir() || d.Name() != coverage.ReportName {
-			return nil
-		}
-		rel, err := filepath.Rel(f.root, path)
-		if err != nil {
-			return fmt.Errorf("%s: %w", path, err)
-		}
-		if coverage.UnderResultsDir(rel) {
-			reports = append(reports, path)
-		}
-		return nil
-	})
+	// The count is the gate's own discovery, run here rather than restated, so
+	// what this guard counts and what the gate later reads cannot disagree.
+	root, err := srcpath.NewRoot(f.root)
 	if err != nil {
-		f.t.Fatalf("walking %s for the cobertura report coverlet wrote: %v", f.root, err)
+		f.t.Fatal(err)
 	}
-	if len(reports) != 1 {
-		f.t.Fatalf("the collection left %d reports the gate would discover under %s, matching %s, want exactly one: %v\n%s",
-			len(reports), f.root, coverage.Glob, reports, out)
+	reports, skipped, err := coverage.Discover(root)
+	if err != nil {
+		f.t.Fatalf("discovering the cobertura report coverlet wrote under %s: %v", f.root, err)
+	}
+	if len(reports) != 1 || len(skipped) > 0 {
+		f.t.Fatalf("the collection left %d reports matching %s under %s and %d paths the walk could not read, want exactly one report and nothing skipped: %v %v\n%s",
+			len(reports), coverage.Glob, f.root, len(skipped), reports, skipped, out)
 	}
 
-	f.assertCoverletReportShape(reports[0], string(out))
+	f.assertCoverletReportShape(reports[0].Abs, string(out))
 }
 
 // scoredClassSuffix is how the one class the golden scores is found in the

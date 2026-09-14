@@ -154,9 +154,8 @@ var childCase = "^(" + strings.Join(realExtractorCases, "|") + ")$"
 
 // childOutcome is a result line a child test binary prints for one case, paired
 // with whether reaching it makes the child exit non-zero. The two travel
-// together because the exit status follows from the outcome, and only the two
-// values below exist, so a row cannot pair a spelling with the opposite
-// disposition and assert the reverse of what its table is for.
+// together so a row states the outcome once and no call site re-derives the
+// disposition from the spelling.
 type childOutcome struct {
 	line    string
 	wantErr bool
@@ -353,8 +352,6 @@ func childEnv(require string) []string {
 // TestFullStackScoresAReportCoverletWrote scores, which is why this case can
 // stay on a report it builds and keep its span numbers exact.
 func TestFullStackDrivesTheRealDotnetExtractor(t *testing.T) {
-	requireRealDotnet(t)
-
 	fullStackBinDir := installRealExtractor(t)
 
 	f := newFixture(t, "main")
