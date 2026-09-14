@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ciWorkflow is the path, relative to the gate module root, to the workflow
+// ciWorkflow is the path, relative to this package, to the workflow
 // that runs this suite. The file is a machine-consumed contract with GitHub
 // Actions, and the assertion below reads it as one: it unmarshals the YAML and
 // walks to the step that runs the suite rather than matching text against the

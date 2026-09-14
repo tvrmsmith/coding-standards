@@ -80,9 +80,9 @@ func TestFullStackScoresAReportCoverletWrote(t *testing.T) {
 	f.writeCoverletFixture()
 	f.commitAll("initial")
 
-	// The edit comes before the collection. A report written against the
-	// committed tree is older than the working-tree file the gate compares it
-	// to, and the gate correctly refuses that as coverage_stale.
+	// The edit comes before the collection. Collecting first would leave a
+	// report older than the working-tree file the gate compares it to, which
+	// the gate correctly refuses as coverage_stale.
 	f.appendComment("src/Points.cs", 7)
 	f.collectCoverage()
 
@@ -107,8 +107,8 @@ func (f *fixture) writeCoverletFixture() {
 	// Nothing in the asserted document depends on this. The gate's changed set
 	// comes from a diff against the base commit, which lists tracked paths
 	// only, so the build output under bin/ and obj/ could never reach it. The
-	// file is here so the fixture repo a reader lands in mid-debug reports a
-	// clean tree rather than pages of build output.
+	// file is here so the fixture repo a reader lands in mid-debug keeps
+	// pages of build output out of git status.
 	f.write(".gitignore", "bin/\nobj/\n")
 
 	// A hand-written solution file is what lets the case run the literal
