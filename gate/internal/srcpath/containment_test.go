@@ -323,6 +323,49 @@ func TestNamedRefusesAMisCasedRootPrefixARelativeNameClimbedOutTo(t *testing.T) 
 	assertRootSpellingRefusal(t, err, name)
 }
 
+// The same climb typed from a working directory that is a symlink out of the
+// repo, which is where reading the name two ways comes apart. The shell reports
+// the logical directory, so the climb pops "ln" and "repo" off the text and
+// lands on the mis-cased root, exactly as it does from any other directory one
+// level in. A walk that resolved each prefix before popping the parents would
+// leave through the link into the other tree instead and answer for a path the
+// gate never placed the file by. The link points deep enough into that tree
+// that popping two parents there reaches a directory with no root of any
+// spelling under it, which is what makes the two readings disagree.
+func TestNamedRefusesAMisCasedRootPrefixClimbedOutOfASymlinkedWorkingDirectory(t *testing.T) {
+	root := containmentRoot(t)
+	miscased := miscasedRoot(t, root)
+	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
+	elsewhere := mkdir(t, filepath.Join(filepath.Dir(root.Dir()), "other", "deep", "deeper"))
+	if err := os.Symlink(elsewhere, filepath.Join(root.Dir(), "ln")); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(filepath.Join(root.Dir(), "ln"))
+	assertFolds(t, root, filepath.Join(miscased, "src", "a.cs"))
+	name := filepath.Join("..", "..", filepath.Base(miscased), "src", "a.cs")
+
+	_, err := root.named(name, dirNames{})
+
+	assertRootSpellingRefusal(t, err, name)
+}
+
+// The same shape on a case-sensitive filesystem, so the merge gate runs it.
+func TestNamedRefusesACaseDifferingRootSpellingClimbedOutOfASymlinkedWorkingDirectory(t *testing.T) {
+	root, real := symlinkedMiscasedRoot(t)
+	touch(t, filepath.Join(real, "src", "a.cs"))
+	elsewhere := mkdir(t, filepath.Join(filepath.Dir(real), "other", "deep", "deeper"))
+	if err := os.Symlink(elsewhere, filepath.Join(real, "ln")); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(filepath.Join(real, "ln"))
+	assertFolds(t, root, filepath.Join(real, "src", "a.cs"))
+	name := filepath.Join("..", "..", filepath.Base(real), "src", "a.cs")
+
+	_, err := root.named(name, dirNames{})
+
+	assertRootSpellingRefusal(t, err, name)
+}
+
 // The same refusal reached by a name that opens with a component rather than
 // with "..", so the climb only exists once filepath.Clean has folded it into a
 // leading parent. The developer's text is longer than the path it reaches, and

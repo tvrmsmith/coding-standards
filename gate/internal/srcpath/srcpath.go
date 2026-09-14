@@ -29,9 +29,10 @@
 // does not use, because such a path is one the developer typed and can retype,
 // and telling them which half is misspelled is the whole of issue 48. The rule
 // covers every component of the root prefix they spelled, not the root's last
-// word alone. The gate walks the prefixes of their text and asks the filesystem
-// which directory each one reaches, so the word blamed is always one they
-// wrote and one the root prefix names. A mis-case the
+// word alone. The gate walks the prefixes of the path it resolved the name by,
+// starting at the first component their own text contributed, and asks the
+// filesystem which directory each one reaches, so the word blamed is always one
+// they wrote and one the root prefix names. A mis-case the
 // working directory supplied, or one a symlink's stored target supplied, is
 // accepted rather than blamed on a half that is not in the string and that no
 // retyping of the name can clear.
@@ -503,9 +504,10 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // its climb starts from, or the target text a symlink in it resolves to, and
 // refusing for a mis-case there would quote a name and blame a half of it that
 // is not in the string they typed and cannot be retyped, no matter how the name
-// is written. typedTheRootPrefix separates the two by walking their text a
-// prefix at a time and resolving each prefix, so every word of the root's own
-// name that they spelled is weighed and nothing else is. The fold is accepted
+// is written. typedTheRootPrefix separates the two by walking the path named
+// built a prefix at a time, from the first component their own text
+// contributed, so every word of the root's own name that they spelled is
+// weighed and nothing else is. The fold is accepted
 // for the rest, and the name goes on to
 // spelledAsOnDisk, which walks every component below the root against the tree's
 // own entries, so nothing is matched approximately for having taken that road.
@@ -562,7 +564,7 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 	if !info.Mode().IsRegular() {
 		return "", &UnresolvedError{Name: name, Reason: "is not a regular file"}
 	}
-	if place == folded && r.typedTheRootPrefix(cwd, name) {
+	if place == folded && r.typedTheRootPrefix(candidate, firstTypedComponent(cwd, name)) {
 		return "", &UnresolvedError{Name: name, Reason: "is not spelled as the repo root is"}
 	}
 	spelled, err := r.spelledAsOnDisk(filepath.FromSlash(string(rel)), dirs)
@@ -582,10 +584,17 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 // --files /u/t/DEV/repo/src/a.cs against a root of /u/t/dev/repo is blamed on
 // DEV (ADR 0004).
 //
-// It walks the prefixes of their text, shallowest first, and resolves each one.
-// For a relative name the walk starts at the working directory and only their
-// own words extend it, so a directory the shell cd'd through is never examined
-// and a mis-case up there is never blamed on a string that does not carry it.
+// It walks the prefixes of candidate, the lexical path named already built and
+// placed the file by, shallowest first, and resolves each one. Walking that
+// path rather than the raw typed string is what keeps the two readings of one
+// name together: filepath.Join collapsed every ".." against the working
+// directory before any link was resolved, and a walk that resolved first and
+// popped afterwards would climb out of a symlinked working directory into
+// another tree and answer for a path named never weighed. Only components from
+// typed onward are the developer's own, so a directory the shell cd'd through
+// is never examined and a mis-case up there is never blamed on a string that
+// does not carry it.
+//
 // Every comparison is made on the resolved side, where the component count is
 // the root's own and no symlink can shift it. A prefix that reaches anywhere
 // other than one of the root's own directories is passed over rather than
@@ -603,39 +612,49 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 // Resolving is what counting cannot do. A symlink anywhere in the text adds or
 // drops components, above the root or below it, so no arithmetic over the
 // resolved candidate says which word of theirs produced which part of it. A
-// ".." extends the walk without naming anything and is never weighed, and a
-// prefix the filesystem will not resolve names nothing either.
-func (r Root) typedTheRootPrefix(cwd, name string) bool {
+// prefix the filesystem will not resolve names nothing and is passed over too.
+func (r Root) typedTheRootPrefix(candidate string, typed int) bool {
 	sep := string(filepath.Separator)
-	typed := filepath.FromSlash(name)
-	volume := filepath.VolumeName(typed)
-	prefix := cwd
-	if filepath.IsAbs(typed) {
-		prefix = volume + sep
-	}
+	components := pathComponents(filepath.Clean(candidate))
 	rootComponents := pathComponents(r.resolved)
-	for _, word := range strings.Split(strings.TrimPrefix(typed, volume), sep) {
-		if word == "" || word == "." {
+	for i := typed; i < len(components); i++ {
+		word := components[i]
+		if word == "" {
 			continue
 		}
-		prefix = strings.TrimSuffix(prefix, sep) + sep + word
-		if word == ".." {
-			continue
-		}
-		reached, err := filepath.EvalSymlinks(prefix)
+		reached, err := filepath.EvalSymlinks(strings.Join(components[:i+1], sep))
 		if err != nil {
 			continue
 		}
-		components := pathComponents(reached)
-		if !namesTheRootPrefix(components, rootComponents) {
+		prefix := pathComponents(reached)
+		if !namesTheRootPrefix(prefix, rootComponents) {
 			continue
 		}
-		last := len(components) - 1
-		if components[last] == word && word != rootComponents[last] {
+		last := len(prefix) - 1
+		if prefix[last] == word && word != rootComponents[last] {
 			return true
 		}
 	}
 	return false
+}
+
+// firstTypedComponent gives the index in named's lexical candidate of the first
+// component the developer's own text contributed. An absolute name contributes
+// all of them. A relative one contributes everything past the working directory
+// less the parents its text climbed, which is exact because filepath.Join
+// collapsed those parents against the working directory lexically, one for one.
+// The count is taken on that lexical pair alone and never on a resolved path,
+// so no symlink can shift it.
+func firstTypedComponent(cwd, name string) int {
+	if cwd == "" {
+		return 0
+	}
+	typed := pathComponents(filepath.Clean(filepath.FromSlash(name)))
+	parents := 0
+	for parents < len(typed) && typed[parents] == ".." {
+		parents++
+	}
+	return max(len(pathComponents(cwd))-parents, 0)
 }
 
 // namesTheRootPrefix reports whether a resolved prefix is one of the
