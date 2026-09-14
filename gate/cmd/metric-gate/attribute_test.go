@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/coverage"
+	"github.com/tvrmsmith/coding-standards/gate/internal/crap"
 	"github.com/tvrmsmith/coding-standards/gate/internal/extract"
 	"github.com/tvrmsmith/coding-standards/gate/internal/metric"
 	"github.com/tvrmsmith/coding-standards/gate/internal/report"
@@ -21,6 +22,11 @@ var (
 	}
 	coveredLines = coverage.Set{
 		cancelSpan.File: coverage.Lines{10: true, 12: true, 15: true, 20: true},
+	}
+	// uncoveredLines instruments the same four lines and records a hit on
+	// none, so cancelSpan measures at coverage 0 and scores 20.
+	uncoveredLines = coverage.Set{
+		cancelSpan.File: coverage.Lines{10: false, 12: false, 15: false, 20: false},
 	}
 )
 
@@ -100,6 +106,48 @@ func TestOneUnattributableMethodCountsOnceWhateverIsSelected(t *testing.T) {
 		if len(m.Rows) != 1 || m.Rows[0].State != report.StateUnknown {
 			t.Errorf("metrics[%d] (%s) rows = %+v, want one unknown row", i, m.Name, m.Rows)
 		}
+	}
+}
+
+// TestOneMethodIsJudgedAtEachSelectionsOwnBar is why rowFor takes a selection
+// rather than a bare threshold: one method, one score, two verdicts. The score
+// is a property of the method and must not move between the entries, while the
+// action, the target and the failure count are readings of that score against
+// a bar and must.
+func TestOneMethodIsJudgedAtEachSelectionsOwnBar(t *testing.T) {
+	selected := []metric.Selection{declaresCoverage, declaresCoverageToo}
+
+	metrics, unknown := attribute(selected, extract.Result{Spans: []extract.Span{cancelSpan}}, []extract.Span{cancelSpan}, uncoveredLines, true)
+
+	if unknown != 0 {
+		t.Fatalf("unknown = %d, want 0: the method measured at coverage 0", unknown)
+	}
+	if len(metrics) != 2 || len(metrics[0].Rows) != 1 || len(metrics[1].Rows) != 1 {
+		t.Fatalf("metrics = %+v, want two entries holding one row each", metrics)
+	}
+	loose, tight := metrics[0].Rows[0], metrics[1].Rows[0]
+
+	if loose.Score == nil || tight.Score == nil || *loose.Score != 20 || *tight.Score != 20 {
+		t.Fatalf("scores = %v and %v, want 20 for both: the bar does not move the score",
+			loose.Score, tight.Score)
+	}
+	if loose.Action != crap.ActionNone || loose.TargetCoverage != nil {
+		t.Errorf("at bar %d: action = %q, target = %v, want %q and nil",
+			declaresCoverage.Threshold, loose.Action, loose.TargetCoverage, crap.ActionNone)
+	}
+	if tight.Action != crap.ActionRaiseCoverage || tight.TargetCoverage == nil || *tight.TargetCoverage != 0.207 {
+		t.Errorf("at bar %d: action = %q, target = %v, want %q and 0.207",
+			declaresCoverageToo.Threshold, tight.Action, tight.TargetCoverage, crap.ActionRaiseCoverage)
+	}
+	if metrics[0].Failed() != 0 || metrics[1].Failed() != 1 {
+		t.Errorf("failed = %d and %d, want 0 and 1: the same method clears one bar and not the other",
+			metrics[0].Failed(), metrics[1].Failed())
+	}
+	// One metric failing fails the run, so the document exits 2 rather than
+	// reading only the entry that passed.
+	doc := report.Document{ChangedMethods: 1, Metrics: metrics}
+	if code := doc.ExitCode(); code != 2 {
+		t.Errorf("ExitCode() = %d, want 2", code)
 	}
 }
 

@@ -23,9 +23,13 @@ var (
 		Definition: metric.Definition{Name: "declares", Display: "DECLARES", Inputs: []metric.Input{metric.InputCoverage}},
 		Threshold:  30,
 	}
+	// declaresCoverageToo sits at a tighter bar than declaresCoverage on
+	// purpose: 20, the score of the method the attribution cases use, falls
+	// between the two, so a run scoring every metric at one bar shows up as a
+	// verdict that stopped diverging.
 	declaresCoverageToo = metric.Selection{
 		Definition: metric.Definition{Name: "declares-too", Display: "DECLARES-TOO", Inputs: []metric.Input{metric.InputCoverage}},
-		Threshold:  30,
+		Threshold:  12,
 	}
 	declaresNothing = metric.Selection{
 		Definition: metric.Definition{Name: "declares-nothing", Display: "DECLARES-NOTHING"},
