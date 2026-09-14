@@ -52,9 +52,10 @@ rather than prose", which requires both cells to be typed and never says what th
 one of `raise_coverage`, `split_method` or `none`. `target_coverage` is the coverage that would
 bring the method under the threshold at its current complexity, and it is `null` on every row whose
 `action` is not `raise_coverage`; `internal/crap` owns the arithmetic and the direction it rounds.
-On a measured row, `split_method` is emitted exactly when complexity exceeds the threshold, because
-at full coverage CRAP reduces to complexity and no test can rescue the method. An `unknown` row
-carries `none` whatever its complexity, since the join produced no score to act on. ADR 0005 fixed
+On a scored row, `measured` or `structural_na`, `split_method` is emitted exactly when complexity
+exceeds the threshold, because at full coverage CRAP reduces to complexity and no test can rescue
+the method. An `unknown` row carries `none` whatever its complexity, since the join produced no
+score to act on. ADR 0005 fixed
 this enumeration and this file lost it in consolidation, while `internal/crap` still emits the
 tokens and `gate/test/golden` still pins them. Adding a token is a contract change and edits this
 paragraph on the same commit, the same way adding a cause edits the `error.code` list in
