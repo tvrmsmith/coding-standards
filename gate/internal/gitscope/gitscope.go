@@ -96,19 +96,20 @@ func (b Base) Label() string { return b.Ref + "@" + b.Commit[:7] }
 
 // NoBaseError reports that the run has no commit to diff against: none of
 // ADR 0007's candidates resolved, --since named a ref that does not resolve to
-// a commit or resolves to one sharing no history with HEAD, or --staged found no
-// HEAD to diff the index against. The message points at --since, issue 14's
-// flag, per ADR 0007, except when the branch has no commit or --since is itself
-// what failed, whether the ref did not resolve, resolved to something other than
-// a commit, or resolved to a commit sharing no history with HEAD. Naming the
-// flag again in any of those tells the caller nothing new.
+// a commit or resolves to one sharing no history with HEAD, or the branch
+// carries no commit for a resolver's HEAD check to find. The message points at
+// --since, issue 14's flag, per ADR 0007, except when the branch has no commit
+// or --since is itself what failed, whether the ref did not resolve, resolved to
+// something other than a commit, or resolved to a commit sharing no history with
+// HEAD. Naming the flag again in any of those tells the caller nothing new.
 //
 // Those first two were one arm until issue 68. The `^{commit}` peel that
 // checked the ref exited 1 both on a ref the repo does not carry and on a
 // lightweight tag over a tree, so "did not resolve" covered the pair. Verifying
-// unpeeled and typing the resolved id with objectType splits them into two
-// exits, and the sentence above names all three because the struct carries a
-// field for the third.
+// unpeeled and typing the resolved id with objectType tells them apart: the ref
+// the repo does not carry is rev-parse's exit 1, and the tag over a tree is the
+// type objectType answers with at exit 0. The sentence above names all three
+// because the struct carries a field for the third.
 type NoBaseError struct {
 	// Ref is the ref --since named. It is empty when the default candidates
 	// are what failed, and empty whenever NoCommits is true, which every
