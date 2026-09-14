@@ -24,10 +24,9 @@ const Threshold = 30
 // message names the metric rather than the file.
 var DeclaredInputs = []string{"coverage"}
 
-// The two fix instructions and their absence. ADR 0008 requires action to be a
-// typed cell rather than prose; the raise_coverage, split_method and none
-// spelling is in ADR 0005, the superseded record 0008 consolidates; issue 65
-// tracks enumerating those tokens in 0008, which would retire the citation.
+// The two fix instructions and their absence, as ADR 0008 types them. It
+// requires action to be a typed cell rather than prose, and its 2026-09-14
+// amendment enumerates these three tokens.
 const (
 	ActionSplitMethod   = "split_method"
 	ActionRaiseCoverage = "raise_coverage"
