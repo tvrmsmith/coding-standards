@@ -4,7 +4,6 @@ import (
 	"encoding/xml"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -199,9 +198,7 @@ public class PointsTests
 // the document.
 func (f *fixture) collectCoverage() {
 	f.t.Helper()
-	requireRealDotnet(f.t)
-	cmd := exec.Command("dotnet", "test", "--collect:XPlat Code Coverage")
-	cmd.Dir = f.root
+	cmd := dotnetCmd(f.t, f.root, "test", "--collect:XPlat Code Coverage")
 	// The restore uses the machine's ordinary NuGet cache rather than the
 	// throwaway NUGET_PACKAGES installRealExtractor sets up. That isolation
 	// exists because the tool project pins one version forever and would

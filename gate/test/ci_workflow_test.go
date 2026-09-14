@@ -31,6 +31,26 @@ const gateJob = "gate"
 // long as it still judges the log the same way.
 const passCheckStep = "Run the gate suite and prove the full-stack cases ran"
 
+// gateWorkingDir is the directory the step declares, relative to the repository
+// root. `go test ./...` selects this module's packages only because it runs
+// there.
+const gateWorkingDir = "gate"
+
+// passCheckGuard is the if: the step carries. Everything below runs the script
+// directly, so nothing else here would notice the step being gated off or
+// falsified. Comparing against the whole expression rather than sweeping the
+// job's conditions is what makes `if: false` red and an unrelated new step
+// carrying its own condition harmless.
+const passCheckGuard = "${{ !cancelled() && steps.setup.outcome == 'success' }}"
+
+// passCheckStepSpec is the part of the step this file replays: the script, the
+// directory it declares, and the environment it declares.
+type passCheckStepSpec struct {
+	run     string
+	workDir string
+	env     map[string]string
+}
+
 // TestCIPassCheckRedsTheJob runs the gate job's step out of ci.yml under bash,
 // so what is under test is what the check does rather than which tokens its
 // script contains. The runner's side of the contract is supplied here: bash,
@@ -44,7 +64,7 @@ const passCheckStep = "Run the gate suite and prove the full-stack cases ran"
 // names in realExtractorCases has to pass, which is what a check still waiting
 // on a renamed or deleted case would not.
 func TestCIPassCheckRedsTheJob(t *testing.T) {
-	script := passCheckScript(t)
+	step := loadPassCheckStep(t)
 
 	// Every red-path row below is generated from realExtractorCases, so an
 	// emptied slice would leave this case asserting only that a green log
@@ -54,7 +74,7 @@ func TestCIPassCheckRedsTheJob(t *testing.T) {
 	}
 
 	t.Run("every case reported PASS, so the check lets the job through", func(t *testing.T) {
-		assertPassCheck(t, script, verboseLog(realExtractorCases), 0, 0, nil)
+		assertPassCheck(t, step, verboseLog(realExtractorCases), 0, 0, nil)
 	})
 
 	// A log naming nothing has to red. That is what proves the check's own list
@@ -62,7 +82,7 @@ func TestCIPassCheckRedsTheJob(t *testing.T) {
 	// a check that demanded no names at all would pass every other red row's
 	// input too.
 	t.Run("a log naming no case at all reds the job", func(t *testing.T) {
-		assertPassCheck(t, script, verboseLog(nil), 0, 1, nil)
+		assertPassCheck(t, step, verboseLog(nil), 0, 1, nil)
 	})
 
 	for i, name := range realExtractorCases {
@@ -71,17 +91,17 @@ func TestCIPassCheckRedsTheJob(t *testing.T) {
 		renamed[i] += "Twice"
 
 		t.Run(name+"/no PASS line reds the job and is named", func(t *testing.T) {
-			assertPassCheck(t, script, verboseLog(withheld), 0, 1, []string{name})
+			assertPassCheck(t, step, verboseLog(withheld), 0, 1, []string{name})
 		})
 		t.Run(name+"/a longer name that starts with it does not stand in for it", func(t *testing.T) {
-			assertPassCheck(t, script, verboseLog(renamed), 0, 1, []string{name})
+			assertPassCheck(t, step, verboseLog(renamed), 0, 1, []string{name})
 		})
 		// A case that ran and skipped is the outcome the whole mechanism exists
 		// to catch: enforcement off, or the env key drifted, and the suite still
 		// reports ok. It prints a RUN line like a passing case does, so a check
 		// keyed on RUN rather than on the result line would let it through.
 		t.Run(name+"/a case that ran and skipped reds the job and is named", func(t *testing.T) {
-			assertPassCheck(t, script, skippedLog(realExtractorCases, name), 0, 1, []string{name})
+			assertPassCheck(t, step, skippedLog(realExtractorCases, name), 0, 1, []string{name})
 		})
 	}
 
@@ -90,7 +110,7 @@ func TestCIPassCheckRedsTheJob(t *testing.T) {
 	// pipeline, which is the mechanism under test here, and an exit 1 would be
 	// indistinguishable from the PASS loop's own failure path.
 	t.Run("a failing test run reds the job even with every PASS line present", func(t *testing.T) {
-		assertPassCheck(t, script, verboseLog(realExtractorCases), 2, 2, nil)
+		assertPassCheck(t, step, verboseLog(realExtractorCases), 2, 2, nil)
 	})
 }
 
@@ -99,10 +119,10 @@ func TestCIPassCheckRedsTheJob(t *testing.T) {
 // than a bare pass or fail is what keeps bash missing from PATH, or the script
 // dying before the PASS loop, from standing in for the loop's own `exit 1`.
 // wantExit 0 is the job going through.
-func assertPassCheck(t *testing.T, script, log string, goExit, wantExit int, names []string) {
+func assertPassCheck(t *testing.T, step passCheckStepSpec, log string, goExit, wantExit int, names []string) {
 	t.Helper()
 
-	stdout, stderr, err := runPassCheck(t, script, log, goExit)
+	stdout, stderr, err := runPassCheck(t, step, log, goExit)
 	out := fmt.Sprintf("stdout:\n%s\nstderr:\n%s", stdout, stderr)
 
 	if wantExit == 0 {
@@ -161,7 +181,7 @@ func caseLog(names []string, skipped string) string {
 // on PATH that replays log and exits goExit. It returns both of the script's
 // streams, stderr being where the check reports a case that did not run and
 // stdout the tee'd log it judged, together with its exit error.
-func runPassCheck(t *testing.T, script, log string, goExit int) (string, string, error) {
+func runPassCheck(t *testing.T, step passCheckStepSpec, log string, goExit int) (string, string, error) {
 	t.Helper()
 
 	runnerTemp := t.TempDir()
@@ -176,9 +196,18 @@ func runPassCheck(t *testing.T, script, log string, goExit int) (string, string,
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command("bash", "-c", script)
+	cmd := exec.Command("bash", "-c", step.run)
+	// The script's own working directory is asserted rather than reproduced: a
+	// stub `go` reads nothing off disk, so a checkout here would prove nothing
+	// the loader's check does not already.
 	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(),
+	// The step's declared env goes on first and the runner's side of the
+	// contract after it, so PATH and RUNNER_TEMP stay this case's to set.
+	cmd.Env = os.Environ()
+	for _, key := range slices.Sorted(maps.Keys(step.env)) {
+		cmd.Env = append(cmd.Env, key+"="+step.env[key])
+	}
+	cmd.Env = append(cmd.Env,
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"RUNNER_TEMP="+runnerTemp)
 	var stdout, stderr strings.Builder
@@ -188,12 +217,14 @@ func runPassCheck(t *testing.T, script, log string, goExit int) (string, string,
 	return stdout.String(), stderr.String(), err
 }
 
-// passCheckScript is the run script of the gate job's PASS check step, found
-// by the step's name rather than by anything in its body. It fails the test
-// rather than returning empty when the job or the step cannot be found, so a
-// workflow restructure reds here instead of leaving the assertions above with
-// nothing to say.
-func passCheckScript(t *testing.T) string {
+// loadPassCheckStep is the gate job's PASS check step, found by the step's name
+// rather than by anything in its body. It fails the test rather than returning
+// a zero value when the job or the step cannot be found, so a workflow
+// restructure reds here instead of leaving the assertions above with nothing to
+// say. The declared guard, working directory and environment are checked here
+// too, because the replay below supplies its own runner and would not notice
+// any of the three drifting.
+func loadPassCheckStep(t *testing.T) passCheckStepSpec {
 	t.Helper()
 
 	body, err := os.ReadFile(ciWorkflow)
@@ -204,9 +235,11 @@ func passCheckScript(t *testing.T) string {
 	var workflow struct {
 		Jobs map[string]struct {
 			Steps []struct {
-				Name string `yaml:"name"`
-				Run  string `yaml:"run"`
-				If   string `yaml:"if"`
+				Name             string            `yaml:"name"`
+				Run              string            `yaml:"run"`
+				If               string            `yaml:"if"`
+				WorkingDirectory string            `yaml:"working-directory"`
+				Env              map[string]string `yaml:"env"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
@@ -219,34 +252,43 @@ func passCheckScript(t *testing.T) string {
 		t.Fatalf("%s declares no %q job, so this case cannot find the step that runs the suite", ciWorkflow, gateJob)
 	}
 
-	var found []string
-	var passCheckIf string
-	conditions := map[string]bool{}
+	var found []passCheckStepSpec
+	var guard string
 	for _, step := range job.Steps {
-		if step.If != "" {
-			conditions[step.If] = true
+		if step.Name != passCheckStep {
+			continue
 		}
-		if step.Name == passCheckStep {
-			found = append(found, step.Run)
-			passCheckIf = step.If
-		}
+		guard = step.If
+		found = append(found, passCheckStepSpec{run: step.Run, workDir: step.WorkingDirectory, env: step.Env})
 	}
 	if len(found) != 1 {
 		t.Fatalf("%s: the %q job holds %d steps named %q, want exactly one",
 			ciWorkflow, gateJob, len(found), passCheckStep)
 	}
+	step := found[0]
 
-	// Everything below runs the script directly, so nothing else here would
-	// notice the step being gated off. A condition the step does not share with
-	// its siblings is the check quietly ceasing to run while every assertion
-	// stays green.
-	if passCheckIf == "" {
-		t.Fatalf("%s: the %q step carries no if:, so it no longer shares its siblings' guard %v",
-			ciWorkflow, passCheckStep, slices.Sorted(maps.Keys(conditions)))
+	if guard != passCheckGuard {
+		t.Fatalf("%s: the %q step carries if: %q, want %q. Any other expression is the check running when it should not or, worse, quietly not running while every row below stays green",
+			ciWorkflow, passCheckStep, guard, passCheckGuard)
 	}
-	if len(conditions) != 1 {
-		t.Fatalf("%s: the %q job's gated steps carry %d distinct if: conditions, want one they all share: %v",
-			ciWorkflow, gateJob, len(conditions), slices.Sorted(maps.Keys(conditions)))
+	if step.workDir != gateWorkingDir {
+		t.Fatalf("%s: the %q step declares working-directory %q, want %q, which is where its `go test ./...` selects this module",
+			ciWorkflow, passCheckStep, step.workDir, gateWorkingDir)
 	}
-	return found[0]
+
+	// The env key is read through the suite's own parser rather than compared
+	// to a literal, so the workflow and the suite agree on what enables
+	// enforcement. Without it both real-toolchain cases skip and the PASS loop
+	// reds for the wrong reason.
+	raw, set := step.env[envRequireDotnet]
+	switch enforce, err := requireDotnet(raw, set); {
+	case err != nil:
+		t.Fatalf("%s: the %q step sets %s=%q, which this suite rejects: %v",
+			ciWorkflow, passCheckStep, envRequireDotnet, raw, err)
+	case !enforce:
+		t.Fatalf("%s: the %q step does not set %s to a value that enables enforcement, so both real-toolchain cases would skip",
+			ciWorkflow, passCheckStep, envRequireDotnet)
+	}
+
+	return step
 }

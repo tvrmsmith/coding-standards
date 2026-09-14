@@ -121,20 +121,63 @@ var realExtractorCases = []string{
 	"TestFullStackScoresAReportCoverletWrote",
 }
 
+// listedRealExtractorCase reports whether testName belongs to a case
+// realExtractorCases names. A case that wraps the collection in t.Run passes
+// the subtest's T, and it inherits its parent's listing rather than being told
+// to list the subtest, so only the part before the first slash is matched.
+func listedRealExtractorCase(testName string) bool {
+	name, _, _ := strings.Cut(testName, "/")
+	return slices.Contains(realExtractorCases, name)
+}
+
+// TestListedRealExtractorCase drives both branches of the predicate
+// requireRealDotnet decides on. Every call site in the suite is a listed case,
+// so without these rows an inverted or deleted check would fire nowhere and the
+// suite would stay green.
+func TestListedRealExtractorCase(t *testing.T) {
+	if len(realExtractorCases) == 0 {
+		t.Fatal("realExtractorCases is empty, so every row below is vacuous")
+	}
+
+	type row struct {
+		name string
+		want bool
+	}
+	cases := []row{
+		{"TestSomeCaseNobodyListed", false},
+		{"", false},
+	}
+	for _, listed := range realExtractorCases {
+		cases = append(cases,
+			row{listed, true},
+			row{listed + "/collects coverage", true},
+			row{listed + "Twice", false},
+		)
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := listedRealExtractorCase(c.name); got != c.want {
+				t.Errorf("listedRealExtractorCase(%q) = %v, want %v", c.name, got, c.want)
+			}
+		})
+	}
+}
+
 // requireRealDotnet is the one decision standing between a case and the real
 // dotnet toolchain, and every entry point that drives the toolchain calls it
-// itself, so reaching dotnet without it is not expressible. It decides two
-// things. The case has to be listed in realExtractorCases, or CI never proves
-// it ran and the enforcement rows never assert its routes. Then the run has to
-// say it means to drive the toolchain: one that does reds on a machine that
-// cannot serve it, one that does not skips before the first dotnet call.
-// Nothing here reads the machine, and calling it twice decides the same way.
+// itself, so reaching dotnet without it is not expressible: dotnetCmd is the
+// only place in the package that builds a dotnet invocation, and it calls this.
+// It decides two things. The case has to be listed in realExtractorCases, or CI
+// never proves it ran and the enforcement rows never assert its routes. Then
+// the run has to say it means to drive the toolchain: one that does reds on a
+// machine that cannot serve it, one that does not skips before the first dotnet
+// call. Nothing here reads the machine, and calling it twice decides the same
+// way.
 func requireRealDotnet(t *testing.T) {
 	t.Helper()
-	// A case that wraps the collection in t.Run passes the subtest's T, and it
-	// inherits its parent's listing rather than being told to list the subtest.
-	name, _, _ := strings.Cut(t.Name(), "/")
-	if !slices.Contains(realExtractorCases, name) {
+	if !listedRealExtractorCase(t.Name()) {
+		name, _, _ := strings.Cut(t.Name(), "/")
 		t.Fatalf("%s drives the real dotnet toolchain but realExtractorCases does not name it. Add %q to that slice and to ci.yml's PASS loop, or the case runs dotnet with CI never proving it ran",
 			t.Name(), name)
 	}
@@ -144,6 +187,18 @@ func requireRealDotnet(t *testing.T) {
 	if testing.Short() {
 		t.Fatalf("%s=1 forbids skipping: %s", envRequireDotnet, reasonShort)
 	}
+}
+
+// dotnetCmd is the only place this package builds a dotnet invocation, which is
+// what turns requireRealDotnet from a convention every caller has to remember
+// into the one route to the toolchain. A new call site reaches dotnet through
+// here or not at all, and here has already decided.
+func dotnetCmd(t *testing.T, dir string, args ...string) *exec.Cmd {
+	t.Helper()
+	requireRealDotnet(t)
+	cmd := exec.Command("dotnet", args...)
+	cmd.Dir = dir
+	return cmd
 }
 
 // childCase selects those cases in a child and nothing else. Widening this
@@ -389,8 +444,7 @@ func installRealExtractor(t *testing.T) string {
 	// developer packing by hand. Every path handed to them is absolute for
 	// that reason: the working directory is the pin's, not this package's.
 	dotnet := func(args ...string) *exec.Cmd {
-		cmd := exec.Command("dotnet", args...)
-		cmd.Dir = dotnetDir
+		cmd := dotnetCmd(t, dotnetDir, args...)
 		cmd.Env = append(os.Environ(), "NUGET_PACKAGES="+nugetPackages)
 		return cmd
 	}
