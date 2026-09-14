@@ -7,19 +7,21 @@ so nothing this harness installs may appear in `git status` or in a teammate's c
 ```sh
 harness/bootstrap ts     ~/dev/target-monorepo
 harness/bootstrap dotnet ~/dev/target-monorepo
+harness/bootstrap go     ~/dev/target-monorepo
 ```
 
 Everything lands either outside the repo (`~/.config/coding-standards`, a symlink to this
-directory; `~/.config/coding-standards.props`; `~/.zshenv.local`) or in a path git ignores
+directory; `~/.config/coding-standards.props`; `~/.config/coding-standards-go-repos`;
+`~/.zshenv.local`) or in a path git ignores
 (`.git/hooks/pre-commit`, and a `.vscode/settings.json` covered by `.gitignore` or
 `.git/info/exclude`). `bootstrap` refuses to touch a tracked file, stages nothing, installs
 nothing into the target's `package.json` or lockfile, and prints `git status --short` when it
-finishes so you can see it stayed out of the way. The `dotnet` half writes nothing inside the
-repo at all except the hook — the analyzers arrive through an MSBuild property, so there is no
-editor file to place.
+finishes so you can see it stayed out of the way. The `dotnet` and `go` halves write nothing
+inside the repo at all except the hook — the analyzers arrive through an MSBuild property and
+the Go rules are compiled into a binary outside it, so there is no editor file to place.
 
-Run it once per language you want in a repo; the two share the config symlink and the hook, and
-neither undoes the other.
+Run it once per language you want in a repo; all three share the config symlink and the hook,
+and none undoes the others.
 
 Rerun it any time — it is idempotent, and re-running is how you pick up new rules.
 
@@ -37,9 +39,10 @@ plugins `base.js` imports.
 | `eslint-layer.js` | Loads the package's own ESLint config, spreads the personal preset after it. The layering, and the typed-layer gate. |
 | `lint-changed.sh` | Lints changed `.ts`/`.tsx` only, each through its own package's ESLint binary. |
 | `lint-changed-dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs`, filters the diagnostics down to those files. |
-| `hooks/pre-commit` | Template for the installed hook. The enforcement gate. One template, two branches, each self-gating. |
+| `lint-changed-go.sh` | The Go counterpart: runs the personal golangci-lint binary over the packages owning the changed `.go`, filters down to those files. |
+| `hooks/pre-commit` | Template for the installed hook. The enforcement gate. One template, three branches, each self-gating. |
 | `write-vscode-settings.mjs` | The editor half — points the extension at `eslint-layer.js`, so typing sees what committing sees. TypeScript only. |
-| `bootstrap` | Installs all of the above into one repo, per language: `ts` or `dotnet`. |
+| `bootstrap` | Installs all of the above into one repo, per language: `ts`, `dotnet` or `go`. |
 
 ## Two layers, different jobs
 
@@ -98,6 +101,26 @@ Four things about it that are not obvious:
 Findings on the .NET side **report and never block**: every id the injection delivers is a
 warning by design, because no build that succeeded before adoption may start failing. Compile
 errors still block, as on the TypeScript side.
+
+## The Go half
+
+One binary and one config file, both outside the target. `go/build.sh` compiles the custom
+analyzers into a golangci-lint binary, `bootstrap go` builds it and `lint-changed-go.sh` runs it
+with `--config` pointed at the hub's `go/golangci.yml`, so a repo with its own `.golangci.yml`
+keeps it untouched — the personal layer is a separate run, not a merge.
+
+Three things about it differ from the other two:
+
+- **A registry file decides which repos are adopted.** `~/.config/coding-standards-go-repos`
+  holds one resolved repo path per line. The other halves can read adoption off something that
+  already exists — an ESLint config in the package, a path-scoped `Import` in the props file —
+  but the Go side installs nothing in the target and its binary is machine-wide, so without the
+  registry, bootstrapping one repo would silently start linting every other repo the hook
+  guards.
+- **Findings report and never block**, the same position the .NET half is in and for the same
+  reason. `--issues-exit-code=0` makes that explicit, which also means a non-zero exit is
+  unambiguous: the run itself broke.
+- **There is no editor half yet.** The hook is the whole gate.
 
 ## Worktrees
 

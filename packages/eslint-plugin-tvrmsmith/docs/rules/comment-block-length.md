@@ -3,10 +3,13 @@
 Limit how many lines one run of non-documentation comments may span.
 
 **Guideline:** *Comments* — [`coding-standards/SKILL.md`](../../../../plugins/coding-standards/skills/coding-standards/SKILL.md#comments),
-"a paragraph justifying a workaround means the code is wrong". No off-the-shelf rule exists
-in either language: StyleCop has no length rule at all, Sonar's `S103` and `@stylistic/max-len`
-cap a *line* rather than a comment, and `sonarjs/comment-regex` allows only one pattern per
-config. The C# half is the `CommentBlockLengthAnalyzer` Roslyn analyzer (TVRM0006).
+"a paragraph justifying a workaround means the code is wrong". No off-the-shelf rule exists in
+any of the three languages: StyleCop has no length rule at all, Sonar's `S103` and
+`@stylistic/max-len` cap a *line* rather than a comment, and `sonarjs/comment-regex` allows only
+one pattern per config. The C# half is the `CommentBlockLengthAnalyzer` Roslyn analyzer
+(TVRM0006); the Go half is the `tvrmsmith-comment-block-length` golangci-lint module plugin in
+[`go/`](../../../../go/README.md), which reads the doc-comment exemption off the AST because Go
+has no doc-comment syntax to read it off.
 
 Severity in the preset: **warn** over 10 lines.
 
@@ -66,10 +69,12 @@ export function retryingFetch(url: string) {}
 
 ## Doc comments are exempt
 
-A doc comment (`/**` in JS and TS, `///` or `/**` in C#) is skipped entirely, however long it
-runs.
+A doc comment (`/**` in JS and TS, `///` or `/**` in C#, and in Go the comment group the parser
+attached to a declaration) is skipped entirely, however long it runs.
 
-It also **ends** the run it sits next to rather than absorbing it. A two-line summary glued
+It also **ends** the run it sits next to rather than absorbing it, in the two languages where
+that shape can be written — Go merges contiguous comment lines above a declaration into one
+group, so there is nothing to split. A two-line summary glued
 above thirty lines of prose exempts only the summary; the prose is measured on its own. Without
 that break the exemption would be the easiest way to defeat the rule. Roslyn splits the two
 constructs this way of its own accord, so the C# half arrived at this first and the ESLint rule
@@ -86,7 +91,8 @@ a regression guard rather than a refactor mandate.
 | `max` | `10` | Report a block longer than this. |
 
 In C# the same budget comes from an `.editorconfig` key, `tvrmsmith_comment_block_max_lines`,
-because Roslyn has no rule-parameter mechanism of its own.
+because Roslyn has no rule-parameter mechanism of its own. In Go it is
+`linters.settings.custom.tvrmsmith-comment-block-length.settings.max`.
 
 ## No autofix
 
