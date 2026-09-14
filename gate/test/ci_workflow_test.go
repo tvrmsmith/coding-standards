@@ -3,7 +3,6 @@ package gate_test
 import (
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 	"testing"
 
@@ -21,37 +20,85 @@ const ciWorkflow = "../../.github/workflows/ci.yml"
 const gateJob = "gate"
 
 // passCheckStep is the name: of the step that runs the suite and then proves
-// every case the step's own loop names reported PASS. The name is how this file
-// finds the step, so the script underneath it stays free to be rewritten as
-// long as it still judges the log the same way.
+// every case the step's own loop names reported PASS. The name is how this
+// file finds the step.
 const passCheckStep = "Run the gate suite and prove the full-stack cases ran"
-
-// passLoopHeader opens the loop in the step's script that names one case per
-// entry in realExtractorCases. passLoopNames reads the names back out of it so
-// a case added to the Go slice and not to the workflow reds here rather than
-// going unchecked on CI forever.
-const passLoopHeader = "for name in"
 
 // gateWorkingDir is the directory the step declares, relative to the repository
 // root. `go test ./...` selects this module's packages only because it runs
 // there.
 const gateWorkingDir = "gate"
 
-// passCheckGuard is the if: the step carries, and passCheckGuardStepID is the
-// step it names. Comparing the whole expression is what makes `if: false` red,
-// and requiring the id to be declared is what makes deleting `id: setup` off
-// the toolchain step red too: without it the condition is false on every run
-// and the check silently never executes.
+// passCheckGuardStepID is the step the guard names, passCheckGuardReference is
+// how the guard expression reads that step's outcome, and passCheckGuard is the
+// whole if: the step carries, built from the other two so the id is stated
+// once. Comparing the whole expression is what makes `if: false` red.
+//
+// Two separate holes, and the assertions below close each one. A guard naming a
+// step no job declares renders false on every run, so exactly one step must
+// carry the id. A guard naming a step that runs later renders empty for the
+// same reason, so the step declaring the id must come first. Neither check pins
+// which action carries the id, so moving `id: setup` onto a different action
+// keeps the guard true while it stops meaning the Go toolchain installed.
 const (
-	passCheckGuard       = "${{ !cancelled() && steps.setup.outcome == 'success' }}"
-	passCheckGuardStepID = "setup"
+	passCheckGuardStepID    = "setup"
+	passCheckGuardReference = "steps." + passCheckGuardStepID + ".outcome"
+	passCheckGuard          = "${{ !cancelled() && " + passCheckGuardReference + " == 'success' }}"
 )
+
+// passCheckScript is the step's run: script, held here as an intentional
+// snapshot of a machine-consumed declarative artifact rather than grepped for
+// tokens. Nothing in this suite executes the script, so a snapshot is what
+// makes every edit to it deliberate: a dropped case name, a deleted trailing
+// exit 1, a rewritten loop, a narrowed `go test` pattern, each reds this case
+// until someone updates the constant to match.
+const passCheckScript = `set -euo pipefail
+go test ./... -count=1 -v -timeout 12m | tee "$RUNNER_TEMP/gate-tests.txt"
+# One name per case in the suite's realExtractorCases list. The names
+# are retyped here rather than read out of the Go source, so add a new
+# case in both places. TestCIDeclaresThePassCheckStep holds this whole
+# script as a snapshot constant and compares it byte for byte, so no
+# edit here lands without a deliberate edit there. What this loop
+# itself catches is a name listed here that stopped reporting PASS.
+# The pattern is anchored because Go's verbose output always follows
+# the name with a space and a parenthesised duration, so an
+# unanchored match would let a longer name that starts with this one
+# stand in for it.
+# Every missing name is collected and reported together, so one run
+# names the whole gap rather than the first case alphabetically.
+# grep's status is read rather than tested, because 1 is "no match"
+# while 2 or more is grep failing to read the log at all, which proves
+# nothing about the name and must not be reported as a case that
+# did not run.
+missing=""
+for name in TestFullStackDrivesTheRealDotnetExtractor \
+            TestFullStackScoresAReportCoverletWrote; do
+  status=0
+  grep -qE -- "^--- PASS: $name \(" "$RUNNER_TEMP/gate-tests.txt" || status=$?
+  if [ "$status" -ge 2 ]; then
+    echo "grep exited $status reading $RUNNER_TEMP/gate-tests.txt, so this" >&2
+    echo "step proved nothing about whether $name ran." >&2
+    exit "$status"
+  fi
+  if [ "$status" -eq 1 ]; then
+    missing="$missing $name"
+  fi
+done
+if [ -n "$missing" ]; then
+  echo "The gate suite passed without these cases reporting PASS:$missing" >&2
+  echo "A case that drives the real dotnet toolchain did not run. Either" >&2
+  echo "the go test line above no longer selects its package, the case" >&2
+  echo "was renamed, or enforcement is off." >&2
+  exit 1
+fi
+`
 
 // TestCIDeclaresThePassCheckStep reads ci.yml as the declarative contract it is
 // and asserts the gate job declares the PASS check step once, gated on a step
-// that exists, running where `go test ./...` selects this module, with
-// enforcement on. Every one of those can drift without any Go test noticing,
-// because the step runs on the runner rather than here.
+// declared ahead of it, running where `go test ./...` selects this module, with
+// enforcement on and the reviewed script underneath. Every one of those can
+// drift without any Go test noticing, because the step runs on the runner
+// rather than here.
 func TestCIDeclaresThePassCheckStep(t *testing.T) {
 	body, err := os.ReadFile(ciWorkflow)
 	if err != nil {
@@ -80,23 +127,29 @@ func TestCIDeclaresThePassCheckStep(t *testing.T) {
 	}
 
 	var found, guardTargets int
-	for _, step := range job.Steps {
+	guardDeclared := false
+	for i, step := range job.Steps {
 		if step.ID == passCheckGuardStepID {
 			guardTargets++
+			guardDeclared = true
+		}
+		guard := scalar(step.If)
+		if !guardDeclared && strings.Contains(guard, passCheckGuardReference) {
+			t.Errorf("%s: step %d of the %q job (%q) reads %s before any step declares id: %s. The expression renders empty for a step that has not run, so the guard is false and the step skips with the job green",
+				ciWorkflow, i+1, gateJob, step.Name, passCheckGuardReference, passCheckGuardStepID)
 		}
 		if step.Name != passCheckStep {
 			continue
 		}
 		found++
 
-		if guard := scalar(step.If); guard != passCheckGuard {
+		if guard != passCheckGuard {
 			t.Errorf("%s: the %q step carries if: %q, want %q. Any other expression is the check running when it should not or, worse, quietly not running",
 				ciWorkflow, passCheckStep, guard, passCheckGuard)
 		}
-		names, want := passLoopNames(step.Run), slices.Sorted(slices.Values(realExtractorCases))
-		if !slices.Equal(names, want) {
-			t.Errorf("%s: the %q step's PASS loop names %v, want %v, the suite's own realExtractorCases. A case missing there runs on CI unproven and can stop running with the job green",
-				ciWorkflow, passCheckStep, names, want)
+		if step.Run != passCheckScript {
+			t.Errorf("%s: the %q step's run: script is not the reviewed one. Update passCheckScript once the new script is what this repo wants to run. got:\n%s\nwant:\n%s",
+				ciWorkflow, passCheckStep, step.Run, passCheckScript)
 		}
 		if step.WorkingDirectory != gateWorkingDir {
 			t.Errorf("%s: the %q step declares working-directory %q, want %q, which is where its `go test ./...` selects this module",
@@ -124,8 +177,8 @@ func TestCIDeclaresThePassCheckStep(t *testing.T) {
 			ciWorkflow, gateJob, found, passCheckStep)
 	}
 	if guardTargets != 1 {
-		t.Errorf("%s: the %q job declares %d steps with id: %s, want exactly one. The PASS check's guard reads steps.%s.outcome, which is false for a step that does not exist, so the check would never run",
-			ciWorkflow, gateJob, guardTargets, passCheckGuardStepID, passCheckGuardStepID)
+		t.Errorf("%s: the %q job declares %d steps with id: %s, want exactly one. The PASS check's guard reads %s, which is false for a step that does not exist, so the check would never run",
+			ciWorkflow, gateJob, guardTargets, passCheckGuardStepID, passCheckGuardReference)
 	}
 }
 
@@ -138,30 +191,4 @@ func scalar(value any) string {
 		return ""
 	}
 	return fmt.Sprint(value)
-}
-
-// passLoopNames returns the case names the PASS loop iterates over, sorted.
-// The loop header is one shell line broken across several with trailing
-// backslashes, so the continuations are joined before the names are split out.
-// An absent or unrecognised header returns nothing, which reds the comparison.
-func passLoopNames(run string) []string {
-	lines := strings.Split(run, "\n")
-	var header string
-	for i := 0; i < len(lines); i++ {
-		if !strings.HasPrefix(strings.TrimSpace(lines[i]), passLoopHeader) {
-			continue
-		}
-		for ; i < len(lines); i++ {
-			line := strings.TrimSpace(lines[i])
-			header += " " + strings.TrimSuffix(line, `\`)
-			if !strings.HasSuffix(line, `\`) {
-				break
-			}
-		}
-		break
-	}
-	header = strings.TrimPrefix(strings.TrimSpace(header), passLoopHeader)
-	header = strings.TrimSuffix(strings.TrimSpace(header), "do")
-	header = strings.TrimSuffix(strings.TrimSpace(header), ";")
-	return slices.Sorted(slices.Values(strings.Fields(header)))
 }

@@ -204,7 +204,8 @@ func (f *fixture) collectCoverage() {
 	// otherwise resolve run 1's local build. These are immutable public
 	// packages, so a cold restore on every run would cost CI minutes and prove
 	// nothing.
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		f.t.Fatalf("dotnet test --collect:\"XPlat Code Coverage\": %v\n%s", err, out)
 	}
 
@@ -215,7 +216,7 @@ func (f *fixture) collectCoverage() {
 	// an opaque golden diff, so the count is checked here where the cause can
 	// be named.
 	var reports []string
-	err := filepath.WalkDir(f.root, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(f.root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -228,11 +229,11 @@ func (f *fixture) collectCoverage() {
 		f.t.Fatalf("walking %s for the cobertura report coverlet wrote: %v", f.root, err)
 	}
 	if len(reports) != 1 {
-		f.t.Fatalf("the collection left %d cobertura reports under %s, want exactly one: %v",
-			len(reports), f.root, reports)
+		f.t.Fatalf("the collection left %d cobertura reports under %s, want exactly one: %v\n%s",
+			len(reports), f.root, reports, out)
 	}
 
-	f.assertCoverletReportShape(reports[0])
+	f.assertCoverletReportShape(reports[0], string(out))
 }
 
 // scoredClassSuffix is how the one class the golden scores is found in the
@@ -247,7 +248,7 @@ const scoredClassSuffix = "src/Points.cs"
 // behaviour: a coverlet release that stops emitting them leaves the golden's
 // numbers untouched, so without this the case would keep passing over an input
 // it was never written for.
-func (f *fixture) assertCoverletReportShape(path string) {
+func (f *fixture) assertCoverletReportShape(path, dotnetOut string) {
 	f.t.Helper()
 
 	body, err := os.ReadFile(path)
@@ -288,8 +289,8 @@ func (f *fixture) assertCoverletReportShape(path string) {
 		}
 	}
 	if len(scored) != 1 {
-		f.t.Fatalf("%s holds %d classes whose filename ends %s, want exactly one. None and the shape checks below would pass over a report that never scored the fixture's own source; more than one and a shape lost by one entry would be hidden by a sibling carrying it. Classes: %v",
-			path, len(scored), scoredClassSuffix, classFilenames)
+		f.t.Fatalf("%s holds %d classes whose filename ends %s, want exactly one. None and the shape checks below would pass over a report that never scored the fixture's own source; more than one and a shape lost by one entry would be hidden by a sibling carrying it. Classes: %v\n%s",
+			path, len(scored), scoredClassSuffix, classFilenames, dotnetOut)
 	}
 
 	class := report.Classes[scored[0]]
@@ -310,7 +311,7 @@ func (f *fixture) assertCoverletReportShape(path string) {
 			methodLines[line.Number] = true
 		}
 	}
-	everyClassLineRepeated := len(classLines) > 0
+	everyClassLineRepeated := true
 	for number := range classLines {
 		if !methodLines[number] {
 			everyClassLineRepeated = false
@@ -321,6 +322,7 @@ func (f *fixture) assertCoverletReportShape(path string) {
 		got  bool
 		want string
 	}{
+		{len(classLines) > 0, "any <line> entries on the scored class, without which every other row below speaks for a class the report left empty"},
 		{branchFalse, `a line of the scored class with branch="False", the capitalised spelling no hand-built report in this suite uses`},
 		{hitsAboveOne, "a line of the scored class hit more than once, which the hand-built reports never produce"},
 		{everyClassLineRepeated, "a <methods> line for every class-level line number of the scored class, so the same line arrives twice"},

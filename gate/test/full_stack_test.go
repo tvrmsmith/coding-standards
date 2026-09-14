@@ -108,9 +108,9 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 // so adding a case here is the one edit that puts it under those rows. ci.yml
 // retypes the same names in the loop that greps the verbose log for each one's
 // PASS line, and it does not read them from here, so a new case is added in
-// both places by hand. TestCIDeclaresThePassCheckStep reads that loop's names
-// back out of the workflow and compares them to this slice, so a case added
-// here and not there reds rather than going unproven on CI.
+// both places by hand. TestCIDeclaresThePassCheckStep holds that whole script
+// as a snapshot, so adding a case here without touching the workflow leaves
+// the snapshot naming one case fewer than this slice does.
 //
 // TestRequireDotnetDecidesTheFullStackOutcome makes a name listed here that no
 // case implements fail, because the name produces no SKIP block to read.
@@ -151,6 +151,9 @@ func dotnetCmd(t *testing.T, dir string, args ...string) *exec.Cmd {
 // childCase selects those cases in a child and nothing else. Widening this
 // pattern would let the child re-enter the forking tests and fork forever.
 var childCase = "^(" + strings.Join(realExtractorCases, "|") + ")$"
+
+// childOutcome is a result line a child test binary prints for one case.
+type childOutcome string
 
 // caseBlock is the -test.v output one named case produced, from its RUN line
 // up to the result line for the given outcome. Everything the case logged
@@ -219,10 +222,16 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 	// depends on the flags this parent happens to run under.
 	const long, short = "-test.short=false", "-test.short=true"
 
-	// outcomeFail is the result line a child prints for a case the enforcement
-	// fatal stopped. It is also what decides the child's exit status, so the
-	// rows state the outcome once and the disposition follows from it.
-	const outcomeFail = "FAIL"
+	// The two result lines a child can print for a case these rows drive.
+	// outcomeFail is the one the enforcement fatal produces, and it is also what
+	// decides the child's exit status, so the rows state the outcome once and
+	// the disposition follows from it. The named type is what keeps a row from
+	// carrying a third spelling, which would yield a pass expectation and a
+	// block lookup that can never match.
+	const (
+		outcomeSkip childOutcome = "SKIP"
+		outcomeFail childOutcome = "FAIL"
+	)
 
 	// outcome and wants are asserted against each case's own block, so every
 	// name in realExtractorCases has to reach that outcome for its own
@@ -231,19 +240,19 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 		name    string
 		require string
 		short   string
-		outcome string
+		outcome childOutcome
 		wants   []string
 	}{
 		{
 			name:    "the unset run skips without touching dotnet",
 			short:   long,
-			outcome: "SKIP",
+			outcome: outcomeSkip,
 			wants:   []string{reasonUnset},
 		},
 		{
 			name:    "-short does not change the unset run",
 			short:   short,
-			outcome: "SKIP",
+			outcome: outcomeSkip,
 			wants:   []string{reasonUnset},
 		},
 		{
@@ -266,7 +275,7 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 				t.Fatalf("child failed with %v, want a pass. output:\n%s", err, out)
 			}
 			for _, name := range realExtractorCases {
-				block, err := caseBlock(out, name, c.outcome)
+				block, err := caseBlock(out, name, string(c.outcome))
 				if err != nil {
 					t.Errorf("%v. output:\n%s", err, out)
 					continue
