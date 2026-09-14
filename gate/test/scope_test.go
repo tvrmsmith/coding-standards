@@ -1191,6 +1191,29 @@ func TestSinceNamingABranchWhoseCommitObjectIsGoneReportsAnUnreadableDiff(t *tes
 		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
 }
 
+func TestSinceNamingAnExplicitPeelOfAGoneCommitFailsNamingThatRev(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.git("branch", "other")
+	f.touchLine(orderService, 62)
+	f.commitAll("second")
+	f.removeLooseObject(f.git("rev-parse", "other"))
+
+	// The other half of the branch-commit-gone case. Spelled plain, other
+	// resolves at the verify and the damaged store comes back as an unreadable
+	// diff; spelled with the peel the developer wrote themselves, the verify has
+	// to read the commit to peel it and exits 1, so the same damaged store comes
+	// back as a ref that does not name a commit. The peel is the rev here, not
+	// something the run appended, and this case is red if the verify ever stops
+	// being the step that fails on it.
+	peeled := "other^{commit}"
+
+	f.runArgs("--since", peeled).assertMatchesWith(t, "since_absent_sha_not_a_commit", 1, "",
+		"no diff base: --since "+peeled+" does not name a commit\n",
+		map[string]string{"REV": peeled})
+}
+
 func TestSinceNamingAFullShaTheStoreDoesNotHoldReportsAnUnreadableDiff(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
