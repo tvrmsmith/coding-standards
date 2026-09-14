@@ -12,7 +12,7 @@ byte-identical. A human-typed path resolves against the current working director
 
 A path that will not resolve refuses the run rather than passing with nothing measured:
 `coverage_source_root_erased`, then `file_ambiguous`, then a coverage path with zero candidates in
-the root, in that precedence. A `--files` path is refused as `file_unresolved` when it names
+the root, in that precedence within one report, and the first failing report decides. A `--files` path is refused as `file_unresolved` when it names
 anything other than a regular file, and when it spells a real file in a case the tree does not use,
 among other reasons Decision lists.
 
@@ -32,7 +32,7 @@ Four path spaces feed the gate, and each has exactly one rule.
 **The diff** already produces source paths. Nothing to do.
 
 **The coverage report** produces paths per Cobertura's contract, `<sources><source>` joined to the
-`filename` attribute of each `<class>`. For each class the gate builds a candidate absolute path per
+`filename` attribute of each `<class>`. For each class the gate builds a candidate path per
 source, resolves it with `filepath.EvalSymlinks`, and makes it relative to the resolved repo root.
 Two narrowings on what counts as landing inside:
 
@@ -117,7 +117,7 @@ rather than on preference.
 It governs the root prefix alone, at every door into containment: a coverage candidate or a report
 display name whose prefix is mis-cased places and is named where it really sits rather than being
 reported as escaping the repo, and a mis-cased root prefix on an absolute `--files` path is refused
-for how the root is spelled, per Decision's third `--files` bullet.
+for how the root is spelled, per Decision's mis-cased-root-prefix refusal.
 
 Case **below** the root is still refused, unfolded, which is what keeps `case_only_path_difference` at
 exit 1 and keeps the gate from attributing coverage to a file the report did not measure.
@@ -195,7 +195,8 @@ that issue 6 unions every discovered report rather than taking the newest.
 
 ## History
 
-Accepted with six dated amendments, five folded on 2026-09-11 and one dropped.
+Accepted with six dated amendments, five folded and one dropped. Four folds and the drop went on
+2026-09-11, the last fold on 2026-09-14.
 
 - **2026-09-03**, first entry. Scoped the case-folding rejection to coverage-path resolution, once
   ADR 0009 landed the fold for extension routing. **Folded**, because it recorded that arriving.
@@ -209,7 +210,7 @@ Accepted with six dated amendments, five folded on 2026-09-11 and one dropped.
   **Folded**.
 - **2026-09-11**. Narrowed the case-folding rejection to exempt a repo-root prefix that
   `os.SameFile` confirms, and refused an absolute `--files` path with a mis-cased root prefix.
-  **Folded** into two places, the Rejected alternatives entry it narrows and Decision's third
-  `--files` bullet.
+  **Folded** on 2026-09-14 into the Rejected alternatives entry it narrows, Decision's
+  mis-cased-root-prefix refusal, and the Current rule block's summary of both.
 
 No decision changed in the fold.

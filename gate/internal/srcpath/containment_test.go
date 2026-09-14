@@ -401,7 +401,7 @@ func TestNamedStillRefusesAPathGenuinelyOutsideTheRoot(t *testing.T) {
 }
 
 // Place reads a folded root prefix as landing where the candidate really sits
-// (ADR 0004, amended 2026-09-11). named still refuses the same shape, because a
+// (ADR 0004's root-prefix exemption). named still refuses the same shape, because a
 // --files path is one a developer typed and can retype; a coverage candidate is
 // not, nobody typed it, and refusing it would drop a class the report really
 // measured. os.SameFile is what separates this from the folding ADR 0004

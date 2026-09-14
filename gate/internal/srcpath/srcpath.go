@@ -6,8 +6,8 @@
 // One function, relativize, computes containment, and Place, Name and named are
 // the three entry points onto it. All three read its placements the same way: a
 // candidate whose root prefix is spelled in another case is under the root, and
-// "outside" means one thing at every door (issue 36). ADR 0004's 2026-09-11
-// amendment is what authorizes that, on the ground that the folding it rejects
+// "outside" means one thing at every door (issue 36). ADR 0004's case-folding
+// rejection is what authorizes that, on the ground that the folding it rejects
 // is folding by text, which on Linux merges two real files, and not a fold
 // os.SameFile has confirmed reaches one inode.
 //
@@ -125,7 +125,7 @@ func (p Placed) Resolved() string { return p.resolved }
 // worth of classes that placed nothing.
 //
 // A candidate whose root prefix is spelled in another case places where it
-// really sits, per ADR 0004's 2026-09-11 amendment. The prefix is confirmed with
+// really sits, per ADR 0004's root-prefix exemption. The prefix is confirmed with
 // os.SameFile, so the two names reach one directory and the candidate is one
 // file, not two merged by text. The components below the root come back as the
 // candidate spells them, which is the same thing filepath.Rel already hands back
@@ -484,7 +484,7 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // refuses on that reading. Place and Name place and name the same path where it
 // really sits, because a coverage candidate is not one a developer typed and
 // there is nobody to send back to the keyboard; the fold is confirmed by
-// os.SameFile, so it merges no two files (ADR 0004, amended 2026-09-11).
+// os.SameFile, so it merges no two files (ADR 0004's root-prefix exemption).
 //
 // Only an absolute one, which is the scope ADR 0004's Decision writes the rule
 // in. A relative name carries no root prefix at all: the one weighed here came
