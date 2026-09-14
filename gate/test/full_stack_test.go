@@ -108,9 +108,9 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 // so adding a case here is the one edit that puts it under those rows. ci.yml
 // retypes the same names in the loop that greps the verbose log for each one's
 // PASS line, and it does not read them from here, so a new case is added in
-// both places by hand. TestCIDeclaresThePassCheckStep holds that whole script
-// as a snapshot, so adding a case here without touching the workflow leaves
-// the snapshot naming one case fewer than this slice does.
+// both places by hand. TestCIDeclaresThePassCheckStep requires every name
+// here to appear in the script it holds as a snapshot, so a case added here
+// and not there reds rather than running on CI unproven.
 //
 // TestRequireDotnetDecidesTheFullStackOutcome makes a name listed here that no
 // case implements fail, because the name produces no SKIP block to read.
@@ -225,9 +225,10 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 	// The two result lines a child can print for a case these rows drive.
 	// outcomeFail is the one the enforcement fatal produces, and it is also what
 	// decides the child's exit status, so the rows state the outcome once and
-	// the disposition follows from it. The named type is what keeps a row from
-	// carrying a third spelling, which would yield a pass expectation and a
-	// block lookup that can never match.
+	// the disposition follows from it. The named type documents that pair, it
+	// does not enforce it: Go converts an untyped constant into a defined string
+	// type, so a row is free to write a third spelling and assert the opposite
+	// of what this table is for.
 	const (
 		outcomeSkip childOutcome = "SKIP"
 		outcomeFail childOutcome = "FAIL"

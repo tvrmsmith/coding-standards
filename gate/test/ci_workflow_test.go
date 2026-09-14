@@ -126,16 +126,32 @@ func TestCIDeclaresThePassCheckStep(t *testing.T) {
 		t.Fatalf("%s declares no %q job, so this case cannot find the step that runs the suite", ciWorkflow, gateJob)
 	}
 
+	// The snapshot below says ci.yml still carries the reviewed script. It says
+	// nothing about which cases that script names, so the names are read out of
+	// the suite's own slice and required to appear in it. A case added to
+	// realExtractorCases and not to the workflow reds here rather than running
+	// on CI unproven.
+	if len(realExtractorCases) == 0 {
+		t.Fatal("realExtractorCases is empty, so the name check below would pass over a script naming nothing")
+	}
+	for _, name := range realExtractorCases {
+		if !strings.Contains(passCheckScript, name) {
+			t.Errorf("%s: the %q step's script names no %s, so CI would never prove that case ran",
+				ciWorkflow, passCheckStep, name)
+		}
+	}
+
 	var found, guardTargets int
 	guardDeclared := false
 	for i, step := range job.Steps {
+		declaredBefore := guardDeclared
 		if step.ID == passCheckGuardStepID {
 			guardTargets++
 			guardDeclared = true
 		}
 		guard := scalar(step.If)
-		if !guardDeclared && strings.Contains(guard, passCheckGuardReference) {
-			t.Errorf("%s: step %d of the %q job (%q) reads %s before any step declares id: %s. The expression renders empty for a step that has not run, so the guard is false and the step skips with the job green",
+		if !declaredBefore && strings.Contains(guard, passCheckGuardReference) {
+			t.Errorf("%s: step %d of the %q job (%q) reads %s, which no earlier step declares id: %s for. The expression renders empty for a step that has not finished, its own step included, so the guard is false and the step skips with the job green",
 				ciWorkflow, i+1, gateJob, step.Name, passCheckGuardReference, passCheckGuardStepID)
 		}
 		if step.Name != passCheckStep {
