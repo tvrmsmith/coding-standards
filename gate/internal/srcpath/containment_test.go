@@ -276,16 +276,7 @@ func TestNamedRefusesAMisCasedRootPrefixAsASpellingRatherThanALocation(t *testin
 
 	_, err := root.named(name, dirNames{})
 
-	var unresolved *UnresolvedError
-	if !errors.As(err, &unresolved) {
-		t.Fatalf("named returned %v, want an *UnresolvedError", err)
-	}
-	if unresolved.Reason != "is not spelled as the repo root is" {
-		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is not spelled as the repo root is")
-	}
-	if unresolved.Name != name {
-		t.Errorf("Name = %q, want the name as typed, %q", unresolved.Name, name)
-	}
+	assertRootSpellingRefusal(t, err, name)
 }
 
 // A relative name that only descends carries no root prefix, so the mis-cased
@@ -322,16 +313,7 @@ func TestNamedRefusesAMisCasedRootPrefixARelativeNameClimbedOutTo(t *testing.T) 
 
 	_, err := root.named(name, dirNames{})
 
-	var unresolved *UnresolvedError
-	if !errors.As(err, &unresolved) {
-		t.Fatalf("named returned %v, want an *UnresolvedError", err)
-	}
-	if unresolved.Reason != "is not spelled as the repo root is" {
-		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is not spelled as the repo root is")
-	}
-	if unresolved.Name != name {
-		t.Errorf("Name = %q, want the name as typed, %q", unresolved.Name, name)
-	}
+	assertRootSpellingRefusal(t, err, name)
 }
 
 // The same refusal reached by a name that opens with a component rather than
@@ -351,16 +333,7 @@ func TestNamedRefusesAMisCasedRootPrefixAnInteriorClimbReachedOutTo(t *testing.T
 
 	_, err := root.named(name, dirNames{})
 
-	var unresolved *UnresolvedError
-	if !errors.As(err, &unresolved) {
-		t.Fatalf("named returned %v, want an *UnresolvedError", err)
-	}
-	if unresolved.Reason != "is not spelled as the repo root is" {
-		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is not spelled as the repo root is")
-	}
-	if unresolved.Name != name {
-		t.Errorf("Name = %q, want the name as typed, %q", unresolved.Name, name)
-	}
+	assertRootSpellingRefusal(t, err, name)
 }
 
 // The climbing-out refusal on a case-sensitive filesystem, so CI runs it rather
@@ -373,16 +346,7 @@ func TestNamedRefusesACaseDifferingRootSpellingARelativeNameClimbedOutTo(t *test
 
 	_, err := root.named(name, dirNames{})
 
-	var unresolved *UnresolvedError
-	if !errors.As(err, &unresolved) {
-		t.Fatalf("named returned %v, want an *UnresolvedError", err)
-	}
-	if unresolved.Reason != "is not spelled as the repo root is" {
-		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is not spelled as the repo root is")
-	}
-	if unresolved.Name != name {
-		t.Errorf("Name = %q, want the name as typed, %q", unresolved.Name, name)
-	}
+	assertRootSpellingRefusal(t, err, name)
 }
 
 // The same refusal reached by a name that opens with a component rather than
@@ -401,16 +365,7 @@ func TestNamedRefusesACaseDifferingRootSpellingAnInteriorClimbReachedOutTo(t *te
 
 	_, err := root.named(name, dirNames{})
 
-	var unresolved *UnresolvedError
-	if !errors.As(err, &unresolved) {
-		t.Fatalf("named returned %v, want an *UnresolvedError", err)
-	}
-	if unresolved.Reason != "is not spelled as the repo root is" {
-		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is not spelled as the repo root is")
-	}
-	if unresolved.Name != name {
-		t.Errorf("Name = %q, want the name as typed, %q", unresolved.Name, name)
-	}
+	assertRootSpellingRefusal(t, err, name)
 }
 
 // The acceptance half of the same policy on a case-sensitive filesystem. Without
@@ -439,16 +394,7 @@ func TestNamedRefusesACaseDifferingRootSpellingAsASpellingRatherThanALocation(t 
 
 	_, err := root.named(name, dirNames{})
 
-	var unresolved *UnresolvedError
-	if !errors.As(err, &unresolved) {
-		t.Fatalf("named returned %v, want an *UnresolvedError", err)
-	}
-	if unresolved.Reason != "is not spelled as the repo root is" {
-		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is not spelled as the repo root is")
-	}
-	if unresolved.Name != name {
-		t.Errorf("Name = %q, want the name as typed, %q", unresolved.Name, name)
-	}
+	assertRootSpellingRefusal(t, err, name)
 }
 
 // The ordering the two arms sit in, pinned where every runner executes it. A
@@ -776,6 +722,25 @@ func symlinkedMiscasedRoot(t *testing.T) (Root, string) {
 		t.Fatal(err)
 	}
 	return Root{resolved: link}, real
+}
+
+// assertRootSpellingRefusal is the answer every mis-cased-root case wants back
+// from named, the refusal that names the root rather than the location or the
+// file, carrying the name as typed because that is the only spelling the
+// developer can retype. The cases differ in the setup that reaches it, so each
+// keeps its own and calls this.
+func assertRootSpellingRefusal(t *testing.T, err error, name string) {
+	t.Helper()
+	var unresolved *UnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("named returned %v, want an *UnresolvedError", err)
+	}
+	if unresolved.Reason != "is not spelled as the repo root is" {
+		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is not spelled as the repo root is")
+	}
+	if unresolved.Name != name {
+		t.Errorf("Name = %q, want the name as typed, %q", unresolved.Name, name)
+	}
 }
 
 // assertFolds pins that the containment test reads resolved as folded, which is

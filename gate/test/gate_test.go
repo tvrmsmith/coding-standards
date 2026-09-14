@@ -3019,7 +3019,9 @@ func TestReportSourceMisCasingTheRepoRootPrefixIsMeasuredInside(t *testing.T) {
 	// <source> naming the repo root in another case. Nothing was built
 	// elsewhere: os.SameFile confirms the two spellings reach one directory, so
 	// the class sits where a correctly spelled <source> would have put it and
-	// the score is the one that case gets. Refusing this as
+	// the score is the one that case gets. Asserting that case's own golden is
+	// what makes "exactly what the correctly spelled one scores" hold by
+	// construction rather than by two files that happen to match today. Refusing this as
 	// coverage_outside_repo would blame a location for a spelling, and unlike
 	// --files there is nobody to send back to the keyboard, because the path
 	// came out of whatever the test runner was invoked with.
@@ -3030,7 +3032,7 @@ func TestReportSourceMisCasingTheRepoRootPrefixIsMeasuredInside(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	f.run().assertMatches(t, "coverage_miscased_root_prefix", 0, f.baseLabel("main"),
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 

@@ -24,12 +24,16 @@
 // for a report that is not on disk at all. Widening Placed to carry it is issue
 // 36 follow-up work.
 //
-// Landing under the root is not the same as being accepted. named still refuses
-// an absolute mis-cased root prefix, because such a --files path is one a
-// developer typed and can retype, and telling them which half is misspelled is
-// the whole of issue 48. A relative one is accepted, since its root prefix came
-// from the process working directory rather than from anything the developer
-// typed. named carries the most user-visible policy of the three, the distinct
+// Landing under the root is not the same as being accepted. named refuses a
+// --files path whose root prefix the developer spelled mis-cased, because such
+// a path is one they typed and can retype, and telling them which half is
+// misspelled is the whole of issue 48. The test is whether their own text
+// spelled that prefix: an absolute name always does, and a relative one does
+// once it climbs above the root and descends back in, since the mis-cased
+// component sits in the string either way. A relative name that only descends
+// inherits its prefix from the process working directory, whatever the shell
+// cd'd through, so it is accepted rather than blamed for a half that is not in
+// the string. named carries the most user-visible policy of the three, the distinct
 // refusal reasons a --files path can come back with, so a reader changing
 // containment has to weigh it beside the other two rather than reading Place and
 // Name alone.
@@ -596,6 +600,17 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 // directory, so named reports it as a plain error, the channel losing the
 // working directory already uses. relativize fails about the repo root, so
 // named refuses it as an UnresolvedError naming the path.
+//
+// Neither fault is one a caller normally reaches, which is why no test pins
+// them. named resolved the whole candidate a moment earlier and climbedTo is
+// the cleaned prefix that same filepath.Join built, so an ancestor of a path
+// that just resolved does not fail to resolve; relativize is the same story,
+// since the candidate's own relativize answered folded, meaning isRootUnder's
+// two stats succeeded on these components. Reaching either arm means the tree
+// moved between two syscalls, the race named's own os.Stat documents. That
+// makes the two-return split more machinery than the fault alone warrants, and
+// it is kept because discarding a filesystem error silently, or filing it
+// against the wrong subject, is worse than an arm no test reaches.
 func (r Root) typedTheRootPrefix(cwd, name string, absolute bool) (typed bool, rootFault, cwdFault error) {
 	if absolute {
 		return true, nil, nil
