@@ -1,0 +1,77 @@
+# Notices when the golangci-lint pin in go/.custom-gcl.yml falls behind upstream.
+#
+# The pin exists because a module plugin links against golangci-lint's internals, so the binary
+# and the personal rules are built together against one version. Nothing else in the repo
+# notices when that version ages: the build keeps working, CI stays green, and the layer quietly
+# runs a linter set that is months old.
+#
+# This runs on its own schedule rather than inside ci.yml on purpose. An upstream release is not
+# a reason for a pull request to go red, and a check that fails for something the author did not
+# do teaches people to ignore it.
+name: golangci-lint pin
+
+on:
+  schedule:
+    # Mondays, early. A weekly nudge matches how often golangci-lint releases.
+    - cron: "0 13 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: compare the pin against the latest release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: File an issue when the pin is behind
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          pinned=$(sed -n 's/^version: *//p' go/.custom-gcl.yml | head -1)
+          if [ -z "$pinned" ]; then
+            echo "no version: line in go/.custom-gcl.yml" >&2
+            exit 1
+          fi
+
+          latest=$(gh api repos/golangci/golangci-lint/releases/latest --jq .tag_name)
+          echo "pinned $pinned, latest $latest"
+
+          if [ "$pinned" = "$latest" ]; then
+            exit 0
+          fi
+
+          # The version goes in the title so the dedupe is per release: filing the same issue
+          # twice is noise, but a newer release is a new thing to decide about, and an issue
+          # whose body describes a version nobody is looking at any more is worse than a second
+          # issue.
+          title="golangci-lint $latest is out, go/.custom-gcl.yml pins $pinned"
+          if [ -n "$(gh issue list --state open --search "$title in:title" --json number --jq '.[].number')" ]; then
+            echo "already filed"
+            exit 0
+          fi
+
+          # ready-for-agent, not needs-triage: the decision is already made (raise it), and the
+          # body says what raising it involves. See docs/agents/triage-labels.md.
+          gh issue create --title "$title" --label ready-for-agent --body "$(cat <<EOF
+          \`go/.custom-gcl.yml\` pins **$pinned**. The latest release is **$latest**.
+
+          Raising it is an edit to that one line and a rerun of \`go/build.sh\`, which rebuilds
+          the binary with the plugin against the new version. Two things to check while doing it:
+
+          - the plugin module links against golangci-lint's internals, so \`go/plugin/go.mod\` may
+            need \`golang.org/x/tools\` moved to whatever the new version builds with, and
+          - a release can add, rename or retire a linter, so re-read \`go/golangci.yml\` against
+            [the release notes](https://github.com/golangci/golangci-lint/releases/tag/$latest)
+            rather than assuming the enable list still means what it did.
+
+          \`go/test\` is the proof either way: it fails if any enabled linter stops reporting.
+
+          Filed by .github/workflows/golangci-pin.yml.
+          EOF
+          )"

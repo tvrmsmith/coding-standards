@@ -1,0 +1,153 @@
+# The curated Go preset, read by the personal binary (go/bin/tvrmsmith-gcl) and by nothing else.
+#
+# It is passed to the target repository with `--config`, never copied into it: adoption is
+# machine-local, so no file this config lives in may appear in anyone else's clone.
+#
+# `default: none` on purpose. The target repository's own .golangci.yml keeps whatever it
+# enables; this config is a separate run carrying only the personal layer, so a rule is here
+# because it was chosen, never because a preset happened to include it.
+#
+# Every entry below is either mapped to a guideline id or deliberately unmapped, and
+# go/README.md carries the table saying which. What is *not* enabled is written down there too,
+# with the reason, because "we looked and said no" and "we never looked" are the same file
+# otherwise.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    # The personal rules. Nothing off the shelf covers either shape in any language.
+    - tvrmsmith-comment-block-length
+    - tvrmsmith-combine-assertions
+
+    # Assertions (A2, A5). One linter covers most of two guidelines, which is why the Go half
+    # needed only one custom assertion rule where the C# half needed five.
+    - testifylint
+
+    # Errors. The guideline is zero tolerance for silent failure, and these are the four shapes
+    # of it a compiler cannot see.
+    - errcheck
+    - errorlint
+    - nilerr
+    - nilnesserr
+
+    # Correctness, unmapped. Nothing here traces back to a guideline and nothing needs to: the
+    # mapping runs one way, and a rule that is already installed and already right earns its
+    # place without prose being written for it first.
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - durationcheck
+    - makezero
+    - predeclared
+    - gocritic
+    - loggercheck
+
+    # Resources. A leaked body, statement or rows handle is a silent failure that surfaces as
+    # exhaustion somewhere else entirely, which is the worst version of the Errors guideline's
+    # complaint. Each of these no-ops in a repo that does not use the library.
+    - bodyclose
+    - sqlclosecheck
+    - rowserrcheck
+
+    # Test integrity, the peer of the TypeScript half's `jest` slice. A test that cannot fail is
+    # worse than no test, and these are the mechanical ways to write one.
+    - thelper
+    - tparallel
+    - usetesting
+
+    # Suppressions. A bare `//nolint` turns any of the above off with no stated reason, which is
+    # the swallowed-exception shape applied to the linter itself.
+    - nolintlint
+
+    # Security. Net-new here, the way jsx-a11y was net-new to the TypeScript preset: no other
+    # layer covers it, and the code this runs over is healthcare software.
+    - gosec
+
+  settings:
+    custom:
+      tvrmsmith-comment-block-length:
+        type: module
+        description: >-
+          Limits how many lines one run of non-documentation comments may span. Guideline
+          "Comments": a paragraph justifying a workaround means the code is wrong.
+        original-url: github.com/tvrmsmith/coding-standards
+        settings:
+          max: 10
+      tvrmsmith-combine-assertions:
+        type: module
+        description: >-
+          Reports consecutive testify assertions that pick one object apart, and a length
+          assertion followed by indexing into the same collection. Guideline A1.
+        original-url: github.com/tvrmsmith/coding-standards
+
+    testifylint:
+      # Every checker, then nothing disabled. The two that usually get turned off are the two
+      # worth keeping most: `require-error` is A5 (an `assert` on a fatal condition lets the test
+      # carry on into a nil dereference) and `go-require` is the same bug in a goroutine, where
+      # `require`'s FailNow kills the wrong stack and the test passes.
+      enable-all: true
+
+    staticcheck:
+      # SA (bugs), S1 (simplifications) and QF1 (quick fixes), but not the ST family. ST is
+      # naming and package-comment style, which is judgement the skill owns and which would
+      # report every file of a repo this layer is only visiting.
+      checks:
+        - all
+        - -ST1*
+
+    gocritic:
+      # The diagnostic tag only: likely bugs. The style and opinion tags overlap the skill, and
+      # the performance tag proposes rewrites nobody measured.
+      enabled-tags:
+        - diagnostic
+
+    gosec:
+      excludes:
+        # G104 is errcheck with a different id, and having both means every unchecked error is
+        # reported twice.
+        - G104
+        # G115 flags every int-to-int conversion that could in principle overflow. On real code
+        # that is hundreds of sites, almost all of them bounded by something the linter cannot
+        # see, and a finding nobody can act on trains you to ignore the rest.
+        - G115
+
+    usetesting:
+      # The three checks that ship off. A context built by hand outlives the test that made it
+      # and an os.Setenv is never undone, so both leak into whatever runs next; the testing
+      # package's own versions are torn down with the test.
+      context-background: true
+      context-todo: true
+      os-setenv: true
+
+    nolintlint:
+      # A directive must say which linter it silences and why.
+      require-explanation: true
+      require-specific: true
+      # But not that the directive still has something to suppress: this config enables a
+      # different set than the target repo's own, so its live directives would all read as dead
+      # here.
+      allow-unused: true
+
+  exclusions:
+    # golangci-lint ships presets that silence whole rule families in test files and generated
+    # code. None applies: the guideline holds in a test as much as in production code, and the
+    # generated-file case is handled by `generated` below.
+    presets: []
+    generated: lax
+
+issues:
+  # Report every finding on a line, not the first one.
+  #
+  # This defaults to true, and it silently loses rules rather than duplicates: `bodyclose` and
+  # `gosec` both report at the `http.Get` call, `sqlclosecheck` and `rowserrcheck` both report
+  # at the `db.Query` call, so with the default on, enabling the second of each pair turns the
+  # first one off. go/test found that, which is what the fixture test is for.
+  uniq-by-line: false
+
+severity:
+  # Every personal Go rule is advisory, in the same position as the Roslyn half: this runs
+  # machine-locally over code other people wrote and are not being asked to change. The harness
+  # turns the severity into an exit status; see harness/lint-changed-go.sh.
+  default: warning

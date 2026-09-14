@@ -4,6 +4,7 @@
 #
 #   harness/bootstrap ts     [<repo>]
 #   harness/bootstrap dotnet [<repo>]
+#   harness/bootstrap go     [<repo>]
 #
 # "Machine-locally" is the whole design constraint: adoption is solo, so
 # nothing this script writes may be visible to anyone else who clones the repo. Everything
@@ -34,6 +35,10 @@ install_dir=$config_home/coding-standards
 analyzer_props=$config_home/coding-standards.props
 artifacts=$hub/dotnet/artifacts/local
 
+# The Go registry, a sibling of $install_dir for the same reason $analyzer_props is one. The
+# override is what lets the harness tests run without writing to the real one.
+go_repos=${TVRMSMITH_GO_REPOS:-$config_home/coding-standards-go-repos}
+
 lang=${1:-}
 repo=${2:-$PWD}
 
@@ -43,6 +48,7 @@ usage: bootstrap <lang> [<repo>]
 
   ts      TypeScript: ESLint layering wrapper, editor settings, pre-commit hook
   dotnet  C#: Roslyn analyzers injected through CustomAfterMicrosoftCommonProps, pre-commit hook
+  go      Go: the personal golangci-lint binary, this repo added to its registry, pre-commit hook
 EOF
   exit 2
 }
@@ -53,7 +59,7 @@ step() { printf '\n%s\n' "$*"; }
 die()  { printf '\nbootstrap: %s\n' "$*" >&2; exit 1; }
 
 case "$lang" in
-  ts|dotnet) ;;
+  ts|dotnet|go) ;;
   *) usage ;;
 esac
 
@@ -304,6 +310,32 @@ twae_count=$(cd "$repo" && grep -rl '<TreatWarningsAsErrors>true<' \
 info "$twae_count file(s) set TreatWarningsAsErrors=true — the exemption list is why they still build"
 fi  # lang = dotnet
 
+if [ "$lang" = go ]; then
+# ---------------------------------------------------------------------------------------
+step 'Linter'
+
+command -v go >/dev/null 2>&1 || die 'no go on PATH'
+
+# Build rather than check whether the binary happens to be there: the custom rules are compiled
+# into it, so a binary left over from an older rule set is worse than none. The Go build cache
+# makes the rerun cheap.
+info 'building the personal golangci-lint binary'
+"$hub/go/build.sh" 2>&1 | sed 's/^/  /' || die 'go/build.sh failed'
+
+# ---------------------------------------------------------------------------------------
+step 'Registry'
+
+# The Go side installs nothing in the target and its binary is machine-wide, so unlike the other
+# two there is nothing in or around the repo that says "this one is adopted". Without this file,
+# bootstrapping one repo would silently start linting every other repo the hook guards.
+if [ -f "$go_repos" ] && grep -qxF "$repo" "$go_repos"; then
+  info "$go_repos already lists $repo"
+else
+  printf '%s\n' "$repo" >>"$go_repos"
+  info "added $repo to $go_repos"
+fi
+fi  # lang = go
+
 # ---------------------------------------------------------------------------------------
 step 'Pre-commit hook'
 
@@ -414,6 +446,32 @@ if [ "$lang" = dotnet ]; then
   (cd "$repo" && git status --short | sed 's/^/  /')
   echo
   info "open a new shell (or source $zshenv_local) so the env var is set; restart the IDE too"
+  exit 0
+fi
+
+if [ "$lang" = go ]; then
+  # That the rule fires is already proven: build.sh above ran the binary over its own fixture,
+  # the only place a deliberate violation can live, since writing one into the target would put
+  # it in someone's `git status`. What is left to ask is whether the binary can load *this*
+  # repo, where a missing toolchain or a tree that does not typecheck would otherwise show up
+  # first as a confusing hook run.
+  module=$(cd "$repo" && find . -name go.mod -not -path '*/vendor/*' \
+    | awk -F/ '{ print NF, $0 }' | sort -n | head -1 | cut -d' ' -f2-)
+  [ -n "$module" ] || die "no go.mod found under $repo"
+  module=$(dirname "${module#./}")
+  if [ "$module" = . ]; then module=$repo; else module=$repo/$module; fi
+  info "probing $module"
+
+  probe=$(cd "$module" && "$hub/go/bin/tvrmsmith-gcl" run --config "$hub/go/golangci.yml" \
+    --issues-exit-code 0 --output.text.print-issued-lines=false --output.text.colors=false ./... 2>&1)
+  if [ $? -ne 0 ]; then
+    printf '%s\n' "$probe" | sed 's/^/      /' >&2
+    die 'the linter could not load this repository'
+  fi
+  info 'ok   the linter loads this repository'
+
+  step 'Done. Nothing was staged, and no tracked file was touched.'
+  (cd "$repo" && git status --short | sed 's/^/  /')
   exit 0
 fi
 
