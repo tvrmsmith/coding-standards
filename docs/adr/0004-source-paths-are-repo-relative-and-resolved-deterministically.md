@@ -23,7 +23,7 @@ human-typed path that mis-cases the repo-root prefix places inside the repo on t
 fold, and once it resolves to a regular file it is refused for its spelling rather than for its
 location.
 
-Sections below carry the reasoning, what is still amended, and the fold history.
+Sections below carry the reasoning and the fold history.
 
 ## Decision
 
@@ -51,9 +51,11 @@ Two narrowings on what counts as landing inside:
 in source paths, so extractor output is already in the canonical form, and a mismatch is exit 1.
 
 **Human-typed paths** on `--files` and `--coverage` resolve against the process cwd, then relativize.
-A `--coverage` path may live anywhere, since a report is not repo content. Every `--files` refusal about the path is exit 1
-under the `file_unresolved` code, the one for a path outside the repo root included. Three more
-refuse a path that does resolve inside the root:
+A `--coverage` path may live anywhere, since a report is not repo content. Every `--files` refusal
+about the path is exit 1 under the `file_unresolved` code, the one for a path outside the repo root
+included, and so is a filesystem that will not answer about the path or about the root, which
+carries the operating system's own words. Three more refuse a path that does resolve inside the
+root:
 
 - A path resolving inside the root that names anything other than a regular file. The gate says "is a
   directory, not a file" for a directory and "is not a regular file" for a fifo, socket or device
@@ -103,20 +105,19 @@ handing to an extractor at all. [ADR 0009](0009-the-csharp-extractor-is-written-
 there, because a touched `Order.CS` matched no row and passed with `changed_methods: 0`, and because the
 only cost of over-claiming is a process launch that finds nothing.
 
-**Amended 2026-09-11.** The rejection above is of folding **by text**, which on Linux merges two real
-files. Folding a repo-root prefix **verified by `os.SameFile`** cannot: two directories differing only in
-case are two inodes on a case-sensitive filesystem, so `/tmp/REPO` beside a real `/tmp/repo` still reads
-as outside on Linux, which is the property the rejection protects. That narrow fold is now taken, with
+Nor does it govern a **repo-root prefix verified by `os.SameFile`**, taken with
 [issue 48](https://github.com/tvrmsmith/coding-standards/issues/48) and
-[issue 36](https://github.com/tvrmsmith/coding-standards/issues/36). The half of this entry that
-refused an absolute `--files` path with a mis-cased root prefix now lives in Decision's third
-`--files` bullet, as a refusal about how the root is spelled.
+[issue 36](https://github.com/tvrmsmith/coding-standards/issues/36). What the rejection refuses is
+folding **by text**, which on Linux merges two real files. Confirming one inode cannot: two
+directories differing only in case are two inodes on a case-sensitive filesystem, so `/tmp/REPO`
+beside a real `/tmp/repo` still reads as outside on Linux, which is the property the rejection
+protects. That is why the coverage side admits this fold, on the evidence `os.SameFile` supplies
+rather than on preference.
 
-The fold governs the root prefix alone, at every door into containment: a coverage candidate or a
-report display name whose prefix is mis-cased places and is named where it really sits rather than
-being reported as escaping the repo. The fold is admitted on the coverage side because
-`os.SameFile` supplies the evidence the scoping above lacked, not because the rejection is being
-narrowed by preference.
+It governs the root prefix alone, at every door into containment: a coverage candidate or a report
+display name whose prefix is mis-cased places and is named where it really sits rather than being
+reported as escaping the repo, and a mis-cased root prefix on an absolute `--files` path is refused
+for how the root is spelled, per Decision's third `--files` bullet.
 
 Case **below** the root is still refused, unfolded, which is what keeps `case_only_path_difference` at
 exit 1 and keeps the gate from attributing coverage to a file the report did not measure.
@@ -135,7 +136,8 @@ confined to `<source>`.
 
 Three exit-1 rules land here, typed `coverage_source_root_erased`, `file_ambiguous` and
 `coverage_outside_repo` in [ADR 0008](0008-the-machine-document-is-the-only-output.md). They are checked
-per report, in discovery order, and within one report in that order. The erased source root is tested
+per report, in the order the reports arrive, which is discovery order when the gate found them and
+the order the flags were typed when `--coverage` named them, and within one report in that order. The erased source root is tested
 over the whole class list before any candidate is built.
 
 **A report whose source root has been erased fails the run, exit 1.** `DeterministicReport=true` emits
@@ -193,7 +195,7 @@ that issue 6 unions every discovered report rather than taking the newest.
 
 ## History
 
-Accepted with six dated amendments, four folded on 2026-09-11, one dropped, and one folded in part.
+Accepted with six dated amendments, five folded on 2026-09-11 and one dropped.
 
 - **2026-09-03**, first entry. Scoped the case-folding rejection to coverage-path resolution, once
   ADR 0009 landed the fold for extension routing. **Folded**, because it recorded that arriving.
@@ -205,9 +207,9 @@ Accepted with six dated amendments, four folded on 2026-09-11, one dropped, and 
   [issue 14](https://github.com/tvrmsmith/coding-standards/issues/14). **Folded**.
 - **2026-09-07**. Widened the first of those refusals from directories to every non-regular inode.
   **Folded**.
-- **2026-09-11**. **Folded in part, kept in part.** The half refusing an absolute `--files` path with
-  a mis-cased root prefix had landed, so it moved into Decision's third `--files` bullet. The half
-  that narrows the coverage-side case-folding rejection stays dated, because a narrowing is a
-  standing qualification of the rule above it rather than something a section can absorb.
+- **2026-09-11**. Narrowed the case-folding rejection to exempt a repo-root prefix that
+  `os.SameFile` confirms, and refused an absolute `--files` path with a mis-cased root prefix.
+  **Folded** into two places, the Rejected alternatives entry it narrows and Decision's third
+  `--files` bullet.
 
 No decision changed in the fold.

@@ -33,10 +33,10 @@ goes. Drop it instead when what it recorded was an in-flight state rather than a
 that has since closed, and the section it pointed at now states the rule outright. Either way, add a
 `## History` section naming every entry, how each one went, and when.
 
-An amendment stays dated and separate while it records something still in flight, or where it
-narrowed a decision rather than recording one arriving. One that stays can still be folded in part:
-move the half that has landed into the section it belongs in, leave the rest dated, and have the
-entry point at the new home. 0004's `## History` is the worked example.
+An amendment stays dated and separate only while what it records is still in flight. A narrowing is
+not a reason to keep one, since a narrowed rule is still a rule and the section can state it that
+way. An entry that corrects two sections folds into both. 0004's `## History` is the worked example,
+five folded and one dropped.
 
 **Supersede** when the decision itself changes, and when amendments have accumulated past the point
 where the file can be read straight through. Write a new numbered ADR stating the rule in one pass.
@@ -51,7 +51,7 @@ when what is left still crowds out the decision.
 
 **The `## Current rule` block stays under 250 words**, and the whole file under 1500. The block is
 what a reader is expected to read in full, so it has to be readable in one sitting; the file is what
-they scroll when the block is not enough. A decision that will not fit is more than one decision.
+they scroll when the block is not enough. A new decision that will not fit is more than one decision.
 0007, 0008 and 0009 sit under both. 0004 is folded and still over the file target.
 
 **Length alone licenses nothing.** An ADR over either target is recorded here and left as it stands.
