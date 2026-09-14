@@ -291,7 +291,14 @@ func TestNamedAcceptsARelativeNameResolvedThroughAMisCasedWorkingDirectory(t *te
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
 	// t.Chdir sets PWD as well as the process directory, which is what makes
 	// os.Getwd hand named the mis-cased spelling rather than the tree's own.
+	// os.Getwd only prefers PWD when it stats as the same file, so without this
+	// the case degrades into an ordinary inside reading that never reaches the
+	// fold and still passes.
 	t.Chdir(miscased)
+	if cwd, err := os.Getwd(); err != nil || cwd != miscased {
+		t.Fatalf("os.Getwd returned %q, %v, want the mis-cased %q; this case is not exercising the fold", cwd, err, miscased)
+	}
+	assertFolds(t, root, filepath.Join(miscased, "src", "a.cs"))
 
 	rel, err := root.named(filepath.Join("src", "a.cs"), dirNames{})
 
@@ -366,6 +373,71 @@ func TestNamedRefusesACaseDifferingRootSpellingAnInteriorClimbReachedOutTo(t *te
 	_, err := root.named(name, dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
+}
+
+// A mis-case the shell introduced above the repo root, on a name that climbs,
+// in the shape a developer actually types: they cd'd through a mis-cased parent
+// of the repo and the filesystem folded it. The root component in their --files
+// string is spelled exactly as the tree spells it, so there is nothing in that
+// string to retype, and refusing would be the mirror of the bug the climb
+// refusal exists to fix. The case below runs the same arm on a case-sensitive
+// filesystem.
+func TestNamedAcceptsARelativeNameUnderAMisCasedParentOfTheRoot(t *testing.T) {
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := mkdir(t, filepath.Join(tmp, "dev"))
+	miscasedParent := filepath.Join(tmp, "DEV")
+	if _, err := os.Stat(miscasedParent); err != nil || !sameDirectory(t, parent, miscasedParent) {
+		t.Skipf("the filesystem is case sensitive, so %s does not name the same directory as %s", miscasedParent, parent)
+	}
+	root, err := NewRoot(mkdir(t, filepath.Join(parent, "repo")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
+	t.Chdir(filepath.Join(miscasedParent, "repo", "src"))
+	if cwd, err := os.Getwd(); err != nil || cwd != filepath.Join(miscasedParent, "repo", "src") {
+		t.Fatalf("os.Getwd returned %q, %v, want the mis-cased spelling; this case is not exercising the fold", cwd, err)
+	}
+	assertFolds(t, root, filepath.Join(miscasedParent, "repo", "src", "a.cs"))
+	// "repo" spelled as the tree spells it. The mis-cased component is DEV,
+	// above it, which only the working directory supplied.
+	name := filepath.Join("..", "..", "repo", "src", "a.cs")
+
+	rel, err := root.named(name, dirNames{})
+
+	if err != nil || rel != "src/a.cs" {
+		t.Errorf("named on a name climbing out under a mis-cased parent returned %q, %v, want \"src/a.cs\", nil", rel, err)
+	}
+}
+
+// A mis-case the shell introduced above the repo root, on a name that climbs.
+// The developer spelled the root component exactly as the tree spells it, and
+// the only component in another case is one their string never carried, so
+// refusing would send them to retype a half they cannot reach: every retyping
+// of this name re-enters the mis-cased directory through the working directory.
+// Reading the climb point's location rather than which component is mis-cased
+// refuses this, which is the mirror of the bug the climb refusal exists to fix.
+//
+// The same file from the same shell is accepted as --files a.cs, so accepting
+// here is also what keeps one file from getting two verdicts on how its name
+// happens to be written.
+func TestNamedAcceptsARelativeNameWhoseWorkingDirectoryIsMisCasedAboveTheRoot(t *testing.T) {
+	root, real := rootUnderASymlinkedMiscasedParent(t)
+	touch(t, filepath.Join(real, "src", "a.cs"))
+	t.Chdir(filepath.Join(real, "src"))
+	assertFolds(t, root, filepath.Join(real, "src", "a.cs"))
+	// "repo" spelled as the tree spells it. The mis-cased component is the
+	// parent above it, which only the working directory supplied.
+	name := filepath.Join("..", "..", filepath.Base(real), "src", "a.cs")
+
+	rel, err := root.named(name, dirNames{})
+
+	if err != nil || rel != "src/a.cs" {
+		t.Errorf("named on a name climbing out under a mis-cased parent returned %q, %v, want \"src/a.cs\", nil", rel, err)
+	}
 }
 
 // The acceptance half of the same policy on a case-sensitive filesystem. Without
@@ -722,6 +794,35 @@ func symlinkedMiscasedRoot(t *testing.T) (Root, string) {
 		t.Fatal(err)
 	}
 	return Root{resolved: link}, real
+}
+
+// rootUnderASymlinkedMiscasedParent is a Root whose resolved directory sits
+// under an upper-cased symlink to a real lower-cased parent, returned with the
+// real repo directory beneath that parent. It is how a case-sensitive
+// filesystem reaches the shape where the mis-cased component is above the repo
+// root rather than at it: the root's own last component is spelled identically
+// either way, and only the parent differs, which is the half a developer's
+// --files text never supplies.
+//
+// Like symlinkedMiscasedRoot it builds the Root by hand, outside NewRoot's
+// invariant, because NewRoot resolves the whole path and no Root it builds
+// holds a name that can fold. A filesystem that folds case cannot build it,
+// since the upper-cased parent already names the directory.
+func rootUnderASymlinkedMiscasedParent(t *testing.T) (Root, string) {
+	t.Helper()
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	realParent := mkdir(t, filepath.Join(tmp, "dev"))
+	link := filepath.Join(tmp, "DEV")
+	if _, err := os.Stat(link); err == nil {
+		t.Skipf("the filesystem folded %s onto %s already, so there is no link to make", link, realParent)
+	}
+	if err := os.Symlink(realParent, link); err != nil {
+		t.Fatal(err)
+	}
+	return Root{resolved: filepath.Join(link, "repo")}, mkdir(t, filepath.Join(realParent, "repo"))
 }
 
 // assertRootSpellingRefusal is the answer every mis-cased-root case wants back

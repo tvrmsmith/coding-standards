@@ -27,13 +27,13 @@
 // Landing under the root is not the same as being accepted. named refuses a
 // --files path whose root prefix the developer spelled mis-cased, because such
 // a path is one they typed and can retype, and telling them which half is
-// misspelled is the whole of issue 48. The test is whether their own text
-// spelled that prefix: an absolute name always does, and a relative one does
-// once it climbs above the root and descends back in, since the mis-cased
-// component sits in the string either way. A relative name that only descends
-// inherits its prefix from the process working directory, whatever the shell
-// cd'd through, so it is accepted rather than blamed for a half that is not in
-// the string. named carries the most user-visible policy of the three, the distinct
+// misspelled is the whole of issue 48. The test is whether the mis-cased
+// component is one their own text spelled: an absolute name spells the whole
+// prefix, and a relative one spells it from the directory it climbs to
+// downwards. Anything above that came from the process working directory,
+// whatever the shell cd'd through, so a mis-case up there is accepted rather
+// than blamed on a half that is not in the string and that no retyping of the
+// name can clear. named carries the most user-visible policy of the three, the distinct
 // refusal reasons a --files path can come back with, so a reader changing
 // containment has to weigh it beside the other two rather than reading Place and
 // Name alone.
@@ -490,14 +490,16 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // there is nobody to send back to the keyboard; the fold is confirmed by
 // os.SameFile, so it merges no two files (ADR 0004, amended 2026-09-11).
 //
-// Spelling the prefix is the test, not typing an absolute path. A relative name
-// spells it too once it climbs above the root and descends back in: --files
-// ../../REPO/src/a.cs typed one directory inside the repo puts REPO in the
-// string the developer can retype, and refusing it is the whole point of the
-// refusal. A relative name that only descends inherits its prefix from the
-// process working directory, whatever path their shell cd'd through, so
-// refusing would quote a name and blame a half of it that is not in the string
-// they typed and cannot be retyped. typedTheRootPrefix separates the two. The
+// Spelling the mis-cased component is the test, not typing an absolute path. A
+// relative name spells it too once it climbs above the root and descends back
+// in: --files ../../REPO/src/a.cs typed one directory inside the repo puts REPO
+// in the string the developer can retype, and refusing it is the whole point of
+// the refusal. What a relative name does not spell is anything above where it
+// climbs to, which it inherits from the process working directory, whatever
+// path their shell cd'd through. Refusing for a mis-case up there would quote a
+// name and blame a half of it that is not in the string they typed and cannot
+// be retyped, no matter how the name is written. typedTheRootPrefix separates
+// the two by where the mis-cased component sits. The
 // fold is accepted for the second, and the name goes on to spelledAsOnDisk,
 // which walks every component below the root against the tree's own entries, so
 // nothing is matched approximately for having taken that road.
@@ -556,12 +558,9 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 		return "", &UnresolvedError{Name: name, Reason: "is not a regular file"}
 	}
 	if place == folded {
-		typed, rootFault, cwdFault := r.typedTheRootPrefix(cwd, name, absolute)
+		typed, cwdFault := r.typedTheRootPrefix(cwd, name, resolved, absolute)
 		if cwdFault != nil {
 			return "", fmt.Errorf("resolving %s against the working directory: %w", name, cwdFault)
-		}
-		if rootFault != nil {
-			return "", unweighable(name, rootFault)
 		}
 		if typed {
 			return "", &UnresolvedError{Name: name, Reason: "is not spelled as the repo root is"}
@@ -577,60 +576,66 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 	return rel, nil
 }
 
-// typedTheRootPrefix reports whether the developer's own text spelled the
-// repo-root prefix that folded, which is what makes the mis-cased half theirs to
-// retype. An absolute name always spells it, which is what absolute says.
+// typedTheRootPrefix reports whether a mis-cased root component sits in the
+// part of the candidate the developer's own text supplied, which is what makes
+// it theirs to retype.
 //
-// A relative name spells it exactly when it climbs above the root before
-// descending, because the directory it climbs to is where the developer's text
-// takes over from the working directory. So the question is where that directory
-// sits: outside the root, and everything from the root prefix down came out of
-// their string; inside or folded, and the prefix came from the shell. relativize
-// answers it, which keeps the one containment owner deciding this too.
+// The question is positional, not geometric. A relative name's text supplies
+// every component at or below the directory it climbs to, and the shell
+// supplies everything above. So the climb point is measured as a depth, a count
+// of components, and the root components from that depth down are the ones the
+// text spelled. Any of them differing from the root's own spelling is a
+// mis-case the developer can retype; all of them matching means the fold came
+// from a mis-case above the climb point, somewhere in the path their shell cd'd
+// through, which no retyping of this name can clear. An absolute name has depth
+// zero, so every root component is theirs.
+//
+// Asking instead where the climb point lands, inside the root or outside it,
+// answers a different question and gets the second case wrong: a working
+// directory mis-cased above the repo, /Users/t/Dev/repo/src against a root of
+// /Users/t/dev/repo, puts the climb outside the root while the only mis-cased
+// component, Dev, is one the text never spelled.
 //
 // The climb is measured on the unresolved working directory because that is the
 // path filepath.Join already walked in named, and the directory it lands on is
-// resolved before relativize weighs it, so a symlinked working directory reads
-// the same here as the name itself did. No relative reading at all means the
-// prefix cannot have come from the working directory, so the text spelled it.
+// resolved before its depth is counted, so the count is in the same spelling as
+// the resolved candidate this weighs it against. The two are comparable for the
+// same reason, and they are equal-fold over the root prefix by construction,
+// since named only asks after relativize answered folded.
 //
-// The two faults leave on separate returns because one helper's single door
-// leads to two of named's codes, and which one is not readable from the error
-// value. Resolving the climbed-to directory fails about the process working
-// directory, so named reports it as a plain error, the channel losing the
-// working directory already uses. relativize fails about the repo root, so
-// named refuses it as an UnresolvedError naming the path.
-//
-// Neither fault is one a caller normally reaches, which is why no test pins
-// them. named resolved the whole candidate a moment earlier and climbedTo is
-// the cleaned prefix that same filepath.Join built, so an ancestor of a path
-// that just resolved does not fail to resolve; relativize is the same story,
-// since the candidate's own relativize answered folded, meaning isRootUnder's
-// two stats succeeded on these components. Reaching either arm means the tree
-// moved between two syscalls, the race named's own os.Stat documents. That
-// makes the two-return split more machinery than the fault alone warrants, and
-// it is kept because discarding a filesystem error silently, or filing it
-// against the wrong subject, is worse than an arm no test reaches.
-func (r Root) typedTheRootPrefix(cwd, name string, absolute bool) (typed bool, rootFault, cwdFault error) {
-	if absolute {
-		return true, nil, nil
+// Resolving the climbed-to directory is the one fault, and it is about the
+// process working directory rather than the path, so named reports it as a
+// plain error, the channel losing the working directory already uses. It is not
+// a fault a caller normally reaches, which is why no test pins it: named
+// resolved the whole candidate a moment earlier and climbedTo is the cleaned
+// prefix that same filepath.Join built, so an ancestor of a path that just
+// resolved does not fail to resolve. Reaching it means the tree moved between
+// two syscalls, the race named's own os.Stat documents.
+func (r Root) typedTheRootPrefix(cwd, name, resolved string, absolute bool) (typed bool, cwdFault error) {
+	sep := string(filepath.Separator)
+	depth := 0
+	if !absolute {
+		climbedTo := cwd
+		for i := leadingParents(name); i > 0; i-- {
+			climbedTo = filepath.Dir(climbedTo)
+		}
+		climbed, err := filepath.EvalSymlinks(climbedTo)
+		if err != nil {
+			return false, err
+		}
+		depth = len(strings.Split(climbed, sep))
 	}
-	climbedTo := cwd
-	for i := leadingParents(name); i > 0; i-- {
-		climbedTo = filepath.Dir(climbedTo)
+	rootComponents := strings.Split(r.resolved, sep)
+	if depth >= len(rootComponents) {
+		return false, nil
 	}
-	resolved, err := filepath.EvalSymlinks(climbedTo)
-	if err != nil {
-		return false, nil, err
+	components := strings.Split(resolved, sep)
+	for i := depth; i < len(rootComponents); i++ {
+		if components[i] != rootComponents[i] {
+			return true, nil
+		}
 	}
-	_, place, err := r.relativize(resolved)
-	if errors.Is(err, errNoRelativeReading) {
-		return true, nil, nil
-	}
-	if err != nil {
-		return false, err, nil
-	}
-	return place == outside, nil, nil
+	return false, nil
 }
 
 // leadingParents counts the ".." components a relative name opens with, which is
@@ -660,9 +665,10 @@ func unreadable(name string, err error) *UnresolvedError {
 }
 
 // unweighable is the refusal for the other half, a filesystem failure about the
-// repo root rather than about the name. named reaches it from two places, the
-// candidate's own relativize and the one inside typedTheRootPrefix, and both
-// say it in one wording so a reader meets one message for one fault class.
+// repo root rather than about the name. It is worded here rather than at
+// named's one call site so that the reason a refusal names the root sits beside
+// unreadable, the refusal that names the path, and the two cannot drift into
+// describing one fault class two ways.
 func unweighable(name string, err error) *UnresolvedError {
 	return &UnresolvedError{Name: name, Reason: "could not be weighed against the repo root, " + errnoText(err)}
 }
