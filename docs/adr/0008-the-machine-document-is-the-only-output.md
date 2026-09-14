@@ -86,6 +86,12 @@ One parser owns argv. Every flag the command takes, `--staged`, `--since`, `--fi
 `--coverage`, is parsed in one place and printed in one usage block. Two parsers, each rejecting the
 other's flags as unknown, cannot print a usage block that tells the truth.
 
+**Amended 2026-09-14.** The sentence above enumerates four flags. Issue 19 adds two more,
+`--metric <name>` and `--threshold <name>=<n>`, both repeatable and both specified by the parent
+spec, so the list now reads `--staged`, `--since`, `--files`, `--coverage`, `--metric` and
+`--threshold`. The rule is unchanged: one parser owns all six and one usage block prints all six.
+The enumeration is what went stale, which is the cost of naming the flags rather than the rule.
+
 ## Considered options
 
 **Human-readable stdout with `--json` for machines.** The familiar shape, and what most CLIs do.
