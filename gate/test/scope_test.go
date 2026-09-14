@@ -1166,6 +1166,51 @@ func TestSinceNamingABranchWhoseCommitObjectIsGoneReportsAnUnreadableDiff(t *tes
 		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
 }
 
+func TestSinceNamingAFullShaTheStoreDoesNotHoldReportsAnUnreadableDiff(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	gone := absentCommitSha(f)
+
+	// `rev-parse --verify --quiet` answers a well-formed 40-hex sha with the sha
+	// itself, without asking the store whether it holds the object, so the run
+	// reaches the classification and cat-file is what fails. The abbreviated
+	// spelling of the same sha takes the other arm, which the case below pins.
+	cause := f.gitStderr("cat-file", "-t", gone+"^{}")
+
+	f.runArgs("--since", gone).assertMatchesWith(t, "since_ref_object_unreadable", 1, "",
+		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
+}
+
+func TestSinceNamingAnAbbreviatedShaTheStoreDoesNotHoldFailsNamingThatRev(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	abbreviated := absentCommitSha(f)[:8]
+
+	// An abbreviation has to be matched against the object store to be resolved
+	// at all, so this spelling exits 1 at the verify and never reaches the
+	// classification. The same commit spelled in full reports an unreadable
+	// diff, which is the whole of the difference between the two arms.
+	f.runArgs("--since", abbreviated).assertMatchesWith(t, "since_absent_sha_not_a_commit", 1, "",
+		"no diff base: --since "+abbreviated+" does not name a commit\n",
+		map[string]string{"REV": abbreviated})
+}
+
+// absentCommitSha is the sha of a commit the fixture's object store no longer
+// holds and no ref names, which is what a case spells to --since to reach the
+// two arms a missing object splits between.
+func absentCommitSha(f *fixture) string {
+	f.t.Helper()
+	f.git("branch", "gone")
+	f.touchLine(orderService, 62)
+	f.commitAll("second")
+	sha := f.git("rev-parse", "gone")
+	f.git("branch", "-D", "gone")
+	f.removeLooseObject(sha)
+	return sha
+}
+
 func TestSinceNamingAnAnnotatedTagResolvesTheBaseThroughIt(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
