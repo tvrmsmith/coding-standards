@@ -1,9 +1,11 @@
 package gate_test
 
 import (
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -48,6 +50,19 @@ const (
 // source paths only. What the harness has to guarantee instead is that exactly
 // one report exists, which it gets from a fresh temp repo per run and a single
 // dotnet test. The golden's only hole stays {{BASE}}.
+//
+// The report shapes this case pins, all four of which the gate already handled
+// and none of which anything pinned until this case existed:
+//
+//   - branch spelled "False" rather than the lowercase "false" the hand-built
+//     helper writes.
+//   - hit counts above 1, which the helper never produces.
+//   - a <methods> block whose own <lines> repeat the class-level ones, so the
+//     same line numbers arrive twice in one class and only the class-level
+//     copy may be read.
+//   - line-rate and lines-covered attributes on the root <coverage> element,
+//     which the gate does not read and must not start trusting over the
+//     per-line hits it counts.
 //
 // The ordering below is load-bearing, and each step says why.
 func TestFullStackScoresAReportCoverletWrote(t *testing.T) {
@@ -178,6 +193,7 @@ public class PointsTests
 // the document.
 func (f *fixture) collectCoverage() {
 	f.t.Helper()
+	requireRegisteredCase(f.t, "collectCoverage")
 	cmd := exec.Command("dotnet", "test", "--collect:XPlat Code Coverage")
 	cmd.Dir = f.root
 	// The restore uses the machine's ordinary NuGet cache rather than the
@@ -189,5 +205,29 @@ func (f *fixture) collectCoverage() {
 	cmd.Env = append(os.Environ(), gitEnv...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		f.t.Fatalf("dotnet test --collect:\"XPlat Code Coverage\": %v\n%s", err, out)
+	}
+
+	// The exit status says the tests passed, not that the collector wrote
+	// anything. A run where coverlet.collector resolves but collects nothing
+	// exits zero with no report, and a second report would reach the document
+	// only as an extra GUID in skipped_paths. Either way the case would red as
+	// an opaque golden diff, so the count is checked here where the cause can
+	// be named.
+	var reports []string
+	err := filepath.WalkDir(f.root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(d.Name(), ".cobertura.xml") {
+			reports = append(reports, path)
+		}
+		return nil
+	})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if len(reports) != 1 {
+		f.t.Fatalf("the collection left %d cobertura reports under %s, want exactly one: %v",
+			len(reports), f.root, reports)
 	}
 }

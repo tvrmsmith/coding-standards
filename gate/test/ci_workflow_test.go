@@ -1,12 +1,11 @@
 package gate_test
 
 import (
+	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -25,39 +24,11 @@ const ciWorkflow = "../../.github/workflows/ci.yml"
 // gateJob is the key under jobs: whose steps run this package.
 const gateJob = "gate"
 
-// passCheckMarker is the grep the PASS check runs per name. It locates the
-// step and the loop; it is not the assertion. A step that stopped checking
-// PASS lines is a restructure this case has to red on rather than silently
-// assert nothing about.
-const passCheckMarker = `^--- PASS: $name \(`
-
-// TestCILoopsOverEveryRealExtractorCase pins the one thing ci.yml cannot
-// derive. The workflow retypes the names in realExtractorCases into a shell
-// loop, and a name added to the slice but not to that loop is never proven to
-// have run in CI, which is the exact hole the PASS check exists to close. This
-// case closes it in the other direction, at merge time.
-func TestCILoopsOverEveryRealExtractorCase(t *testing.T) {
-	script := passCheckScript(t)
-
-	looped, err := forLoopWords(script)
-	if err != nil {
-		t.Fatalf("%s: the gate job's PASS check step no longer holds a loop this case can read: %v\nscript:\n%s",
-			ciWorkflow, err, script)
-	}
-
-	for _, name := range realExtractorCases {
-		if !slices.Contains(looped, name) {
-			t.Errorf("%s: the PASS check loops over %v, which does not name %s. A case in realExtractorCases that CI never proves ran is the hole the PASS check exists to close.",
-				ciWorkflow, looped, name)
-		}
-	}
-	for _, name := range looped {
-		if !slices.Contains(realExtractorCases, name) {
-			t.Errorf("%s: the PASS check loops over %s, which is not a case in realExtractorCases. It was renamed or deleted, so CI is waiting on a PASS line no run can print.",
-				ciWorkflow, name)
-		}
-	}
-}
+// passCheckStep is the name: of the step that runs the suite and then proves
+// every case in realExtractorCases reported PASS. The name is how this file
+// finds the step, so the script underneath it stays free to be rewritten as
+// long as it still judges the log the same way.
+const passCheckStep = "Run the gate suite and prove the full-stack cases ran"
 
 // TestCIPassCheckRedsTheJob runs the gate job's step out of ci.yml under bash,
 // so what is under test is what the check does rather than which tokens its
@@ -65,59 +36,69 @@ func TestCILoopsOverEveryRealExtractorCase(t *testing.T) {
 // a RUNNER_TEMP to write the log into, and a `go` on PATH standing in for the
 // toolchain, which is what lets the case choose the verbose log the check then
 // has to judge.
+//
+// Membership is proven here too, in both directions and per name. Withholding
+// one case's PASS line has to red the job, which is what a name missing from
+// the check's own list would silently allow, and a log carrying exactly the
+// names in realExtractorCases has to pass, which is what a check still waiting
+// on a renamed or deleted case would not.
 func TestCIPassCheckRedsTheJob(t *testing.T) {
 	script := passCheckScript(t)
 
-	last := len(realExtractorCases) - 1
-	renamed := slices.Clone(realExtractorCases)
-	renamed[last] += "Twice"
+	t.Run("every case reported PASS, so the check lets the job through", func(t *testing.T) {
+		assertPassCheck(t, script, realExtractorCases, 0, false, nil)
+	})
 
-	cases := []struct {
-		name    string
-		ran     []string
-		goExit  int
-		wantErr bool
-		names   []string
-	}{
-		{
-			name: "every case reported PASS, so the check lets the job through",
-			ran:  realExtractorCases,
-		},
-		{
-			name:    "a case with no PASS line reds the job and is named",
-			ran:     realExtractorCases[:last],
-			wantErr: true,
-			names:   []string{realExtractorCases[last]},
-		},
-		{
-			name:    "a longer name that starts with a case's name does not stand in for it",
-			ran:     renamed,
-			wantErr: true,
-			names:   []string{realExtractorCases[last]},
-		},
-		{
-			name:    "a failing test run reds the job even with every PASS line present",
-			ran:     realExtractorCases,
-			goExit:  1,
-			wantErr: true,
-		},
+	for i, name := range realExtractorCases {
+		withheld := slices.Concat(realExtractorCases[:i], realExtractorCases[i+1:])
+		renamed := slices.Clone(realExtractorCases)
+		renamed[i] += "Twice"
+
+		t.Run(name+"/no PASS line reds the job and is named", func(t *testing.T) {
+			assertPassCheck(t, script, withheld, 0, true, []string{name})
+		})
+		t.Run(name+"/a longer name that starts with it does not stand in for it", func(t *testing.T) {
+			assertPassCheck(t, script, renamed, 0, true, []string{name})
+		})
 	}
 
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			stderr, err := runPassCheck(t, script, verboseLog(c.ran), c.goExit)
-			if c.wantErr && err == nil {
-				t.Fatalf("the check exited zero, want a failure. stderr:\n%s", stderr)
-			}
-			if !c.wantErr && err != nil {
-				t.Fatalf("the check failed with %v, want it to let the job through. stderr:\n%s", err, stderr)
-			}
-			for _, name := range c.names {
-				if !strings.Contains(stderr, name) {
-					t.Errorf("the check reds without naming %s, so the log says nothing about which case did not run. stderr:\n%s", name, stderr)
-				}
-			}
-		})
+	t.Run("a failing test run reds the job even with every PASS line present", func(t *testing.T) {
+		assertPassCheck(t, script, realExtractorCases, 1, true, nil)
+	})
+}
+
+// assertPassCheck runs the step's script over the log a run of ran would have
+// written and asserts the outcome. A failure has to be the script's own `exit
+// 1` rather than any nonzero end, so bash missing from PATH or the script
+// dying before it reaches the PASS loop cannot pass for the check working.
+func assertPassCheck(t *testing.T, script string, ran []string, goExit int, wantErr bool, names []string) {
+	t.Helper()
+
+	stdout, stderr, err := runPassCheck(t, script, verboseLog(ran), goExit)
+	out := fmt.Sprintf("stdout:\n%s\nstderr:\n%s", stdout, stderr)
+
+	if !wantErr {
+		if err != nil {
+			t.Fatalf("the check failed with %v, want it to let the job through. %s", err, out)
+		}
+		return
+	}
+
+	if err == nil {
+		t.Fatalf("the check exited zero, want a failure. %s", out)
+	}
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("the check ended with %v rather than a nonzero exit status, so nothing here proves the PASS loop ran at all. %s", err, out)
+	}
+	if exit.ExitCode() != 1 {
+		t.Fatalf("the check exited %d, want the 1 its own failure path reports. Another status is the script dying before it judged the log. %s",
+			exit.ExitCode(), out)
+	}
+	for _, name := range names {
+		if !strings.Contains(stderr, name) {
+			t.Errorf("the check reds without naming %s, so the log says nothing about which case did not run. %s", name, out)
+		}
 	}
 }
 
@@ -134,10 +115,10 @@ func verboseLog(passed []string) string {
 }
 
 // runPassCheck executes the workflow step's own script under bash with a `go`
-// on PATH that replays log and exits goExit. It returns the script's stderr,
-// which is where the check reports a case that did not run, and its exit
-// error.
-func runPassCheck(t *testing.T, script, log string, goExit int) (string, error) {
+// on PATH that replays log and exits goExit. It returns both of the script's
+// streams, stderr being where the check reports a case that did not run and
+// stdout the tee'd log it judged, together with its exit error.
+func runPassCheck(t *testing.T, script, log string, goExit int) (string, string, error) {
 	t.Helper()
 
 	runnerTemp := t.TempDir()
@@ -157,17 +138,18 @@ func runPassCheck(t *testing.T, script, log string, goExit int) (string, error) 
 	cmd.Env = append(os.Environ(),
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"RUNNER_TEMP="+runnerTemp)
-	var stderr strings.Builder
-	cmd.Stdout = io.Discard
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
-	return stderr.String(), err
+	return stdout.String(), stderr.String(), err
 }
 
-// passCheckScript is the run script of the gate job's PASS check step. It
-// fails the test rather than returning empty when the job, the steps or the
-// step cannot be found, so a workflow restructure reds here instead of leaving
-// the assertion above with nothing to say.
+// passCheckScript is the run script of the gate job's PASS check step, found
+// by the step's name rather than by anything in its body. It fails the test
+// rather than returning empty when the job or the step cannot be found, so a
+// workflow restructure reds here instead of leaving the assertions above with
+// nothing to say.
 func passCheckScript(t *testing.T) string {
 	t.Helper()
 
@@ -194,44 +176,14 @@ func passCheckScript(t *testing.T) string {
 	}
 
 	var found []string
-	var names []string
 	for _, step := range job.Steps {
-		if strings.Contains(step.Run, passCheckMarker) {
+		if step.Name == passCheckStep {
 			found = append(found, step.Run)
-			names = append(names, step.Name)
 		}
 	}
 	if len(found) != 1 {
-		t.Fatalf("%s: the %q job holds %d steps whose script greps for %q, want exactly one: %v",
-			ciWorkflow, gateJob, len(found), passCheckMarker, names)
+		t.Fatalf("%s: the %q job holds %d steps named %q, want exactly one",
+			ciWorkflow, gateJob, len(found), passCheckStep)
 	}
 	return found[0]
-}
-
-// forLoopHeader matches the opening of a shell for loop at the start of a
-// line, which is what keeps a `for ` inside a comment or inside prose from
-// being read as the loop.
-var forLoopHeader = regexp.MustCompile(`(?m)^[ \t]*for[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]+in[ \t]+`)
-
-// forLoopWords is the iteration list of the one for loop in a shell script,
-// with line continuations folded away. It is a normalised model of what the
-// loop iterates over, which is the meaning this case asserts on; the words
-// themselves are the names CI demands a PASS line for.
-func forLoopWords(script string) ([]string, error) {
-	folded := strings.ReplaceAll(script, "\\\n", " ")
-
-	found := forLoopHeader.FindAllStringIndex(folded, -1)
-	if len(found) != 1 {
-		return nil, fmt.Errorf("the script holds %d `for <var> in <words>` loops, want exactly one", len(found))
-	}
-
-	list := folded[found[0][1]:]
-	if end := strings.IndexAny(list, ";\n"); end >= 0 {
-		list = list[:end]
-	}
-	words := strings.Fields(list)
-	if len(words) == 0 {
-		return nil, fmt.Errorf("the loop iterates over nothing")
-	}
-	return words, nil
 }

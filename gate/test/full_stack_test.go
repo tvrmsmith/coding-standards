@@ -2,14 +2,13 @@ package gate_test
 
 import (
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -114,102 +113,71 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 // PASS line, and it does not read them from here.
 //
 // The slice, that loop and the cases themselves are pinned to each other in
-// both directions. TestCILoopsOverEveryRealExtractorCase makes a name missing
-// from ci.yml impossible to merge, and
-// TestRealExtractorCasesNamesEveryCaseThatDrivesTheToolchain makes a case
-// missing from this slice impossible to merge.
+// both directions. TestCIPassCheckRedsTheJob makes a name missing from ci.yml
+// impossible to merge, and the registration below makes a case missing from
+// this slice impossible to merge.
 var realExtractorCases = []string{
 	"TestFullStackDrivesTheRealDotnetExtractor",
 	"TestFullStackScoresAReportCoverletWrote",
 }
 
-// realExtractorHelpers are the two calls that make a case one that drives the
-// real toolchain. requireRealDotnet is the decision and installRealExtractor
-// is the act, so either one is enough to earn a place in realExtractorCases,
-// and looking for both is what catches the case that installs without asking.
-var realExtractorHelpers = []string{"requireRealDotnet", "installRealExtractor"}
+// registeredCases is every case that announced itself through
+// requireRealDotnet in this process. It is what closes realExtractorCases
+// against what the cases actually do: the toolchain entry points refuse a
+// caller that is not in it, and an unfiltered run then has to end with it
+// equal to the slice.
+var (
+	registeredMu    sync.Mutex
+	registeredCases = map[string]bool{}
+)
 
-// TestRealExtractorCasesNamesEveryCaseThatDrivesTheToolchain closes the slice
-// against what this package's cases actually do. Without it a third case can
-// call the helpers and stay out of the slice, and then CI never proves it ran
-// and its skip and fatal routes go unasserted, which is the hole the PASS
-// check closes one level up. The check reads the package's own Go source
-// through go/parser, so it matches a call in the AST and never a name sitting
-// in a comment or a string literal. That is why this case can name both
-// helpers above without matching itself.
-func TestRealExtractorCasesNamesEveryCaseThatDrivesTheToolchain(t *testing.T) {
-	drive := casesDrivingTheRealToolchain(t)
-
-	for _, name := range drive {
-		if !slices.Contains(realExtractorCases, name) {
-			t.Errorf("%s calls one of %v but realExtractorCases does not name it, so CI never proves it ran and the enforcement rows never assert its skip and fatal routes",
-				name, realExtractorHelpers)
-		}
-	}
-	for _, name := range realExtractorCases {
-		if !slices.Contains(drive, name) {
-			t.Errorf("realExtractorCases names %s, but no case in this package calls any of %v. It was renamed or deleted, so CI is waiting on a PASS line no run can print",
-				name, realExtractorHelpers)
-		}
-	}
+// registerRealDotnetCase records the running case before requireRealDotnet
+// decides anything, so the name lands in the set whichever route the case then
+// takes, the skip, the fatal or the real run.
+func registerRealDotnetCase(name string) {
+	registeredMu.Lock()
+	defer registeredMu.Unlock()
+	registeredCases[name] = true
 }
 
-// casesDrivingTheRealToolchain is every top-level test function in this
-// package whose body calls a realExtractorHelpers function, read off the
-// parsed source rather than the file's text.
-func casesDrivingTheRealToolchain(t *testing.T) []string {
+// registeredCaseNames is the recorded set, sorted, for comparison against
+// realExtractorCases.
+func registeredCaseNames() []string {
+	registeredMu.Lock()
+	defer registeredMu.Unlock()
+	names := slices.Collect(maps.Keys(registeredCases))
+	slices.Sort(names)
+	return names
+}
+
+// requireRegisteredCase is the guard on every entry point that drives the real
+// dotnet toolchain. A case that reaches one without having announced itself
+// runs dotnet unasked, gets no CI PASS line and has its skip and fatal routes
+// unasserted, so it fails here instead, naming the two edits that fix it.
+func requireRegisteredCase(t *testing.T, entry string) {
 	t.Helper()
-
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
+	registeredMu.Lock()
+	defer registeredMu.Unlock()
+	if !registeredCases[t.Name()] {
+		t.Fatalf("%s reached %s without calling requireRealDotnet first. Call it, and add %q to realExtractorCases, or the case drives dotnet unasked and CI never proves it ran",
+			t.Name(), entry, t.Name())
 	}
-
-	fset := token.NewFileSet()
-	var drive []string
-	parsed := 0
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "_test.go") {
-			continue
-		}
-		file, err := parser.ParseFile(fset, entry.Name(), nil, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		parsed++
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Recv != nil || fn.Body == nil || !strings.HasPrefix(fn.Name.Name, "Test") {
-				continue
-			}
-			if callsAny(fn.Body, realExtractorHelpers) {
-				drive = append(drive, fn.Name.Name)
-			}
-		}
-	}
-	if parsed == 0 {
-		t.Fatal("this case parsed no _test.go files, so it asserted nothing. It reads the package directory, which go test makes the working directory")
-	}
-	slices.Sort(drive)
-	return drive
 }
 
-// callsAny reports whether body calls any of the named functions directly,
-// closures inside it included.
-func callsAny(body *ast.BlockStmt, names []string) bool {
-	called := false
-	ast.Inspect(body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		if fn, ok := call.Fun.(*ast.Ident); ok && slices.Contains(names, fn.Name) {
-			called = true
-			return false
-		}
-		return true
-	})
-	return called
+// assertRegisteredCasesMatch compares the cases that announced themselves
+// against realExtractorCases. TestMain calls it, because no test function can:
+// ordering between test functions is not something a case may rely on, so only
+// a check that runs after m.Run has seen the whole set. It reports a message
+// rather than failing directly, since at that point there is no *testing.T
+// left to fail.
+func assertRegisteredCasesMatch() error {
+	got := registeredCaseNames()
+	want := slices.Sorted(slices.Values(realExtractorCases))
+	if slices.Equal(got, want) {
+		return nil
+	}
+	return fmt.Errorf("the cases that called requireRealDotnet are %v, but realExtractorCases names %v. A name only in the slice was renamed or deleted, so CI waits on a PASS line no run can print; a name only in the run drives dotnet without CI proving it ran",
+		got, want)
 }
 
 // requireRealDotnet is the decision every case in realExtractorCases makes
@@ -220,6 +188,7 @@ func callsAny(body *ast.BlockStmt, names []string) bool {
 // first dotnet call.
 func requireRealDotnet(t *testing.T) {
 	t.Helper()
+	registerRealDotnetCase(t.Name())
 	if !enforceDotnet {
 		t.Skip(reasonUnset)
 	}
@@ -322,7 +291,7 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 			short:   short,
 			wantErr: true,
 			outcome: "FAIL",
-			wants:   []string{envRequireDotnet, "forbids skipping", reasonShort},
+			wants:   []string{envRequireDotnet + "=1 forbids skipping: " + reasonShort},
 		},
 	}
 
@@ -455,6 +424,7 @@ func (f *fixture) appendComment(rel string, n int) {
 // from the shared stub-based binDir. It returns that directory.
 func installRealExtractor(t *testing.T) string {
 	t.Helper()
+	requireRegisteredCase(t, "installRealExtractor")
 	// A directory holding the gate and no extractor beside it is exactly what
 	// this case needs before it installs the real tool into it.
 	dir := gateOnlyDir(t)
