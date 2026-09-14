@@ -52,7 +52,8 @@ when what is left still crowds out the decision.
 **The `## Current rule` block stays under 250 words**, and the whole file under 1500. The block is
 what a reader is expected to read in full, so it has to be readable in one sitting; the file is what
 they scroll when the block is not enough. A new decision that will not fit is more than one decision.
-0007, 0008 and 0009 sit under both. 0004 is folded and still over the file target.
+0007, 0008 and 0009 sit under both. 0004 is folded and still over the file target. Neither ceiling
+is checked mechanically yet, which is [issue 87](https://github.com/tvrmsmith/coding-standards/issues/87).
 
 **Length alone licenses nothing.** An ADR over either target is recorded here and left as it stands.
 Only the amendment count triggers consolidation, so a long file with few amendments stays long. A
