@@ -104,13 +104,15 @@ func (b Base) Label() string { return b.Ref + "@" + b.Commit[:7] }
 // HEAD. Naming the flag again in any of those tells the caller nothing new.
 //
 // A ref that does not resolve and a ref resolving to something other than a
-// commit were one arm until issue 68. The `^{commit}` peel that
-// checked the ref exited 1 both on a ref the repo does not carry and on a
-// lightweight tag over a tree, so "did not resolve" covered the pair. Verifying
-// unpeeled and typing the resolved id with objectType tells them apart: the ref
-// the repo does not carry is rev-parse's exit 1, and the tag over a tree is the
-// type objectType answers with at exit 0. The sentence above names all three
-// because the struct carries a field for the third.
+// commit still share this one message and this one Ref field. Verifying
+// unpeeled and typing the resolved id with objectType did not split them, and
+// the caller sees "does not name a commit" either way, because both are a ref
+// the developer can fix by naming another. What issue 68 took out of this
+// error is the third case the old `^{commit}` peel swept in with them, a ref
+// the repo carries whose commit object the store has lost, which is git
+// failing to answer rather than a wrong ref and now reports an unreadable
+// diff. The sentence above names all three arms this error does keep because
+// the struct carries a field for the third.
 type NoBaseError struct {
 	// Ref is the ref --since named. It is empty when the default candidates
 	// are what failed, and empty whenever NoCommits is true, which every

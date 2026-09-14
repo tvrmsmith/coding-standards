@@ -240,6 +240,21 @@ func TestSinceNamingATagThatDoesNotPointAtACommitFailsNamingThatRef(t *testing.T
 		"no diff base: --since treetag does not name a commit\n")
 }
 
+func TestSinceNamingAnAnnotatedTagOverATreeFailsNamingThatRef(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.git("tag", "-a", "treetag", "-m", "the tree", f.git("rev-parse", "HEAD^{tree}"))
+
+	// The one shape where the id verify hands over is itself a tag object and
+	// the peel still lands on something the run cannot diff. `cat-file -t` on
+	// the tag object bare answers `tag` at exit 0, so only the `^{}` gets
+	// `tree` out of it, and a regression dropping that peel turns a ref the
+	// developer can fix by naming another into an unreadable diff.
+	f.runArgs("--since", "treetag").assertMatches(t, "since_annotated_tree_tag_not_a_commit", 1, "",
+		"no diff base: --since treetag does not name a commit\n")
+}
+
 func TestSinceNamingAPathInsideACommitFailsNamingThatRev(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
@@ -1214,7 +1229,7 @@ func TestSinceNamingAFullShaTheStoreHoldsResolvesTheBaseFromIt(t *testing.T) {
 
 	// The green side of the spelling split the absent-sha case pins. A
 	// well-formed 40-hex clears the verify without the store being consulted,
-	// so the classification is the only step that ever reads this object, and
+	// so the classification is the first step that reads this object, and
 	// this case is red if a live full sha stops coming back `commit` there and
 	// the run starts reporting a sha it can see as naming no commit.
 	f.runArgs("--since", base).assertMatches(t, "since_single_method", 0, f.baseLabel(base),
