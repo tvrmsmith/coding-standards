@@ -20,29 +20,43 @@ by 0007, [0005](0005-the-machine-document-is-the-only-output.md) by 0008,
 
 ## Conventions
 
-An accepted ADR is never rewritten in place and never reworded for style. There are two ways to
-change one.
+An accepted ADR keeps every decision it made and every reason it gave, through any edit. Text moves
+and a landed changelog entry retires; a decision and its reasons do not. Three ways to change one.
 
 **Amend** when the decision stands and the text is wrong, incomplete, or overtaken by a detail.
 Write a paragraph opening with `**Amended YYYY-MM-DD.**` at the start of a line, and place it next
 to the text it corrects, so a reader meets the correction where they meet the claim.
 
+**Fold** an amendment once what it records has landed, one of two ways. Fold it by rewriting the
+section it corrects, so that section states the current fact directly and only the changelog hop
+goes. Drop it instead when what it recorded was an in-flight state rather than a fact, a deferral
+that has since closed, and the section it pointed at now states the rule outright. Either way, add a
+`## History` section naming every entry, how each one went, and when.
+
+An amendment stays dated and separate only while what it records is still in flight. A narrowing is
+not a reason to keep one, since a narrowed rule is still a rule and the section can state it that
+way. An entry that corrects two sections folds into both. 0004's `## History` is the worked example,
+five folded and one dropped.
+
 **Supersede** when the decision itself changes, and when amendments have accumulated past the point
 where the file can be read straight through. Write a new numbered ADR stating the rule in one pass.
 Give the old file a `**Superseded YYYY-MM-DD by [ADR NNNN](...)**` paragraph under its title and
 leave everything else in it untouched. Add the new ADR to the table above and move the old row down
-to the superseded line. Nothing is deleted.
+to the superseded line. Nothing in the superseded file is deleted.
 
 **Five amendments is the consolidation trigger.** Past that the amendments outweigh the decision and
 a reader has to reconstruct the rule from a changelog. ADR 0005 reached seventeen, four of them
-revising one number, each claiming to supersede the others.
+revising one number, each claiming to supersede the others. Fold the landed ones first; supersede
+when what is left still crowds out the decision.
 
 **The `## Current rule` block stays under 250 words**, and the whole file under 1500. The block is
 what a reader is expected to read in full, so it has to be readable in one sitting; the file is what
-they scroll when the block is not enough. A decision that will not fit is more than one decision.
-Neither ceiling is checked mechanically yet, which is [issue 87](https://github.com/tvrmsmith/coding-standards/issues/87).
+they scroll when the block is not enough. A new decision that will not fit is more than one decision.
+0007, 0008 and 0009 sit under both. 0004 is folded and still over the file target. Neither ceiling
+is checked mechanically yet, which is [issue 87](https://github.com/tvrmsmith/coding-standards/issues/87).
 
-0004 is at both triggers, five amendments and past the word ceiling, and is the next one to
-consolidate.
+**Length alone licenses nothing.** An ADR over either target is recorded here and left as it stands.
+Only the amendment count triggers consolidation, so a long file with few amendments stays long. A
+decision is not rewritten because its file is big.
 
 If an ADR looks wrong, that is a decision to escalate to the user, not an edit to make.
