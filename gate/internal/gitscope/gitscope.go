@@ -329,9 +329,10 @@ func (r Repo) verifyRev(rev string) (string, error) {
 // Decomposition alone would leave a pure `git mv` marking every method in the
 // moved file changed, because the add side is the whole file. So ADR 0007 also
 // says "the gate drops an added file whose content matches a deleted one" in
-// the same diff. An added path whose content, whitespace ignored, is the only
-// match for a path the same diff deleted is dropped afterwards, and only a move
-// that also edited the file is measured.
+// the same diff. An added path whose content, whitespace ignored, matches a
+// path the same diff deleted is dropped afterwards, provided the diff deletes
+// at least as many blobs with that content as it adds, and only a move that
+// also edited the file is measured.
 //
 // ACM also excludes T, so a typechange contributes no touched lines in either
 // direction, and the two drops have different reasons. A source file replaced
