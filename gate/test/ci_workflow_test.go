@@ -108,16 +108,21 @@ func TestCIDeclaresThePassCheckStep(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// if: and the env values are decoded as raw nodes rather than as Go values.
+	// Actions hands the runner the source text, so `01` reaches the step as the
+	// string 01, while decoding it as a Go value yields the integer 1 and hides
+	// a value this suite rejects. Node.Value is that source text, and it also
+	// keeps `if: false` and an integer env value from failing the unmarshal.
 	var workflow struct {
 		Jobs map[string]struct {
 			Steps []struct {
-				Name             string         `yaml:"name"`
-				ID               string         `yaml:"id"`
-				Uses             string         `yaml:"uses"`
-				If               any            `yaml:"if"`
-				Run              string         `yaml:"run"`
-				WorkingDirectory string         `yaml:"working-directory"`
-				Env              map[string]any `yaml:"env"`
+				Name             string               `yaml:"name"`
+				ID               string               `yaml:"id"`
+				Uses             string               `yaml:"uses"`
+				If               yaml.Node            `yaml:"if"`
+				Run              string               `yaml:"run"`
+				WorkingDirectory string               `yaml:"working-directory"`
+				Env              map[string]yaml.Node `yaml:"env"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
@@ -130,23 +135,8 @@ func TestCIDeclaresThePassCheckStep(t *testing.T) {
 		t.Fatalf("%s declares no %q job, so this case cannot find the step that runs the suite", ciWorkflow, gateJob)
 	}
 
-	// The snapshot below says ci.yml still carries the reviewed script. It says
-	// nothing about which cases that script names, so the loop's own list is
-	// read out of the script and compared with the suite's slice as a set, both
-	// directions. Containment one way would miss a name left in the script after
-	// a half-applied rename, which CI then greps for and never finds.
 	if len(realExtractorCases) == 0 {
 		t.Fatal("realExtractorCases is empty, so the name check below would pass over a script naming nothing")
-	}
-	looped, err := scriptLoopNames(passCheckScript)
-	if err != nil {
-		t.Fatalf("%s: the %q step's script: %v", ciWorkflow, passCheckStep, err)
-	}
-	wantNames := slices.Sorted(slices.Values(realExtractorCases))
-	slices.Sort(looped)
-	if !slices.Equal(looped, wantNames) {
-		t.Errorf("%s: the %q step's loop walks %v, want exactly the suite's realExtractorCases %v. A name the suite no longer defines makes CI grep for a case that can never report PASS, and a case the suite defines but the loop omits runs on CI unproven",
-			ciWorkflow, passCheckStep, looped, wantNames)
 	}
 
 	var found, guardTargets int
@@ -161,7 +151,7 @@ func TestCIDeclaresThePassCheckStep(t *testing.T) {
 					ciWorkflow, i+1, gateJob, passCheckGuardStepID, step.Uses, passCheckGuardStepUses)
 			}
 		}
-		guard := scalar(step.If)
+		guard := step.If.Value
 		if !declaredBefore && strings.Contains(guard, passCheckGuardReference) {
 			t.Errorf("%s: step %d of the %q job (%q) reads %s, which no earlier step declares id: %s for. The expression renders empty for a step that has not finished, its own step included, so the guard is false and the step skips with the job green",
 				ciWorkflow, i+1, gateJob, step.Name, passCheckGuardReference, passCheckGuardStepID)
@@ -179,6 +169,24 @@ func TestCIDeclaresThePassCheckStep(t *testing.T) {
 			t.Errorf("%s: the %q step's run: script is not the reviewed one. Update passCheckScript once the new script is what this repo wants to run. got:\n%s\nwant:\n%s",
 				ciWorkflow, passCheckStep, step.Run, passCheckScript)
 		}
+
+		// The snapshot above says ci.yml still carries the reviewed script. It
+		// says nothing about which cases that script names, so the loop's own
+		// list is read out of the step's script and compared with the suite's
+		// slice as a set, both directions. Containment one way would miss a name
+		// left in the script after a half-applied rename, which CI then greps for
+		// and never finds.
+		switch looped, err := scriptLoopNames(step.Run); {
+		case err != nil:
+			t.Errorf("%s: the %q step's script: %v", ciWorkflow, passCheckStep, err)
+		default:
+			wantNames := slices.Sorted(slices.Values(realExtractorCases))
+			slices.Sort(looped)
+			if !slices.Equal(looped, wantNames) {
+				t.Errorf("%s: the %q step's loop walks %v, want exactly the suite's realExtractorCases %v. A name the suite no longer defines makes CI grep for a case that can never report PASS, and a case the suite defines but the loop omits runs on CI unproven",
+					ciWorkflow, passCheckStep, looped, wantNames)
+			}
+		}
 		if step.WorkingDirectory != gateWorkingDir {
 			t.Errorf("%s: the %q step declares working-directory %q, want %q, which is where its `go test ./...` selects this module",
 				ciWorkflow, passCheckStep, step.WorkingDirectory, gateWorkingDir)
@@ -189,7 +197,7 @@ func TestCIDeclaresThePassCheckStep(t *testing.T) {
 		// enables enforcement. Without it both real-toolchain cases skip and the
 		// PASS loop reds for the wrong reason.
 		value, set := step.Env[envRequireDotnet]
-		raw := scalar(value)
+		raw := value.Value
 		switch enforce, err := requireDotnet(raw, set); {
 		case err != nil:
 			t.Errorf("%s: the %q step sets %s=%q, which this suite rejects: %v",
@@ -227,15 +235,4 @@ func scriptLoopNames(script string) ([]string, error) {
 		return nil, fmt.Errorf("its %q list never closes with %q", openLoop, closeLoop)
 	}
 	return strings.Fields(strings.ReplaceAll(rest[:end], "\\", " ")), nil
-}
-
-// scalar renders a YAML scalar the workflow schema allows to be written
-// unquoted. Actions coerces `if: false` and `TIMEOUT: 12` to strings, so
-// decoding them as strings would fail the whole unmarshal and red this case
-// with a message about the file rather than about the PASS check.
-func scalar(value any) string {
-	if value == nil {
-		return ""
-	}
-	return fmt.Sprint(value)
 }

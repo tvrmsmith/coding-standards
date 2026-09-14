@@ -297,17 +297,23 @@ func (f *fixture) assertCoverletReportShape(path, dotnetOut string) {
 	class := report.Classes[scored[0]]
 	var branchFalse, hitsAboveOne bool
 	classLines := map[int]bool{}
-	covered := 0
 	for _, line := range class.Lines {
-		classLines[line.Number] = line.Hits > 0
-		if line.Hits > 0 {
-			covered++
-		}
+		classLines[line.Number] = classLines[line.Number] || line.Hits > 0
 		if line.Branch == "False" {
 			branchFalse = true
 		}
 		if line.Hits > 1 {
 			hitsAboveOne = true
+		}
+	}
+	// Distinct line numbers, not <line> entries. coverlet emits a sibling method
+	// per lambda or local function whose sequence points overlap the enclosing
+	// one, so counting entries would raise this floor above the report-wide
+	// lines-covered it is compared against and red a sound report.
+	covered := 0
+	for _, hit := range classLines {
+		if hit {
+			covered++
 		}
 	}
 	// A precondition rather than a shape the gate reads past: the gate does read
