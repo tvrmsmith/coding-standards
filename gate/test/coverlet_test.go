@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -52,18 +53,22 @@ const (
 // one report exists, which it gets from a fresh temp repo per run and a single
 // dotnet test. The golden's only hole stays {{BASE}}.
 //
-// The report shapes this case pins, all four of which the gate already handled
-// and none of which anything pinned until this case existed:
+// Two separate claims, kept apart because they have different strength.
 //
-//   - branch spelled "False" rather than the lowercase "false" the hand-built
-//     helper writes.
-//   - hit counts above 1, which the helper never produces.
-//   - a <methods> block whose own <lines> repeat the class-level ones, so the
-//     same line numbers arrive twice in one class and only the class-level
-//     copy may be read.
-//   - line-rate and lines-covered attributes on the root <coverage> element,
-//     which the gate does not read and must not start trusting over the
-//     per-line hits it counts.
+// What the golden's numbers depend on is narrow: the <source> root, each
+// class's filename, each <line>'s number and whether its hits are above zero,
+// and the timestamp the staleness rule reads. The gate's parser takes nothing
+// else from the document, so those are the only parts of coverlet's output a
+// golden diff can speak for.
+//
+// Everything else coverlet emits, the gate reads past rather than reads, and a
+// golden diff would stay silent if it disappeared. assertCoverletReportShape is
+// what speaks for that half: it requires the collected report to still carry
+// branch="False" in coverlet's capitalised spelling, a hit count above 1, a
+// <methods> block whose <lines> repeat the class-level numbers, and line-rate
+// and lines-covered on the root <coverage> element. The point is that the gate
+// stays correct over a report carrying all four, not that any of them moves a
+// number here.
 //
 // The ordering below is load-bearing, and each step says why.
 func TestFullStackScoresAReportCoverletWrote(t *testing.T) {
@@ -194,7 +199,7 @@ public class PointsTests
 // the document.
 func (f *fixture) collectCoverage() {
 	f.t.Helper()
-	requireRegisteredCase(f.t, "collectCoverage")
+	requireRealDotnet(f.t)
 	cmd := exec.Command("dotnet", "test", "--collect:XPlat Code Coverage")
 	cmd.Dir = f.root
 	// The restore uses the machine's ordinary NuGet cache rather than the
@@ -235,8 +240,14 @@ func (f *fixture) collectCoverage() {
 	f.assertCoverletReportShape(reports[0])
 }
 
+// scoredClassSuffix is how the one class the golden scores is found in the
+// report. coverlet writes the class filename as the absolute path minus its
+// leading slash, so the suffix is what identifies it without pinning the temp
+// repo's own path.
+const scoredClassSuffix = "src/Points.cs"
+
 // assertCoverletReportShape checks the report coverlet just wrote still carries
-// the shapes the case exists to score. Reading the file here is reading the
+// the shapes the gate reads past. Reading the file here is reading the
 // producer's serialized output as this case's input, not as a proxy for gate
 // behaviour: a coverlet release that stops emitting them leaves the golden's
 // numbers untouched, so without this the case would keep passing over an input
@@ -270,8 +281,16 @@ func (f *fixture) assertCoverletReportShape(path string) {
 		f.t.Fatalf("%s: %v", path, err)
 	}
 
+	// Scoped to the one class the golden scores. coverlet reports the test
+	// assembly's own sources into the same document, so PointsTests.cs carrying
+	// a shape must not stand in for Points.cs losing it.
+	var scored []string
 	var branchFalse, hitsAboveOne, duplicated bool
 	for _, class := range report.Classes {
+		scored = append(scored, class.Filename)
+		if !strings.HasSuffix(class.Filename, scoredClassSuffix) {
+			continue
+		}
 		classLines := map[int]bool{}
 		for _, line := range class.Lines {
 			classLines[line.Number] = true
@@ -291,17 +310,24 @@ func (f *fixture) assertCoverletReportShape(path string) {
 		}
 	}
 
+	if !slices.ContainsFunc(scored, func(name string) bool {
+		return strings.HasSuffix(name, scoredClassSuffix)
+	}) {
+		f.t.Fatalf("%s holds no class whose filename ends %s, so the shape checks below would pass over a report that never scored the fixture's own source. Classes: %v",
+			path, scoredClassSuffix, scored)
+	}
+
 	for _, shape := range []struct {
 		got  bool
 		want string
 	}{
-		{branchFalse, `a line with branch="False", the capitalised spelling no hand-built report in this suite uses`},
-		{hitsAboveOne, "a line hit more than once, which the hand-built reports never produce"},
-		{duplicated, "a <methods> line repeating a class-level line number, so the same line arrives twice"},
+		{branchFalse, `a line of the scored class with branch="False", the capitalised spelling no hand-built report in this suite uses`},
+		{hitsAboveOne, "a line of the scored class hit more than once, which the hand-built reports never produce"},
+		{duplicated, "a <methods> line of the scored class repeating a class-level line number, so the same line arrives twice"},
 		{report.LineRate != "" && report.LinesCovered != "", "line-rate and lines-covered on the root element, the summary the gate must not start trusting over the per-line hits"},
 	} {
 		if !shape.got {
-			f.t.Errorf("coverlet %s wrote %s without %s. This case scores the producer's own report, so a shape it no longer emits is coverage this case silently lost",
+			f.t.Errorf("coverlet %s wrote %s without %s. The gate reads past this shape rather than reading it, so no golden diff would report its loss",
 				coverletVersion, path, shape.want)
 		}
 	}

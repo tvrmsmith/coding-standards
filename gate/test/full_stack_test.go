@@ -112,7 +112,7 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 //
 // The slice, that loop and the cases themselves are pinned to each other in
 // both directions. TestCIPassCheckRedsTheJob makes a name missing from ci.yml
-// impossible to merge, requireRegisteredCase makes a case that reaches the
+// impossible to merge, requireRealDotnet makes a case that reaches the
 // toolchain without being listed here fail where it stands, and
 // TestRequireDotnetDecidesTheFullStackOutcome makes a name listed here that no
 // case implements fail, because the name produces no SKIP block to read.
@@ -121,27 +121,23 @@ var realExtractorCases = []string{
 	"TestFullStackScoresAReportCoverletWrote",
 }
 
-// requireRegisteredCase is the guard on every entry point that drives the real
-// dotnet toolchain. A case that reaches one without being listed in
-// realExtractorCases runs dotnet unasked, gets no CI PASS line and has its skip
-// and fatal routes unasserted, so it fails here instead, naming the two edits
-// that fix it.
-func requireRegisteredCase(t *testing.T, entry string) {
-	t.Helper()
-	if !slices.Contains(realExtractorCases, t.Name()) {
-		t.Fatalf("%s reached %s without calling requireRealDotnet first. Call it, and add %q to realExtractorCases, or the case drives dotnet unasked and CI never proves it ran",
-			t.Name(), entry, t.Name())
-	}
-}
-
-// requireRealDotnet is the decision every case in realExtractorCases makes
-// before it touches dotnet, held in one place so a case added to the slice
-// without it cannot run the toolchain unasked. Nothing here reads the machine.
-// A run that means to drive the real toolchain says so and then reds on a
-// machine that cannot serve it; a run that does not say so skips before the
-// first dotnet call.
+// requireRealDotnet is the one decision standing between a case and the real
+// dotnet toolchain, and every entry point that drives the toolchain calls it
+// itself, so reaching dotnet without it is not expressible. It decides two
+// things. The case has to be listed in realExtractorCases, or CI never proves
+// it ran and the enforcement rows never assert its routes. Then the run has to
+// say it means to drive the toolchain: one that does reds on a machine that
+// cannot serve it, one that does not skips before the first dotnet call.
+// Nothing here reads the machine, and calling it twice decides the same way.
 func requireRealDotnet(t *testing.T) {
 	t.Helper()
+	// A case that wraps the collection in t.Run passes the subtest's T, and it
+	// inherits its parent's listing rather than being told to list the subtest.
+	name, _, _ := strings.Cut(t.Name(), "/")
+	if !slices.Contains(realExtractorCases, name) {
+		t.Fatalf("%s drives the real dotnet toolchain but realExtractorCases does not name it. Add %q to that slice and to ci.yml's PASS loop, or the case runs dotnet with CI never proving it ran",
+			t.Name(), name)
+	}
 	if !enforceDotnet {
 		t.Skip(reasonUnset)
 	}
@@ -377,7 +373,7 @@ func (f *fixture) appendComment(rel string, n int) {
 // from the shared stub-based binDir. It returns that directory.
 func installRealExtractor(t *testing.T) string {
 	t.Helper()
-	requireRegisteredCase(t, "installRealExtractor")
+	requireRealDotnet(t)
 	// A directory holding the gate and no extractor beside it is exactly what
 	// this case needs before it installs the real tool into it.
 	dir := gateOnlyDir(t)

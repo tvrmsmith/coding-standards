@@ -54,7 +54,7 @@ func TestCIPassCheckRedsTheJob(t *testing.T) {
 	}
 
 	t.Run("every case reported PASS, so the check lets the job through", func(t *testing.T) {
-		assertPassCheck(t, script, realExtractorCases, 0, false, nil)
+		assertPassCheck(t, script, verboseLog(realExtractorCases), 0, 0, nil)
 	})
 
 	// A log naming nothing has to red. That is what proves the check's own list
@@ -62,7 +62,7 @@ func TestCIPassCheckRedsTheJob(t *testing.T) {
 	// a check that demanded no names at all would pass every other red row's
 	// input too.
 	t.Run("a log naming no case at all reds the job", func(t *testing.T) {
-		assertPassCheck(t, script, nil, 0, true, nil)
+		assertPassCheck(t, script, verboseLog(nil), 0, 1, nil)
 	})
 
 	for i, name := range realExtractorCases {
@@ -71,10 +71,17 @@ func TestCIPassCheckRedsTheJob(t *testing.T) {
 		renamed[i] += "Twice"
 
 		t.Run(name+"/no PASS line reds the job and is named", func(t *testing.T) {
-			assertPassCheck(t, script, withheld, 0, true, []string{name})
+			assertPassCheck(t, script, verboseLog(withheld), 0, 1, []string{name})
 		})
 		t.Run(name+"/a longer name that starts with it does not stand in for it", func(t *testing.T) {
-			assertPassCheck(t, script, renamed, 0, true, []string{name})
+			assertPassCheck(t, script, verboseLog(renamed), 0, 1, []string{name})
+		})
+		// A case that ran and skipped is the outcome the whole mechanism exists
+		// to catch: enforcement off, or the env key drifted, and the suite still
+		// reports ok. It prints a RUN line like a passing case does, so a check
+		// keyed on RUN rather than on the result line would let it through.
+		t.Run(name+"/a case that ran and skipped reds the job and is named", func(t *testing.T) {
+			assertPassCheck(t, script, skippedLog(realExtractorCases, name), 0, 1, []string{name})
 		})
 	}
 
@@ -83,30 +90,19 @@ func TestCIPassCheckRedsTheJob(t *testing.T) {
 	// pipeline, which is the mechanism under test here, and an exit 1 would be
 	// indistinguishable from the PASS loop's own failure path.
 	t.Run("a failing test run reds the job even with every PASS line present", func(t *testing.T) {
-		assertPassCheckExit(t, script, realExtractorCases, 2, 2, nil)
+		assertPassCheck(t, script, verboseLog(realExtractorCases), 2, 2, nil)
 	})
 }
 
-// assertPassCheck runs the step's script over the log a run of ran would have
-// written and asserts the outcome. A red is required to be the PASS loop's own
-// `exit 1`, so bash missing from PATH or the script dying earlier cannot pass
-// for the check working. The one row that reds for another reason states its
-// own status through assertPassCheckExit.
-func assertPassCheck(t *testing.T, script string, ran []string, goExit int, wantErr bool, names []string) {
-	t.Helper()
-	if !wantErr {
-		assertPassCheckExit(t, script, ran, goExit, 0, names)
-		return
-	}
-	assertPassCheckExit(t, script, ran, goExit, 1, names)
-}
-
-// assertPassCheckExit is assertPassCheck with the status the script has to end
-// on stated rather than assumed. wantExit 0 is the job going through.
-func assertPassCheckExit(t *testing.T, script string, ran []string, goExit, wantExit int, names []string) {
+// assertPassCheck runs the step's script over log with a `go` that exits
+// goExit, and requires the script to end on wantExit. Stating the status rather
+// than a bare pass or fail is what keeps bash missing from PATH, or the script
+// dying before the PASS loop, from standing in for the loop's own `exit 1`.
+// wantExit 0 is the job going through.
+func assertPassCheck(t *testing.T, script, log string, goExit, wantExit int, names []string) {
 	t.Helper()
 
-	stdout, stderr, err := runPassCheck(t, script, verboseLog(ran), goExit)
+	stdout, stderr, err := runPassCheck(t, script, log, goExit)
 	out := fmt.Sprintf("stdout:\n%s\nstderr:\n%s", stdout, stderr)
 
 	if wantExit == 0 {
@@ -138,9 +134,24 @@ func assertPassCheckExit(t *testing.T, script string, ran []string, goExit, want
 // passed. It is the input the PASS check reads, and building it here is what
 // lets a case withhold one name's result without running the suite.
 func verboseLog(passed []string) string {
+	return caseLog(passed, "")
+}
+
+// skippedLog is verboseLog with one name reporting SKIP instead of PASS. A
+// skipped case still prints its RUN line and still leaves the package ok, which
+// is the shape a run with enforcement off writes.
+func skippedLog(names []string, skipped string) string {
+	return caseLog(names, skipped)
+}
+
+func caseLog(names []string, skipped string) string {
 	var b strings.Builder
-	for _, name := range passed {
-		fmt.Fprintf(&b, "=== RUN   %s\n--- PASS: %s (1.23s)\n", name, name)
+	for _, name := range names {
+		outcome := "PASS"
+		if name == skipped {
+			outcome = "SKIP"
+		}
+		fmt.Fprintf(&b, "=== RUN   %s\n--- %s: %s (1.23s)\n", name, outcome, name)
 	}
 	b.WriteString("PASS\nok  \tgithub.com/tvrmsmith/coding-standards/gate/test\t1.234s\n")
 	return b.String()
