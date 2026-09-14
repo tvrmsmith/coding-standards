@@ -1,0 +1,15 @@
+# Build recipe for the personal golangci-lint binary. `go/build.sh` runs `golangci-lint custom`
+# against it, which compiles the plugin module below into a binary at go/bin/tvrmsmith-gcl.
+#
+# The version is a hard pin, not a floor: a module plugin is linked into golangci-lint's own
+# process, so the binary and the plugin are built against one version of its internals. Raising
+# it means rebuilding, which is what `build.sh` is for.
+version: v2.13.2
+name: tvrmsmith-gcl
+destination: ./bin
+
+plugins:
+  # Local path rather than a Go proxy version: the rules churn, and a proxy reference would
+  # publish every edit before it could be tried.
+  - module: github.com/tvrmsmith/coding-standards/go/plugin
+    path: ./plugin

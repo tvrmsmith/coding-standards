@@ -1,11 +1,14 @@
 # C# decision points
 
 The C# extractor computes cyclomatic complexity as base 1 plus one point per decision point it finds
-walking a span's syntax. [ADR 0006](adr/0006-the-csharp-extractor-is-written-in-house.md) picked a
-definition close to Roslyn's own code-metrics walker, `CodeAnalysisMetricData`, on purpose, not
-byte-identical to it. That ADR's Consequences section says owning the walker means owning this list, so
-this document is where the list lives, and the second section below names every point where the two
-disagree.
+walking a span's syntax. The definition sits close to Roslyn's own code-metrics walker,
+`CodeAnalysisMetricData`, on purpose, and is not byte-identical to it.
+[Issue 11](https://github.com/tvrmsmith/coding-standards/issues/11) settled that pairing and asked
+for the deltas to be written down rather than matched away; no ADR restates it.
+[ADR 0009](adr/0009-the-csharp-extractor-is-written-in-house.md)'s Consequences section says owning
+the walker means owning this list, and its Current rule block puts the decision-point rules in this
+document rather than in the ADR, so this document is where the list lives, and the second section
+below names every point where the two disagree.
 
 The threshold a CRAP score is compared against is set against this extractor's own numbers, never
 against Roslyn's, so a delta from Roslyn costs nothing on its own. It only matters once it is written
@@ -161,9 +164,10 @@ when the declaration's own line is rewritten, unlike a count of how many local f
 which an unrelated edit earlier in the method would churn.
 
 A generic name's printed form carries a comma, and this document's own tables carry it unquoted because
-the delimiter is a pipe. That is the reason [ADR 0005](adr/0005-the-machine-document-is-the-only-output.md)
-chose the pipe over TOON's comma default: a comma delimiter would force `Order.Map<TKey, TValue>` to be
-quoted, while pipe never needs to quote it.
+the delimiter is a pipe. [ADR 0008](adr/0008-the-machine-document-is-the-only-output.md) fixes the
+pipe as the gate's delimiter, and the reason it beat TOON's comma default stays in the superseded
+[ADR 0005](adr/0005-the-machine-document-is-the-only-output.md), which rejected the comma because it
+would force `Order.Map<TKey, TValue>` to be quoted where pipe never needs to quote it.
 
 ## The language ceiling
 

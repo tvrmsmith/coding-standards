@@ -13,7 +13,7 @@ without a guideline being written for it first.
 | Mode | When | What it is |
 |---|---|---|
 | **skill-as-guidance** | before the code is written | The skills below, loaded by the agent while writing code. |
-| **lint** | after, mechanical | ESLint + Roslyn rules. Deterministic shapes only — an off-the-shelf rule where one exists, a custom rule where none does. |
+| **lint** | after, mechanical | ESLint, Roslyn and golangci-lint rules. Deterministic shapes only — an off-the-shelf rule where one exists, a custom rule where none does. |
 | **skill-as-review** | after, judgement | The same skills, read while reviewing. |
 | **metric-gate** | after, mechanical, needs the tests run | The `gate/` binary. Measures a quantity per changed method and compares it against a threshold, so it costs a test run and can fail because a test was deleted. |
 
@@ -31,7 +31,7 @@ two that drift.
 Most guidelines need judgement to spot, so the skills are their only enforcement. The rest have a
 deterministic shape a linter can catch. Each of those has an id (`A1`, `D11`, `F10`) carried by the
 enforcement mapping and repeated on the rule that enforces it — see the rule tables in
-`packages/eslint-config-tvrmsmith/README.md` and `dotnet/README.md`.
+`packages/eslint-config-tvrmsmith/README.md`, `dotnet/README.md` and `go/README.md`.
 
 **The mapping runs one way.** Every guideline needs an enforcement home; a rule does not have to
 trace back to a guideline. An off-the-shelf rule that is already installed and already correct
@@ -65,6 +65,10 @@ dotnet/                              # NuGet
   src/Tvrmsmith.Analyzers/           # the three custom analyzers + curated severities
   src/Tvrmsmith.MetricGate.CSharp/   # the C# extractor: method spans + cyclomatic complexity
   tests/                             # analyzer and extractor tests, a stand-in consumer, the severity proof
+go/                                  # the Go lint layer: one golangci-lint binary with the
+  plugin/                            #   custom analyzers compiled into it
+  golangci.yml                       #   the curated config, passed to the target with --config
+  test/                              #   a fixture per enabled linter, and the proof each fires
 gate/                                # the metric gate: a Go binary, one TOON document on stdout
   cmd/metric-gate/
   internal/                          # scope selection, diff, coverage, join, CRAP, TOON encoder
@@ -72,16 +76,18 @@ gate/                                # the metric gate: a Go binary, one TOON do
 harness/                             # machine-local adoption harness: editor layer + pre-commit
 ```
 
-The plugin loader ignores `packages/`, `dotnet/` and `gate/` — it reads only `.claude-plugin/` and
+The plugin loader ignores `packages/`, `dotnet/`, `go/` and `gate/` — it reads only `.claude-plugin/` and
 `skills/`.
 
 ## The custom rules
 
 Everything else is off the shelf. These have no off-the-shelf equivalent:
 
-1. `combine-assertions-on-same-object` — Roslyn (`TVRM0001`) **and** ESLint. The ESLint half is
+1. `combine-assertions-on-same-object` — Roslyn (`TVRM0001`), ESLint **and** golangci-lint. The
+   ESLint half is
    [written](packages/eslint-plugin-tvrmsmith/docs/rules/combine-assertions-on-same-object.md)
-   and wired into the preset.
+   and wired into the preset; `go/README.md` covers the Go half, which recognises a testify
+   assertion by the callee's package rather than by an `assert.` prefix.
 2. `no-suppression-before-assertion` — Roslyn only (`TVRM0002`). TypeScript is covered by
    `@typescript-eslint/no-non-null-assertion` plus a `no-restricted-syntax` selector.
 3. `no-assertion-escape-cast` — Roslyn only (`TVRM0003`). Bans `((object)x).Should()`.
@@ -90,17 +96,27 @@ Everything else is off the shelf. These have no off-the-shelf equivalent:
 5. `no-dropped-async-assertion` — Roslyn only (`TVRM0005`). Catches an awaitable assertion nobody
    awaits, in the synchronous test bodies the compiler's CS4014 cannot reach. TypeScript is covered
    by `jest/valid-expect` too.
-6. `comment-block-length` — Roslyn (`TVRM0006`) **and** ESLint, both
+6. `comment-block-length` — Roslyn (`TVRM0006`), ESLint **and** golangci-lint, all three
    [documented together](packages/eslint-plugin-tvrmsmith/docs/rules/comment-block-length.md).
    Warns on a run of non-documentation comments over 10 lines and exempts doc comments at any
    length. StyleCop ships no length rule at all; Sonar's `S103` and `@stylistic/max-len` cap a
-   physical *line*, so they flag long code and miss a long comment made of short lines.
+   physical *line*, so they flag long code and miss a long comment made of short lines. Go has
+   no equivalent either, and `go/README.md` records the two ways a doc comment behaves
+   differently there.
+
+Go needs two of the six and no more. `testifylint` covers A2 and most of A5 on its own, which is
+why the Go half has one hand-written assertion rule where C# needed five, and A4 has no Go shape
+at all: neither a nil dereference nor a failed type assertion can turn a missing value into a
+*passing* assertion, so there is nothing to ban. `go/README.md` records that decision with the
+rest of the rule tables.
 
 The off-the-shelf layer around them is already curated: `packages/eslint-config-tvrmsmith` for
-TypeScript, and for C# both AwesomeAssertions.Analyzers `FAA0001`–`FAA0004` and most of the built-in
-`CAxxxx` rules the SDK ships quiet, disabled or at `note` (see `dotnet/README.md` — the analyzer pairing is
-version-sensitive and mixing it with FluentAssertions fails *silently*, and the `CA` set is
-generated from the SDK's own rule metadata rather than a pinned list).
+TypeScript, `go/golangci.yml` for Go, and for C# both AwesomeAssertions.Analyzers
+`FAA0001`–`FAA0004` and most of the built-in `CAxxxx` rules the SDK ships quiet, disabled or at
+`note` (see `dotnet/README.md` — the analyzer pairing is version-sensitive and mixing it with
+FluentAssertions fails *silently*, and the `CA` set is generated from the SDK's own rule metadata
+rather than a pinned list). Each of the three carries its own rule table with a reason per rule,
+and `go/README.md` also lists what it deliberately leaves off.
 
 TypeScript also registers `eslint-plugin-jest`, for the A2 and A5 assertion rules and for a slice
 of lint-only test-integrity rules. Despite the name it is not a bet on jest: those rules resolve
@@ -137,5 +153,7 @@ claude plugin marketplace add tvrmsmith/coding-standards
 ## Distribution
 
 Deliberately solo and machine-local: nothing is committed to the repos being linted, no CI gate,
-no teammate impact. The packages wire up by local path while the rules churn, and publish to
+no teammate impact. Go has no package at all — `go/build.sh` compiles the rules into a
+golangci-lint binary on the machine that runs them. The packages wire up by local path while the
+rules churn, and publish to
 GitHub Packages (npm + NuGet) under `tvrmsmith` once they settle — not to the public registries.

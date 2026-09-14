@@ -5,8 +5,10 @@ assertion.
 
 **Guideline:** *Combine Assertions on the Same Object* — [`test-best-practices/SKILL.md`](../../../../plugins/coding-standards/skills/test-best-practices/SKILL.md#assertions)
 (guideline **A1** in the enforcement mapping). It is the one guideline in
-the whole inventory with no off-the-shelf rule in either language. The C# half is the
-Roslyn analyzer of the same name in `Tvrmsmith.Analyzers`.
+the whole inventory with no off-the-shelf rule in any of the three languages. The C# half is the
+Roslyn analyzer of the same name in `Tvrmsmith.Analyzers`, and the Go half is the
+`tvrmsmith-combine-assertions` linter in [`go/`](../../../../go/README.md), which targets
+testify and also reports a length assertion followed by indexing into the same collection.
 
 Severity in the preset: **warn**. The restructure is mechanical but the choice between
 `toEqual` and `toMatchObject` is the author's, and this rule reaches existing test suites

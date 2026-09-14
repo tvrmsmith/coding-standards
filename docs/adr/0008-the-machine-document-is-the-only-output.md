@@ -47,6 +47,20 @@ no uniform shape to declare. This qualifies "Its field list is fixed and does no
 outcome". ADR 0005 fixed that encoding and this file lost it in consolidation, while `internal/toon`
 still implements it.
 
+**Amended 2026-09-14.** This completes "`action` and `target_coverage` are typed cells in the table
+rather than prose", which requires both cells to be typed and never says what they hold. `action` is
+one of `raise_coverage`, `split_method` or `none`. `target_coverage` is the coverage that would
+bring the method under the threshold at its current complexity, and it is `null` on every row whose
+`action` is not `raise_coverage`; `internal/crap` owns the arithmetic and the direction it rounds.
+On a scored row, `measured` or `structural_na`, `split_method` is emitted exactly when complexity
+exceeds the threshold, because at full coverage CRAP reduces to complexity and no test can rescue
+the method. An `unknown` row carries `none` whatever its complexity, since the join produced no
+score to act on. ADR 0005 fixed
+this enumeration and this file lost it in consolidation, while `internal/crap` still emits the
+tokens and `gate/test/golden` still pins them. Adding a token is a contract change and edits this
+paragraph on the same commit, the same way adding a cause edits the `error.code` list in
+`## Current rule`.
+
 `skipped_paths` lists paths no extractor claimed. Two things produce it: a changed file whose
 extension no extractor in the language table handles, and a `--files` path that resolves to a real
 file no extractor claims. Both proceed; neither fails the run.

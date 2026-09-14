@@ -113,6 +113,49 @@ jobs:
             exit 1
           fi
 
+  golint:
+    name: lint plugin (go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        id: setup
+        with:
+          go-version-file: go/plugin/go.mod
+          cache-dependency-path: go/plugin/go.sum
+      - run: go vet ./...
+        working-directory: go/plugin
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      - run: go test ./... -count=1
+        working-directory: go/plugin
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+
+      # The analyzer passing its own tests says nothing about whether it reaches
+      # a real run: a module plugin that fails to register leaves a working
+      # golangci-lint binary that silently enables no rule. build.sh answers
+      # that by linting go/test/smoke, which holds one deliberate violation, and
+      # failing when nothing is reported. The install below is only a bootstrap
+      # — `golangci-lint custom` builds the version .custom-gcl.yml pins, not
+      # its own — so the two versions are deliberately read from one place.
+      - name: Build the personal binary and prove the plugin is in it
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          pinned=$(sed -n 's/^version: *//p' go/.custom-gcl.yml | head -1)
+          go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$pinned"
+          ./go/build.sh
+
+      # And the config is a list of promises until something exercises it. This
+      # runs the binary built above over go/test/fixtures and fails on any
+      # linter golangci.yml enables that reported nothing, which is how an
+      # enabled-but-silent rule gets found. Only the module root package is
+      # tested: the fixtures are deliberate violations, and the printf one would
+      # fail the vet pass `go test` runs over them.
+      - name: Prove every enabled linter reports
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: go test . -count=1
+        working-directory: go/test
+
   dotnet:
     name: extractor and analyzers (dotnet)
     runs-on: ubuntu-latest
@@ -212,7 +255,9 @@ jobs:
       # runner, which is what keeps the fixtures out:
       # packages/eslint-config-tvrmsmith/test/fixture-package has no scripts,
       # and dotnet/tests/Consumer exists to emit diagnostics rather than to be
-      # run.
+      # run. The Go discriminator is the coarse one: go/test/smoke is a fixture
+      # and go/test carries both a suite and one, but a module is a module, so
+      # both are listed and the golint job is where to look for what runs them.
       - name: Compare the suites on disk against the hand-maintained list
         # The node install is a precondition, because this step parses every
         # manifest with node.
@@ -228,6 +273,9 @@ jobs:
           dotnet/tests/Tvrmsmith.MetricGate.CSharp.Tests/Tvrmsmith.MetricGate.CSharp.Tests.csproj
           dotnet/tests/verify-severities.sh
           gate/go.mod
+          go/plugin/go.mod
+          go/test/go.mod
+          go/test/smoke/go.mod
           harness/package.json
           packages/eslint-config-tvrmsmith/package.json
           packages/eslint-plugin-tvrmsmith/package.json
