@@ -1,7 +1,8 @@
 // Package scope parses the whole of metric-gate's command line, the diff
-// scope a run measures and the coverage reports it reads. It depends on
-// stdlib alone: nothing here touches git or the filesystem, so a caller can
-// validate a command line before it opens a repo.
+// scope a run measures, the coverage reports it reads, and the metrics it
+// selects. It depends on stdlib and the metric catalogue alone: neither
+// touches git or the filesystem, so a caller can validate a command line
+// before it opens a repo.
 //
 // One parser owns argv. Two of them, each rejecting the other's flags as
 // unknown, cannot print a usage block that tells the truth, and the first
@@ -13,7 +14,12 @@
 // one outright.
 package scope
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+
+	"github.com/tvrmsmith/coding-standards/gate/internal/metric"
+)
 
 // Mode is which diff a run measures.
 type Mode string
@@ -43,6 +49,10 @@ type Scope struct {
 	// typed them. Empty means discovery. It is independent of Mode: any
 	// scope can be scored against named reports.
 	Coverage []string
+	// Metrics is every metric the run selected with the threshold in force
+	// for it, in the order metric.Hosted lists them. Never empty: no
+	// --metric means every metric the binary hosts.
+	Metrics []metric.Selection
 }
 
 // UsageError is a command line the gate refuses to guess at. Its Error()
@@ -54,12 +64,14 @@ func (e *UsageError) Error() string {
 	return "metric-gate: " + e.Problem + "\n\n" + usage
 }
 
-const usage = `usage: metric-gate [--staged | --since <ref> | --files <path>...] [--coverage <path>]...
-  (no flag)          the merge base of HEAD and the default branch
-  --staged           what a commit would contain
-  --since <ref>      the merge base of HEAD and <ref>
-  --files <path>...  every method in each named file
-  --coverage <path>  read this report instead of discovering one; repeatable`
+const usage = `usage: metric-gate [--staged | --since <ref> | --files <path>...] [--coverage <path>]... [--metric <name>]... [--threshold <name>=<n>]...
+  (no flag)               the merge base of HEAD and the default branch
+  --staged                what a commit would contain
+  --since <ref>           the merge base of HEAD and <ref>
+  --files <path>...       every method in each named file
+  --coverage <path>       read this report instead of discovering one; repeatable
+  --metric <name>         measure this metric; repeatable, defaults to every one this binary hosts
+  --threshold <name>=<n>  the bar for one metric, as in crap=30; repeatable, never global`
 
 // flagNames is the human name for each scope flag, used to report a conflict
 // between two of them. ModeMergeBase is absent on purpose: no flag spells it,
@@ -92,8 +104,35 @@ var flagNames = map[Mode]string{
 // taken as a path, since the gate's own flags are all long ones and a report
 // really can be named that way.
 func Parse(args []string) (Scope, error) {
+	return parse(args, metric.Hosted())
+}
+
+// parse is Parse's work, taking the catalogue as a parameter rather than
+// reading metric.Hosted() itself.
+//
+// The binary hosts CRAP alone, so several of the rules below cannot fire
+// through Parse: with one metric hosted, a threshold naming a metric
+// --metric did not select is unreachable, since the only name left over is
+// the one --metric already took, and "defaults to every metric the binary
+// hosts" cannot be told apart from "defaults to crap". Driving parse from
+// gate/internal/scope/scope_test.go with a two-entry fake catalogue is what
+// makes those rules real tests rather than dead branches.
+func parse(args []string, hosted []metric.Definition) (Scope, error) {
 	var sc Scope
 	sc.Mode = ModeMergeBase
+
+	// selected is every name --metric named, in typed order, used to reject a
+	// repeat and, once argv is fully read, to pick which hosted metrics the
+	// run measures. Empty means the flag was never typed, which is "every
+	// hosted metric" rather than "none": a flag not given is a default, not a
+	// negative selection.
+	var selected []string
+	// thresholds holds one explicit override per metric name, keyed for the
+	// twice-check; thresholdOrder keeps the typed order so the
+	// did-not-select validation below reports the first offending flag
+	// deterministically rather than in map iteration order.
+	thresholds := map[string]int{}
+	var thresholdOrder []string
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -146,6 +185,74 @@ func Parse(args []string) (Scope, error) {
 			}
 			sc.Coverage = append(sc.Coverage, value)
 
+		case arg == "--metric", strings.HasPrefix(arg, "--metric="):
+			var value string
+			if after, joined := strings.CutPrefix(arg, "--metric="); joined {
+				value = after
+			} else if i+1 < len(args) {
+				i++
+				value = args[i]
+			}
+			if value == "" {
+				return Scope{}, &UsageError{Problem: "--metric needs a metric name"}
+			}
+			// The same two-dash-only refusal --coverage makes, for the same
+			// reason: a hosted metric name never begins with a dash, and a
+			// mistyped flag taken as a name would reach the developer as an
+			// unknown-metric message rather than the usage error it is.
+			if strings.HasPrefix(value, "--") {
+				return Scope{}, &UsageError{Problem: "--metric needs a metric name, not the flag '" + value + "'"}
+			}
+			if _, ok := metric.Lookup(hosted, value); !ok {
+				return Scope{}, &UsageError{Problem: "unknown metric '" + value + "'; this binary hosts: " + strings.Join(metric.Names(hosted), ", ")}
+			}
+			for _, s := range selected {
+				if s == value {
+					return Scope{}, &UsageError{Problem: "--metric was given '" + value + "' twice; pass it once"}
+				}
+			}
+			selected = append(selected, value)
+
+		case arg == "--threshold", strings.HasPrefix(arg, "--threshold="):
+			var value string
+			if after, joined := strings.CutPrefix(arg, "--threshold="); joined {
+				value = after
+			} else if i+1 < len(args) {
+				i++
+				value = args[i]
+			}
+			if value == "" {
+				return Scope{}, &UsageError{Problem: "--threshold needs a <metric>=<value> assignment, as in 'crap=30'"}
+			}
+			if strings.HasPrefix(value, "--") {
+				return Scope{}, &UsageError{Problem: "--threshold needs a <metric>=<value> assignment, not the flag '" + value + "'"}
+			}
+			name, numStr, hasEquals := strings.Cut(value, "=")
+			if !hasEquals {
+				return Scope{}, &UsageError{Problem: "--threshold '" + value + "' is missing '=', as in 'crap=30'"}
+			}
+			if name == "" {
+				return Scope{}, &UsageError{Problem: "--threshold '" + value + "' names no metric, as in 'crap=30'"}
+			}
+			if _, ok := metric.Lookup(hosted, name); !ok {
+				return Scope{}, &UsageError{Problem: "--threshold names unknown metric '" + name + "'; this binary hosts: " + strings.Join(metric.Names(hosted), ", ")}
+			}
+			n, err := strconv.Atoi(numStr)
+			if err != nil {
+				return Scope{}, &UsageError{Problem: "--threshold '" + value + "' is not a whole number, as in 'crap=30'"}
+			}
+			// Below 1 no method can pass: complexity 1 fully covered scores 1,
+			// the floor of crap.Measurement.Score, so a threshold under it
+			// would fail every run outright rather than set a bar.
+			if n < 1 {
+				return Scope{}, &UsageError{Problem: "--threshold " + value + " is below 1, so no method could pass"}
+			}
+			if _, ok := thresholds[name]; ok {
+				return Scope{}, &UsageError{Problem: "--threshold was given " + name + " twice; pass it once"}
+			}
+			thresholds[name] = n
+			thresholdOrder = append(thresholdOrder, name)
+
 		case strings.HasPrefix(arg, "-"):
 			return Scope{}, &UsageError{Problem: "unknown argument '" + arg + "'"}
 
@@ -153,6 +260,48 @@ func Parse(args []string) (Scope, error) {
 			return Scope{}, &UsageError{Problem: "unexpected argument '" + arg + "'; there are no positional arguments"}
 		}
 	}
+
+	// Resolved after the whole of argv is read, so --metric and --threshold
+	// may be typed in either order: an empty selection means every hosted
+	// metric, and only then can "a threshold named a metric that was not
+	// selected" be told apart from "no --metric was typed at all".
+	var names []string
+	if len(selected) == 0 {
+		names = metric.Names(hosted)
+	} else {
+		chosen := make(map[string]bool, len(selected))
+		for _, name := range selected {
+			chosen[name] = true
+		}
+		for _, def := range hosted {
+			if chosen[def.Name] {
+				names = append(names, def.Name)
+			}
+		}
+	}
+
+	final := make(map[string]bool, len(names))
+	for _, name := range names {
+		final[name] = true
+	}
+	for _, name := range thresholdOrder {
+		if !final[name] {
+			return Scope{}, &UsageError{Problem: "--threshold names " + name + ", which --metric did not select"}
+		}
+	}
+
+	// Order follows hosted, never the order --metric was typed in, so the
+	// document does not vary with argv ordering (issue 19).
+	sc.Metrics = make([]metric.Selection, 0, len(names))
+	for _, name := range names {
+		def, _ := metric.Lookup(hosted, name) // name came from hosted itself, so this always finds it
+		threshold := def.DefaultThreshold
+		if t, ok := thresholds[name]; ok {
+			threshold = t
+		}
+		sc.Metrics = append(sc.Metrics, metric.Selection{Definition: def, Threshold: threshold})
+	}
+
 	return sc, nil
 }
 

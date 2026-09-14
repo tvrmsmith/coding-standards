@@ -16,9 +16,9 @@ import (
 // healthy writer, so every case below is exercising emit's own handling of
 // the write rather than a cause the document already carried.
 func passingDocument() report.Document {
-	return report.Document{Scope: scope.ModeMergeBase, Metric: &report.Metric{
-		Name: crap.Name, Display: crap.DisplayName, Threshold: crap.Threshold,
-	}}
+	return report.Document{Scope: scope.ModeMergeBase, Metrics: []report.Metric{{
+		Name: crap.Name, Display: crap.DisplayName, Threshold: crap.DefaultThreshold,
+	}}}
 }
 
 // exceedingDocument is a document that renders and carries a score over the
@@ -26,17 +26,17 @@ func passingDocument() report.Document {
 // passing doc.ExitCode() through instead of returning a constant that happens
 // to match the passing case.
 func exceedingDocument() report.Document {
-	measurement := crap.Measurement{Complexity: crap.Threshold + 10, Coverage: 0.1}
+	measurement := crap.Measurement{Complexity: crap.DefaultThreshold + 10, Coverage: 0.1, Threshold: crap.DefaultThreshold}
 	score := measurement.Score()
-	return report.Document{Scope: scope.ModeMergeBase, ChangedMethods: 1, Metric: &report.Metric{
-		Name: crap.Name, Display: crap.DisplayName, Threshold: crap.Threshold,
+	return report.Document{Scope: scope.ModeMergeBase, ChangedMethods: 1, Metrics: []report.Metric{{
+		Name: crap.Name, Display: crap.DisplayName, Threshold: crap.DefaultThreshold,
 		Rows: []report.Row{{
 			File: "src/Ordering/OrderService.cs", Start: 1, End: 20, Name: "Place",
 			Complexity: measurement.Complexity, Coverage: &measurement.Coverage, Score: &score,
 			State: report.StateMeasured, Action: measurement.Action(),
 			TargetCoverage: measurement.TargetCoverage(),
 		}},
-	}}
+	}}}
 }
 
 // erroringWriter always fails, which black-box coverage cannot force onto

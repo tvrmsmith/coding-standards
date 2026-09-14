@@ -10,12 +10,14 @@ import (
 // usage is the block every scope.UsageError renders beneath its specific
 // problem, pinned here once so a case's stderr assertion states only the
 // problem line it is actually testing.
-const usage = "\n\nusage: metric-gate [--staged | --since <ref> | --files <path>...] [--coverage <path>]...\n" +
-	"  (no flag)          the merge base of HEAD and the default branch\n" +
-	"  --staged           what a commit would contain\n" +
-	"  --since <ref>      the merge base of HEAD and <ref>\n" +
-	"  --files <path>...  every method in each named file\n" +
-	"  --coverage <path>  read this report instead of discovering one; repeatable\n"
+const usage = "\n\nusage: metric-gate [--staged | --since <ref> | --files <path>...] [--coverage <path>]... [--metric <name>]... [--threshold <name>=<n>]...\n" +
+	"  (no flag)               the merge base of HEAD and the default branch\n" +
+	"  --staged                what a commit would contain\n" +
+	"  --since <ref>           the merge base of HEAD and <ref>\n" +
+	"  --files <path>...       every method in each named file\n" +
+	"  --coverage <path>       read this report instead of discovering one; repeatable\n" +
+	"  --metric <name>         measure this metric; repeatable, defaults to every one this binary hosts\n" +
+	"  --threshold <name>=<n>  the bar for one metric, as in crap=30; repeatable, never global\n"
 
 // TestScopeUsageErrors covers every command line metric-gate refuses before it
 // runs, the scope flags and --coverage alike. One parser owns argv, so one
@@ -148,6 +150,102 @@ func TestScopeUsageErrors(t *testing.T) {
 		"--coverage given a flag as a joined value": {
 			argv:    []string{"--coverage=--nope"},
 			problem: "--coverage needs a path, not the flag '--nope'",
+		},
+		"--metric with nothing after it": {
+			argv:    []string{"--metric"},
+			problem: "--metric needs a metric name",
+		},
+		"--metric with an empty joined value": {
+			argv:    []string{"--metric="},
+			problem: "--metric needs a metric name",
+		},
+		"--metric with an empty separate value": {
+			argv:    []string{"--metric", ""},
+			problem: "--metric needs a metric name",
+		},
+		"--metric given a flag as a separate value": {
+			argv:    []string{"--metric", "--staged"},
+			problem: "--metric needs a metric name, not the flag '--staged'",
+		},
+		"--metric naming an unknown metric": {
+			argv:    []string{"--metric", "cyclo"},
+			problem: "unknown metric 'cyclo'; this binary hosts: crap",
+		},
+		"--metric is case sensitive": {
+			argv:    []string{"--metric", "CRAP"},
+			problem: "unknown metric 'CRAP'; this binary hosts: crap",
+		},
+		"the same metric named on --metric twice": {
+			argv:    []string{"--metric", "crap", "--metric", "crap"},
+			problem: "--metric was given 'crap' twice; pass it once",
+		},
+		// A single dash is not the flag-shaped refusal --metric makes, so it
+		// falls through to the ordinary unknown-metric rule, matching the
+		// asymmetry TestCoverageFlagTakesAValueBeginningWithOneDashAsAPath
+		// pins for --coverage.
+		"--metric given a single-dash value": {
+			argv:    []string{"--metric", "-x"},
+			problem: "unknown metric '-x'; this binary hosts: crap",
+		},
+		"--threshold with nothing after it": {
+			argv:    []string{"--threshold"},
+			problem: "--threshold needs a <metric>=<value> assignment, as in 'crap=30'",
+		},
+		"--threshold with an empty joined value": {
+			argv:    []string{"--threshold="},
+			problem: "--threshold needs a <metric>=<value> assignment, as in 'crap=30'",
+		},
+		"--threshold with an empty separate value": {
+			argv:    []string{"--threshold", ""},
+			problem: "--threshold needs a <metric>=<value> assignment, as in 'crap=30'",
+		},
+		"--threshold given a flag as a separate value": {
+			argv:    []string{"--threshold", "--staged"},
+			problem: "--threshold needs a <metric>=<value> assignment, not the flag '--staged'",
+		},
+		"--threshold missing its '='": {
+			argv:    []string{"--threshold", "crap"},
+			problem: "--threshold 'crap' is missing '=', as in 'crap=30'",
+		},
+		"--threshold naming no metric before '='": {
+			argv:    []string{"--threshold", "=30"},
+			problem: "--threshold '=30' names no metric, as in 'crap=30'",
+		},
+		"--threshold naming an unknown metric": {
+			argv:    []string{"--threshold", "cyclo=30"},
+			problem: "--threshold names unknown metric 'cyclo'; this binary hosts: crap",
+		},
+		"--threshold given a non-numeric value": {
+			argv:    []string{"--threshold", "crap=abc"},
+			problem: "--threshold 'crap=abc' is not a whole number, as in 'crap=30'",
+		},
+		"--threshold given no value after '='": {
+			argv:    []string{"--threshold", "crap="},
+			problem: "--threshold 'crap=' is not a whole number, as in 'crap=30'",
+		},
+		"--threshold given a fractional value": {
+			argv:    []string{"--threshold", "crap=12.5"},
+			problem: "--threshold 'crap=12.5' is not a whole number, as in 'crap=30'",
+		},
+		"--threshold at zero": {
+			argv:    []string{"--threshold", "crap=0"},
+			problem: "--threshold crap=0 is below 1, so no method could pass",
+		},
+		"--threshold negative": {
+			argv:    []string{"--threshold", "crap=-5"},
+			problem: "--threshold crap=-5 is below 1, so no method could pass",
+		},
+		"the same metric named on --threshold twice": {
+			argv:    []string{"--threshold", "crap=12", "--threshold", "crap=20"},
+			problem: "--threshold was given crap twice; pass it once",
+		},
+		// A single dash falls through to the ordinary rules rather than the
+		// flag-shaped refusal, the same asymmetry --metric's single-dash case
+		// pins: taken as a value it never reaches '=', so the missing-'='
+		// message fires instead of a report about a flag.
+		"--threshold given a single-dash value": {
+			argv:    []string{"--threshold", "-5"},
+			problem: "--threshold '-5' is missing '=', as in 'crap=30'",
 		},
 	}
 	for name, tt := range cases {
