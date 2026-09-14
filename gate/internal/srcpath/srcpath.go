@@ -581,10 +581,10 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 // it theirs to retype.
 //
 // The question is positional, not geometric. A relative name's text supplies
-// every component at or below the directory it climbs to, and the shell
-// supplies everything above. So the climb point is measured as a depth, a count
-// of components, and the root components from that depth down are the ones the
-// text spelled. Any of them differing from the root's own spelling is a
+// every component below the directory it climbs to, and the shell supplies that
+// directory and everything above it. So the climb point is measured as a depth,
+// a count of components, and the root components from that depth down are the
+// ones the text spelled. Any of them differing from the root's own spelling is a
 // mis-case the developer can retype; all of them matching means the fold came
 // from a mis-case above the climb point, somewhere in the path their shell cd'd
 // through, which no retyping of this name can clear. An absolute name has depth
@@ -612,24 +612,27 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 // resolved does not fail to resolve. Reaching it means the tree moved between
 // two syscalls, the race named's own os.Stat documents.
 func (r Root) typedTheRootPrefix(cwd, name, resolved string, absolute bool) (typed bool, cwdFault error) {
-	sep := string(filepath.Separator)
 	depth := 0
 	if !absolute {
 		climbedTo := cwd
 		for i := leadingParents(name); i > 0; i-- {
-			climbedTo = filepath.Dir(climbedTo)
+			parent := filepath.Dir(climbedTo)
+			if parent == climbedTo {
+				break
+			}
+			climbedTo = parent
 		}
 		climbed, err := filepath.EvalSymlinks(climbedTo)
 		if err != nil {
 			return false, err
 		}
-		depth = len(strings.Split(climbed, sep))
+		depth = len(pathComponents(climbed))
 	}
-	rootComponents := strings.Split(r.resolved, sep)
+	rootComponents := pathComponents(r.resolved)
 	if depth >= len(rootComponents) {
 		return false, nil
 	}
-	components := strings.Split(resolved, sep)
+	components := pathComponents(resolved)
 	for i := depth; i < len(rootComponents); i++ {
 		if components[i] != rootComponents[i] {
 			return true, nil
@@ -638,8 +641,28 @@ func (r Root) typedTheRootPrefix(cwd, name, resolved string, absolute bool) (typ
 	return false, nil
 }
 
+// pathComponents splits a cleaned absolute path into its components, so that a
+// path's depth and an index into that same path are counted by one function and
+// cannot disagree. strings.Split alone cannot be that function: it answers two
+// elements for the filesystem root, "/" and its Windows "C:\" counterpart,
+// where there is one component, and typedTheRootPrefix reading that as a depth
+// of two would skip the first real component and accept a mis-cased root the
+// developer typed. The root is the only cleaned path with a trailing separator,
+// so dropping the empty element it produces is the whole of the correction.
+func pathComponents(path string) []string {
+	sep := string(filepath.Separator)
+	components := strings.Split(path, sep)
+	if len(components) > 1 && components[len(components)-1] == "" {
+		return components[:len(components)-1]
+	}
+	return components
+}
+
 // leadingParents counts the ".." components a relative name opens with, which is
-// how far above the working directory it reaches before descending again.
+// how far above the working directory it reaches before descending again. The
+// climb it drives stops at the filesystem root, where filepath.Dir saturates,
+// so a name opening with more parents than the working directory has lands
+// there rather than counting past it.
 // filepath.Clean folds an interior climb into that prefix, so "a/../../b" counts
 // one, and it is the same normalization filepath.Join applied to build the
 // candidate.
