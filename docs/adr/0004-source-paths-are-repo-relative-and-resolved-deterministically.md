@@ -2,8 +2,8 @@
 
 **Consolidated 2026-09-11.** Six dated amendments folded into the body; the 2606 words were what
 forced the pass. The decision is unchanged. Three clauses were dropped that should have been kept and
-two later passes put them back, so the prose is new but the rules are all here. `git log -p` on this file carries the amendments as they were written, with the dates
-they were decided.
+two later passes put them back, so the prose is new but the rules are all here. `git log -p` on this
+file carries the amendments as they were written, with the dates they were decided.
 
 ## Current rule
 

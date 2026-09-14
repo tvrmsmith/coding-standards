@@ -59,8 +59,9 @@ they scroll when the block is not enough. A decision that will not fit is more t
 Neither ceiling is checked mechanically yet, which is [issue 87](https://github.com/tvrmsmith/coding-standards/issues/87).
 
 That consolidation took 0004 from 2606 words to 1791, and it dropped three clauses it should have
-kept. Two later passes, 008eae6 and 7ef466e, put them back, which is why the file now stands at 1862. It is still over 1500,
-and the remaining excess is reasoning rather than restatement, so trimming it again buys little. The
-next move on it is a split, superseded by one new ADR per decision, under the mechanics above.
+kept. Two later passes, 008eae6 and 7ef466e, put them back, which is why the file now stands at
+1862. It is still over 1500, and the remaining excess is reasoning rather than restatement, so
+trimming it again buys little. The next move on it is a split, superseded by one new ADR per
+decision, under the mechanics above.
 
 If an ADR looks wrong, that is a decision to escalate to the user, not an edit to make.
