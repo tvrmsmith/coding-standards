@@ -3,6 +3,7 @@ package gate_test
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -130,21 +131,22 @@ func TestCIDeclaresThePassCheckStep(t *testing.T) {
 	}
 
 	// The snapshot below says ci.yml still carries the reviewed script. It says
-	// nothing about which cases that script names, so the names are read out of
-	// the suite's own slice and required to appear in it as whole words of the
-	// loop's list, bounded on both sides: preceded by the space that separates
-	// one word from the last, and either continued onto the next line or closing
-	// the list. A bare substring would let a name that is a prefix or a suffix of
-	// a listed one pass on the longer name's text while the loop's anchored grep
-	// never runs for it.
+	// nothing about which cases that script names, so the loop's own list is
+	// read out of the script and compared with the suite's slice as a set, both
+	// directions. Containment one way would miss a name left in the script after
+	// a half-applied rename, which CI then greps for and never finds.
 	if len(realExtractorCases) == 0 {
 		t.Fatal("realExtractorCases is empty, so the name check below would pass over a script naming nothing")
 	}
-	for _, name := range realExtractorCases {
-		if !strings.Contains(passCheckScript, " "+name+" \\") && !strings.Contains(passCheckScript, " "+name+";") {
-			t.Errorf("%s: the %q step's script names no %s, so CI would never prove that case ran",
-				ciWorkflow, passCheckStep, name)
-		}
+	looped, err := scriptLoopNames(passCheckScript)
+	if err != nil {
+		t.Fatalf("%s: the %q step's script: %v", ciWorkflow, passCheckStep, err)
+	}
+	wantNames := slices.Sorted(slices.Values(realExtractorCases))
+	slices.Sort(looped)
+	if !slices.Equal(looped, wantNames) {
+		t.Errorf("%s: the %q step's loop walks %v, want exactly the suite's realExtractorCases %v. A name the suite no longer defines makes CI grep for a case that can never report PASS, and a case the suite defines but the loop omits runs on CI unproven",
+			ciWorkflow, passCheckStep, looped, wantNames)
 	}
 
 	var found, guardTargets int
@@ -206,6 +208,25 @@ func TestCIDeclaresThePassCheckStep(t *testing.T) {
 		t.Errorf("%s: the %q job declares %d steps with id: %s, want exactly one. The PASS check's guard reads %s, which is false for a step that does not exist, so the check would never run",
 			ciWorkflow, gateJob, guardTargets, passCheckGuardStepID, passCheckGuardReference)
 	}
+}
+
+// scriptLoopNames is the case names the pass-check script's loop walks, taken
+// from the list between `for name in ` and the `; do` that closes it. The line
+// continuations are dropped and the rest split on whitespace, so a name is a
+// whole token of the list rather than a substring of the script, and the two
+// lists can be compared as sets in both directions.
+func scriptLoopNames(script string) ([]string, error) {
+	const openLoop, closeLoop = "for name in ", "; do"
+	start := strings.Index(script, openLoop)
+	if start < 0 {
+		return nil, fmt.Errorf("it declares no %q loop, so it names no case at all", openLoop)
+	}
+	rest := script[start+len(openLoop):]
+	end := strings.Index(rest, closeLoop)
+	if end < 0 {
+		return nil, fmt.Errorf("its %q list never closes with %q", openLoop, closeLoop)
+	}
+	return strings.Fields(strings.ReplaceAll(rest[:end], "\\", " ")), nil
 }
 
 // scalar renders a YAML scalar the workflow schema allows to be written

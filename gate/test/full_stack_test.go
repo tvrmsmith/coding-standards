@@ -108,12 +108,15 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 // so adding a case here is the one edit that puts it under those rows. ci.yml
 // retypes the same names in the loop that greps the verbose log for each one's
 // PASS line, and it does not read them from here, so a new case is added in
-// both places by hand. TestCIDeclaresThePassCheckStep requires every name
-// here to appear in the script it holds as a snapshot, so a case added here
-// and not there reds rather than running on CI unproven.
+// both places by hand. TestCIDeclaresThePassCheckStep reads that script's own
+// loop list and requires it to hold exactly these names, so a case added here
+// and not there, or left there after a rename, reds rather than running on CI
+// unproven.
 //
 // TestRequireDotnetDecidesTheFullStackOutcome makes a name listed here that no
-// case implements fail, because the name produces no SKIP block to read.
+// case implements fail, on every row rather than the SKIP ones alone, because
+// caseBlock looks for the case's RUN line first and a name nothing implements
+// produces no RUN line to find.
 var realExtractorCases = []string{
 	"TestFullStackDrivesTheRealDotnetExtractor",
 	"TestFullStackScoresAReportCoverletWrote",

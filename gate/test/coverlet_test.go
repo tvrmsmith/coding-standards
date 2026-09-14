@@ -2,8 +2,10 @@ package gate_test
 
 import (
 	"encoding/xml"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -295,8 +297,12 @@ func (f *fixture) assertCoverletReportShape(path, dotnetOut string) {
 	class := report.Classes[scored[0]]
 	var branchFalse, hitsAboveOne bool
 	classLines := map[int]bool{}
+	covered := 0
 	for _, line := range class.Lines {
-		classLines[line.Number] = true
+		classLines[line.Number] = line.Hits > 0
+		if line.Hits > 0 {
+			covered++
+		}
 		if line.Branch == "False" {
 			branchFalse = true
 		}
@@ -308,9 +314,9 @@ func (f *fixture) assertCoverletReportShape(path, dotnetOut string) {
 	// the per-line hits, so an empty scored class would red the golden on its
 	// own. It stops the case here so the rows below, which all speak for shapes
 	// no golden diff reports, cannot report an empty class as a lost shape.
-	if len(classLines) == 0 {
-		f.t.Fatalf("%s scored class %s carries no <line> entries, so every shape check below would speak for a class the report left empty\n%s",
-			path, class.Filename, dotnetOut)
+	if len(classLines) == 0 || covered == 0 {
+		f.t.Fatalf("%s scored class %s carries %d <line> entries and %d of them hit, want both above zero, so every shape check below would speak for a class the report left empty or never ran\n%s",
+			path, class.Filename, len(classLines), covered, dotnetOut)
 	}
 
 	methodLines := map[int]bool{}
@@ -326,6 +332,13 @@ func (f *fixture) assertCoverletReportShape(path, dotnetOut string) {
 		}
 	}
 
+	// The root summary is read as the numbers it claims to be rather than as
+	// two non-empty strings. Both are report-wide, so the scored class's own
+	// hit lines are a floor on lines-covered and proof that a zero rate is
+	// wrong, which is as far as this class alone can speak for them.
+	lineRate, lineRateErr := strconv.ParseFloat(report.LineRate, 64)
+	linesCovered, linesCoveredErr := strconv.Atoi(report.LinesCovered)
+
 	for _, shape := range []struct {
 		got  bool
 		want string
@@ -333,8 +346,8 @@ func (f *fixture) assertCoverletReportShape(path, dotnetOut string) {
 		{branchFalse, `a line of the scored class with branch="False", the capitalised spelling no hand-built report in this suite uses`},
 		{hitsAboveOne, "a line of the scored class hit more than once, which the hand-built reports never produce"},
 		{everyClassLineRepeated, "a <methods> line for every class-level line number of the scored class, so the same line arrives twice"},
-		{report.LineRate != "", "line-rate on the root element, half of the summary the gate must not start trusting over the per-line hits"},
-		{report.LinesCovered != "", "lines-covered on the root element, the other half of that summary"},
+		{lineRateErr == nil && lineRate > 0, fmt.Sprintf("a line-rate on the root element parsing as a number above zero, got %q, half of the summary the gate must not start trusting over the %d hit lines of the scored class", report.LineRate, covered)},
+		{linesCoveredErr == nil && linesCovered >= covered, fmt.Sprintf("a lines-covered on the root element parsing as at least the %d hit lines of the scored class, got %q, the other half of that summary", covered, report.LinesCovered)},
 	} {
 		if !shape.got {
 			f.t.Errorf("coverlet %s wrote %s without %s. The gate reads past this shape rather than reading it, so no golden diff would report its loss",
