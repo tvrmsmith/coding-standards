@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/extract"
@@ -13,13 +14,17 @@ import (
 	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
 )
 
-// The two selections below are built here rather than read out of
-// metric.Hosted, so the case states the declaration it is testing instead of
-// depending on what the catalogue happens to hold. Only the Inputs field
-// differs between them.
+// The selections below are built here rather than read out of metric.Hosted,
+// so the cases state the declaration they are testing instead of depending on
+// what the catalogue happens to hold. Only the Inputs field differs between
+// declaresCoverage and declaresNothing.
 var (
 	declaresCoverage = metric.Selection{
 		Definition: metric.Definition{Name: "declares", Display: "DECLARES", Inputs: []metric.Input{metric.InputCoverage}},
+		Threshold:  30,
+	}
+	declaresCoverageToo = metric.Selection{
+		Definition: metric.Definition{Name: "declares-too", Display: "DECLARES-TOO", Inputs: []metric.Input{metric.InputCoverage}},
 		Threshold:  30,
 	}
 	declaresNothing = metric.Selection{
@@ -52,6 +57,21 @@ func TestOnlyADeclaredCoverageInputIsDemanded(t *testing.T) {
 		var failure *report.Failure
 		if !errors.As(err, &failure) || failure.Code != report.CodeCoverageMissing {
 			t.Fatalf("loadCoverage err = %v, want a report.Failure coded %s", err, report.CodeCoverageMissing)
+		}
+	})
+
+	// ADR 0002 names every metric the absent report stops, not only the first,
+	// so the developer learns what the one `dotnet test` run would unblock.
+	t.Run("the failure names every metric stuck on the absent report", func(t *testing.T) {
+		_, _, err := loadCoverage(root, nil, changed, []metric.Selection{declaresCoverage, declaresCoverageToo})
+
+		var failure *report.Failure
+		if !errors.As(err, &failure) {
+			t.Fatalf("loadCoverage err = %v, want a report.Failure", err)
+		}
+		const want = "DECLARES, DECLARES-TOO requires a coverage report"
+		if !strings.HasPrefix(failure.Message, want) {
+			t.Errorf("failure.Message = %q, want it to begin %q", failure.Message, want)
 		}
 	})
 }

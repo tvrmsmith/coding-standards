@@ -150,16 +150,12 @@ func measure(sc scope.Scope) (report.Document, error) {
 
 	extracted, changed := selected.Extracted, selected.Changed
 	doc.ChangedMethods = len(changed)
-	metrics := make([]report.Metric, 0, len(sc.Metrics))
-	for _, sel := range sc.Metrics {
-		metrics = append(metrics, report.Metric{Name: sel.Name, Display: sel.Display, Threshold: sel.Threshold})
-	}
 	// ADR 0007: an empty changed-method set exits 0 before resolving any
 	// input, because a metric with nothing to compute is not asking for one.
 	// Every selected metric is still emitted, with no rows, so the document
 	// carries the same keys it would have carried had there been work.
 	if len(changed) == 0 {
-		doc.Metrics = metrics
+		doc.Metrics = entriesFor(sc.Metrics)
 		return doc, nil
 	}
 
@@ -174,20 +170,7 @@ func measure(sc scope.Scope) (report.Document, error) {
 		return doc, err
 	}
 
-	// The join runs once whatever is selected. Every metric scores the same
-	// method set; only the bar it is read against differs, so attributing the
-	// set per metric would repeat the expensive half of the run to reach the
-	// same answer.
-	joined := join.Attribute(extracted.Spans, changed, lines)
-	unknown := 0
-	for _, method := range joined {
-		if method.State == report.StateUnknown {
-			unknown++
-		}
-		for i, sel := range sc.Metrics {
-			metrics[i].Rows = append(metrics[i].Rows, rowFor(method, sel))
-		}
-	}
+	metrics, unknown := attribute(sc.Metrics, extracted, changed, lines)
 	doc.Metrics = metrics
 	// Any single unknown fails the run: there is no tolerated fraction, and
 	// the table is still present on that failure. The count comes off the join
@@ -394,11 +377,15 @@ func dirtyMessage(dirty []srcpath.Path) string {
 
 // implementedInputs names every input this binary knows how to go and get.
 // It is the other half of ADR 0002's declaration: a metric declaring an input
-// absent from this list would be ignored in silence, because the resolution
+// nothing here resolves would be ignored in silence, because the resolution
 // below asks only about the inputs it implements, so nothing would go looking
 // and the run would score the metric as though it had everything it asked for.
-// Nothing reads this list at run time, which is the point.
-// TestEveryHostedDeclarationIsImplemented is what makes it load-bearing.
+//
+// Nothing reads this list at run time. Adding an Input to it makes the gate
+// fetch nothing: loadCoverage asks about metric.InputCoverage by name, and
+// every future input needs its own resolution written by hand beside it. The
+// list exists only so TestEveryHostedDeclarationIsImplemented fails when a
+// catalogue entry declares an input no such code went and got.
 var implementedInputs = []metric.Input{metric.InputCoverage}
 
 // loadCoverage resolves the coverage input, and only because a selected
@@ -503,6 +490,67 @@ func displayNames(selected []metric.Selection) string {
 		names[i] = sel.Display
 	}
 	return strings.Join(names, ", ")
+}
+
+// entriesFor opens one document entry per selected metric, carrying the bar
+// the run reads it against and no rows yet.
+func entriesFor(selected []metric.Selection) []report.Metric {
+	metrics := make([]report.Metric, 0, len(selected))
+	for _, sel := range selected {
+		metrics = append(metrics, report.Metric{Name: sel.Name, Display: sel.Display, Threshold: sel.Threshold})
+	}
+	return metrics
+}
+
+// attribute reads changed against every selection, and reports the entries
+// beside the count of methods nothing could attribute. The join runs once
+// whatever is selected. Every metric scores the same method set; only the bar
+// it is read against differs, so attributing the set per metric would repeat
+// the expensive half of the run to reach the same answer.
+//
+// A selection where nothing declared coverage was handed no coverage set, and
+// the join reads an absent set as every file unmatched, which would fail the
+// run with unknown_changed_method over an input nobody asked for (ADR 0002).
+// So the join is skipped rather than fed nothing. Every changed method still
+// gets a row, carrying the cells that need no coverage, and the cells that do,
+// the score and the verdict it implies, stay null: there is no second formula
+// yet, and inventing a reading for a metric that has none would be guessing.
+// The gate is the union being empty, because one declaring metric is enough to
+// make the set worth loading and the join worth running for all of them.
+func attribute(selected []metric.Selection, extracted extract.Result, changed []extract.Span, lines coverage.Set) ([]report.Metric, int) {
+	metrics := entriesFor(selected)
+	if len(metric.Declaring(selected, metric.InputCoverage)) == 0 {
+		for _, span := range changed {
+			row := unscoredRow(span)
+			for i := range metrics {
+				metrics[i].Rows = append(metrics[i].Rows, row)
+			}
+		}
+		return metrics, 0
+	}
+
+	unknown := 0
+	for _, method := range join.Attribute(extracted.Spans, changed, lines) {
+		if method.State == report.StateUnknown {
+			unknown++
+		}
+		for i, sel := range selected {
+			metrics[i].Rows = append(metrics[i].Rows, rowFor(method, sel))
+		}
+	}
+	return metrics, unknown
+}
+
+// unscoredRow renders a changed method nothing measured: the cells that come
+// off the span alone, and null for every cell a coverage reading would fill.
+func unscoredRow(span extract.Span) report.Row {
+	return report.Row{
+		File:       span.File,
+		Start:      span.StartLine,
+		End:        span.EndLine,
+		Name:       span.Name,
+		Complexity: span.Complexity,
+	}
 }
 
 // rowFor renders one joined method as a document row, scored at sel's own
