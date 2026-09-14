@@ -260,12 +260,15 @@ func (r Root) relativize(resolved string) (Path, placement, error) {
 // neither and must not be read as having done so.
 func (r Root) foldRootPrefix(resolved string) (Path, placement, error) {
 	sep := string(filepath.Separator)
-	rootComponents := strings.Split(r.resolved, sep)
-	components := strings.Split(resolved, sep)
+	rootComponents := pathComponents(r.resolved)
+	components := pathComponents(resolved)
 	if len(components) < len(rootComponents) {
 		return "", outside, nil
 	}
 	prefix := strings.Join(components[:len(rootComponents)], sep)
+	if prefix == "" {
+		prefix = sep
+	}
 	if !strings.EqualFold(prefix, r.resolved) {
 		return "", outside, nil
 	}
@@ -498,8 +501,10 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // climbs to, which it inherits from the process working directory, whatever
 // path their shell cd'd through. Refusing for a mis-case up there would quote a
 // name and blame a half of it that is not in the string they typed and cannot
-// be retyped, no matter how the name is written. typedTheRootPrefix separates
-// the two by where the mis-cased component sits. The
+// be retyped, no matter how the name is written. Nor does a name spell a
+// component a symlink in its descent resolved to, however far down the string
+// that link's own name sits. typedTheRootPrefix separates the two by asking
+// whether the developer's text carries the mis-cased component itself. The
 // fold is accepted for the second, and the name goes on to spelledAsOnDisk,
 // which walks every component below the root against the tree's own entries, so
 // nothing is matched approximately for having taken that road.
@@ -558,11 +563,14 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 		return "", &UnresolvedError{Name: name, Reason: "is not a regular file"}
 	}
 	if place == folded {
-		typed, cwdFault := r.typedTheRootPrefix(cwd, name, resolved)
-		if cwdFault != nil {
-			return "", workingDirFault(name, cwdFault)
+		typed := absoluteText(name)
+		if !absolute {
+			typed, err = climbedText(cwd, name)
+			if err != nil {
+				return "", workingDirFault(name, err)
+			}
 		}
-		if typed {
+		if r.typedTheRootPrefix(typed, resolved) {
 			return "", &UnresolvedError{Name: name, Reason: "is not spelled as the repo root is"}
 		}
 	}
@@ -576,93 +584,104 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 	return rel, nil
 }
 
-// typedTheRootPrefix reports whether a mis-cased root component sits in the
-// part of the candidate the developer's own text supplied, which is what makes
-// it theirs to retype.
-//
-// The question is positional, not geometric. A relative name's text supplies
-// every component below the directory it climbs to, and the shell supplies that
-// directory and everything above it. So the climb point is measured as a depth,
-// a count of components, and the root components from that depth down are the
-// ones the text spelled. Any of them differing from the root's own spelling is a
-// mis-case the developer can retype; all of them matching means the fold came
-// from a mis-case above the climb point, somewhere in the path their shell cd'd
-// through, which no retyping of this name can clear. An absolute name has depth
-// zero, so every root component is theirs.
-//
-// Asking instead where the climb point lands, inside the root or outside it,
-// answers a different question and gets the second case wrong: a working
-// directory mis-cased above the repo, /Users/t/Dev/repo/src against a root of
-// /Users/t/dev/repo, puts the climb outside the root while the only mis-cased
-// component, Dev, is one the text never spelled.
-//
-// Counting by depth only locates the text's contribution while the resolved
-// candidate still sits under the resolved climb point. A descent through a
-// symlink that leaves that subtree breaks it: the components at those indices
-// then came from wherever the link pointed, and comparing them against the root
-// would quote a name and blame a component the string does not contain, which
-// is the harm this predicate exists to avoid. So a candidate that is not under
-// the climb point answers false and the fold is accepted. Nothing merges for
-// it, since os.SameFile has already confirmed the fold reaches one directory,
-// and spelledAsOnDisk still holds every component below the root to the tree's
-// own spelling.
-//
-// The climb is measured on the unresolved working directory because that is the
-// path filepath.Join already walked in named, and the directory it lands on is
-// resolved before its depth is counted, so the count is in the same spelling as
-// the resolved candidate this weighs it against. The two are comparable for the
-// same reason, and they are equal-fold over the root prefix by construction,
-// since named only asks after relativize answered folded.
-func (r Root) typedTheRootPrefix(cwd, name, resolved string) (typed bool, cwdFault error) {
-	rootComponents := pathComponents(r.resolved)
-	depth := 0
-	if !filepath.IsAbs(filepath.FromSlash(name)) {
-		climbed, err := climbedTo(cwd, name)
-		if err != nil {
-			return false, err
-		}
-		if !under(climbed, resolved) {
-			return false, nil
-		}
-		depth = len(pathComponents(climbed))
-	}
-	if depth >= len(rootComponents) {
-		return false, nil
-	}
-	components := pathComponents(resolved)
-	return !slices.Equal(components[depth:len(rootComponents)], rootComponents[depth:]), nil
+// typedText is the part of a resolved candidate the developer's own --files
+// string supplied: the components of that string, and the depth in the resolved
+// candidate at which they start. The two shapes have their own constructors
+// because a relative name needs a working directory to climb from and an
+// absolute one must not be given one, which no flag beside a string can hold.
+type typedText struct {
+	depth      int
+	components []string
 }
 
-// climbedTo resolves the directory a relative name climbs to before its own
-// text takes over, which is the one filesystem call typedTheRootPrefix makes
-// and its one fault. That fault is about the process working directory rather
-// than the path, so named reports it as a plain error, the channel losing the
-// working directory already uses. It is not a fault a caller normally reaches,
-// which is why no test pins it: named resolved the whole candidate a moment
-// earlier and the climb lands on the cleaned prefix that same filepath.Join
-// built, so an ancestor of a path that just resolved does not fail to resolve.
-// Reaching it means the tree moved between two syscalls, the race named's own
-// os.Stat documents.
-func climbedTo(cwd, name string) (string, error) {
+// absoluteText reads an absolute name as typed text. Every component of it is
+// the developer's, so the text starts at the top of the resolved candidate.
+func absoluteText(name string) typedText {
+	return typedText{components: pathComponents(filepath.Clean(filepath.FromSlash(name)))}
+}
+
+// climbedText reads a relative name as typed text, which starts below the
+// directory the name climbs to from cwd. filepath.Clean folds an interior climb
+// into the leading parents, so "a/../../b" climbs one, the same normalization
+// filepath.Join applied to build the candidate. The climb stops at the
+// filesystem root, where filepath.Dir saturates, so a name opening with more
+// parents than the working directory has lands there rather than counting past
+// it.
+//
+// The climb is walked on the unresolved working directory because that is the
+// path filepath.Join already walked in named, and the directory it lands on is
+// resolved before its depth is counted, so the count is in the same spelling as
+// the resolved candidate the depth indexes into.
+//
+// Resolving that directory is the one filesystem call the spelling test makes
+// and its one fault. It is about the process working directory rather than the
+// path, so named reports it as a plain error, the channel losing the working
+// directory already uses. It is not a fault a caller normally reaches, which is
+// why no test pins it: named resolved the whole candidate a moment earlier and
+// the climb lands on the cleaned prefix that same filepath.Join built, so an
+// ancestor of a path that just resolved does not fail to resolve. Reaching it
+// means the tree moved between two syscalls, the race named's own os.Stat
+// documents.
+func climbedText(cwd, name string) (typedText, error) {
+	components := strings.Split(filepath.Clean(filepath.FromSlash(name)), string(filepath.Separator))
+	parents := 0
+	for parents < len(components) && components[parents] == ".." {
+		parents++
+	}
 	dir := cwd
-	for i := leadingParents(name); i > 0; i-- {
+	for i := parents; i > 0; i-- {
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			break
 		}
 		dir = parent
 	}
-	return filepath.EvalSymlinks(dir)
+	climbed, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return typedText{}, err
+	}
+	return typedText{depth: len(pathComponents(climbed)), components: components[parents:]}, nil
 }
 
-// under reports whether path sits below dir lexically. The filesystem root
-// already ends in a separator, so appending a second one would match nothing.
-func under(dir, path string) bool {
-	sep := string(filepath.Separator)
-	if !strings.HasSuffix(dir, sep) {
-		dir += sep
+// typedTheRootPrefix reports whether the developer's own --files text spells a
+// root component in a case the root does not use, which is what makes the
+// mis-spelling theirs to retype.
+//
+// The test is literal, not positional. The depth says where their text's
+// components sit in the resolved candidate, and nothing above it is theirs: a
+// relative name inherits that part from the process working directory, whatever
+// the shell cd'd through, and an absolute name has depth zero, so every
+// component is its own. But a component at one of their positions can still
+// have come from somewhere else, because a symlink in the descent resolves to
+// the case its target stored rather than the case they wrote. So a component is
+// blamed only when the resolved candidate's spelling at that position is also
+// the one their text carries there, and a mis-case nothing in the string
+// spelled is accepted rather than quoted back at a developer who cannot retype
+// it. The fold itself is confirmed by os.SameFile, so accepting merges nothing,
+// and spelledAsOnDisk still holds every component below the root to the tree's
+// own spelling.
+//
+// The comparison against their text folds case, because the whole root prefix
+// is equal-fold with the root by construction and the question here is which
+// component the text named rather than how it spelled it. "link" naming a
+// symlink whose target spells REPO is a different component and is not blamed;
+// "REPO" typed against a root spelled repo is the same component and is.
+//
+// Asking instead where the climb point lands, inside the root or outside it,
+// answers a different question: a working directory mis-cased above the repo,
+// /Users/t/Dev/repo/src against a root of /Users/t/dev/repo, puts the climb
+// outside the root while the only mis-cased component, Dev, is one the text
+// never spelled.
+func (r Root) typedTheRootPrefix(typed typedText, resolved string) bool {
+	rootComponents := pathComponents(r.resolved)
+	components := pathComponents(resolved)
+	for i := typed.depth; i < len(rootComponents) && i-typed.depth < len(typed.components); i++ {
+		spelled := typed.components[i-typed.depth]
+		if components[i] != rootComponents[i] && strings.EqualFold(components[i], spelled) {
+			return true
+		}
 	}
-	return strings.HasPrefix(path, dir)
+	return false
 }
 
 // pathComponents splits a cleaned absolute path into its components, so that a
@@ -680,25 +699,6 @@ func pathComponents(path string) []string {
 		return components[:len(components)-1]
 	}
 	return components
-}
-
-// leadingParents counts the ".." components a relative name opens with, which is
-// how far above the working directory it reaches before descending again. The
-// climb it drives stops at the filesystem root, where filepath.Dir saturates,
-// so a name opening with more parents than the working directory has lands
-// there rather than counting past it.
-// filepath.Clean folds an interior climb into that prefix, so "a/../../b" counts
-// one, and it is the same normalization filepath.Join applied to build the
-// candidate.
-func leadingParents(name string) int {
-	count := 0
-	for _, component := range strings.Split(filepath.Clean(filepath.FromSlash(name)), string(filepath.Separator)) {
-		if component != ".." {
-			break
-		}
-		count++
-	}
-	return count
 }
 
 // unreadable is the refusal for a filesystem failure reading the name itself

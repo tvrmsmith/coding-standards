@@ -325,10 +325,9 @@ func TestNamedRefusesAMisCasedRootPrefixARelativeNameClimbedOutTo(t *testing.T) 
 
 // The same refusal reached by a name that opens with a component rather than
 // with "..", so the climb only exists once filepath.Clean has folded it into a
-// leading parent. leadingParents counting the uncleaned string reads zero
-// parents here, leaves the climb at the working directory, and accepts a name
-// whose mis-cased root prefix the developer typed, which is the refusal issue
-// 48 exists for.
+// leading parent. Counting the parents of the uncleaned string reads zero here,
+// leaves the climb at the working directory, and accepts a name whose mis-cased
+// root prefix the developer typed, which is the refusal issue 48 exists for.
 func TestNamedRefusesAMisCasedRootPrefixAnInteriorClimbReachedOutTo(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
@@ -356,12 +355,7 @@ func TestNamedRefusesACaseDifferingRootSpellingARelativeNameClimbedOutTo(t *test
 	assertRootSpellingRefusal(t, err, name)
 }
 
-// The same refusal reached by a name that opens with a component rather than
-// with "..", so the climb only exists once filepath.Clean has folded it into a
-// leading parent. leadingParents counting the uncleaned string reads zero
-// parents here, leaves the climb at the working directory, and accepts a name
-// whose mis-cased root prefix the developer typed, which is the refusal issue
-// 48 exists for.
+// The same interior climb on a case-sensitive filesystem.
 func TestNamedRefusesACaseDifferingRootSpellingAnInteriorClimbReachedOutTo(t *testing.T) {
 	root, real := symlinkedMiscasedRoot(t)
 	touch(t, filepath.Join(real, "src", "a.cs"))
@@ -383,19 +377,7 @@ func TestNamedRefusesACaseDifferingRootSpellingAnInteriorClimbReachedOutTo(t *te
 // refusal exists to fix. The case below runs the same arm on a case-sensitive
 // filesystem.
 func TestNamedAcceptsARelativeNameUnderAMisCasedParentOfTheRoot(t *testing.T) {
-	tmp, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	parent := mkdir(t, filepath.Join(tmp, "dev"))
-	miscasedParent := filepath.Join(tmp, "DEV")
-	if _, err := os.Stat(miscasedParent); err != nil || !sameDirectory(t, parent, miscasedParent) {
-		t.Skipf("the filesystem is case sensitive, so %s does not name the same directory as %s", miscasedParent, parent)
-	}
-	root, err := NewRoot(mkdir(t, filepath.Join(parent, "repo")))
-	if err != nil {
-		t.Fatal(err)
-	}
+	root, miscasedParent := miscasedParentRoot(t)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
 	t.Chdir(filepath.Join(miscasedParent, "repo", "src"))
 	if cwd, err := os.Getwd(); err != nil || cwd != filepath.Join(miscasedParent, "repo", "src") {
@@ -428,12 +410,15 @@ func TestNamedAcceptsARelativeNameUnderAMisCasedParentOfTheRoot(t *testing.T) {
 func TestTypedTheRootPrefixCountsTheFilesystemRootAsOneComponent(t *testing.T) {
 	root := Root{resolved: filepath.FromSlash("/repo")}
 	name := filepath.FromSlash("../../REPO/src/a.cs")
+	text, err := climbedText(filepath.FromSlash("/repo/src"), name)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	typed, err := root.typedTheRootPrefix(
-		filepath.FromSlash("/repo/src"), name, filepath.FromSlash("/REPO/src/a.cs"))
+	typed := root.typedTheRootPrefix(text, filepath.FromSlash("/REPO/src/a.cs"))
 
-	if err != nil || !typed {
-		t.Errorf("typedTheRootPrefix on %q climbing to the filesystem root returned %v, %v, want true, nil", name, typed, err)
+	if !typed {
+		t.Errorf("typedTheRootPrefix on %q climbing to the filesystem root returned %v, want true", name, typed)
 	}
 }
 
@@ -460,25 +445,13 @@ func TestNamedRefusesAMisCasedRootComponentAboveTheLastOneTheTextSpelled(t *test
 // and the twin of the accepting case above it, which uses this same tree and
 // climbs one level less.
 func TestNamedRefusesAMisCasedParentOfTheRootTheTextSpelled(t *testing.T) {
-	tmp, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	parent := mkdir(t, filepath.Join(tmp, "dev"))
-	miscasedParent := filepath.Join(tmp, "DEV")
-	if _, err := os.Stat(miscasedParent); err != nil || !sameDirectory(t, parent, miscasedParent) {
-		t.Skipf("the filesystem is case sensitive, so %s does not name the same directory as %s", miscasedParent, parent)
-	}
-	root, err := NewRoot(mkdir(t, filepath.Join(parent, "repo")))
-	if err != nil {
-		t.Fatal(err)
-	}
+	root, miscasedParent := miscasedParentRoot(t)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
 	t.Chdir(filepath.Join(root.Dir(), "src"))
 	assertFolds(t, root, filepath.Join(miscasedParent, "repo", "src", "a.cs"))
 	name := filepath.Join("..", "..", "..", filepath.Base(miscasedParent), "repo", "src", "a.cs")
 
-	_, err = root.named(name, dirNames{})
+	_, err := root.named(name, dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
@@ -546,34 +519,16 @@ func TestNamedAcceptsAMisCasedRootSpellingReachedThroughASymlinkedWorkingDirecto
 }
 
 // A working directory that reaches the root through a symlink shortening the
-// path, which is the case that pins resolving the climb point rather than
-// counting the shell's spelling of it. The depth the count needs is the one the
-// root is measured in, and here the two differ by a component: dropping the
-// EvalSymlinks call leaves the climb one short, which hands the developer the
-// mis-cased parent they never typed and turns this accept into a refusal.
+// path. The developer spelled "repo" as the tree spells it and typed nothing
+// above it, so the mis-cased parent is not theirs and the name is accepted. Its
+// refusing twin below climbs one level further over the same tree and is what
+// pins resolving the climb point, since the accept here survives a depth
+// counted on the shell's own spelling.
 func TestNamedAcceptsARelativeNameWhoseWorkingDirectoryReachesTheRootThroughASymlink(t *testing.T) {
-	tmp, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	under := mkdir(t, filepath.Join(tmp, "a", "b"))
-	realParent := mkdir(t, filepath.Join(under, "dev"))
-	miscasedParent := filepath.Join(under, "DEV")
-	if _, err := os.Stat(miscasedParent); err == nil {
-		t.Skipf("the filesystem folded %s onto %s already, so there is no link to make", miscasedParent, realParent)
-	}
-	if err := os.Symlink(realParent, miscasedParent); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(under, filepath.Join(tmp, "s")); err != nil {
-		t.Fatal(err)
-	}
-	root := Root{resolved: filepath.Join(miscasedParent, "repo")}
-	real := mkdir(t, filepath.Join(realParent, "repo"))
+	root, real, shortcut := rootReachedThroughAShortcut(t)
 	touch(t, filepath.Join(real, "src", "a.cs"))
-	t.Chdir(filepath.Join(tmp, "s", "dev", "repo", "src"))
+	t.Chdir(filepath.Join(shortcut, "dev", "repo", "src"))
 	assertFolds(t, root, filepath.Join(real, "src", "a.cs"))
-	// "repo" spelled as the tree spells it, and nothing above it typed at all.
 	name := filepath.Join("..", "..", "repo", "src", "a.cs")
 
 	rel, err := root.named(name, dirNames{})
@@ -583,43 +538,84 @@ func TestNamedAcceptsARelativeNameWhoseWorkingDirectoryReachesTheRootThroughASym
 	}
 }
 
-// A name whose descent leaves the subtree it climbs from, through a symlink
-// into the repo, where counting components off the climb point locates nothing
-// the developer typed. "link/a.cs" carries no root component at all, so
-// refusing it would blame a half of a string that is not in it and that no
-// retyping can clear, and the mis-cased spelling it lands on came from the link
-// target rather than from their keyboard. Without the containment guard the
-// depth counted on a sibling directory lines the root's mis-cased parent up
-// under the text's own side of the climb and refuses.
-func TestNamedAcceptsARelativeNameWhoseDescentReachesTheRootThroughASymlink(t *testing.T) {
-	tmp, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	realParent := mkdir(t, filepath.Join(tmp, "x", "dev"))
-	miscasedParent := filepath.Join(tmp, "x", "DEV")
-	if _, err := os.Stat(miscasedParent); err == nil {
-		t.Skipf("the filesystem folded %s onto %s already, so there is no link to make", miscasedParent, realParent)
-	}
-	if err := os.Symlink(realParent, miscasedParent); err != nil {
-		t.Fatal(err)
-	}
-	root := Root{resolved: filepath.Join(miscasedParent, "repo")}
-	real := mkdir(t, filepath.Join(realParent, "repo"))
+// The refusing twin over that same tree, where the text does spell the
+// mis-cased parent. It is what holds climbedText's EvalSymlinks: counting the
+// depth on the shell's shortened spelling rather than on the resolved directory
+// lines the developer's "DEV" up against a component they did not type, the
+// mis-case is credited to nobody, and issue 48's refusal is silently dropped
+// for every developer whose shell reaches the repo through a link.
+func TestNamedRefusesAMisCasedParentTypedThroughAShortcutWorkingDirectory(t *testing.T) {
+	root, real, shortcut := rootReachedThroughAShortcut(t)
 	touch(t, filepath.Join(real, "src", "a.cs"))
-	// A sibling of the repo tree, so the climb point is not an ancestor of the
-	// file the name resolves to and the depth cannot locate the text.
-	elsewhere := mkdir(t, filepath.Join(tmp, "y"))
-	if err := os.Symlink(filepath.Join(real, "src"), filepath.Join(elsewhere, "link")); err != nil {
+	t.Chdir(filepath.Join(shortcut, "dev", "repo", "src"))
+	assertFolds(t, root, filepath.Join(real, "src", "a.cs"))
+	name := filepath.Join("..", "..", "..", filepath.Base(filepath.Dir(root.Dir())), "repo", "src", "a.cs")
+
+	_, err := root.named(name, dirNames{})
+
+	assertRootSpellingRefusal(t, err, name)
+}
+
+// A name whose descent passes through a symlink whose target spells the root in
+// another case. The developer typed "link/a.cs", which carries no root
+// component at all, so the mis-cased spelling the name resolves to came from the
+// link's stored target rather than from their keyboard, and refusing would send
+// them to retype a half of a string that is not in it. Locating their text by
+// depth alone refuses this, because the link's target lands the mis-cased
+// component at exactly the position their own text occupies.
+func TestNamedAcceptsARelativeNameWhoseSymlinkTargetSpellsTheRootMisCased(t *testing.T) {
+	root := containmentRoot(t)
+	miscased := miscasedRoot(t, root)
+	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
+	tmp := filepath.Dir(root.Dir())
+	// Stored mis-cased, which is the spelling EvalSymlinks hands back and the
+	// component the developer's own name never carries.
+	if err := os.Symlink(filepath.Join(miscased, "src"), filepath.Join(tmp, "link")); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(elsewhere)
+	t.Chdir(tmp)
+	assertFolds(t, root, filepath.Join(miscased, "src", "a.cs"))
+
+	rel, err := root.named(filepath.Join("link", "a.cs"), dirNames{})
+
+	if err != nil || rel != "src/a.cs" {
+		t.Errorf("named on a name descending through a mis-cased symlink target returned %q, %v, want \"src/a.cs\", nil", rel, err)
+	}
+}
+
+// The same acceptance on a case-sensitive filesystem, where the root's own
+// spelling is the one that differs and the link target spells the tree's.
+func TestNamedAcceptsADescentThroughASymlinkUnderACaseDifferingRootSpelling(t *testing.T) {
+	root, real := symlinkedMiscasedRoot(t)
+	touch(t, filepath.Join(real, "src", "a.cs"))
+	tmp := filepath.Dir(real)
+	if err := os.Symlink(filepath.Join(real, "src"), filepath.Join(tmp, "link")); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(tmp)
 	assertFolds(t, root, filepath.Join(real, "src", "a.cs"))
 
 	rel, err := root.named(filepath.Join("link", "a.cs"), dirNames{})
 
 	if err != nil || rel != "src/a.cs" {
 		t.Errorf("named on a name descending through a symlink into the repo returned %q, %v, want \"src/a.cs\", nil", rel, err)
+	}
+}
+
+// A shell already inside a case-differing spelling of the repo, naming a file
+// beside it, which is the most ordinary folded invocation there is. The climb
+// point is deeper than the root, so no root component is left for the
+// developer's text to have spelled and the name is accepted.
+func TestNamedAcceptsANameTypedFromInsideACaseDifferingRootSpelling(t *testing.T) {
+	root, real := symlinkedMiscasedRoot(t)
+	touch(t, filepath.Join(real, "src", "a.cs"))
+	t.Chdir(filepath.Join(real, "src"))
+	assertFolds(t, root, filepath.Join(real, "src", "a.cs"))
+
+	rel, err := root.named("a.cs", dirNames{})
+
+	if err != nil || rel != "src/a.cs" {
+		t.Errorf("named on a name typed from inside the repo returned %q, %v, want \"src/a.cs\", nil", rel, err)
 	}
 }
 
@@ -641,13 +637,7 @@ func TestNamedRefusesABelowRootMisCaseReachedThroughAMisCasedWorkingDirectory(t 
 
 	_, err := root.named(name, dirNames{})
 
-	var unresolved *UnresolvedError
-	if !errors.As(err, &unresolved) {
-		t.Fatalf("named returned %v, want an *UnresolvedError", err)
-	}
-	if unresolved.Reason != "is not spelled as the file on disk is" {
-		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is not spelled as the file on disk is")
-	}
+	assertUnresolvedReason(t, err, "is not spelled as the file on disk is")
 }
 
 // placement names itself for the failure messages the containment cases print,
@@ -702,13 +692,7 @@ func TestNamedRefusesACaseDifferingRootSpellingOfTheRepoRootAsADirectory(t *test
 
 	_, err := root.named(real, dirNames{})
 
-	var unresolved *UnresolvedError
-	if !errors.As(err, &unresolved) {
-		t.Fatalf("named returned %v, want an *UnresolvedError", err)
-	}
-	if unresolved.Reason != "is a directory, not a file" {
-		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is a directory, not a file")
-	}
+	assertUnresolvedReason(t, err, "is a directory, not a file")
 }
 
 // --files naming the repo root is a directory mistake whichever case it is
@@ -722,13 +706,7 @@ func TestNamedRefusesTheMisCasedRepoRootAsADirectory(t *testing.T) {
 
 	_, err := root.named(miscased, dirNames{})
 
-	var unresolved *UnresolvedError
-	if !errors.As(err, &unresolved) {
-		t.Fatalf("named returned %v, want an *UnresolvedError", err)
-	}
-	if unresolved.Reason != "is a directory, not a file" {
-		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is a directory, not a file")
-	}
+	assertUnresolvedReason(t, err, "is a directory, not a file")
 }
 
 func TestNamedRefusesTheRepoRootAsADirectory(t *testing.T) {
@@ -736,13 +714,7 @@ func TestNamedRefusesTheRepoRootAsADirectory(t *testing.T) {
 
 	_, err := root.named(root.Dir(), dirNames{})
 
-	var unresolved *UnresolvedError
-	if !errors.As(err, &unresolved) {
-		t.Fatalf("named returned %v, want an *UnresolvedError", err)
-	}
-	if unresolved.Reason != "is a directory, not a file" {
-		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is a directory, not a file")
-	}
+	assertUnresolvedReason(t, err, "is a directory, not a file")
 }
 
 // The fold rule narrows what "outside" means for --files, so this pins that it
@@ -754,13 +726,7 @@ func TestNamedStillRefusesAPathGenuinelyOutsideTheRoot(t *testing.T) {
 
 	_, err := root.named(name, dirNames{})
 
-	var unresolved *UnresolvedError
-	if !errors.As(err, &unresolved) {
-		t.Fatalf("named returned %v, want an *UnresolvedError", err)
-	}
-	if unresolved.Reason != "is outside the repo root" {
-		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is outside the repo root")
-	}
+	assertUnresolvedReason(t, err, "is outside the repo root")
 }
 
 // Place reads a folded root prefix as landing where the candidate really sits
@@ -1027,6 +993,60 @@ func symlinkedMiscasedRoot(t *testing.T) (Root, string) {
 	return Root{resolved: link}, real
 }
 
+// rootReachedThroughAShortcut is a Root under an upper-cased symlink to a real
+// lower-cased parent, returned with the real repo directory and with a second
+// symlink that shortens the path to that parent's own parent. A shell sitting
+// under the shortcut reports a working directory with fewer components than the
+// root has, which is what separates counting the climb on the shell's spelling
+// from counting it on the resolved directory.
+func rootReachedThroughAShortcut(t *testing.T) (root Root, real, shortcut string) {
+	t.Helper()
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	under := mkdir(t, filepath.Join(tmp, "a", "b"))
+	realParent := mkdir(t, filepath.Join(under, "dev"))
+	miscasedParent := filepath.Join(under, "DEV")
+	if _, err := os.Stat(miscasedParent); err == nil {
+		t.Skipf("the filesystem folded %s onto %s already, so there is no link to make", miscasedParent, realParent)
+	}
+	if err := os.Symlink(realParent, miscasedParent); err != nil {
+		t.Fatal(err)
+	}
+	shortcut = filepath.Join(tmp, "s")
+	if err := os.Symlink(under, shortcut); err != nil {
+		t.Fatal(err)
+	}
+	return Root{resolved: filepath.Join(miscasedParent, "repo")}, mkdir(t, filepath.Join(realParent, "repo")), shortcut
+}
+
+// miscasedParentRoot is a Root whose parent directory the filesystem also
+// answers to under an upper-cased spelling, returned with that spelling. It is
+// the folding filesystem's counterpart to rootUnderASymlinkedMiscasedParent,
+// reaching the shape where the mis-cased component sits above the repo root
+// rather than at it, and it skips where no such spelling reaches the parent.
+//
+// The root's own last component is spelled identically either way, so a --files
+// name that spells "repo" and climbs no higher carries nothing mis-cased.
+func miscasedParentRoot(t *testing.T) (Root, string) {
+	t.Helper()
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := mkdir(t, filepath.Join(tmp, "dev"))
+	miscasedParent := filepath.Join(tmp, "DEV")
+	if _, err := os.Stat(miscasedParent); err != nil || !sameDirectory(t, parent, miscasedParent) {
+		t.Skipf("the filesystem is case sensitive, so %s does not name the same directory as %s", miscasedParent, parent)
+	}
+	root, err := NewRoot(mkdir(t, filepath.Join(parent, "repo")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root, miscasedParent
+}
+
 // rootUnderASymlinkedMiscasedParent is a Root whose resolved directory sits
 // under an upper-cased symlink to a real lower-cased parent, returned with the
 // real repo directory beneath that parent. It is how a case-sensitive
@@ -1063,16 +1083,25 @@ func rootUnderASymlinkedMiscasedParent(t *testing.T) (Root, string) {
 // keeps its own and calls this.
 func assertRootSpellingRefusal(t *testing.T, err error, name string) {
 	t.Helper()
+	unresolved := assertUnresolvedReason(t, err, "is not spelled as the repo root is")
+	if unresolved.Name != name {
+		t.Errorf("Name = %q, want the name as typed, %q", unresolved.Name, name)
+	}
+}
+
+// assertUnresolvedReason is the refusal every named case that is about the path
+// wants back, read as the typed error rather than as message text, and returned
+// so a case that also cares which name it quotes can go on to check that.
+func assertUnresolvedReason(t *testing.T, err error, want string) *UnresolvedError {
+	t.Helper()
 	var unresolved *UnresolvedError
 	if !errors.As(err, &unresolved) {
 		t.Fatalf("named returned %v, want an *UnresolvedError", err)
 	}
-	if unresolved.Reason != "is not spelled as the repo root is" {
-		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is not spelled as the repo root is")
+	if unresolved.Reason != want {
+		t.Errorf("Reason = %q, want %q", unresolved.Reason, want)
 	}
-	if unresolved.Name != name {
-		t.Errorf("Name = %q, want the name as typed, %q", unresolved.Name, name)
-	}
+	return unresolved
 }
 
 // assertFolds pins that the containment test reads resolved as folded, which is
