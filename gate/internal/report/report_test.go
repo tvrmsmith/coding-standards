@@ -17,7 +17,7 @@ func scoredRow(name string, score float64) Row {
 	return Row{
 		File: "src/Ordering/OrderService.cs", Start: 1, End: 20, Name: name,
 		Complexity: 4, Coverage: &coverage, Score: &score,
-		State: StateMeasured, Action: "add_tests",
+		State: StateMeasured, Action: "raise_coverage",
 	}
 }
 
@@ -61,6 +61,18 @@ func TestStderrReportsOneLinePerMetricInOrder(t *testing.T) {
 
 	want := "0 of 1 changed methods over FIRST threshold 30, worst score 20.00\n" +
 		"1 of 1 changed methods over SECOND threshold 12, worst score 20.00\n"
+	if got := doc.Stderr(); got != want {
+		t.Errorf("Stderr() = %q, want %q", got, want)
+	}
+}
+
+// TestStderrSaysTheChangedSetIsEmptyOnceForTheWholeRun pins the sentence as a
+// statement about the set, not about any metric's reading of it, so it appears
+// once however many metrics were selected.
+func TestStderrSaysTheChangedSetIsEmptyOnceForTheWholeRun(t *testing.T) {
+	doc := Document{ChangedMethods: 0, Metrics: twoMetrics(30, 12)}
+
+	const want = "no changed methods, nothing to measure\n"
 	if got := doc.Stderr(); got != want {
 		t.Errorf("Stderr() = %q, want %q", got, want)
 	}

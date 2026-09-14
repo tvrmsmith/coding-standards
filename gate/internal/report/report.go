@@ -108,15 +108,13 @@ type Row struct {
 	Reason         string
 }
 
-// cells renders the row in the fixed column order. A nil pointer and an empty
-// string both become the bare `null` token, never the string "null". State and
-// Action are empty only on a row nothing measured, where the reading that would
-// fill them was never taken.
+// cells renders the row in the fixed column order. A nil pointer and an
+// empty reason both become the bare `null` token, never the string "null".
 func (r Row) cells() []any {
 	return []any{
 		r.File.String(), r.Start, r.End, r.Name, r.Complexity,
-		nullable(r.Coverage), nullable(r.Score), textCell(string(r.State)),
-		textCell(r.Action), nullable(r.TargetCoverage), textCell(r.Reason),
+		nullable(r.Coverage), nullable(r.Score), string(r.State),
+		r.Action, nullable(r.TargetCoverage), reasonCell(r.Reason),
 	}
 }
 
@@ -151,14 +149,12 @@ func (m Metric) orderedRows() []Row {
 	return ordered
 }
 
-// Measured counts the rows the join could attribute. A structural_na row
-// counts as measured. The test is positive rather than "not unknown", so a row
-// the join never saw, which carries no state at all, counts as measured no
-// more than an unknown one does.
+// Measured counts the rows the join could attribute, which is every row whose
+// state is not unknown. A structural_na row counts as measured.
 func (m Metric) Measured() int {
 	measured := 0
 	for _, row := range m.Rows {
-		if row.State == StateMeasured || row.State == StateStructuralNA {
+		if row.State != StateUnknown {
 			measured++
 		}
 	}
@@ -205,9 +201,14 @@ type Document struct {
 	// Failure is the typed exit-1 cause, or nil.
 	Failure *Failure
 	// Metrics is every selected metric with its threshold and its whole
-	// changed-method set, present whenever a metric was selected and the run
-	// got past scope resolution, with or without rows, in metric.Hosted
-	// order. A list rather than one entry because ADR 0008
+	// changed-method set, in metric.Hosted order. It is present once the
+	// changed-method set is known and no typed failure short-circuited the
+	// run before the join or before the empty-changed-set exit; a run that
+	// stopped on a dirty staged file, an unresolvable base, an unresolvable
+	// --files path or a missing coverage report carries no entry at all, so
+	// the document has no `metrics` key. Rows may be empty where the entry is
+	// present, since a metric can reach the document having scored nothing.
+	// A list rather than one entry because ADR 0008
 	// gives each metric its own table key, so a second metric adds a second
 	// key rather than changing the first one's shape.
 	Metrics []Metric
@@ -332,10 +333,10 @@ func nullable[T any](p *T) any {
 	return *p
 }
 
-// textCell renders an optional token, where the empty string is `null`.
-func textCell(token string) any {
-	if token == "" {
+// reasonCell renders the typed reason, where no reason is `null`.
+func reasonCell(reason string) any {
+	if reason == "" {
 		return nil
 	}
-	return token
+	return reason
 }

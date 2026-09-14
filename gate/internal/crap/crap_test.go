@@ -30,6 +30,13 @@ func TestMeasurement(t *testing.T) {
 		{"fully covered trivial method clears the default threshold", 1, 1, 30, 1, crap.ActionNone, nil},
 		{"complexity above a tight threshold splits even at full coverage", 13, 1, 12, 13, crap.ActionSplitMethod, nil},
 		{"same complexity clears the default threshold", 13, 1, 30, 13, crap.ActionNone, nil},
+		// Both comparisons in Action are strict, and --threshold is what puts a
+		// developer on either boundary deliberately. A method exactly at its
+		// bar passes, by complexity and by score alike, and one at the bar on
+		// complexity is asked for full coverage rather than told to split.
+		{"complexity exactly at the threshold does not split", 12, 1, 12, 12, crap.ActionNone, nil},
+		{"a score exactly at the threshold passes", 4, 0, 20, 20, crap.ActionNone, nil},
+		{"complexity at the threshold leaves full coverage as the only way under", 13, 0.5, 13, 34.13, crap.ActionRaiseCoverage, f(1)},
 	}
 
 	for _, c := range cases {

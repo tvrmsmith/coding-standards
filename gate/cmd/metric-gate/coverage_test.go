@@ -42,18 +42,22 @@ func TestOnlyADeclaredCoverageInputIsDemanded(t *testing.T) {
 	root, changed := rootWithNoCoverageReport(t)
 
 	t.Run("a selection declaring no input skips coverage entirely", func(t *testing.T) {
-		set, skipped, err := loadCoverage(root, nil, changed, []metric.Selection{declaresNothing})
+		set, declared, skipped, err := loadCoverage(root, nil, changed, []metric.Selection{declaresNothing})
 
 		// Nothing was demanded, so nothing was skipped and the run is free to
-		// pass in a repo where nobody ran the tests.
-		if set != nil || skipped != nil || err != nil {
-			t.Errorf("loadCoverage = (%v, %v, %v), want (nil, nil, nil)", set, skipped, err)
+		// pass in a repo where nobody ran the tests. declared is what carries
+		// that decision on to the join.
+		if set != nil || declared || skipped != nil || err != nil {
+			t.Errorf("loadCoverage = (%v, %v, %v, %v), want (nil, false, nil, nil)", set, declared, skipped, err)
 		}
 	})
 
 	t.Run("a selection declaring coverage fails on the absent report", func(t *testing.T) {
-		_, _, err := loadCoverage(root, nil, changed, []metric.Selection{declaresCoverage})
+		_, declared, _, err := loadCoverage(root, nil, changed, []metric.Selection{declaresCoverage})
 
+		if !declared {
+			t.Error("declared = false, want true: the selection asked for coverage")
+		}
 		var failure *report.Failure
 		if !errors.As(err, &failure) || failure.Code != report.CodeCoverageMissing {
 			t.Fatalf("loadCoverage err = %v, want a report.Failure coded %s", err, report.CodeCoverageMissing)
@@ -63,7 +67,7 @@ func TestOnlyADeclaredCoverageInputIsDemanded(t *testing.T) {
 	// ADR 0002 names every metric the absent report stops, not only the first,
 	// so the developer learns what the one `dotnet test` run would unblock.
 	t.Run("the failure names every metric stuck on the absent report", func(t *testing.T) {
-		_, _, err := loadCoverage(root, nil, changed, []metric.Selection{declaresCoverage, declaresCoverageToo})
+		_, _, _, err := loadCoverage(root, nil, changed, []metric.Selection{declaresCoverage, declaresCoverageToo})
 
 		var failure *report.Failure
 		if !errors.As(err, &failure) {

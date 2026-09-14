@@ -33,27 +33,27 @@ var (
 func TestASelectionDeclaringNoCoverageScoresWithoutTheJoin(t *testing.T) {
 	selected := []metric.Selection{declaresNothing}
 
-	metrics, unknown := attribute(selected, extract.Result{Spans: []extract.Span{cancelSpan}}, []extract.Span{cancelSpan}, nil)
+	metrics, unknown := attribute(selected, extract.Result{Spans: []extract.Span{cancelSpan}}, []extract.Span{cancelSpan}, nil, false)
 
 	if unknown != 0 {
-		t.Errorf("unknown = %d, want 0: nothing was demanded, so nothing is unattributed", unknown)
+		t.Errorf("unknown = %d, want 0: the join never ran, so nothing is unattributed", unknown)
 	}
-	if len(metrics) != 1 || len(metrics[0].Rows) != 1 {
-		t.Fatalf("metrics = %+v, want one entry holding one row", metrics)
+	if len(metrics) != 1 {
+		t.Fatalf("metrics = %+v, want the one selected entry", metrics)
 	}
-	// Nothing is silently skipped: the method is still reported, carrying the
-	// cells that come off the span alone.
-	row := metrics[0].Rows[0]
-	want := report.Row{
-		File: cancelSpan.File, Start: cancelSpan.StartLine, End: cancelSpan.EndLine,
-		Name: cancelSpan.Name, Complexity: cancelSpan.Complexity,
-	}
-	if row != want {
-		t.Errorf("row = %+v, want %+v: every coverage-derived cell null", row, want)
+	// The metric is still named, at its own bar, having read nothing. What a
+	// row looks like for it waits on the formula that would fill one.
+	if len(metrics[0].Rows) != 0 {
+		t.Errorf("rows = %+v, want none", metrics[0].Rows)
 	}
 	if metrics[0].Measured() != 0 || metrics[0].Failed() != 0 {
-		t.Errorf("measured = %d, failed = %d, want 0 and 0: no reading was taken",
-			metrics[0].Measured(), metrics[0].Failed())
+		t.Errorf("measured = %d, failed = %d, want 0 and 0", metrics[0].Measured(), metrics[0].Failed())
+	}
+	// The run passes rather than dying on unknown_changed_method, which is the
+	// whole of the scenario.
+	doc := report.Document{ChangedMethods: len([]extract.Span{cancelSpan}), Metrics: metrics}
+	if code := doc.ExitCode(); code != 0 {
+		t.Errorf("ExitCode() = %d, want 0", code)
 	}
 }
 
@@ -63,7 +63,7 @@ func TestASelectionDeclaringNoCoverageScoresWithoutTheJoin(t *testing.T) {
 func TestOneDeclaringMetricMakesTheJoinRunForAllOfThem(t *testing.T) {
 	selected := []metric.Selection{declaresCoverage, declaresNothing}
 
-	metrics, unknown := attribute(selected, extract.Result{Spans: []extract.Span{cancelSpan}}, []extract.Span{cancelSpan}, coveredLines)
+	metrics, unknown := attribute(selected, extract.Result{Spans: []extract.Span{cancelSpan}}, []extract.Span{cancelSpan}, coveredLines, true)
 
 	if unknown != 0 {
 		t.Errorf("unknown = %d, want 0: the file matched the report", unknown)
@@ -74,6 +74,31 @@ func TestOneDeclaringMetricMakesTheJoinRunForAllOfThem(t *testing.T) {
 	for i, m := range metrics {
 		if len(m.Rows) != 1 || m.Rows[0].State != report.StateMeasured || m.Rows[0].Score == nil {
 			t.Errorf("metrics[%d] (%s) rows = %+v, want one measured, scored row", i, m.Name, m.Rows)
+		}
+	}
+}
+
+// TestOneUnattributableMethodCountsOnceWhateverIsSelected is why the count
+// comes off the join rather than off the rows: a method nothing could
+// attribute is unknown to the run, not once to every metric reading it. Two
+// selections over one unmatched method must report one, not two.
+func TestOneUnattributableMethodCountsOnceWhateverIsSelected(t *testing.T) {
+	selected := []metric.Selection{declaresCoverage, declaresCoverageToo}
+	// The set names some other file, so cancelSpan's file matched no report
+	// path at all, which is ADR 0004's file_unmatched.
+	elsewhere := coverage.Set{"src/Billing/InvoiceService.cs": coverage.Lines{1: true}}
+
+	metrics, unknown := attribute(selected, extract.Result{Spans: []extract.Span{cancelSpan}}, []extract.Span{cancelSpan}, elsewhere, true)
+
+	if unknown != 1 {
+		t.Errorf("unknown = %d, want 1: one method, counted once however many metrics read it", unknown)
+	}
+	if len(metrics) != 2 {
+		t.Fatalf("metrics = %+v, want two entries", metrics)
+	}
+	for i, m := range metrics {
+		if len(m.Rows) != 1 || m.Rows[0].State != report.StateUnknown {
+			t.Errorf("metrics[%d] (%s) rows = %+v, want one unknown row", i, m.Name, m.Rows)
 		}
 	}
 }
@@ -89,7 +114,7 @@ func TestEveryMetricScoresTheSameMethodSet(t *testing.T) {
 	lines := coverage.Set{cancelSpan.File: coverage.Lines{10: true, 12: false, 30: true, 35: false}}
 	selected := []metric.Selection{declaresCoverage, declaresCoverageToo}
 
-	metrics, _ := attribute(selected, extract.Result{Spans: []extract.Span{cancelSpan, placeSpan}}, []extract.Span{cancelSpan, placeSpan}, lines)
+	metrics, _ := attribute(selected, extract.Result{Spans: []extract.Span{cancelSpan, placeSpan}}, []extract.Span{cancelSpan, placeSpan}, lines, true)
 
 	if len(metrics) != 2 {
 		t.Fatalf("metrics = %+v, want two entries", metrics)
