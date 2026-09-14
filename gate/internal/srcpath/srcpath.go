@@ -32,10 +32,11 @@
 // word alone. The gate walks the prefixes of the path it resolved the name by,
 // starting at the first component their own text contributed, and asks the
 // filesystem which directory each one reaches, so the word blamed is always one
-// they wrote and one the root prefix names. A mis-case the
-// working directory supplied, or one a symlink's stored target supplied, is
-// accepted rather than blamed on a half that is not in the string and that no
-// retyping of the name can clear.
+// they wrote and one the root prefix names. A mis-case the working directory
+// supplied, or one a symlink's stored target supplied, is accepted rather than
+// blamed on a half that is not in the string and that no retyping of the name
+// can clear.
+//
 // named carries the most user-visible policy of the three, the distinct
 // refusal reasons a --files path can come back with, so a reader changing
 // containment has to weigh it beside the other two rather than reading Place and
@@ -507,10 +508,10 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // is written. typedTheRootPrefix separates the two by walking the path named
 // built a prefix at a time, from the first component their own text
 // contributed, so every word of the root's own name that they spelled is
-// weighed and nothing else is. The fold is accepted
-// for the rest, and the name goes on to
-// spelledAsOnDisk, which walks every component below the root against the tree's
-// own entries, so nothing is matched approximately for having taken that road.
+// weighed and nothing else is. The fold is accepted for the rest, and the name
+// goes on to spelledAsOnDisk, which walks every component below the root
+// against the tree's own entries, so nothing is matched approximately for
+// having taken that road.
 //
 // That refusal is weighed after the mode checks, so --files naming the repo
 // root itself answers "is a directory, not a file" in either case, and a
@@ -677,14 +678,13 @@ func namesTheRootPrefix(components, rootComponents []string) bool {
 // pathComponents splits a cleaned absolute path into its components, so that
 // foldRootPrefix and typedTheRootPrefix count the root's length and index
 // against it with one function and the two cannot disagree. strings.Split alone
-// cannot be that
-// function, since it answers two elements for the filesystem root, "/" and its
-// Windows "C:\" counterpart, where there is one component. The root is the only
-// cleaned path with a trailing separator, so dropping the empty element it
-// produces is the whole of the correction. No repo the gate resolves sits at the
-// filesystem root today, and filepath.Rel reads every path under such a root as
-// inside without ever reaching the fold, so this keeps the two counts honest
-// rather than fixing a refusal a developer meets.
+// cannot be that function, since it answers two elements for the filesystem
+// root, "/" and its Windows "C:\" counterpart, where there is one component.
+// The root is the only cleaned path with a trailing separator, so dropping the
+// empty element it produces is the whole of the correction. No repo the gate
+// resolves sits at the filesystem root today, and filepath.Rel reads every path
+// under such a root as inside without ever reaching the fold, so this keeps the
+// two counts honest rather than fixing a refusal a developer meets.
 func pathComponents(path string) []string {
 	sep := string(filepath.Separator)
 	components := strings.Split(path, sep)
