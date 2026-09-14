@@ -695,7 +695,8 @@ func TestMethodMovedWithinOneFileIsMeasuredAtItsNewLocation(t *testing.T) {
 // this suite happens to exercise, the alternative issue 25 considered and
 // rejected. That reaches only the typechange: a `.cs` symlink added outright
 // arrives as status A, passes ACM, and is handed to the extractor like any
-// other new file.
+// other new file. TestASymlinkReplacedByASourceFileContributesNoChangedMethods
+// pins the opposite direction of the same typechange.
 func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderFile, csharpFile(80))
@@ -707,9 +708,12 @@ func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) 
 	// extractor ever claims it, and only a live typechange exercises status T.
 	f.removeFile(orderFile)
 	f.symlinkTo(filepath.Base(orderService), orderFile)
+	f.assertTypechange("main", orderFile, realFile, symlink)
+	handed := filepath.Join(t.TempDir(), "handed")
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderFile), []span{orderTotal}),
+		StdinLog:   handed,
 	}
 
 	// Under ACM, git reports Order.cs as status T and it never reaches the
@@ -720,6 +724,114 @@ func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) 
 	// from matching.
 	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
 		"no changed methods, nothing to measure\n")
+
+	// Today the golden already reds on any handing of Order.cs, since the
+	// extractor's file list is the touched-line key set (every touched file
+	// here is .cs, so extension filtering never narrows it) and a touched line
+	// either lands inside Order.Total's 60-64 span or outside it. This check
+	// states the rule directly instead of inferring it from an empty
+	// document, and it holds if a later change decouples the extractor's
+	// input from the touched-line key set, which the mode-aware pass in issue
+	// 84 would do. This direction is the dangerous handing, since an
+	// extractor given the link path follows it and reports the target's spans
+	// under Order.cs.
+	assertNotHandedToExtractor(t, handed)
+}
+
+// TestATypechangeIsWithheldWhileTheRestOfTheDiffIsMeasured is the positive
+// control the two cases either side of it cannot be. Both of those assert an
+// absence against the empty_changed_set golden, which is also what a run that
+// extracted nothing at all produces, so a change that skipped extraction for
+// an unrelated reason would leave them green for the wrong reason. Here the
+// same typechange sits beside an ordinary edit, so the run measures something
+// real and the document is non-empty, and the drop becomes a live extractor
+// withholding one path rather than an extractor that never ran. The symlink
+// points at OrderService.cs, so an extractor handed Order.cs would follow it
+// and report OrderService.Cancel a second time under Order.cs.
+func TestATypechangeIsWithheldWhileTheRestOfTheDiffIsMeasured(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderFile, csharpFile(80))
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.removeFile(orderFile)
+	f.symlinkTo(filepath.Base(orderService), orderFile)
+	f.touchLine(orderService, 62)
+	f.assertTypechange("main", orderFile, realFile, symlink)
+	// Two thirds of Cancel's three instrumentable lines are covered, the same
+	// arithmetic pass_single_method holds.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	handed := filepath.Join(t.TempDir(), "handed")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+		StdinLog:   handed,
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+
+	assertHandedToExtractor(t, handed, orderService+"\n")
+}
+
+// TestASymlinkReplacedByASourceFileContributesNoChangedMethods pins the
+// mirror of the case above: the other direction of status T, a committed
+// `.cs` symlink replaced in the working tree by a real source file full of
+// methods. The gate drops it, same as the other direction, and this case
+// exists so that drop stays a decision rather than an accident. The blind
+// spot it accepts is not one commit wide. Under ADR 0007 a changed method is
+// a working-tree span holding a touched line, so a later status M edit to the
+// now-real file measures only the methods holding the edited lines, and every
+// other method in the file stays unmeasured until something touches it. The
+// file never arrives as status A, which is the only route that measures all
+// of it, so the gap persists.
+//
+// Widening the filter to ACMT is not the fix, verified against real git.
+// With T included, git renders a typechange as a delete plus an add pair, so
+// this direction's new side is the whole real source file, every line of it
+// claimed under Order.cs, while the case above gets a new side holding the
+// link's own text, the path it points at, as one line under an equally
+// claimed `.cs` path. The second of those is what makes the flag edit wrong.
+// The extractor is handed the link path, follows it, and reports the target
+// file's spans under the link's path. Touched line 1 then falls inside no
+// span, so the guaranteed effect is touched_lines_outside_spans going 0 to 1
+// and nothing measured, at exit 0. Where the target's spans do cover the
+// link's first line, the worse effect follows. A method is measured under a
+// path that does not hold it, the coverage lookup against that path finds
+// nothing, and the run fails as an unknown changed method. Measuring the
+// direction this case covers needs a
+// mode-aware pass classifying the new side of a typechange before anything
+// reaches the extractor, not a flag edit. That pass is the work this change
+// does not take on, so the gap above is accepted rather than closed. Spans
+// reported under a path that does not hold them is worse than methods that go
+// unmeasured until an edit reaches them.
+func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.symlinkTo(filepath.Base(orderService), orderFile)
+	f.commitAll("initial")
+	f.removeFile(orderFile)
+	f.write(orderFile, csharpFile(80))
+	f.assertTypechange("main", orderFile, symlink, realFile)
+	handed := filepath.Join(t.TempDir(), "handed")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderFile), []span{orderTotal}),
+		StdinLog:   handed,
+	}
+
+	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
+		"no changed methods, nothing to measure\n")
+
+	// An ACMT widen is caught by the golden above, and so is any other
+	// handing of Order.cs today, since the extractor's file list is the
+	// touched-line key set (every touched file here is .cs, so extension
+	// filtering never narrows it). This check states the rule directly, that a
+	// dropped path never reaches the extractor, instead of inferring it from
+	// an empty document, and it holds if a later change decouples the
+	// extractor's input from that key set, which the mode-aware pass in issue
+	// 84 would do.
+	assertNotHandedToExtractor(t, handed)
 }
 
 // TestDeletingAMethodAttributesTheZeroLengthHunkToTheLineBeforeIt pins which
@@ -823,9 +935,7 @@ func TestANewFileNeverAddedToTheIndexContributesNoChangedMethods(t *testing.T) {
 	f.run().assertMatches(t, "untracked_new_file", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 9.65\n")
 
-	if got := readFile(t, handed); got != orderService+"\n" {
-		t.Errorf("the extractor was handed %q, want the one line %q", got, orderService+"\n")
-	}
+	assertHandedToExtractor(t, handed, orderService+"\n")
 }
 
 // TestRealCommitMixingEditMoveDeletionAdditionRenameAndReflow is the

@@ -516,6 +516,107 @@ func (f *fixture) removeFile(rel string) {
 	}
 }
 
+// fileKind is which of the two things a path stands as across a typechange, a
+// real file or a symbolic link. It is one value, so a case names which end is
+// the symlink once and both notations the precondition compares, the mode git
+// records in a tree and the bit os.Lstat reports, come off that one value.
+type fileKind int
+
+const (
+	realFile fileKind = iota
+	symlink
+)
+
+// gitMode is the tree mode git records for this kind, carrying the space that
+// ends the mode field of an `ls-tree` line. A real file is 100644 rather than
+// either regular mode, because the fixture's write only ever makes 0644 and an
+// executable blob should fail the precondition rather than pass it.
+func (k fileKind) gitMode() string {
+	if k == symlink {
+		return "120000 "
+	}
+	return "100644 "
+}
+
+// String names the kind for a failure message.
+func (k fileKind) String() string {
+	if k == symlink {
+		return "a symlink"
+	}
+	return "a real file"
+}
+
+// lstatKind is the kind an os.Lstat mode stands for.
+func lstatKind(mode fs.FileMode) fileKind {
+	if mode&fs.ModeSymlink != 0 {
+		return symlink
+	}
+	return realFile
+}
+
+// assertTypechange fails the case unless rel is a live typechange against
+// base, committed as committed and standing in the working tree as tree.
+//
+// A typechange case asserts an absence, so a setup that stopped producing one
+// would pass while testing nothing. `git diff --name-status` renders both
+// directions as T, so the two kinds are what pin which direction the case is.
+func (f *fixture) assertTypechange(base, rel string, committed, tree fileKind) {
+	f.t.Helper()
+	if got := f.git("diff", "--name-status", base, "--", rel); got != "T\t"+rel {
+		f.t.Fatalf("git reports %q for %s, so this case is not exercising a typechange", got, rel)
+	}
+	if got := f.git("ls-tree", base, "--", rel); !strings.HasPrefix(got, committed.gitMode()) {
+		f.t.Fatalf("%s holds %q for %s, want %s at mode %s",
+			base, got, rel, committed, strings.TrimSpace(committed.gitMode()))
+	}
+	info, err := os.Lstat(filepath.Join(f.root, filepath.FromSlash(rel)))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if got := lstatKind(info.Mode()); got != tree {
+		f.t.Fatalf("the working tree holds %s as %s, want %s", rel, got, tree)
+	}
+}
+
+// assertHandedToExtractor fails the case unless the stub's stdin log at handed
+// holds exactly want, which is how a case pins the file list the gate handed
+// the extractor. An absent log means the gate never spawned the extractor for
+// extraction at all, which is reported as its own failure rather than as an
+// unreadable file, since a run that measured nothing is what a case pinning a
+// handed list exists to tell apart from one that measured the wrong thing.
+func assertHandedToExtractor(t *testing.T, handed, want string) {
+	t.Helper()
+	switch body, err := os.ReadFile(handed); {
+	case err == nil:
+		if string(body) != want {
+			t.Errorf("the extractor was handed %q, want %q", body, want)
+		}
+	case errors.Is(err, fs.ErrNotExist):
+		t.Errorf("the extractor was never invoked, so it was handed nothing; want %q", want)
+	default:
+		t.Fatalf("reading %s answered neither way: %v", handed, err)
+	}
+}
+
+// assertNotHandedToExtractor fails the case unless the stub's stdin log at
+// handed is absent, which is how a case pins that a dropped path never reached
+// the extractor at all.
+//
+// An empty changed set makes the gate exit before it spawns the extractor for
+// extraction, so the stub never runs the path that writes the log. A
+// --capabilities probe cannot create the file either: the stub answers
+// --capabilities and returns before it drains stdin (gate/test/stub/main.go),
+// so even a capabilities-only invocation leaves it absent.
+func assertNotHandedToExtractor(t *testing.T, handed string) {
+	t.Helper()
+	switch _, err := os.Stat(handed); {
+	case err == nil:
+		t.Errorf("the extractor was handed %q, want nothing", readFile(t, handed))
+	case !errors.Is(err, fs.ErrNotExist):
+		t.Fatalf("stating %s answered neither way: %v", handed, err)
+	}
+}
+
 // denyReadFile makes the file at rel unreadable, so reading the report fails
 // on the file itself rather than on its contents. Root ignores the mode, so a
 // case relying on this skips there.
