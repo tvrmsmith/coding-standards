@@ -272,8 +272,9 @@ func TestSinceNamingAPathInsideACommitFailsNamingThatRev(t *testing.T) {
 	// rather than to the id the verify resolved: `HEAD:<path>^{}` asks git for
 	// a path spelled with a trailing `^{}`, which no tree holds, and the run
 	// would report a git failure over a path nobody typed.
-	f.runArgs("--since", "HEAD:"+orderService).assertMatches(t, "since_path_rev_not_a_commit", 1, "",
-		"no diff base: --since HEAD:"+orderService+" does not name a commit\n")
+	f.runArgs("--since", "HEAD:"+orderService).assertMatchesWith(t, "since_absent_sha_not_a_commit", 1, "",
+		"no diff base: --since HEAD:"+orderService+" does not name a commit\n",
+		map[string]string{"REV": "HEAD:" + orderService})
 }
 
 func TestStagedMeasuresOnlyWhatIsStaged(t *testing.T) {
@@ -1183,32 +1184,51 @@ func TestSinceNamingABranchWhoseCommitObjectIsGoneReportsAnUnreadableDiff(t *tes
 	// the developer after a branch that is sitting right there in refs/heads.
 	cause := f.gitStderr("cat-file", "-t", gone+"^{}")
 
-	f.runArgs("--since", "other").assertMatchesWith(t, "since_ref_object_unreadable", 1, "",
+	// The document an unreadable diff carries is the same whichever step failed
+	// to read it, so this case shares the golden the merge-base case pins; the
+	// input shape it covers is a named branch whose commit object is gone.
+	f.runArgs("--since", "other").assertMatchesWith(t, "since_merge_base_unreadable", 1, "",
 		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
 }
 
-func TestSinceNamingAShaTheStoreDoesNotHoldReadsAFullShaAsAnUnreadableDiffAndAnAbbreviationAsNotACommit(t *testing.T) {
+func TestSinceNamingAFullShaTheStoreDoesNotHoldReportsAnUnreadableDiff(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 
 	// `commit-tree` writes a commit no ref reaches, so removing it damages
-	// nothing main's history walks, and both spellings below name the one sha.
+	// nothing main's history walks.
 	gone := f.git("commit-tree", f.git("rev-parse", "HEAD^{tree}"), "-m", "unreferenced")
 	f.removeLooseObject(gone)
 
 	// `rev-parse --verify --quiet` answers a well-formed 40-hex sha with the sha
 	// itself, without asking the store whether it holds the object, so the run
-	// reaches the classification and cat-file is what fails.
+	// reaches the classification and cat-file is what fails. The document is the
+	// one every unreadable diff carries; the input shape here is a full sha the
+	// store does not hold.
 	cause := f.gitStderr("cat-file", "-t", gone+"^{}")
 
-	f.runArgs("--since", gone).assertMatchesWith(t, "since_ref_object_unreadable", 1, "",
+	// TestSinceNamingAnAbbreviatedShaTheStoreDoesNotHoldFailsNamingThatRev names
+	// the same commit spelled short and gets the other document. One commit, two
+	// documents, which is the whole of the disagreement between the spellings.
+	f.runArgs("--since", gone).assertMatchesWith(t, "since_merge_base_unreadable", 1, "",
 		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
+}
+
+func TestSinceNamingAnAbbreviatedShaTheStoreDoesNotHoldFailsNamingThatRev(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+
+	gone := f.git("commit-tree", f.git("rev-parse", "HEAD^{tree}"), "-m", "unreferenced")
+	f.removeLooseObject(gone)
 
 	// An abbreviation has to be matched against the object store to be resolved
-	// at all, so the same commit spelled short exits 1 at the verify and never
-	// reaches the classification. One commit, two documents, which is the whole
-	// of the disagreement between the two spellings.
+	// at all, so the commit spelled short exits 1 at the verify and never
+	// reaches the classification.
+	// TestSinceNamingAFullShaTheStoreDoesNotHoldReportsAnUnreadableDiff names the
+	// same commit in full and gets the other document. One commit, two documents,
+	// which is the whole of the disagreement between the spellings.
 	abbreviated := gone[:8]
 
 	f.runArgs("--since", abbreviated).assertMatchesWith(t, "since_absent_sha_not_a_commit", 1, "",
@@ -1286,7 +1306,9 @@ func TestSinceNamingAnAnnotatedTagWhoseCommitObjectIsGoneReportsAnUnreadableDiff
 	// that is damaged rather than a ref that is wrong.
 	cause := f.gitStderr("cat-file", "-t", tagObject+"^{}")
 
-	f.runArgs("--since", "other").assertMatchesWith(t, "since_ref_object_unreadable", 1, "",
+	// Same shared unreadable-diff document as the other cases; the input shape
+	// here is an annotated tag whose target commit is gone.
+	f.runArgs("--since", "other").assertMatchesWith(t, "since_merge_base_unreadable", 1, "",
 		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
 }
 

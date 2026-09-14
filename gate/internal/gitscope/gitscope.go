@@ -347,8 +347,8 @@ func (r Repo) verifyRev(rev string) (string, error) {
 }
 
 // objectType names the type of the object oid peels to, `commit` for a commit
-// and for an annotated tag on one, `tree` or `blob` for a lightweight tag on
-// either.
+// and for an annotated tag on one, `tree` or `blob` for a tag over either,
+// lightweight or annotated.
 //
 // It is the one check in the package that does not read exit 1 as git answering
 // no, because `cat-file -t` has no such answer to give: an object the store does
