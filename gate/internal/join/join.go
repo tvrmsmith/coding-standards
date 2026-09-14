@@ -1,5 +1,5 @@
 // Package join runs the smallest-containing-span rule in both directions: it
-// scopes the extractor's spans to the touched lines (ADR 0003), and it
+// scopes the extractor's spans to the touched lines (ADR 0007), and it
 // attributes coverage lines to those spans (ADR 0001).
 package join
 

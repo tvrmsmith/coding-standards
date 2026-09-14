@@ -1,6 +1,6 @@
 // Package toon is an in-house encoder for the TOON document format
 // (https://toonformat.dev/), spec version 4.1.1. It renders the document
-// model metric-gate emits on stdout per ADR 0005: a fixed pipe delimiter,
+// model metric-gate emits on stdout per ADR 0008: a fixed pipe delimiter,
 // tabular arrays for uniform rows, and no decoding — this gate never reads
 // TOON back in.
 package toon
@@ -101,7 +101,7 @@ func encodeField(f Field, indent int) (string, error) {
 // encodeTableField renders a *Table field at the given indent level. A
 // table with zero rows has no uniform shape to declare and MUST be
 // emitted as "key: []", the same empty-array form as an empty []string
-// field (spec §9.1); ADR 0005 makes this rule explicit for the gate's
+// field (spec §9.1); ADR 0008 makes this rule explicit for the gate's
 // own tables. A non-empty table is the tabular header form
 // "key[N<delim?>]{field1<delim>...}:" (spec §6), followed by one row
 // per element one indent level deeper (spec §9.3), each row's cells
@@ -156,7 +156,7 @@ func encodeStringSliceField(key string, items []string) (string, error) {
 }
 
 // delimiter is the pipe character this document always encodes with
-// (ADR 0005), both as the document delimiter for object field values and
+// (ADR 0008), both as the document delimiter for object field values and
 // the active delimiter for table headers, rows, and inline arrays
 // (spec §11.1).
 const delimiter = '|'

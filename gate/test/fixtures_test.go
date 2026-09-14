@@ -175,7 +175,7 @@ type fileStatus struct {
 	Status string `json:"status"`
 }
 
-// extractorOutput renders the ADR 0006 wire response the stub emits.
+// extractorOutput renders the ADR 0009 wire response the stub emits.
 func extractorOutput(t *testing.T, files []fileStatus, spans []span) string {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{"files": files, "spans": spans})

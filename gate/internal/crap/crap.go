@@ -1,5 +1,5 @@
 // Package crap is the CRAP metric: the inputs it declares (ADR 0002), the
-// formula, and the two typed fix cells ADR 0005 requires beside it.
+// formula, and the two typed fix cells ADR 0008 requires beside it.
 package crap
 
 import (
@@ -24,7 +24,10 @@ const Threshold = 30
 // message names the metric rather than the file.
 var DeclaredInputs = []string{"coverage"}
 
-// The two fix instructions and their absence, as ADR 0005 types them.
+// The two fix instructions and their absence. ADR 0008 requires action to be a
+// typed cell rather than prose; the raise_coverage, split_method and none
+// spelling is in ADR 0005, the superseded record 0008 consolidates; issue 65
+// tracks enumerating those tokens in 0008, which would retire the citation.
 const (
 	ActionSplitMethod   = "split_method"
 	ActionRaiseCoverage = "raise_coverage"

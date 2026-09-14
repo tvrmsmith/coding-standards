@@ -147,7 +147,7 @@ func FromSlash(rel string) Path { return Path(rel) }
 //
 // The type exists so a caller can tell a refusal about the path from a failure
 // that is not about any path, a process whose working directory was deleted for
-// instance. Both come back from NamedFiles, and only the first is ADR 0005's
+// instance. Both come back from NamedFiles, and only the first is ADR 0008's
 // file_unresolved, whose message the reader expects to name a path.
 type UnresolvedError struct {
 	// Name is the path as the developer typed it.
