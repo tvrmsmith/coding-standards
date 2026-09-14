@@ -135,11 +135,6 @@ here reopens them.
 
 ## Consequences
 
-The gate runs `git` itself rather than taking hunks from a wrapper, so the rule lives in one binary
-and no caller can get `-w` or `--diff-filter` subtly wrong. That is the second thing the gate shells
-out to, after nothing, and it is acceptable because git is present on every machine that has a repo
-to gate.
-
-`lint-changed-dotnet.sh` only warns where this gate exits 1 on a staged-and-dirty file. It is right
-to, because it reports and never blocks. This one blocks, and silent misattribution is the worst
-thing a blocking gate can do.
+**Trimmed 2026-09-14**, with Trevor's approval, on the precedent set above. Both paragraphs stood
+verbatim in [ADR 0003](0003-changed-method-is-a-span-holding-a-touched-line.md)'s Consequences,
+which is preserved and states them still.
