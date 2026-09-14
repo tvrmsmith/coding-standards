@@ -20,8 +20,8 @@ by 0007, [0005](0005-the-machine-document-is-the-only-output.md) by 0008,
 
 ## Conventions
 
-An accepted ADR is never rewritten in place and never reworded for style. There are two ways to
-change one.
+An accepted ADR is never rewritten in place and never reworded for style. There are three ways to
+change one, and only the third removes anything.
 
 **Amend** when the decision stands and the text is wrong, incomplete, or overtaken by a detail.
 Write a paragraph opening with `**Amended YYYY-MM-DD.**` at the start of a line, and place it next
@@ -32,6 +32,12 @@ where the file can be read straight through. Write a new numbered ADR stating th
 Give the old file a `**Superseded YYYY-MM-DD by [ADR NNNN](...)**` paragraph under its title and
 leave everything else in it untouched. Add the new ADR to the table above and move the old row down
 to the superseded line. Nothing is deleted.
+
+**Trim** only when the word ceiling below binds and the text to be cut already stands in another ADR
+this repo keeps. Ask the user first, because this is the one mode that deletes. Leave a paragraph
+opening with `**Trimmed YYYY-MM-DD.**` where the text was, naming the ADR that still carries it and
+saying how closely, word for word or in its own words. A superseded ADR counts: it is kept for its
+history, and a consequence it already states is that history.
 
 **Five amendments is the consolidation trigger.** Past that the amendments outweigh the decision and
 a reader has to reconstruct the rule from a changelog. ADR 0005 reached seventeen, four of them

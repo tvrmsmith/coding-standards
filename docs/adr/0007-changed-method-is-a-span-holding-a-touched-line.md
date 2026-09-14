@@ -98,7 +98,8 @@ verify **unpeeled**, because `<ref>^{commit}` exits 1 on a missing object.
 **Amended 2026-09-11.** `--since <ref>` verifies its ref unpeeled too, then classifies with
 `cat-file -t` on the id that verify resolved, `^{}` appended to that id and never to the typed ref,
 which for `<rev>:<path>` builds a pathspec rather than a peel. A missing commit object now reports
-an unreadable diff rather than "does not name a commit".
+an unreadable diff rather than "does not name a commit", except spelled as an abbreviation, which
+verify cannot expand without the object and so exits 1.
 
 `--files` carries no line information, so every method in a listed file is changed and `base` is
 null. `--staged` reports index line numbers while the extractor parses the disk copy, so the gate
@@ -135,6 +136,6 @@ here reopens them.
 
 ## Consequences
 
-**Trimmed 2026-09-14**, with Trevor's approval, on the precedent set above. Both paragraphs stood
-verbatim in [ADR 0003](0003-changed-method-is-a-span-holding-a-touched-line.md)'s Consequences,
-which is preserved and states them still.
+**Trimmed 2026-09-14**, with Trevor's approval, on the precedent set above.
+[ADR 0003](0003-changed-method-is-a-span-holding-a-touched-line.md)'s Consequences is preserved and
+states both still, the first word for word.

@@ -103,7 +103,8 @@ func (b Base) Label() string { return b.Ref + "@" + b.Commit[:7] }
 // something other than a commit, or resolved to a commit sharing no history with
 // HEAD. Naming the flag again in any of those tells the caller nothing new.
 //
-// Those first two were one arm until issue 68. The `^{commit}` peel that
+// A ref that does not resolve and a ref resolving to something other than a
+// commit were one arm until issue 68. The `^{commit}` peel that
 // checked the ref exited 1 both on a ref the repo does not carry and on a
 // lightweight tag over a tree, so "did not resolve" covered the pair. Verifying
 // unpeeled and typing the resolved id with objectType tells them apart: the ref
