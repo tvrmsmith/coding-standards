@@ -27,9 +27,11 @@
 // Landing under the root is not the same as being accepted. named refuses a
 // --files path whose own text names the repo root directory in a case the root
 // does not use, because such a path is one the developer typed and can retype,
-// and telling them which half is misspelled is the whole of issue 48. The gate
-// walks the prefixes of their text and asks the filesystem which directory each
-// one reaches, so the word blamed is always one they wrote. A mis-case the
+// and telling them which half is misspelled is the whole of issue 48. The rule
+// covers every component of the root prefix they spelled, not the root's last
+// word alone. The gate walks the prefixes of their text and asks the filesystem
+// which directory each one reaches, so the word blamed is always one they
+// wrote and one the root prefix names. A mis-case the
 // working directory supplied, or one a symlink's stored target supplied, is
 // accepted rather than blamed on a half that is not in the string and that no
 // retyping of the name can clear.
@@ -502,8 +504,9 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // refusing for a mis-case there would quote a name and blame a half of it that
 // is not in the string they typed and cannot be retyped, no matter how the name
 // is written. typedTheRootPrefix separates the two by walking their text a
-// prefix at a time and asking the filesystem which of those prefixes is the
-// root. The fold is accepted for the rest, and the name goes on to
+// prefix at a time and resolving each prefix, so every word of the root's own
+// name that they spelled is weighed and nothing else is. The fold is accepted
+// for the rest, and the name goes on to
 // spelledAsOnDisk, which walks every component below the root against the tree's
 // own entries, so nothing is matched approximately for having taken that road.
 //
@@ -572,33 +575,36 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 	return rel, nil
 }
 
-// typedTheRootPrefix reports whether the developer's own --files text names the
-// repo root directory in a case the root does not use, which is what makes the
-// mis-spelling theirs to retype.
+// typedTheRootPrefix reports whether the developer's own --files text spells a
+// component of the repo root's prefix in a case the root does not use, which is
+// what makes the mis-spelling theirs to retype. The root prefix is the whole
+// run of directories that names the root, not its last word alone, so
+// --files /u/t/DEV/repo/src/a.cs against a root of /u/t/dev/repo is blamed on
+// DEV (ADR 0004).
 //
-// It walks the prefixes of their text, shallowest first, and asks the
-// filesystem which directory each one reaches. For a relative name the walk
-// starts at the working directory and only their own words extend it, so a root
-// the shell cd'd through is never examined and a mis-case up there is never
-// blamed on a string that does not carry it. At the first prefix that reaches
-// the root, the word they wrote to get there is the whole answer. It is blamed
-// when it folds with the root's own last component and is spelled differently,
-// and accepted otherwise, so a link named "link" that points at the root is not
-// a mis-spelling of anything and a name reaching the root through it stands.
+// It walks the prefixes of their text, shallowest first, and resolves each one.
+// For a relative name the walk starts at the working directory and only their
+// own words extend it, so a directory the shell cd'd through is never examined
+// and a mis-case up there is never blamed on a string that does not carry it.
+// Every comparison is made on the resolved side, where the component count is
+// the root's own and no symlink can shift it. A prefix that reaches anywhere
+// other than one of the root's own directories is passed over rather than
+// ending the walk, since a name is free to descend, climb back out and name the
+// root after that, as "src/../../REPO/src/a.cs" does. Nothing below the root is
+// ever weighed here; spelledAsOnDisk holds every component under it to the
+// tree's own spelling.
 //
-// Asking the filesystem is what counting cannot do. A symlink anywhere in the
-// text adds or drops components, above the root or below it, so no arithmetic
-// over the resolved candidate says which word of theirs produced which part of
-// it, while os.SameFile answers for one prefix at a time.
+// A word is blamed only when the resolved prefix still ends in that same word,
+// which says the last hop renamed nothing and the word really is theirs. That
+// is what separates a mis-spelling from a different name: a link named "link"
+// pointing at the root, or at a mis-cased directory, hands back a tail they
+// never wrote, so nothing is blamed and the name stands.
 //
-// The walk starts at the root's own authority and stops there. A component
-// above the root is not the root prefix, so a mis-cased ancestor of a root the
-// text spells correctly is accepted, and nothing below the root is weighed
-// here, since spelledAsOnDisk holds every component under it to the tree's own
-// spelling. A ".." extends the walk without naming anything and is never
-// blamed. A prefix the filesystem will not answer for is not the root under
-// another spelling; named resolved the whole candidate a moment earlier, so
-// reaching that means the tree moved between two syscalls.
+// Resolving is what counting cannot do. A symlink anywhere in the text adds or
+// drops components, above the root or below it, so no arithmetic over the
+// resolved candidate says which word of theirs produced which part of it. A
+// ".." extends the walk without naming anything and is never weighed, and a
+// prefix the filesystem will not resolve names nothing either.
 func (r Root) typedTheRootPrefix(cwd, name string) bool {
 	sep := string(filepath.Separator)
 	typed := filepath.FromSlash(name)
@@ -607,7 +613,7 @@ func (r Root) typedTheRootPrefix(cwd, name string) bool {
 	if filepath.IsAbs(typed) {
 		prefix = volume + sep
 	}
-	rootWord := filepath.Base(r.resolved)
+	rootComponents := pathComponents(r.resolved)
 	for _, word := range strings.Split(strings.TrimPrefix(typed, volume), sep) {
 		if word == "" || word == "." {
 			continue
@@ -616,18 +622,43 @@ func (r Root) typedTheRootPrefix(cwd, name string) bool {
 		if word == ".." {
 			continue
 		}
-		same, err := r.isRootUnder(prefix)
-		if err != nil || !same {
+		reached, err := filepath.EvalSymlinks(prefix)
+		if err != nil {
 			continue
 		}
-		return strings.EqualFold(word, rootWord) && word != rootWord
+		components := pathComponents(reached)
+		if !namesTheRootPrefix(components, rootComponents) {
+			continue
+		}
+		last := len(components) - 1
+		if components[last] == word && word != rootComponents[last] {
+			return true
+		}
 	}
 	return false
 }
 
+// namesTheRootPrefix reports whether a resolved prefix is one of the
+// directories that name the root, read case-insensitively, so that the only
+// words typedTheRootPrefix weighs are the root's own. A prefix below the root
+// is not one of them, and neither is one that leaves the root's ancestry, which
+// a name is free to do and come back from.
+func namesTheRootPrefix(components, rootComponents []string) bool {
+	if len(components) > len(rootComponents) {
+		return false
+	}
+	for i, component := range components {
+		if !strings.EqualFold(component, rootComponents[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 // pathComponents splits a cleaned absolute path into its components, so that
-// foldRootPrefix counts the root's length and indexes the candidate with one
-// function and the two cannot disagree. strings.Split alone cannot be that
+// foldRootPrefix and typedTheRootPrefix count the root's length and index
+// against it with one function and the two cannot disagree. strings.Split alone
+// cannot be that
 // function, since it answers two elements for the filesystem root, "/" and its
 // Windows "C:\" counterpart, where there is one component. The root is the only
 // cleaned path with a trailing separator, so dropping the empty element it

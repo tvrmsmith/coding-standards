@@ -564,12 +564,13 @@ func TestNamedAcceptsACaseDifferingRootReachedThroughALinkNamedSomethingElse(t *
 	}
 }
 
-// The developer's text spelling a mis-cased component above the root, with the
-// root itself spelled as the tree spells it. The gate's authority starts at the
-// root, and the walk reaches the root through that parent and answers on the
-// root's own word, so a component the developer typed above it is not the root
-// prefix and is not theirs to retype.
-func TestNamedAcceptsAMisCasedComponentTypedAboveACorrectlySpelledRoot(t *testing.T) {
+// The developer's text spelling a mis-cased component of the root prefix that
+// is not the root's last word. The root prefix is every directory that names
+// the root, so a parent they typed in a case the root does not use is theirs to
+// retype even though "repo" underneath it is spelled correctly. It differs from
+// the accepting case below only in climbing one level higher, which moves that
+// same parent from the shell's side of the climb point to theirs.
+func TestNamedRefusesAMisCasedRootComponentAboveTheLastOneTheTextSpelled(t *testing.T) {
 	root, real := rootUnderASymlinkedMiscasedParent(t)
 	touch(t, filepath.Join(real, "src", "a.cs"))
 	t.Chdir(filepath.Join(real, "src"))
@@ -579,28 +580,24 @@ func TestNamedAcceptsAMisCasedComponentTypedAboveACorrectlySpelledRoot(t *testin
 	parent := filepath.Base(filepath.Dir(real))
 	name := filepath.Join("..", "..", "..", parent, filepath.Base(real), "src", "a.cs")
 
-	rel, err := root.named(name, dirNames{})
+	_, err := root.named(name, dirNames{})
 
-	if err != nil || rel != "src/a.cs" {
-		t.Errorf("named on a name spelling a mis-cased parent above the root returned %q, %v, want \"src/a.cs\", nil", rel, err)
-	}
+	assertRootSpellingRefusal(t, err, name)
 }
 
-// The same acceptance in the shape a developer reaches on a filesystem that
-// folds, over the same tree as the accepting case above it, which climbs one
-// level less and so does not type the parent at all.
-func TestNamedAcceptsAMisCasedParentOfTheRootTheTextSpelled(t *testing.T) {
+// The same refusal in the shape a developer reaches on a filesystem that folds,
+// and the twin of the accepting case below, which uses this same tree and
+// climbs one level less, so the shell supplies the mis-cased parent instead.
+func TestNamedRefusesAMisCasedParentOfTheRootTheTextSpelled(t *testing.T) {
 	root, miscasedParent := miscasedParentRoot(t)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
 	t.Chdir(filepath.Join(root.Dir(), "src"))
 	assertFolds(t, root, filepath.Join(miscasedParent, "repo", "src", "a.cs"))
 	name := filepath.Join("..", "..", "..", filepath.Base(miscasedParent), "repo", "src", "a.cs")
 
-	rel, err := root.named(name, dirNames{})
+	_, err := root.named(name, dirNames{})
 
-	if err != nil || rel != "src/a.cs" {
-		t.Errorf("named on a name spelling a mis-cased parent above the root returned %q, %v, want \"src/a.cs\", nil", rel, err)
-	}
+	assertRootSpellingRefusal(t, err, name)
 }
 
 // A mis-case the shell introduced above the repo root, on a name that climbs.
@@ -683,6 +680,24 @@ func TestNamedAcceptsARelativeNameWhoseWorkingDirectoryReachesTheRootThroughASym
 	if err != nil || rel != "src/a.cs" {
 		t.Errorf("named on a name climbing out through a symlinked working directory returned %q, %v, want \"src/a.cs\", nil", rel, err)
 	}
+}
+
+// The refusing twin over that same tree, where the text does spell the parent
+// in a case the root does not use. The shell's own spelling is three components
+// shorter than the resolved candidate here, so a walk that located the text by
+// counting the working directory would line "dev" up against a word the
+// developer never typed and drop issue 48's refusal for everyone whose shell
+// reaches the repo through a link.
+func TestNamedRefusesAMisCasedParentTypedThroughAShortcutWorkingDirectory(t *testing.T) {
+	root, real, shortcut := rootReachedThroughAShortcut(t)
+	touch(t, filepath.Join(real, "src", "a.cs"))
+	t.Chdir(filepath.Join(shortcut, "dev", "repo", "src"))
+	assertFolds(t, root, filepath.Join(real, "src", "a.cs"))
+	name := filepath.Join("..", "..", "..", filepath.Base(filepath.Dir(real)), "repo", "src", "a.cs")
+
+	_, err := root.named(name, dirNames{})
+
+	assertRootSpellingRefusal(t, err, name)
 }
 
 // A name whose descent passes through a symlink whose target spells the root in
