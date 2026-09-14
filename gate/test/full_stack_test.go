@@ -152,8 +152,22 @@ func dotnetCmd(t *testing.T, dir string, args ...string) *exec.Cmd {
 // pattern would let the child re-enter the forking tests and fork forever.
 var childCase = "^(" + strings.Join(realExtractorCases, "|") + ")$"
 
-// childOutcome is a result line a child test binary prints for one case.
-type childOutcome string
+// childOutcome is a result line a child test binary prints for one case, paired
+// with whether reaching it makes the child exit non-zero. The two travel
+// together because the exit status follows from the outcome, and only the two
+// values below exist, so a row cannot pair a spelling with the opposite
+// disposition and assert the reverse of what its table is for.
+type childOutcome struct {
+	line    string
+	wantErr bool
+}
+
+// The two result lines a child can print for a case these rows drive.
+// outcomeFail is the one the enforcement fatal produces.
+var (
+	outcomeSkip = childOutcome{line: "SKIP"}
+	outcomeFail = childOutcome{line: "FAIL", wantErr: true}
+)
 
 // caseBlock is the -test.v output one named case produced, from its RUN line
 // up to the result line for the given outcome. Everything the case logged
@@ -161,15 +175,15 @@ type childOutcome string
 // the whole child output is what stops one case's message from standing in for
 // a sibling that took some other route entirely. A case that never ran, or ran
 // and reached a different outcome, has no block and is an error.
-func caseBlock(out, name, outcome string) (string, error) {
+func caseBlock(out, name string, outcome childOutcome) (string, error) {
 	start := strings.Index(out, "=== RUN   "+name+"\n")
 	if start < 0 {
 		return "", fmt.Errorf("the child printed no RUN line for %s, so the case never started", name)
 	}
 	rest := out[start:]
-	end := strings.Index(rest, "--- "+outcome+": "+name+" (")
+	end := strings.Index(rest, "--- "+outcome.line+": "+name+" (")
 	if end < 0 {
-		return "", fmt.Errorf("the child printed no %q line for %s, so the case took some other route", outcome, name)
+		return "", fmt.Errorf("the child printed no %q line for %s, so the case took some other route", outcome.line, name)
 	}
 	return rest[:end], nil
 }
@@ -222,18 +236,6 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 	// depends on the flags this parent happens to run under.
 	const long, short = "-test.short=false", "-test.short=true"
 
-	// The two result lines a child can print for a case these rows drive.
-	// outcomeFail is the one the enforcement fatal produces, and it is also what
-	// decides the child's exit status, so the rows state the outcome once and
-	// the disposition follows from it. The named type documents that pair, it
-	// does not enforce it: Go converts an untyped constant into a defined string
-	// type, so a row is free to write a third spelling and assert the opposite
-	// of what this table is for.
-	const (
-		outcomeSkip childOutcome = "SKIP"
-		outcomeFail childOutcome = "FAIL"
-	)
-
 	// outcome and wants are asserted against each case's own block, so every
 	// name in realExtractorCases has to reach that outcome for its own
 	// documented reason and no sibling's message can cover for it.
@@ -268,15 +270,14 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			out, err := runChild(t, c.require, "-test.run", childCase, "-test.v", c.short)
-			wantErr := c.outcome == outcomeFail
-			if wantErr && err == nil {
+			if c.outcome.wantErr && err == nil {
 				t.Fatalf("child exited zero, want a failure. output:\n%s", out)
 			}
-			if !wantErr && err != nil {
+			if !c.outcome.wantErr && err != nil {
 				t.Fatalf("child failed with %v, want a pass. output:\n%s", err, out)
 			}
 			for _, name := range realExtractorCases {
-				block, err := caseBlock(out, name, string(c.outcome))
+				block, err := caseBlock(out, name, c.outcome)
 				if err != nil {
 					t.Errorf("%v. output:\n%s", err, out)
 					continue
@@ -284,7 +285,7 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 				for _, want := range c.wants {
 					if !strings.Contains(block, want) {
 						t.Errorf("%s reached %s but said nothing containing %q. what it printed:\n%s",
-							name, c.outcome, want, block)
+							name, c.outcome.line, want, block)
 					}
 				}
 			}

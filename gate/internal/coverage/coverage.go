@@ -171,7 +171,7 @@ func Discover(root srcpath.Root) (sources []Source, skipped []string, err error)
 			skipped = append(skipped, name.String())
 			return nil
 		}
-		if !underResultsDir(rel) {
+		if !UnderResultsDir(rel) {
 			return nil
 		}
 		sources = append(sources, Source{Abs: path, Name: name, Origin: Discovered})
@@ -229,9 +229,12 @@ func Named(root srcpath.Root, cwd string, paths []string) []Source {
 	return sources
 }
 
-// underResultsDir reports whether any directory component of rel is the
-// TestResults directory the glob anchors on.
-func underResultsDir(rel string) bool {
+// UnderResultsDir reports whether any directory component of rel, a path
+// relative to the repo root, is the TestResults directory the glob anchors on.
+// It is exported because it is half of what discovery matches, beside
+// ReportName, and a caller checking one without the other is checking something
+// the walk does not.
+func UnderResultsDir(rel string) bool {
 	dir := filepath.Dir(rel)
 	for _, component := range strings.Split(filepath.ToSlash(dir), "/") {
 		if component == resultsDir {

@@ -34,14 +34,16 @@ const gateWorkingDir = "gate"
 // whole if: the step carries, built from the other two so the id is stated
 // once. Comparing the whole expression is what makes `if: false` red.
 //
-// Two separate holes, and the assertions below close each one. A guard naming a
-// step no job declares renders false on every run, so exactly one step must
+// Three separate holes, and the assertions below close each one. A guard naming
+// a step no job declares renders false on every run, so exactly one step must
 // carry the id. A guard naming a step that runs later renders empty for the
-// same reason, so the step declaring the id must come first. Neither check pins
-// which action carries the id, so moving `id: setup` onto a different action
-// keeps the guard true while it stops meaning the Go toolchain installed.
+// same reason, so the step declaring the id must come first. A guard naming a
+// step that installs something else renders true while it stops meaning the Go
+// toolchain installed, so the step carrying the id must run
+// passCheckGuardStepUses.
 const (
 	passCheckGuardStepID    = "setup"
+	passCheckGuardStepUses  = "actions/setup-go@"
 	passCheckGuardReference = "steps." + passCheckGuardStepID + ".outcome"
 	passCheckGuard          = "${{ !cancelled() && " + passCheckGuardReference + " == 'success' }}"
 )
@@ -110,6 +112,7 @@ func TestCIDeclaresThePassCheckStep(t *testing.T) {
 			Steps []struct {
 				Name             string         `yaml:"name"`
 				ID               string         `yaml:"id"`
+				Uses             string         `yaml:"uses"`
 				If               any            `yaml:"if"`
 				Run              string         `yaml:"run"`
 				WorkingDirectory string         `yaml:"working-directory"`
@@ -129,14 +132,16 @@ func TestCIDeclaresThePassCheckStep(t *testing.T) {
 	// The snapshot below says ci.yml still carries the reviewed script. It says
 	// nothing about which cases that script names, so the names are read out of
 	// the suite's own slice and required to appear in it as whole words of the
-	// loop's list, either continued onto the next line or closing it. A bare
-	// substring would let a name that is a prefix of a listed one pass on the
-	// longer name's text while the loop's anchored grep never runs for it.
+	// loop's list, bounded on both sides: preceded by the space that separates
+	// one word from the last, and either continued onto the next line or closing
+	// the list. A bare substring would let a name that is a prefix or a suffix of
+	// a listed one pass on the longer name's text while the loop's anchored grep
+	// never runs for it.
 	if len(realExtractorCases) == 0 {
 		t.Fatal("realExtractorCases is empty, so the name check below would pass over a script naming nothing")
 	}
 	for _, name := range realExtractorCases {
-		if !strings.Contains(passCheckScript, name+" \\") && !strings.Contains(passCheckScript, name+";") {
+		if !strings.Contains(passCheckScript, " "+name+" \\") && !strings.Contains(passCheckScript, " "+name+";") {
 			t.Errorf("%s: the %q step's script names no %s, so CI would never prove that case ran",
 				ciWorkflow, passCheckStep, name)
 		}
@@ -149,6 +154,10 @@ func TestCIDeclaresThePassCheckStep(t *testing.T) {
 		if step.ID == passCheckGuardStepID {
 			guardTargets++
 			guardDeclared = true
+			if !strings.HasPrefix(step.Uses, passCheckGuardStepUses) {
+				t.Errorf("%s: step %d of the %q job declares id: %s but runs %q, want an action beginning %s. The guard stays true over any action carrying the id, so on another one it renders success while it has stopped meaning the Go toolchain installed",
+					ciWorkflow, i+1, gateJob, passCheckGuardStepID, step.Uses, passCheckGuardStepUses)
+			}
 		}
 		guard := scalar(step.If)
 		if !declaredBefore && strings.Contains(guard, passCheckGuardReference) {

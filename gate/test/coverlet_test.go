@@ -2,11 +2,14 @@ package gate_test
 
 import (
 	"encoding/xml"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tvrmsmith/coding-standards/gate/internal/coverage"
 )
 
 // coverletFixtureFramework is the target framework both fixture projects
@@ -215,12 +218,26 @@ func (f *fixture) collectCoverage() {
 	// only as an extra GUID in skipped_paths. Either way the case would red as
 	// an opaque golden diff, so the count is checked here where the cause can
 	// be named.
+	//
+	// The count is of the reports the gate would discover, not of every file
+	// whose name ends .cobertura.xml, so the name and the TestResults
+	// requirement come from the gate's own discovery rather than being retyped.
+	// A coverlet release that renames the report or writes it elsewhere then
+	// reds here, naming the cause, instead of leaving exactly one match for a
+	// guard the gate's walk disagrees with.
 	var reports []string
 	err = filepath.WalkDir(f.root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			return fmt.Errorf("%s: %w", path, err)
 		}
-		if !d.IsDir() && strings.HasSuffix(d.Name(), ".cobertura.xml") {
+		if d.IsDir() || d.Name() != coverage.ReportName {
+			return nil
+		}
+		rel, err := filepath.Rel(f.root, path)
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		if coverage.UnderResultsDir(rel) {
 			reports = append(reports, path)
 		}
 		return nil
@@ -229,8 +246,8 @@ func (f *fixture) collectCoverage() {
 		f.t.Fatalf("walking %s for the cobertura report coverlet wrote: %v", f.root, err)
 	}
 	if len(reports) != 1 {
-		f.t.Fatalf("the collection left %d cobertura reports under %s, want exactly one: %v\n%s",
-			len(reports), f.root, reports, out)
+		f.t.Fatalf("the collection left %d reports the gate would discover under %s, matching %s, want exactly one: %v\n%s",
+			len(reports), f.root, coverage.Glob, reports, out)
 	}
 
 	f.assertCoverletReportShape(reports[0], string(out))
@@ -239,8 +256,9 @@ func (f *fixture) collectCoverage() {
 // scoredClassSuffix is how the one class the golden scores is found in the
 // report. coverlet writes the class filename as the absolute path minus its
 // leading slash, so the suffix is what identifies it without pinning the temp
-// repo's own path.
-const scoredClassSuffix = "src/Points.cs"
+// repo's own path. It leads with the separator, so a sibling under a directory
+// merely ending "src" cannot answer for the fixture's own source.
+const scoredClassSuffix = "/src/Points.cs"
 
 // assertCoverletReportShape checks the report coverlet just wrote still carries
 // the shapes the gate reads past. Reading the file here is reading the
@@ -305,6 +323,15 @@ func (f *fixture) assertCoverletReportShape(path, dotnetOut string) {
 			hitsAboveOne = true
 		}
 	}
+	// A precondition rather than a shape the gate reads past: the gate does read
+	// the per-line hits, so an empty scored class would red the golden on its
+	// own. It stops the case here so the rows below, which all speak for shapes
+	// no golden diff reports, cannot report an empty class as a lost shape.
+	if len(classLines) == 0 {
+		f.t.Fatalf("%s scored class %s carries no <line> entries, so every shape check below would speak for a class the report left empty\n%s",
+			path, class.Filename, dotnetOut)
+	}
+
 	methodLines := map[int]bool{}
 	for _, method := range class.Methods {
 		for _, line := range method.Lines {
@@ -322,7 +349,6 @@ func (f *fixture) assertCoverletReportShape(path, dotnetOut string) {
 		got  bool
 		want string
 	}{
-		{len(classLines) > 0, "any <line> entries on the scored class, without which every other row below speaks for a class the report left empty"},
 		{branchFalse, `a line of the scored class with branch="False", the capitalised spelling no hand-built report in this suite uses`},
 		{hitsAboveOne, "a line of the scored class hit more than once, which the hand-built reports never produce"},
 		{everyClassLineRepeated, "a <methods> line for every class-level line number of the scored class, so the same line arrives twice"},
