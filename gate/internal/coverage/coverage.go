@@ -188,9 +188,10 @@ func Discover(root srcpath.Root) (sources []Source, skipped []string, err error)
 // walkedName renders a path the walk yielded as the document names it, which is
 // its path relative to the root, and hands that relative reading back beside it
 // so the caller can test where the path sits without computing it twice. ok is
-// false when the root and the path have no relative reading at all, where the
-// name falls back to the absolute path and there is no relative reading to
-// return.
+// false when the root and the path have no relative reading at all, where there
+// is no relative reading to return and the name comes from srcpath.Root.Name,
+// so even that fallback is a shape srcpath owns and documents rather than a
+// path this package spelled itself.
 //
 // This is not a second owner of the containment question (issue 36). fs.WalkDir
 // never follows a symlink, so every path it hands back is literally under
@@ -206,7 +207,7 @@ func Discover(root srcpath.Root) (sources []Source, skipped []string, err error)
 func walkedName(root srcpath.Root, path string) (rel string, name srcpath.Name, ok bool) {
 	rel, err := filepath.Rel(root.Dir(), path)
 	if err != nil {
-		return "", srcpath.Name(filepath.ToSlash(path)), false
+		return "", root.Name(path), false
 	}
 	return rel, srcpath.Name(filepath.ToSlash(rel)), true
 }

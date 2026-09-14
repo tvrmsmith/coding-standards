@@ -523,7 +523,7 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 		var err error
 		cwd, err = os.Getwd()
 		if err != nil {
-			return "", fmt.Errorf("resolving %s against the working directory: %w", name, err)
+			return "", workingDirFault(name, err)
 		}
 		candidate = filepath.Join(cwd, candidate)
 	}
@@ -558,9 +558,9 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 		return "", &UnresolvedError{Name: name, Reason: "is not a regular file"}
 	}
 	if place == folded {
-		typed, cwdFault := r.typedTheRootPrefix(cwd, name, resolved, absolute)
+		typed, cwdFault := r.typedTheRootPrefix(cwd, name, resolved)
 		if cwdFault != nil {
-			return "", fmt.Errorf("resolving %s against the working directory: %w", name, cwdFault)
+			return "", workingDirFault(name, cwdFault)
 		}
 		if typed {
 			return "", &UnresolvedError{Name: name, Reason: "is not spelled as the repo root is"}
@@ -596,49 +596,73 @@ func (r Root) named(name string, dirs dirNames) (Path, error) {
 // /Users/t/dev/repo, puts the climb outside the root while the only mis-cased
 // component, Dev, is one the text never spelled.
 //
+// Counting by depth only locates the text's contribution while the resolved
+// candidate still sits under the resolved climb point. A descent through a
+// symlink that leaves that subtree breaks it: the components at those indices
+// then came from wherever the link pointed, and comparing them against the root
+// would quote a name and blame a component the string does not contain, which
+// is the harm this predicate exists to avoid. So a candidate that is not under
+// the climb point answers false and the fold is accepted. Nothing merges for
+// it, since os.SameFile has already confirmed the fold reaches one directory,
+// and spelledAsOnDisk still holds every component below the root to the tree's
+// own spelling.
+//
 // The climb is measured on the unresolved working directory because that is the
 // path filepath.Join already walked in named, and the directory it lands on is
 // resolved before its depth is counted, so the count is in the same spelling as
 // the resolved candidate this weighs it against. The two are comparable for the
 // same reason, and they are equal-fold over the root prefix by construction,
 // since named only asks after relativize answered folded.
-//
-// Resolving the climbed-to directory is the one fault, and it is about the
-// process working directory rather than the path, so named reports it as a
-// plain error, the channel losing the working directory already uses. It is not
-// a fault a caller normally reaches, which is why no test pins it: named
-// resolved the whole candidate a moment earlier and climbedTo is the cleaned
-// prefix that same filepath.Join built, so an ancestor of a path that just
-// resolved does not fail to resolve. Reaching it means the tree moved between
-// two syscalls, the race named's own os.Stat documents.
-func (r Root) typedTheRootPrefix(cwd, name, resolved string, absolute bool) (typed bool, cwdFault error) {
+func (r Root) typedTheRootPrefix(cwd, name, resolved string) (typed bool, cwdFault error) {
+	rootComponents := pathComponents(r.resolved)
 	depth := 0
-	if !absolute {
-		climbedTo := cwd
-		for i := leadingParents(name); i > 0; i-- {
-			parent := filepath.Dir(climbedTo)
-			if parent == climbedTo {
-				break
-			}
-			climbedTo = parent
-		}
-		climbed, err := filepath.EvalSymlinks(climbedTo)
+	if !filepath.IsAbs(filepath.FromSlash(name)) {
+		climbed, err := climbedTo(cwd, name)
 		if err != nil {
 			return false, err
 		}
+		if !under(climbed, resolved) {
+			return false, nil
+		}
 		depth = len(pathComponents(climbed))
 	}
-	rootComponents := pathComponents(r.resolved)
 	if depth >= len(rootComponents) {
 		return false, nil
 	}
 	components := pathComponents(resolved)
-	for i := depth; i < len(rootComponents); i++ {
-		if components[i] != rootComponents[i] {
-			return true, nil
+	return !slices.Equal(components[depth:len(rootComponents)], rootComponents[depth:]), nil
+}
+
+// climbedTo resolves the directory a relative name climbs to before its own
+// text takes over, which is the one filesystem call typedTheRootPrefix makes
+// and its one fault. That fault is about the process working directory rather
+// than the path, so named reports it as a plain error, the channel losing the
+// working directory already uses. It is not a fault a caller normally reaches,
+// which is why no test pins it: named resolved the whole candidate a moment
+// earlier and the climb lands on the cleaned prefix that same filepath.Join
+// built, so an ancestor of a path that just resolved does not fail to resolve.
+// Reaching it means the tree moved between two syscalls, the race named's own
+// os.Stat documents.
+func climbedTo(cwd, name string) (string, error) {
+	dir := cwd
+	for i := leadingParents(name); i > 0; i-- {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
 		}
+		dir = parent
 	}
-	return false, nil
+	return filepath.EvalSymlinks(dir)
+}
+
+// under reports whether path sits below dir lexically. The filesystem root
+// already ends in a separator, so appending a second one would match nothing.
+func under(dir, path string) bool {
+	sep := string(filepath.Separator)
+	if !strings.HasSuffix(dir, sep) {
+		dir += sep
+	}
+	return strings.HasPrefix(path, dir)
 }
 
 // pathComponents splits a cleaned absolute path into its components, so that a
@@ -694,6 +718,15 @@ func unreadable(name string, err error) *UnresolvedError {
 // describing one fault class two ways.
 func unweighable(name string, err error) *UnresolvedError {
 	return &UnresolvedError{Name: name, Reason: "could not be weighed against the repo root, " + errnoText(err)}
+}
+
+// workingDirFault is a failure to read the process working directory, or the
+// directory a relative name climbs out to. It is not about the path the
+// developer named, so it travels as a plain error rather than as an
+// UnresolvedError, and it is worded here rather than at named's two call sites
+// so the two cannot drift into describing one fault class two ways.
+func workingDirFault(name string, err error) error {
+	return fmt.Errorf("resolving %s against the working directory: %w", name, err)
 }
 
 // errnoText is what the operating system said, without the fs.PathError around

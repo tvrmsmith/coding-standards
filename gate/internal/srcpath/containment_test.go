@@ -430,7 +430,7 @@ func TestTypedTheRootPrefixCountsTheFilesystemRootAsOneComponent(t *testing.T) {
 	name := filepath.FromSlash("../../REPO/src/a.cs")
 
 	typed, err := root.typedTheRootPrefix(
-		filepath.FromSlash("/repo/src"), name, filepath.FromSlash("/REPO/src/a.cs"), false)
+		filepath.FromSlash("/repo/src"), name, filepath.FromSlash("/REPO/src/a.cs"))
 
 	if err != nil || !typed {
 		t.Errorf("typedTheRootPrefix on %q climbing to the filesystem root returned %v, %v, want true, nil", name, typed, err)
@@ -580,6 +580,88 @@ func TestNamedAcceptsARelativeNameWhoseWorkingDirectoryReachesTheRootThroughASym
 
 	if err != nil || rel != "src/a.cs" {
 		t.Errorf("named on a name climbing out through a symlinked working directory returned %q, %v, want \"src/a.cs\", nil", rel, err)
+	}
+}
+
+// A name whose descent leaves the subtree it climbs from, through a symlink
+// into the repo, where counting components off the climb point locates nothing
+// the developer typed. "link/a.cs" carries no root component at all, so
+// refusing it would blame a half of a string that is not in it and that no
+// retyping can clear, and the mis-cased spelling it lands on came from the link
+// target rather than from their keyboard. Without the containment guard the
+// depth counted on a sibling directory lines the root's mis-cased parent up
+// under the text's own side of the climb and refuses.
+func TestNamedAcceptsARelativeNameWhoseDescentReachesTheRootThroughASymlink(t *testing.T) {
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	realParent := mkdir(t, filepath.Join(tmp, "x", "dev"))
+	miscasedParent := filepath.Join(tmp, "x", "DEV")
+	if _, err := os.Stat(miscasedParent); err == nil {
+		t.Skipf("the filesystem folded %s onto %s already, so there is no link to make", miscasedParent, realParent)
+	}
+	if err := os.Symlink(realParent, miscasedParent); err != nil {
+		t.Fatal(err)
+	}
+	root := Root{resolved: filepath.Join(miscasedParent, "repo")}
+	real := mkdir(t, filepath.Join(realParent, "repo"))
+	touch(t, filepath.Join(real, "src", "a.cs"))
+	// A sibling of the repo tree, so the climb point is not an ancestor of the
+	// file the name resolves to and the depth cannot locate the text.
+	elsewhere := mkdir(t, filepath.Join(tmp, "y"))
+	if err := os.Symlink(filepath.Join(real, "src"), filepath.Join(elsewhere, "link")); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(elsewhere)
+	assertFolds(t, root, filepath.Join(real, "src", "a.cs"))
+
+	rel, err := root.named(filepath.Join("link", "a.cs"), dirNames{})
+
+	if err != nil || rel != "src/a.cs" {
+		t.Errorf("named on a name descending through a symlink into the repo returned %q, %v, want \"src/a.cs\", nil", rel, err)
+	}
+}
+
+// The fold-accept road still holds every component below the root to the tree's
+// own spelling. The mis-cased working directory folds the prefix and the name is
+// accepted for it, and then "SRC" is refused as the file's own spelling, the
+// refusal that sends the developer to retype the half that is theirs. Nothing on
+// this road is matched approximately for having taken it.
+func TestNamedRefusesABelowRootMisCaseReachedThroughAMisCasedWorkingDirectory(t *testing.T) {
+	root := containmentRoot(t)
+	miscased := miscasedRoot(t, root)
+	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
+	t.Chdir(miscased)
+	if cwd, err := os.Getwd(); err != nil || cwd != miscased {
+		t.Fatalf("os.Getwd returned %q, %v, want the mis-cased %q; this case is not exercising the fold", cwd, err, miscased)
+	}
+	assertFolds(t, root, filepath.Join(miscased, "SRC", "a.cs"))
+	name := filepath.Join("SRC", "a.cs")
+
+	_, err := root.named(name, dirNames{})
+
+	var unresolved *UnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("named returned %v, want an *UnresolvedError", err)
+	}
+	if unresolved.Reason != "is not spelled as the file on disk is" {
+		t.Errorf("Reason = %q, want %q", unresolved.Reason, "is not spelled as the file on disk is")
+	}
+}
+
+// placement names itself for the failure messages the containment cases print,
+// so a case that goes red says "folded" rather than "2". Nothing in production
+// reads the rendering, which is why it is asserted here rather than through a
+// door.
+func TestPlacementNamesItself(t *testing.T) {
+	for _, testCase := range []struct {
+		place placement
+		want  string
+	}{{inside, "inside"}, {folded, "folded"}, {outside, "outside"}} {
+		if got := testCase.place.String(); got != testCase.want {
+			t.Errorf("placement(%d).String() = %q, want %q", int(testCase.place), got, testCase.want)
+		}
 	}
 }
 
@@ -750,6 +832,12 @@ func TestPlaceLandsNowhereWhenTheRepoRootCannotBeStatted(t *testing.T) {
 	assertFolds(t, root, resolved)
 	if err := os.Remove(root.Dir()); err != nil {
 		t.Fatal(err)
+	}
+	// Place lands nowhere for anything it reads as outside the root, so without
+	// this the case stays green if the removal stops provoking the root stat and
+	// the candidate simply reads as outside.
+	if _, _, err := root.relativize(resolved); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("relativize on %s returned %v, want the root-stat fault; this case is not exercising the fault arm", resolved, err)
 	}
 
 	placed := root.Place(resolved)
