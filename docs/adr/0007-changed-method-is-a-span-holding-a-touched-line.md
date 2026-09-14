@@ -48,6 +48,20 @@ read suppresses the drop for the whole run, because an uncounted digest would le
 look accounted for. A deleted submodule is skipped rather than read, since a gitlink's object id
 names a commit in another repository.
 
+**Amended 2026-09-11.** `--diff-filter=ACM` excludes `T`, so a typechange contributes no touched
+lines in either direction. A source file replaced by a symlink is the wanted answer, since a link
+holds no source to measure. A symlink replaced by a real source file is an accepted gap, and its
+methods stay unmeasured until an edit touches each of them, because the file never arrives as status
+`A`. Widening to `ACMT` is not the remedy. git renders a typechange as a delete plus an add, so in
+the first direction the new side is the link's own blob, one line holding the path it points at,
+under a name still claiming `.cs`. That line falls inside no span, so the guaranteed effect is
+`touched_lines_outside_spans` going 0 to 1 at exit 0, and where the extractor follows the link and
+the target's spans cover line 1, a method is measured under a path that does not hold it and the run
+fails on an unknown changed method. Measuring the second direction needs a pass classifying the new
+side's mode before extraction, which is
+[issue 84](https://github.com/tvrmsmith/coding-standards/issues/84) rather than work taken here.
+Issues 25 and 75 pin both directions in `gate/test/gate_test.go`.
+
 ## The gate pins every git setting its parsers depend on
 
 Each of these turns a real change into `changed_methods: 0`, exit 0, which is the worst outcome a
@@ -109,30 +123,10 @@ otherwise good report.
 
 ## Considered options
 
-**Take method line ranges from the coverage report.** No second parse, and the ranges arrive aligned
-with the coverage they scope. Rejected because it makes identity depend on a language-specific
-artifact the gate does not own, which is the seam [ADR 0001](0001-crap-gate-topology.md) draws, and
-because a method absent from the report would be invisible rather than `unknown`.
-
-**Measure the callers of changed methods too.** Rejected because resolving callers needs a call
-graph, a call graph needs a semantic model, and the complexity walker needs none. The depth limit
-would also be arbitrary.
-
-**Count every diff line, with no whitespace filter.** Rejected because one `dotnet format` run over
-a legacy file marks every method in it changed, so a formatting commit becomes a wall of failures on
-code nobody wrote that day. `-w` is git's own definition of the exemption rather than one invented
-here.
-
-**Extend a comment-only filter alongside `-w`.** Rejected because deciding a line carries only a
-comment needs a lexer, and a lexer is language-specific. The gate is not.
-
-**Mark every containing span, not just the smallest.** Rejected because the coverage join already
-uses smallest-containing-span, and one containment rule serving both directions is worth more than
-the extra sensitivity. The container's own complexity did not change.
-
-**Union in `git ls-files --others --exclude-standard`** so untracked files count. Rejected because
-it makes a scratch file gate the run, and it adds a second input source to a definition whose value
-is being one sentence long.
+**Trimmed 2026-09-11**, with Trevor's approval, because this file's header delegates the reasoning
+to 0003 and the section then restated it. Every option and the reasoning that rejected each stay in
+[ADR 0003](0003-changed-method-is-a-span-holding-a-touched-line.md), which is preserved. Nothing
+here reopens them.
 
 ## Consequences
 
