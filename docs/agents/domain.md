@@ -6,7 +6,7 @@ How the engineering skills should consume this repo's domain documentation when 
 
 - **`CONTEXT.md`** at the repo root.
 - **`docs/adr/README.md`**: the one-line live rule of every ADR, plus which are superseded and the
-  amend-versus-supersede conventions. Start here to find the ADRs that touch your area, then read
+  conventions for changing an accepted one. Start here to find the ADRs that touch your area, then read
   the `## Current rule` block of each. Read a full ADR file only for the reasoning behind its rule.
 
 If either is missing, **proceed silently**. Don't flag its absence; don't suggest creating it
