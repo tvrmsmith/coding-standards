@@ -58,9 +58,9 @@ what a reader is expected to read in full, so it has to be readable in one sitti
 they scroll when the block is not enough. A decision that will not fit is more than one decision.
 Neither ceiling is checked mechanically yet, which is [issue 87](https://github.com/tvrmsmith/coding-standards/issues/87).
 
-0004 came down from 2606 words to 1823 in that consolidation, with no rule dropped. It is still over
-1500, and the remaining excess is reasoning rather than restatement, so trimming it again buys
-little. The next move on it is a split, superseded by one new ADR per decision, under the mechanics
-above.
+That consolidation took 0004 from 2606 words to 1791, and it dropped three clauses it should have
+kept. A later pass put them back, which is why the file now stands at 1837. It is still over 1500,
+and the remaining excess is reasoning rather than restatement, so trimming it again buys little. The
+next move on it is a split, superseded by one new ADR per decision, under the mechanics above.
 
 If an ADR looks wrong, that is a decision to escalate to the user, not an edit to make.
