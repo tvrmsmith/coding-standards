@@ -42,6 +42,16 @@ The document is a fixed shape rather than a shape that grows with the run. The s
 always present. `action` and `target_coverage` are typed cells in the table rather than prose, so a
 consumer reading "raise coverage to 0.8" reads `0.8` and not a sentence.
 
+**Amended 2026-09-14.** That sentence requires the two cells to be typed and never says what they
+hold. `action` is one of `raise_coverage`, `split_method` or `none`. `target_coverage` is the
+coverage that would bring the method under the threshold at its current complexity,
+`1 - cbrt((T - comp) / comp²)`, and it is `null` on every row whose `action` is not
+`raise_coverage`. `split_method` is emitted exactly when complexity exceeds the threshold, because
+at full coverage CRAP reduces to `comp` and no test can rescue the method. ADR 0005 fixed that
+enumeration and this file lost it in consolidation, while `internal/crap` still emits it and
+`gate/test/golden` still pins it (issue 65). Adding a token is a contract change and edits this
+paragraph on the same commit, the same way adding a typed `error.code` edits the list above.
+
 **Amended 2026-09-09.** A table with no rows encodes as `crap: []`, since with no elements there is
 no uniform shape to declare. This qualifies "Its field list is fixed and does not vary with the
 outcome". ADR 0005 fixed that encoding and this file lost it in consolidation, while `internal/toon`

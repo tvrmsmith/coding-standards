@@ -10,7 +10,7 @@ section is about this one.
 paths on stdin and writes one JSON document of method spans and cyclomatic complexities on stdout,
 or its extension list when run with `--capabilities`. It is syntax only, never a project load. The
 gate that consumes it lives in `gate/`;
-[ADR 0006](../docs/adr/0006-the-csharp-extractor-is-written-in-house.md) records why it is written
+[ADR 0009](../docs/adr/0009-the-csharp-extractor-is-written-in-house.md) records why it is written
 in house, and [docs/csharp-decision-points.md](../docs/csharp-decision-points.md) is the list of
 what scores a point, which declarations get a span, and how each one is named.
 
