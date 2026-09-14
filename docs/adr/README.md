@@ -35,7 +35,7 @@ to the superseded line. Nothing is deleted.
 
 **Trim** only when the word ceiling below binds and the text to be cut already stands in another ADR
 this repo keeps. Ask the user first, because this is the one mode that deletes. Leave a paragraph
-opening with `**Trimmed YYYY-MM-DD.**` where the text was, naming the ADR that still carries it and
+opening with `**Trimmed YYYY-MM-DD**` where the text was, naming the ADR that still carries it and
 saying how closely, word for word or in its own words. A superseded ADR counts: it is kept for its
 history, and a consequence it already states is that history.
 
