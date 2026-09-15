@@ -14,9 +14,11 @@ import (
 )
 
 // coverletFixtureFramework is the target framework both fixture projects
-// build for. It matches the runtime CI installs beside the pinned SDK, so the
-// test assembly the collector instruments runs on a framework the workflow
-// already provisions.
+// build for. It is meant to track the runtime CI installs beside the pinned
+// SDK, so the test assembly the collector instruments runs on a framework the
+// workflow already provisions. Nothing enforces that: this constant and
+// ci.yml's DOTNET_VERSION are independent literals, so a bump to one has to be
+// mirrored in the other by hand.
 const coverletFixtureFramework = "net8.0"
 
 // Package versions the fixture pins. They are literals rather than a floating

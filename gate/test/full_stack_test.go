@@ -383,7 +383,9 @@ func readFixture(t *testing.T, rel string) string {
 
 // appendComment appends a trailing comment to line n of the file at rel,
 // touching that one line without disturbing any other, and without removing
-// a construct the real extractor would count towards complexity.
+// a construct the real extractor would count towards complexity. count runs
+// below len(lines) for a newline-terminated file, where strings.Split yields a
+// trailing empty element that is not a line n can name.
 func (f *fixture) appendComment(rel string, n int) {
 	f.t.Helper()
 	lines := strings.Split(f.read(rel), "\n")
