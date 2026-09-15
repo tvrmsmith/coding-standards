@@ -200,21 +200,33 @@ type Document struct {
 	SkippedPaths             []string
 	// Failure is the typed exit-1 cause, or nil.
 	Failure *Failure
-	// Metric is present exactly when the join ran.
-	Metric *Metric
+	// Metrics is every selected metric with its threshold and its whole
+	// changed-method set, in metric.Hosted order. It is present once the
+	// changed-method set is known and no typed failure short-circuited the
+	// run before the join or before the empty-changed-set exit; a run that
+	// stopped on a dirty staged file, an unresolvable base, an unresolvable
+	// --files path or a missing coverage report carries no entry at all, so
+	// the document has no `metrics` key. Rows may be empty where the entry is
+	// present, since a metric can reach the document having scored nothing.
+	// A list rather than one entry because ADR 0008
+	// gives each metric its own table key, so a second metric adds a second
+	// key rather than changing the first one's shape.
+	Metrics []Metric
 }
 
 // Status is the document's verdict: error when a typed cause fired, fail when
-// a scored method is over threshold, pass otherwise.
+// a scored method is over threshold, pass otherwise. Any one metric failing
+// fails the run, so a selection passes only when every metric in it passed.
 func (d Document) Status() string {
-	switch {
-	case d.Failure != nil:
+	if d.Failure != nil {
 		return "error"
-	case d.Metric != nil && d.Metric.Failed() > 0:
-		return "fail"
-	default:
-		return "pass"
 	}
+	for _, m := range d.Metrics {
+		if m.Failed() > 0 {
+			return "fail"
+		}
+	}
+	return "pass"
 }
 
 // ExitCode is 0 pass, 1 tool error, 2 threshold exceeded. There is no fourth
@@ -231,24 +243,29 @@ func (d Document) ExitCode() int {
 }
 
 // Stderr is the summary a human reads, so nobody is asked to parse the machine
-// document. A run that scored methods reports the counts on one line, a run
-// that failed before scoring reports its message verbatim on one line, and the
-// one cause that fails with a table, unknown_changed_method, reports both, on
-// two lines.
+// document. A run that scored methods reports the counts on one line per
+// metric, a run that failed before scoring reports its message verbatim on one
+// line, and the one cause that fails with a table, unknown_changed_method,
+// reports both, the cause first.
+//
+// The empty changed set says so once rather than once per metric: the sentence
+// is about the set, not about any metric's reading of it.
 func (d Document) Stderr() string {
 	var b strings.Builder
 	if d.Failure != nil {
 		b.WriteString(d.Failure.Message + "\n")
 	}
-	if d.Metric == nil {
+	if len(d.Metrics) == 0 {
 		return b.String()
 	}
 	if d.ChangedMethods == 0 {
 		b.WriteString("no changed methods, nothing to measure\n")
 		return b.String()
 	}
-	fmt.Fprintf(&b, "%d of %d changed methods over %s threshold %d, worst score %.2f\n",
-		d.Metric.Failed(), d.ChangedMethods, d.Metric.Display, d.Metric.Threshold, d.Metric.WorstScore())
+	for _, m := range d.Metrics {
+		fmt.Fprintf(&b, "%d of %d changed methods over %s threshold %d, worst score %.2f\n",
+			m.Failed(), d.ChangedMethods, m.Display, m.Threshold, m.WorstScore())
+	}
 	return b.String()
 }
 
@@ -270,21 +287,27 @@ func (d Document) Stdout() ([]byte, error) {
 			{Key: "message", Value: d.Failure.Message},
 		}}})
 	}
-	if d.Metric != nil {
-		fields = append(fields,
-			toon.Field{Key: "metrics", Value: metricsTable(*d.Metric)},
-			toon.Field{Key: d.Metric.Name, Value: rowsTable(d.Metric.orderedRows())},
-		)
+	if len(d.Metrics) > 0 {
+		fields = append(fields, toon.Field{Key: "metrics", Value: metricsTable(d.Metrics)})
+		// Every rows table sits after the whole summary table rather than
+		// beside its own summary row, so a reader finds the verdict for the
+		// run before any of the detail whatever is selected (ADR 0008).
+		for _, m := range d.Metrics {
+			fields = append(fields, toon.Field{Key: m.Name, Value: rowsTable(m.orderedRows())})
+		}
 	}
 	return toon.Doc{Fields: fields}.Encode()
 }
 
-// metricsTable is the one-row summary of each metric the run computed.
-func metricsTable(m Metric) *toon.Table {
-	return &toon.Table{
+// metricsTable is the one-row-per-metric summary of what the run computed.
+func metricsTable(metrics []Metric) *toon.Table {
+	table := &toon.Table{
 		Columns: []toon.Column{{Name: "name"}, {Name: "threshold"}, {Name: "measured"}, {Name: "failed"}},
-		Rows:    [][]any{{m.Name, m.Threshold, m.Measured(), m.Failed()}},
 	}
+	for _, m := range metrics {
+		table.Rows = append(table.Rows, []any{m.Name, m.Threshold, m.Measured(), m.Failed()})
+	}
+	return table
 }
 
 // rowsTable is the changed-method table. Precision is a rounding rule, so the

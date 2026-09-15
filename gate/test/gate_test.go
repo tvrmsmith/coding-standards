@@ -24,6 +24,12 @@ var (
 	cancel     = span{File: orderService, Name: "OrderService.Cancel", StartLine: 60, EndLine: 64, Complexity: 3}
 )
 
+// retry is a third span in orderService, complexity 4, which at no coverage
+// scores exactly 20. That sits under the default bar of 30 and over a bar of
+// 12, which is what lets the --threshold pair below move the verdict without
+// moving the score (issue 19).
+var retry = span{File: orderService, Name: "OrderService.Retry", StartLine: 66, EndLine: 72, Complexity: 4}
+
 // orderFile is a second source file, for a case that needs two changed files
 // at once, with one canned span of its own.
 const orderFile = "src/Ordering/Order.cs"
@@ -480,19 +486,33 @@ func TestCoverageWalkRecordsAPathItCouldNotRead(t *testing.T) {
 
 func TestWellTestedMethodForItsComplexityPasses(t *testing.T) {
 	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-	f.touchLine(orderService, 62)
-	// Two thirds of Cancel's three instrumentable lines are covered.
-	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
-		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
-	f.stub = stubConfig{
-		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
-	}
+	cancelFixture(t, f)
 
 	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+}
+
+// TestSelectingTheOnlyHostedMetricAtItsDefaultBarChangesNothing pins that both
+// flags are no-ops when they name what the run would have done anyway. In a
+// binary hosting one metric, "defaults to every metric the binary hosts" and
+// "defaults to crap" are the same run, and naming the default bar is the bar
+// that was already in force, so both documents are pass_single_method byte for
+// byte.
+func TestSelectingTheOnlyHostedMetricAtItsDefaultBarChangesNothing(t *testing.T) {
+	cases := map[string][]string{
+		"naming the only hosted metric": {"--metric", "crap"},
+		"naming the default bar":        {"--threshold", "crap=30"},
+	}
+
+	for name, argv := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, "main")
+			cancelFixture(t, f)
+
+			f.runWithArgs(argv...).assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+				"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+		})
+	}
 }
 
 func TestMethodWithTooLittleCoverageForItsComplexityFails(t *testing.T) {
@@ -510,6 +530,64 @@ func TestMethodWithTooLittleCoverageForItsComplexityFails(t *testing.T) {
 
 	f.run().assertMatches(t, "fail_single_method", 2, f.baseLabel("main"),
 		"1 of 1 changed methods over CRAP threshold 30, worst score 68.05\n")
+}
+
+// The next two cases are a pair, and only the pair is the test: one fixture,
+// one score of 20, read once against the default bar of 30 and once against a
+// bar of 12. The score does not move and the verdict does, which is the whole
+// of what --threshold is for (issue 19).
+
+func TestChangedMethodUnderTheDefaultThresholdPasses(t *testing.T) {
+	f := newFixture(t, "main")
+	retryFixture(t, f)
+
+	f.run().assertMatches(t, "threshold_default_passes", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 20.00\n")
+}
+
+func TestTheSameMethodFailsOnceTheThresholdIsLoweredUnderItsScore(t *testing.T) {
+	f := newFixture(t, "main")
+	retryFixture(t, f)
+
+	f.runWithArgs("--threshold", "crap=12").assertMatches(t, "threshold_lowered_fails", 2, f.baseLabel("main"),
+		"1 of 1 changed methods over CRAP threshold 12, worst score 20.00\n")
+}
+
+func TestThresholdBelowAMethodsComplexityAsksForASplitRatherThanCoverage(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 45)
+	// A tenth of PlaceAsync's ten instrumentable lines is covered, the same
+	// fixture TestMethodWithTooLittleCoverageForItsComplexityFails scores at
+	// the default bar. At a bar of 8 its complexity 9 is already over, so full
+	// coverage would still leave it failing and no test can rescue it: the fix
+	// flips to split_method and there is no coverage target to name.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(42, 10, 1)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.runWithArgs("--threshold", "crap=8").assertMatches(t, "threshold_below_complexity_splits", 2, f.baseLabel("main"),
+		"1 of 1 changed methods over CRAP threshold 8, worst score 68.05\n")
+}
+
+func TestEmptyChangedSetStillReportsTheThresholdItWasGiven(t *testing.T) {
+	f := newFixture(t, "main")
+	f.stub = stubConfig{Extensions: []string{".cs"}}
+	f.write("docs/notes.md", "first\n")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.write("docs/notes.md", "first\nsecond\n")
+
+	// The bar reaches the summary row even though nothing scored, and ADR
+	// 0003's exit 0 before resolving any input still holds with one named:
+	// there is no coverage report here and naming a threshold does not go
+	// looking for one.
+	f.runWithArgs("--threshold", "crap=12").assertMatches(t, "empty_changed_set_threshold", 0, f.baseLabel("main"),
+		"no changed methods, nothing to measure\n")
 }
 
 func TestFourChangedMethodsEachGetTheFixThatApplies(t *testing.T) {
@@ -1049,6 +1127,27 @@ func TestChangedMethodWithNoCoverageReportAnywhereFails(t *testing.T) {
 	}
 
 	f.run().assertMatches(t, "coverage_missing", 1, f.baseLabel("main"),
+		"CRAP requires a coverage report, none found matching **/TestResults/**/coverage.cobertura.xml under the repo root\n")
+}
+
+// TestExplicitlySelectingCRAPStillDemandsTheCoverageItDeclares is the
+// declares-implies-reads half of issue 19's drift test. CRAP's catalogue entry
+// declares InputCoverage, so a run that selects it by name must still go
+// looking for a report and must still fail when there is none. A gate that
+// resolved coverage off anything other than the declaration, the old
+// unconditional rule among them, would satisfy this case by accident; the
+// reads-implies-declares half, in cmd/metric-gate, is what catches that.
+func TestExplicitlySelectingCRAPStillDemandsTheCoverageItDeclares(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	f.runWithArgs("--metric", "crap").assertMatches(t, "coverage_missing", 1, f.baseLabel("main"),
 		"CRAP requires a coverage report, none found matching **/TestResults/**/coverage.cobertura.xml under the repo root\n")
 }
 

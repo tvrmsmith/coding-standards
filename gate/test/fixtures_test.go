@@ -62,6 +62,38 @@ func boundaryFixture(t *testing.T, f *fixture, covered int) {
 	}
 }
 
+// cancelFixture lays out orderService with two thirds of Cancel's three
+// instrumentable lines covered and only Cancel touched, which is the passing
+// run the pass_single_method golden describes.
+func cancelFixture(t *testing.T, f *fixture) {
+	t.Helper()
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+}
+
+// retryFixture lays out the one complexity 4 span of `retry` with none of its
+// four instrumentable lines covered, so it scores exactly 20, which is how the
+// two --threshold cases put the same score either side of the bar.
+func retryFixture(t *testing.T, f *fixture) {
+	t.Helper()
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.touchLine(orderService, 68)
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(66, 4, 0)}))
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{retry}),
+	}
+}
+
 // plantUnrunnableExtractor puts a file under the extractor's name in dir that
 // is present but carries no execute bit, which is the misinstall the "could
 // not be run" cause exists to tell apart from an absent binary.

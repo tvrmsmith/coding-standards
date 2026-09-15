@@ -15,14 +15,10 @@ const Name = "crap"
 // line and the missing-input failure both say.
 const DisplayName = "CRAP"
 
-// Threshold is the CRAP score a changed method may not exceed. It is a
-// constant; making it configurable is another issue's work.
-const Threshold = 30
-
-// DeclaredInputs names the inputs a run selecting CRAP demands. The gate
-// looks for a coverage report only because this names it, and the failure
-// message names the metric rather than the file.
-var DeclaredInputs = []string{"coverage"}
+// DefaultThreshold is the CRAP score a changed method may not exceed absent a
+// run naming its own bar (issue 19). The catalogue entry in package metric is
+// what a run actually reads; this stays for the caller building that entry.
+const DefaultThreshold = 30
 
 // The two fix instructions and their absence, as ADR 0008 types them. It
 // requires action to be a typed cell rather than prose, and its 2026-09-14
@@ -33,12 +29,17 @@ const (
 	ActionNone          = "none"
 )
 
-// Measurement is one method's complexity and coverage fraction, which is
-// everything CRAP needs to score it and to say which fix applies.
+// Measurement is one method's complexity and coverage fraction judged against
+// one threshold, which is everything CRAP needs to score it and to say which
+// fix applies. Threshold is a field rather than a package constant (issue 19):
+// the same complexity and coverage can pass one run's bar and fail another's,
+// so the verdict has to travel with the bar it was judged against, not with
+// the package.
 type Measurement struct {
 	Complexity int
 	// Coverage is the raw fraction, 0 to 1, not the rounded cell value.
-	Coverage float64
+	Coverage  float64
+	Threshold int
 }
 
 // Score is comp² × (1 − cov)³ + comp, rounded half up at two decimals. The
@@ -55,9 +56,9 @@ func (m Measurement) Score() float64 {
 // CRAP reduces to comp and no test can rescue the method.
 func (m Measurement) Action() string {
 	switch {
-	case m.Complexity > Threshold:
+	case m.Complexity > m.Threshold:
 		return ActionSplitMethod
-	case m.Score() > Threshold:
+	case m.Score() > float64(m.Threshold):
 		return ActionRaiseCoverage
 	default:
 		return ActionNone
@@ -74,7 +75,8 @@ func (m Measurement) TargetCoverage() *float64 {
 		return nil
 	}
 	comp := float64(m.Complexity)
-	target := ceilAt(1-math.Cbrt((Threshold-comp)/(comp*comp)), 3)
+	threshold := float64(m.Threshold)
+	target := ceilAt(1-math.Cbrt((threshold-comp)/(comp*comp)), 3)
 	return &target
 }
 

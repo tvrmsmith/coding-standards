@@ -2,7 +2,10 @@
 // threshold. Its scope defaults to the merge base of HEAD and the default
 // branch, and --staged, --since <ref> or --files <path>... pick another
 // (ADR 0008, issue 14). --coverage <path>, repeatable, names the coverage
-// reports to read in place of discovery. The rest of ADR 0008's command line
+// reports to read in place of discovery. --metric <name> picks which of the
+// metrics the binary hosts a run measures and --threshold <name>=<n> sets one
+// metric's bar, both repeatable, both defaulting to what the catalogue in
+// package metric declares (issue 19). The rest of ADR 0008's command line
 // lands with its own issues, and any other argument is a usage error. Package
 // scope owns the whole of argv, so the usage block one prints lists every
 // flag. Stdout is one TOON document, stderr is the human summary, one line
@@ -54,6 +57,7 @@ import (
 	"github.com/tvrmsmith/coding-standards/gate/internal/extract"
 	"github.com/tvrmsmith/coding-standards/gate/internal/gitscope"
 	"github.com/tvrmsmith/coding-standards/gate/internal/join"
+	"github.com/tvrmsmith/coding-standards/gate/internal/metric"
 	"github.com/tvrmsmith/coding-standards/gate/internal/report"
 	"github.com/tvrmsmith/coding-standards/gate/internal/scope"
 	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
@@ -146,15 +150,16 @@ func measure(sc scope.Scope) (report.Document, error) {
 
 	extracted, changed := selected.Extracted, selected.Changed
 	doc.ChangedMethods = len(changed)
-	metric := report.Metric{Name: crap.Name, Display: crap.DisplayName, Threshold: crap.Threshold}
 	// ADR 0007: an empty changed-method set exits 0 before resolving any
 	// input, because a metric with nothing to compute is not asking for one.
+	// Every selected metric is still emitted, with no rows, so the document
+	// carries the same keys it would have carried had there been work.
 	if len(changed) == 0 {
-		doc.Metric = &metric
+		doc.Metrics = entriesFor(sc.Metrics)
 		return doc, nil
 	}
 
-	lines, skipped, err := loadCoverage(repo.Root(), sc.Coverage, changed)
+	lines, declared, skipped, err := loadCoverage(repo.Root(), sc.Coverage, changed, sc.Metrics)
 	// The append is what enforces ADR 0008's skipped_paths order, which
 	// gate/test/golden/files_skip_before_discovery_skip.toon pins.
 	doc.SkippedPaths = append(doc.SkippedPaths, skipped...)
@@ -165,13 +170,13 @@ func measure(sc scope.Scope) (report.Document, error) {
 		return doc, err
 	}
 
-	for _, method := range join.Attribute(extracted.Spans, changed, lines) {
-		metric.Rows = append(metric.Rows, rowFor(method))
-	}
-	doc.Metric = &metric
+	metrics, unknown := attribute(sc.Metrics, extracted, changed, lines, declared)
+	doc.Metrics = metrics
 	// Any single unknown fails the run: there is no tolerated fraction, and
-	// the table is still present on that failure.
-	if unknown := len(metric.Rows) - metric.Measured(); unknown > 0 {
+	// the table is still present on that failure. The count comes off the join
+	// rather than off a metric's rows, because a method nothing could
+	// attribute is unknown to the run, not to one metric's reading of it.
+	if unknown > 0 {
 		doc.Failure = &report.Failure{
 			Code:    report.CodeUnknownChangedMethod,
 			Message: unknownMessage(unknown),
@@ -370,9 +375,25 @@ func dirtyMessage(dirty []srcpath.Path) string {
 	return "refusing to score " + strings.Join(names, ", ") + ": staged in one state and on disk in another"
 }
 
-// loadCoverage resolves the coverage input, and only because
-// crap.DeclaredInputs names it. The failure names the metric that is stuck
-// rather than the file that is absent (ADR 0002). The paths discovery could
+// implementedInputs names every input this binary knows how to go and get.
+// It is the other half of ADR 0002's declaration: a metric declaring an input
+// nothing here resolves would be ignored in silence, because the resolution
+// below asks only about the inputs it implements, so nothing would go looking
+// and the run would score the metric as though it had everything it asked for.
+//
+// Nothing reads this list at run time. Adding an Input to it makes the gate
+// fetch nothing: loadCoverage asks about metric.InputCoverage by name, and
+// every future input needs its own resolution written by hand beside it. The
+// list exists only so TestEveryHostedDeclarationIsImplemented fails when a
+// catalogue entry declares an input no such code went and got.
+var implementedInputs = []metric.Input{metric.InputCoverage}
+
+// loadCoverage resolves the coverage input, and only because a selected
+// metric declared it. Whether one did comes back as declared, so the caller
+// reads the decision this function already made rather than asking
+// metric.Declaring the same question again and risking a different answer.
+// The failure names the metrics that are stuck rather
+// than the file that is absent (ADR 0002). The paths discovery could
 // not read come back alongside, including on the missing-report failure,
 // where they are the likeliest explanation for it. When the developer named
 // any report, discovery does not run at all: skipped_paths stays empty, and
@@ -394,37 +415,38 @@ func dirtyMessage(dirty []srcpath.Path) string {
 // missing-report failure above is the one exception, and it earns it: there
 // the unreadable paths are candidate reports, so they are the likeliest
 // explanation for finding none.
-func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (coverage.Set, []string, error) {
-	if !slices.Contains(crap.DeclaredInputs, inputCoverage) {
-		return nil, nil, nil
+func loadCoverage(root srcpath.Root, named []string, changed []extract.Span, selected []metric.Selection) (lines coverage.Set, declared bool, skipped []string, err error) {
+	declaring := metric.Declaring(selected, metric.InputCoverage)
+	if len(declaring) == 0 {
+		return nil, false, nil, nil
 	}
 	now := time.Now()
 	newest, err := newestEdit(root, changed)
 	if err != nil {
-		return nil, nil, err
+		return nil, true, nil, err
 	}
 	if len(named) > 0 {
 		cwd, err := os.Getwd()
 		if err != nil {
-			return nil, nil, fmt.Errorf("resolving --coverage paths against the working directory: %w", err)
+			return nil, true, nil, fmt.Errorf("resolving --coverage paths against the working directory: %w", err)
 		}
 		set, _, err := coverage.Load(root, coverage.Named(root, cwd, named), newest, now)
-		return set, nil, err
+		return set, true, nil, err
 	}
 	sources, skipped, err := coverage.Discover(root)
 	if err != nil {
-		return nil, nil, err
+		return nil, true, nil, err
 	}
 	if len(sources) == 0 {
-		return nil, skipped, &report.Failure{
+		return nil, true, skipped, &report.Failure{
 			Code: report.CodeCoverageMissing,
-			Message: crap.DisplayName + " requires a coverage report, none found matching " +
+			Message: displayNames(declaring) + " requires a coverage report, none found matching " +
 				coverage.Glob + " under the repo root",
 		}
 	}
 	set, superseded, err := coverage.Load(root, sources, newest, now)
 	if err != nil {
-		return nil, nil, err
+		return nil, true, nil, err
 	}
 	// discovery's own skips and Load's superseded skips are two different
 	// reasons a path is missing from the score, a walk that could not read a
@@ -433,7 +455,7 @@ func loadCoverage(root srcpath.Root, named []string, changed []extract.Span) (co
 	// two fields the document would have to carry separately.
 	skipped = append(skipped, superseded...)
 	slices.Sort(skipped)
-	return set, skipped, nil
+	return set, true, skipped, nil
 }
 
 // newestEdit stats the working-tree file of every distinct span file among
@@ -462,12 +484,79 @@ func newestEdit(root srcpath.Root, changed []extract.Span) (coverage.Newest, err
 	return newest, nil
 }
 
-// inputCoverage is the declared input name a coverage report answers.
-const inputCoverage = "coverage"
+// displayNames renders the prose names of selected, comma-space separated in
+// selection order, which is how a failure about an input names every metric
+// that is stuck on it rather than only the first (ADR 0002).
+func displayNames(selected []metric.Selection) string {
+	names := make([]string, len(selected))
+	for i, sel := range selected {
+		names[i] = sel.Display
+	}
+	return strings.Join(names, ", ")
+}
 
-// rowFor renders one joined method as a document row. An unknown method
-// carries no numbers, only its typed reason.
-func rowFor(method join.Method) report.Row {
+// entriesFor opens one document entry per selected metric, carrying the bar
+// the run reads it against and no rows yet.
+func entriesFor(selected []metric.Selection) []report.Metric {
+	metrics := make([]report.Metric, 0, len(selected))
+	for _, sel := range selected {
+		metrics = append(metrics, report.Metric{Name: sel.Name, Display: sel.Display, Threshold: sel.Threshold})
+	}
+	return metrics
+}
+
+// attribute reads changed against every selection, and reports the entries
+// beside the count of methods nothing could attribute. The join runs once
+// whatever is selected. Every metric scores the same method set; only the bar
+// it is read against differs, so attributing the set per metric would repeat
+// the expensive half of the run to reach the same answer.
+//
+// declared is loadCoverage's own answer about whether any selection asked for
+// coverage. When nothing did there is no coverage set, and the join reads an
+// absent set as every file unmatched, which would fail the run with
+// unknown_changed_method over an input nobody asked for (ADR 0002). So the
+// join does not run and the selection contributes no rows; its summary row
+// still names it, at its bar, measured 0 and failed 0, so the run exits 0.
+//
+// What a row looks like for a metric that takes no coverage reading is the
+// second metric's to settle, alongside the formula that would fill it. That is
+// the same deferral rowFor's comment makes, and inventing a row shape, or a
+// state and action token for it, before there is a formula to fit would be
+// guessing at both.
+//
+// The gate is the union of the declarations, not each metric's own: one
+// declaring metric is enough to make the set worth loading and the join worth
+// running for every metric in the selection.
+func attribute(selected []metric.Selection, extracted extract.Result, changed []extract.Span, lines coverage.Set, declared bool) ([]report.Metric, int) {
+	metrics := entriesFor(selected)
+	if !declared {
+		return metrics, 0
+	}
+
+	unknown := 0
+	for _, method := range join.Attribute(extracted.Spans, changed, lines) {
+		if method.State == report.StateUnknown {
+			unknown++
+		}
+		for i, sel := range selected {
+			metrics[i].Rows = append(metrics[i].Rows, rowFor(method, sel))
+		}
+	}
+	return metrics, unknown
+}
+
+// rowFor renders one joined method as a document row, scored at sel's own
+// threshold: the same method can pass one selection's bar and fail another's,
+// so the row is a reading of the method against a bar rather than a property
+// of the method. An unknown method carries no numbers, only its typed reason.
+//
+// The formula is CRAP's whatever sel names, which is correct only while CRAP
+// is the one metric the catalogue hosts. A second entry needs the formula to
+// be dispatched off sel rather than fixed here, and that dispatch is that
+// metric's work rather than issue 19's: the selection machinery this row sits
+// in is what makes the dispatch possible, and choosing its shape before there
+// is a second formula to fit would be guessing at one.
+func rowFor(method join.Method, sel metric.Selection) report.Row {
 	row := report.Row{
 		File:       method.Span.File,
 		Start:      method.Span.StartLine,
@@ -481,7 +570,7 @@ func rowFor(method join.Method) report.Row {
 	if method.State == report.StateUnknown {
 		return row
 	}
-	measurement := crap.Measurement{Complexity: method.Span.Complexity, Coverage: method.Coverage}
+	measurement := crap.Measurement{Complexity: method.Span.Complexity, Coverage: method.Coverage, Threshold: sel.Threshold}
 	score := measurement.Score()
 	row.Coverage = &method.Coverage
 	row.Score = &score
