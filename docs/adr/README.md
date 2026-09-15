@@ -20,18 +20,27 @@ by 0007, [0005](0005-the-machine-document-is-the-only-output.md) by 0008,
 
 ## Conventions
 
-An accepted ADR is never rewritten in place and never reworded for style. There are three ways to
-change one, and only the third removes anything.
+An accepted ADR is never reworded for style, outside a consolidation. There are four ways to change
+one, and only the last removes anything.
 
 **Amend** when the decision stands and the text is wrong, incomplete, or overtaken by a detail.
 Write a paragraph opening with `**Amended YYYY-MM-DD.**` at the start of a line, and place it next
 to the text it corrects, so a reader meets the correction where they meet the claim.
 
-**Supersede** when the decision itself changes, and when amendments have accumulated past the point
-where the file can be read straight through. Write a new numbered ADR stating the rule in one pass.
-Give the old file a `**Superseded YYYY-MM-DD by [ADR NNNN](...)**` paragraph under its title and
-leave everything else in it untouched. Add the new ADR to the table above and move the old row down
-to the superseded line. Nothing is deleted.
+**Consolidate** when the decision still stands but the amendments have piled up past the point where
+the file reads straight through. Rewrite the file in place, folding every amendment's rule back into
+the body, and open it with a `**Consolidated YYYY-MM-DD.**` paragraph saying so. The number stays, so
+every link to it keeps working. No rule may be dropped and no decision may change; `git log -p` on
+the file keeps the amendments as they were written. Consolidating is a decision to escalate to the
+user first, not a tidy-up to make on your own.
+
+**Supersede** when the decision itself changes, or when one ADR turns out to be more than one
+decision. Write a new numbered ADR stating the rule in one pass, one ADR per decision when you are
+splitting.
+Give the old file a `**Superseded YYYY-MM-DD by [ADR NNNN](...)**` paragraph under its title, naming
+every new ADR when you split, and leave everything else in it untouched. Add each new ADR to the
+table above and move the old row down to the superseded line. Nothing is deleted, and inbound links
+keep pointing at the old file, which carries the reader on to the new numbers.
 
 **Trim** only when the word ceiling below binds and the text to be cut already stands in another ADR
 this repo keeps. Ask the user first, because this is the one mode that deletes. Leave a paragraph
@@ -41,14 +50,23 @@ history, and a consequence it already states is that history.
 
 **Five amendments is the consolidation trigger.** Past that the amendments outweigh the decision and
 a reader has to reconstruct the rule from a changelog. ADR 0005 reached seventeen, four of them
-revising one number, each claiming to supersede the others.
+revising one number, each claiming to supersede the others. 0004 hit six on 2026-09-11 and was
+consolidated in place the same day. The rebase that offsets the word counts below also places a
+seventh amendment ahead of the consolidation, so the file as it stood the moment before the pass
+carries seven `**Amended` markers rather than six. The consolidated file carries one, main's, which
+landed after the fold.
 
 **The `## Current rule` block stays under 250 words**, and the whole file under 1500. The block is
 what a reader is expected to read in full, so it has to be readable in one sitting; the file is what
 they scroll when the block is not enough. A decision that will not fit is more than one decision.
 Neither ceiling is checked mechanically yet, which is [issue 87](https://github.com/tvrmsmith/coding-standards/issues/87).
 
-0004 is past both triggers, six amendments and past the word ceiling, and is the next one to
-consolidate.
+That consolidation took 0004 from 2606 words to 1791, and it dropped three clauses it should have
+kept. Two later passes put them back. The `os.SameFile` root-prefix fold landed on main while all
+this was in flight, and rebasing placed its amendment ahead of the consolidation, so `wc -w` over
+this branch reads 331 higher at both ends, 2937 and 2122. The file now stands at 2193. It is still
+over 1500, and the remaining excess is reasoning rather than restatement, so trimming it again buys
+little. The next move on it is a split, superseded by one new ADR per decision, under the mechanics
+above.
 
 If an ADR looks wrong, that is a decision to escalate to the user, not an edit to make.
