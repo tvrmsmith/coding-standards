@@ -27,9 +27,10 @@ one, and only the last removes anything.
 Write a paragraph opening with `**Amended YYYY-MM-DD.**` at the start of a line, and place it next
 to the text it corrects, so a reader meets the correction where they meet the claim.
 
-**Consolidate** when the decision still stands but the amendments have piled up past the point where
-the file reads straight through. Rewrite the file in place, folding every amendment's rule back into
-the body, and open it with a `**Consolidated YYYY-MM-DD.**` paragraph saying so. The number stays, so
+**Consolidate** when the decision still stands but the file is over a ceiling below. Rewrite the
+file in place, folding every amendment's rule back into the body, and open it with a
+`**Consolidated YYYY-MM-DD.**` paragraph saying so. Rewording is what makes a file fit, so it is
+allowed here and nowhere else. The number stays, so
 every link to it keeps working. No rule may be dropped and no decision may change; `git log -p` on
 the file keeps the amendments as they were written. Consolidating is a decision to escalate to the
 user first, not a tidy-up to make on your own.
@@ -48,21 +49,17 @@ opening with `**Trimmed YYYY-MM-DD**` where the text was, naming the ADR that st
 saying how closely, word for word or in its own words. A superseded ADR counts: it is kept for its
 history, and a consequence it already states is that history.
 
-**Five amendments is the consolidation trigger.** Past that the amendments outweigh the decision and
-a reader has to reconstruct the rule from a changelog. ADR 0005 reached seventeen, four of them
-revising one number, each claiming to supersede the others. 0004 hit six on 2026-09-11 and was
-consolidated in place the same day. The rebase that offsets the word counts below also places a
-seventh amendment ahead of the consolidation, so the file as it stood the moment before the pass
-carries seven `**Amended` markers rather than six. The consolidated file carries one, main's, which
-landed after the fold.
+**Length is the only trigger.** Amendments are not counted and no number of them obliges anything.
+A file that still reads straight through is fine however many dated paragraphs it carries; a file
+that does not is over a ceiling, and the ceiling is what says so.
 
 **The `## Current rule` block stays under 250 words**, and the whole file under 1500. The block is
 what a reader is expected to read in full, so it has to be readable in one sitting; the file is what
 they scroll when the block is not enough. A decision that will not fit is more than one decision.
 Neither ceiling is checked mechanically yet, which is [issue 87](https://github.com/tvrmsmith/coding-standards/issues/87).
 
-That consolidation took 0004 from 2606 words to 1791, and it dropped three clauses it should have
-kept. Two later passes put them back. The `os.SameFile` root-prefix fold landed on main while all
+0004 was consolidated in place on 2026-09-11, which took it from 2606 words to 1791, and the pass
+dropped three clauses it should have kept. Two later passes put them back. The `os.SameFile` root-prefix fold landed on main while all
 this was in flight, and rebasing placed its amendment ahead of the consolidation, so `wc -w` over
 this branch reads 331 higher at both ends, 2937 and 2122. The file now stands at 2193. It is still
 over 1500, and the remaining excess is reasoning rather than restatement, so trimming it again buys
