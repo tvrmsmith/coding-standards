@@ -59,9 +59,10 @@ they scroll when the block is not enough. A decision that will not fit is more t
 Neither ceiling is checked mechanically yet, which is [issue 87](https://github.com/tvrmsmith/coding-standards/issues/87).
 
 That consolidation took 0004 from 2606 words to 1791, and it dropped three clauses it should have
-kept. Two later passes, 008eae6 and 7ef466e, put them back, and the `os.SameFile` root-prefix fold
-landed as one dated amendment on top, which is why the file now stands at 2193. It is still over
-1500, and the remaining excess is reasoning rather than restatement, so trimming it again buys
+kept. Two later passes put them back. The `os.SameFile` root-prefix fold landed on main while all
+this was in flight, and rebasing placed its amendment ahead of the consolidation, so `wc -w` over
+this branch reads 331 higher at both ends, 2937 and 2122. The file now stands at 2193. It is still
+over 1500, and the remaining excess is reasoning rather than restatement, so trimming it again buys
 little. The next move on it is a split, superseded by one new ADR per decision, under the mechanics
 above.
 
