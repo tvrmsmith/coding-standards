@@ -95,6 +95,12 @@ caller cannot detect.
 Any git exit other than 1, at any check, reports an unreadable diff carrying git's words. Candidates
 verify **unpeeled**, because `<ref>^{commit}` exits 1 on a missing object.
 
+**Amended 2026-09-14.** `--since <ref>` verifies its ref unpeeled too, then classifies with
+`cat-file -t` on the id that verify resolved, `^{}` appended to that id and never to the typed ref,
+which for `<rev>:<path>` builds a pathspec rather than a peel. A missing commit object now reports
+an unreadable diff rather than "does not name a commit", for a full sha or a plain ref. An
+abbreviation or an explicit peel needs the store to resolve and still exits 1.
+
 `--files` carries no line information, so every method in a listed file is changed and `base` is
 null. `--staged` reports index line numbers while the extractor parses the disk copy, so the gate
 exits 1 on a file staged in one state and dirty on disk in another. That refusal is narrowed three
@@ -130,11 +136,6 @@ here reopens them.
 
 ## Consequences
 
-The gate runs `git` itself rather than taking hunks from a wrapper, so the rule lives in one binary
-and no caller can get `-w` or `--diff-filter` subtly wrong. That is the second thing the gate shells
-out to, after nothing, and it is acceptable because git is present on every machine that has a repo
-to gate.
-
-`lint-changed-dotnet.sh` only warns where this gate exits 1 on a staged-and-dirty file. It is right
-to, because it reports and never blocks. This one blocks, and silent misattribution is the worst
-thing a blocking gate can do.
+**Trimmed 2026-09-14**, with Trevor's approval, on the precedent set above.
+[ADR 0003](0003-changed-method-is-a-span-holding-a-touched-line.md)'s Consequences is preserved and
+states both still, the first word for word.

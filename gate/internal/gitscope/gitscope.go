@@ -95,12 +95,24 @@ type Base struct {
 func (b Base) Label() string { return b.Ref + "@" + b.Commit[:7] }
 
 // NoBaseError reports that the run has no commit to diff against: none of
-// ADR 0007's candidates resolved, --since named a ref that does not exist, or
-// --staged found no HEAD to diff the index against. The message points at
+// ADR 0007's candidates resolved, --since named a ref that does not resolve to
+// a commit or resolves to one sharing no history with HEAD, or the branch
+// carries no commit for a resolver's HEAD check to find. The message points at
 // --since, issue 14's flag, per ADR 0007, except when the branch has no commit
-// or --since is itself what failed, whether the ref did not resolve or it
-// resolved and shares no history with HEAD. Naming the flag again in any of
-// those tells the caller nothing new.
+// or --since is itself what failed, whether the ref did not resolve, resolved to
+// something other than a commit, or resolved to a commit sharing no history with
+// HEAD. Naming the flag again in any of those tells the caller nothing new.
+//
+// A ref that does not resolve and a ref resolving to something other than a
+// commit still share this one message and this one Ref field. Verifying
+// unpeeled and typing the resolved id with objectType did not split them, and
+// the caller sees "does not name a commit" either way, because both are a ref
+// the developer can fix by naming another. What issue 68 took out of this
+// error is the third case the old `^{commit}` peel swept in with them, a ref
+// the repo carries whose commit object the store has lost, which is git
+// failing to answer rather than a wrong ref and now reports an unreadable
+// diff. The sentence above names all three arms this error does keep because
+// the struct carries a field for the third.
 type NoBaseError struct {
 	// Ref is the ref --since named. It is empty when the default candidates
 	// are what failed, and empty whenever NoCommits is true, which every
@@ -154,15 +166,16 @@ var errNoSuchRev = errors.New("rev does not resolve")
 // list, which sends the developer after a missing branch while every ref that
 // list names is sitting in the repo.
 //
-// The candidate is verified unpeeled, where ResolveRef peels with `^{commit}`.
-// A peel reads the object the ref names, and git exits 1 on an object its store
-// does not hold, the same code an absent branch gives. Peeled here, a rung
-// whose commit is missing reads as a rung the repo does not carry, the walk
+// The candidate is verified unpeeled, the check ResolveRef makes about its one
+// ref too. A peel reads the object the ref names, and git exits 1 on an object
+// its store does not hold, the same code an absent branch gives. Peeled here, a
+// rung whose commit is missing reads as a rung the repo does not carry, the walk
 // skips it, and the run ends at the tried-refs list naming a branch that is
 // sitting in the repo, which is the failure this resolver exists to close.
 // Unpeeled, the check answers about the ref alone and merge-base is what
-// classifies the object. ResolveRef keeps the peel because --since can name a
-// tag, and "does not name a commit" is the answer that flag owes its caller.
+// classifies the object. ResolveRef classifies afterwards instead, with
+// `cat-file -t <sha>^{}` over the id its verify resolved, since --since can name
+// a tag and "does not name a commit" is the answer that flag owes its caller.
 //
 // git resolves refs/tags/<name> ahead of refs/heads/<name>, so a lightweight
 // tag shadowing a rung and pointing at a tree or a blob resolves at the
@@ -221,13 +234,22 @@ func (r Repo) ResolveBase() (Base, error) {
 // typed as an unreadable diff, because reported as a name that does not exist
 // it would send the developer hunting a typo.
 //
-// The `^{commit}` peel is what makes "does not name a commit" the answer a tag
-// on a tree gets, which is the answer --since owes a caller who chose the ref by
-// hand. It cannot separate that ref from one whose own commit object is gone,
-// since git exits 1 on both, so `--since main` in a store missing main's commit
-// says main does not name a commit while the default scope, which verifies its
-// candidates unpeeled, reports the object merge-base could not read. Issue 68
-// tracks that gap.
+// The ref check is unpeeled, matching ResolveBase's candidate check, so both
+// resolvers read exit 1 the same way, no such ref rather than a claim about
+// what the ref names. objectType is what classifies the object once the ref
+// itself resolves. Exit 0 naming anything but a commit is the "does not name a
+// commit" answer --since owes a caller who chose the ref by hand, a lightweight
+// tag on a tree for one. Every non-zero exit is git failing to answer, which is
+// what a branch whose commit object the store lacks gives, and separating those
+// two is the whole point of asking: the peel this check replaces exits 1 on
+// both and reported the damaged store as a ref naming no commit.
+//
+// It is the id the verify already resolved that gets peeled, not the rev the
+// developer typed. `--since HEAD:src/Order.cs` names a blob and resolves, and
+// pasting `^{}` onto that text asks git for a path called `src/Order.cs^{}`,
+// which does not exist and comes back as a git failure that never happened over
+// a path nobody typed. The id has no such second reading, so the blob answers
+// "blob" and the run says the rev does not name a commit.
 //
 // Only the argv shape reaches a caller from these two checks today, and
 // since_ref_unreadable pins it. `--quiet` is what makes an absent ref exit 1 at
@@ -246,11 +268,19 @@ func (r Repo) ResolveBase() (Base, error) {
 // made with `git checkout --orphan` reports the diff as unparseable for a run
 // that never reached a diff, when what the repo has is no commit on this branch.
 func (r Repo) ResolveRef(ref string) (Base, error) {
-	if _, err := r.verifyRev(ref + "^{commit}"); err != nil {
+	oid, err := r.verifyRev(ref)
+	if err != nil {
 		if errors.Is(err, errNoSuchRev) {
 			return Base{}, NoBaseError{Ref: ref}
 		}
 		return Base{}, err
+	}
+	objType, err := r.objectType(oid)
+	if err != nil {
+		return Base{}, err
+	}
+	if objType != "commit" {
+		return Base{}, NoBaseError{Ref: ref}
 	}
 	if _, err := r.verifyRev("HEAD"); err != nil {
 		if errors.Is(err, errNoSuchRev) {
@@ -284,16 +314,19 @@ func (r Repo) ResolveStaged() (Base, error) {
 
 // verifyRev resolves rev, answering errNoSuchRev when git exits 1 and an
 // unreadable diff on every other exit code. It promises no commit id. Every
-// check here is unpeeled but the ref check ResolveRef makes, so for a ref whose
-// commit object the store lacks git exits 0 and prints an id the object store
-// does not hold, which is the fact the merge base that follows fails on.
-// ResolveStaged is the one of the five call sites that reads the string, and it
-// can be handed a dangling id that way. The other four discard it and want only
-// which of the two arms fired.
+// check here is unpeeled, so for a ref whose commit object the store lacks git
+// exits 0 and prints an id the object store does not hold, which is the fact
+// the merge base or the cat-file check that follows fails on. Two of the five
+// call sites read the string, ResolveStaged's HEAD check and ResolveRef's ref
+// check, which hands the id to objectType, and either can be handed a dangling
+// id that way. The other three discard it and want only which of the two arms
+// fired.
 //
-// Every resolver's every check shares this rather than spelling the same two
-// arms out each time, which is what makes one reading of noMatch the reading
-// all three hold. ResolveRef's HEAD check is the reason it is worth sharing: no
+// Every rev-parse check the resolvers make shares this rather than spelling the
+// same two arms out each time, which is what makes one reading of noMatch the
+// reading all three hold. objectType is the one check that does not, and it
+// says at its own definition why its non-zero exits read differently.
+// ResolveRef's HEAD check is the reason this one is worth sharing: no
 // fixture makes git read a named ref and then fail to answer about HEAD at all,
 // since every damaged HEAD real git will produce is either exit 1 or a
 // repository it refuses to open at all, so a second copy of the unreadable arm
@@ -308,6 +341,28 @@ func (r Repo) verifyRev(rev string) (string, error) {
 		if noMatch(err) {
 			return "", errNoSuchRev
 		}
+		return "", unreadableDiff(err)
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// objectType names the type of the object oid peels to, `commit` for a commit
+// and for an annotated tag on one, `tree` or `blob` for a tag over either,
+// lightweight or annotated.
+//
+// It is the one check in the package that does not read exit 1 as git answering
+// no, because `cat-file -t` has no such answer to give: an object the store does
+// not hold is exit 128, so every non-zero exit here is git failing to answer and
+// comes back as an unreadable diff carrying its words. Routed through verifyRev's
+// reading instead, the missing object would come back as a no and put the
+// resolver back on the misreport issue 68 removed.
+//
+// The argument peels rather than being asked about bare, since `-t <tag oid>`
+// answers "tag" for an annotated tag whose target commit the store lacks, which
+// is that same conflation one object further out.
+func (r Repo) objectType(oid string) (string, error) {
+	out, err := r.git("cat-file", "-t", oid+"^{}")
+	if err != nil {
 		return "", unreadableDiff(err)
 	}
 	return strings.TrimSpace(out), nil
@@ -341,8 +396,8 @@ func (r Repo) verifyRev(rev string) (string, error) {
 // which it follows to report the target's spans under a name that does not
 // hold them. A symlink replaced by a real source file is an accepted gap, and
 // measuring it needs a pass classifying the new side's mode before extraction,
-// which is issue 84 rather than a wider letter set. See ADR 0007's 2026-09-11
-// amendment.
+// which is issue 84 rather than a wider letter set. See the ADR 0007 amendment
+// beginning "`--diff-filter=ACM` excludes `T`,".
 //
 // Nothing gets out of here untyped. Base resolution has already succeeded, so
 // the document exists and ADR 0008's one-document rule binds: every cause below
