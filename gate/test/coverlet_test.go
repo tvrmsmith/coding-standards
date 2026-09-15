@@ -348,16 +348,29 @@ func (f *fixture) assertCoverletReportShape(path, dotnetOut string) {
 	for _, shape := range []struct {
 		got  bool
 		want string
+		// fixtureCause names the other way the row can go false: the shape
+		// holds only over the current fixture sources, so an edit to them can
+		// red the row with coverlet unchanged.
+		fixtureCause string
 	}{
-		{branchFalse, `a line of the scored class with branch="False", the capitalised spelling no hand-built report in this suite uses`},
-		{hitsAboveOne, "a line of the scored class hit more than once, which the hand-built reports never produce"},
-		{everyClassLineRepeated, "a <methods> line for every class-level line number of the scored class, so the same line arrives twice"},
-		{lineRateErr == nil && lineRate > 0, fmt.Sprintf("a line-rate on the root element parsing as a number above zero, got %q, half of the summary the gate must not start trusting over the %d hit lines of the scored class", report.LineRate, covered)},
-		{linesCoveredErr == nil && linesCovered >= covered, fmt.Sprintf("a lines-covered on the root element parsing as at least the %d hit lines of the scored class, got %q, the other half of that summary", covered, report.LinesCovered)},
+		{branchFalse, `a line of the scored class with branch="False", the capitalised spelling no hand-built report in this suite uses`,
+			"src/Points.cs stopped carrying a branch the single call reaches"},
+		{hitsAboveOne, "a line of the scored class hit more than once, which the hand-built reports never produce",
+			`tests/PointsTests.cs stopped calling All with an argument that runs the loop condition twice, as All(1, "s") does`},
+		{everyClassLineRepeated, "a <methods> line for every class-level line number of the scored class, so the same line arrives twice",
+			"src/Points.cs changed shape so a class-level line falls outside every method"},
+		{lineRateErr == nil && lineRate > 0, fmt.Sprintf("a line-rate on the root element parsing as a number above zero, got %q, half of the summary the gate must not start trusting over the %d hit lines of the scored class", report.LineRate, covered), ""},
+		{linesCoveredErr == nil && linesCovered >= covered, fmt.Sprintf("a lines-covered on the root element parsing as at least the %d hit lines of the scored class, got %q, the other half of that summary", covered, report.LinesCovered), ""},
 	} {
-		if !shape.got {
-			f.t.Errorf("coverlet %s wrote %s without %s. The gate reads past this shape rather than reading it, so no golden diff would report its loss",
-				coverletVersion, path, shape.want)
+		if shape.got {
+			continue
 		}
+		if shape.fixtureCause != "" {
+			f.t.Errorf("%s holds no %s. Either coverlet %s stopped emitting it or %s. The gate reads past this shape rather than reading it, so no golden diff would report its loss",
+				path, shape.want, coverletVersion, shape.fixtureCause)
+			continue
+		}
+		f.t.Errorf("coverlet %s wrote %s without %s. The gate reads past this shape rather than reading it, so no golden diff would report its loss",
+			coverletVersion, path, shape.want)
 	}
 }
