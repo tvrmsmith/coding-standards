@@ -224,7 +224,7 @@ func (f *fixture) collectCoverage() {
 	// what this guard counts and what the gate later reads cannot disagree.
 	root, err := srcpath.NewRoot(f.root)
 	if err != nil {
-		f.t.Fatal(err)
+		f.t.Fatalf("rooting the fixture repo at %s: %v", f.root, err)
 	}
 	reports, skipped, err := coverage.Discover(root)
 	if err != nil {
@@ -357,7 +357,7 @@ func (f *fixture) assertCoverletReportShape(path, dotnetOut string) {
 	}{
 		{branchFalse, `a line of the scored class with branch="False", the capitalised spelling no hand-built report in this suite uses`,
 			"src/Points.cs stopped carrying a branch the single call reaches"},
-		{hitsAboveOne, "a line of the scored class hit more than once, which the hand-built reports never produce",
+		{hitsAboveOne, "a line of the scored class hit more than once, which no report this file hand-builds produces",
 			`tests/PointsTests.cs stopped calling All with an argument that runs the loop condition twice, as All(1, "s") does`},
 		{everyClassLineRepeated, "a <methods> line for every class-level line number of the scored class, so the same line arrives twice",
 			"src/Points.cs changed shape so a class-level line falls outside every method"},
