@@ -256,7 +256,7 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 		wants   []string
 	}{
 		{
-			name:    "the unset run skips without touching dotnet",
+			name:    "the unset run skips for the documented reason",
 			short:   long,
 			outcome: outcomeSkip,
 			wants:   []string{reasonUnset},

@@ -105,7 +105,7 @@ fi
 func TestCIDeclaresThePassCheckStep(t *testing.T) {
 	body, err := os.ReadFile(ciWorkflow)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("reading the workflow this case reads as a contract at %s: %v", ciWorkflow, err)
 	}
 
 	// if: and the env values are decoded as raw nodes rather than as Go values.

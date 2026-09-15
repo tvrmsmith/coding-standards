@@ -256,7 +256,7 @@ func (f *fixture) assertCoverletReportShape(path, dotnetOut string) {
 
 	body, err := os.ReadFile(path)
 	if err != nil {
-		f.t.Fatal(err)
+		f.t.Fatalf("reading the cobertura report coverlet wrote at %s: %v", path, err)
 	}
 
 	var report struct {
@@ -357,7 +357,7 @@ func (f *fixture) assertCoverletReportShape(path, dotnetOut string) {
 	}{
 		{branchFalse, `a line of the scored class with branch="False", the capitalised spelling no hand-built report in this suite uses`,
 			"src/Points.cs stopped carrying a branch the single call reaches"},
-		{hitsAboveOne, "a line of the scored class hit more than once, which no report this file hand-builds produces",
+		{hitsAboveOne, "a line of the scored class hit more than once, so hits counts executions rather than flagging a line as covered, which is what the gate reads it as",
 			`tests/PointsTests.cs stopped calling All with an argument that runs the loop condition twice, as All(1, "s") does`},
 		{everyClassLineRepeated, "a <methods> line for every class-level line number of the scored class, so the same line arrives twice",
 			"src/Points.cs changed shape so a class-level line falls outside every method"},
