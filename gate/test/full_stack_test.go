@@ -387,8 +387,12 @@ func readFixture(t *testing.T, rel string) string {
 func (f *fixture) appendComment(rel string, n int) {
 	f.t.Helper()
 	lines := strings.Split(f.read(rel), "\n")
-	if n < 1 || n > len(lines) {
-		f.t.Fatalf("%s holds %d lines, so it has no line %d to append a comment to", rel, len(lines), n)
+	count := len(lines)
+	if count > 0 && lines[count-1] == "" {
+		count--
+	}
+	if n < 1 || n > count {
+		f.t.Fatalf("%s holds %d lines, so it has no line %d to append a comment to", rel, count, n)
 	}
 	lines[n-1] += " // touched"
 	f.write(rel, strings.Join(lines, "\n"))

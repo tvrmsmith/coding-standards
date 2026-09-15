@@ -365,12 +365,13 @@ func (f *fixture) assertCoverletReportShape(path, dotnetOut string) {
 		if shape.got {
 			continue
 		}
+		const tail = "The gate reads past this shape rather than reading it, so no golden diff would report its loss"
 		if shape.fixtureCause != "" {
-			f.t.Errorf("%s holds no %s. Either coverlet %s stopped emitting it or %s. The gate reads past this shape rather than reading it, so no golden diff would report its loss",
-				path, shape.want, coverletVersion, shape.fixtureCause)
+			f.t.Errorf("%s does not hold %s. Either coverlet %s stopped emitting it or %s. %s",
+				path, shape.want, coverletVersion, shape.fixtureCause, tail)
 			continue
 		}
-		f.t.Errorf("coverlet %s wrote %s without %s. The gate reads past this shape rather than reading it, so no golden diff would report its loss",
-			coverletVersion, path, shape.want)
+		f.t.Errorf("coverlet %s wrote %s without %s. %s",
+			coverletVersion, path, shape.want, tail)
 	}
 }
