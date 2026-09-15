@@ -135,8 +135,9 @@ var realExtractorCases = []string{
 // machine, and calling it twice decides the same way.
 func requireRealDotnet(t *testing.T) {
 	t.Helper()
-	if !slices.Contains(realExtractorCases, t.Name()) {
-		t.Fatalf("%s drives the real dotnet toolchain but is not in realExtractorCases, so it gets no enforcement row and no CI PASS grep. Add it there and to ci.yml's loop.", t.Name())
+	top, _, _ := strings.Cut(t.Name(), "/")
+	if !slices.Contains(realExtractorCases, top) {
+		t.Fatalf("%s drives the real dotnet toolchain but is not in realExtractorCases, so it gets no enforcement row and no CI PASS grep. Add it there and to ci.yml's loop.", top)
 	}
 	if !enforceDotnet {
 		t.Skip(reasonUnset)
@@ -162,20 +163,21 @@ func dotnetCmd(t *testing.T, dir string, args ...string) *exec.Cmd {
 // pattern would let the child re-enter the forking tests and fork forever.
 var childCase = "^(" + strings.Join(realExtractorCases, "|") + ")$"
 
-// childOutcome is a result line a child test binary prints for one case, paired
-// with whether reaching it makes the child exit non-zero. The two travel
-// together so a row states the outcome once and no call site re-derives the
-// disposition from the spelling.
+// childOutcome is a result line a child test binary prints for one case. A row
+// states the outcome once and reads the exit disposition off it through
+// failing, so the two cannot disagree.
 type childOutcome struct {
-	line    string
-	wantErr bool
+	line string
 }
+
+// failing reports whether reaching this outcome makes the child exit non-zero.
+func (o childOutcome) failing() bool { return o.line == "FAIL" }
 
 // The two result lines a child can print for a case these rows drive.
 // outcomeFail is the one the enforcement fatal produces.
 var (
 	outcomeSkip = childOutcome{line: "SKIP"}
-	outcomeFail = childOutcome{line: "FAIL", wantErr: true}
+	outcomeFail = childOutcome{line: "FAIL"}
 )
 
 // caseBlock is the -test.v output one named case produced, from its RUN line
@@ -279,10 +281,10 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			out, err := runChild(t, c.require, "-test.run", childCase, "-test.v", c.short)
-			if c.outcome.wantErr && err == nil {
+			if c.outcome.failing() && err == nil {
 				t.Fatalf("child exited zero, want a failure. output:\n%s", out)
 			}
-			if !c.outcome.wantErr && err != nil {
+			if !c.outcome.failing() && err != nil {
 				t.Fatalf("child failed with %v, want a pass. output:\n%s", err, out)
 			}
 			for _, name := range realExtractorCases {

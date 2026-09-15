@@ -127,7 +127,7 @@ func TestCIDeclaresThePassCheckStep(t *testing.T) {
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal(body, &workflow); err != nil {
-		t.Fatalf("%s: %v", ciWorkflow, err)
+		t.Fatalf("parsing the workflow this case reads as a contract at %s: %v", ciWorkflow, err)
 	}
 
 	job, ok := workflow.Jobs[gateJob]

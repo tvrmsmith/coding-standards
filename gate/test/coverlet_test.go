@@ -277,7 +277,7 @@ func (f *fixture) assertCoverletReportShape(path, dotnetOut string) {
 		} `xml:"packages>package>classes>class"`
 	}
 	if err := xml.Unmarshal(body, &report); err != nil {
-		f.t.Fatalf("%s: %v", path, err)
+		f.t.Fatalf("parsing the cobertura report coverlet wrote at %s: %v", path, err)
 	}
 
 	// Scoped to the one class the golden scores. coverlet reports the test
