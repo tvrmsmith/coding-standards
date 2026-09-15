@@ -49,8 +49,47 @@ func TestFixturesCoverOnlyEnabledLinters(t *testing.T) {
 	}
 }
 
+// TestNeitherOutputCapTruncates pins `max-issues-per-linter: 0` and `max-same-issues: 0`.
+//
+// Both cap by default, at 50 and at 3, and both drop the excess silently. That is not a cosmetic
+// limit for this layer: harness/lint-changed-go.sh lints whole packages and filters down to the
+// changed files afterwards, so a cap applied to the package total leaves the filter an arbitrary
+// subset, and which findings survive shifts with the order parallel analysis finished in. The
+// fixture calls one error-returning function 55 times, which is over both caps at once.
+func TestNeitherOutputCapTruncates(t *testing.T) {
+	const want = 55
+
+	same := 0
+	for _, issue := range runFixtures(t) {
+		if issue.FromLinter == "errcheck" && issue.Text == "Error return value is not checked" {
+			same++
+		}
+	}
+
+	assert.GreaterOrEqual(t, same, want,
+		"golangci-lint reported %d of the %d identical errcheck findings in fixtures/caps.go; "+
+			"an output cap is truncating the report", same, want)
+}
+
 // lintFixtures returns the sorted set of linters that reported something in test/fixtures.
 func lintFixtures(t *testing.T) []string {
+	t.Helper()
+
+	return sorted(func(add func(string)) {
+		for _, issue := range runFixtures(t) {
+			add(issue.FromLinter)
+		}
+	})
+}
+
+// issue is the part of golangci-lint's JSON report these cases read.
+type issue struct {
+	FromLinter string `json:"FromLinter"`
+	Text       string `json:"Text"`
+}
+
+// runFixtures runs the personal binary over test/fixtures and returns every issue it reported.
+func runFixtures(t *testing.T) []issue {
 	t.Helper()
 
 	binary, err := filepath.Abs(binaryPath)
@@ -73,18 +112,12 @@ func lintFixtures(t *testing.T) []string {
 	require.NoError(t, err)
 
 	var report struct {
-		Issues []struct {
-			FromLinter string `json:"FromLinter"`
-		} `json:"Issues"`
+		Issues []issue `json:"Issues"`
 	}
 	require.NoError(t, json.Unmarshal(output, &report), "output was not the JSON report: %s", output)
 	require.NotEmpty(t, report.Issues, "the fixtures reported nothing at all")
 
-	return sorted(func(add func(string)) {
-		for _, issue := range report.Issues {
-			add(issue.FromLinter)
-		}
-	})
+	return report.Issues
 }
 
 // enabledLinters returns the sorted `linters.enable` list from the curated config.

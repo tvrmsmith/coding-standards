@@ -146,6 +146,17 @@ issues:
   # first one off. go/test found that, which is what the fixture test is for.
   uniq-by-line: false
 
+  # Report every finding, not the first 50 per linter and the first 3 sharing a message.
+  #
+  # Both cap by default, both drop silently, and the truncation is worse here than in a CI run.
+  # harness/lint-changed-go.sh lints whole packages and then filters the output down to the
+  # changed files, so the cap applies to the package total before the filter ever sees it. Which
+  # findings survive depends on the order parallel package analysis finished in, so the same
+  # commit reported a different set on every run: on one real repo, three runs of one command
+  # gave 5, 16 and 11 errcheck findings out of 193. Same class as uniq-by-line above.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
 severity:
   # Every personal Go rule is advisory, in the same position as the Roslyn half: this runs
   # machine-locally over code other people wrote and are not being asked to change. The harness
