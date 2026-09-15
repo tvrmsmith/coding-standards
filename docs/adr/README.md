@@ -52,8 +52,9 @@ history, and a consequence it already states is that history.
 a reader has to reconstruct the rule from a changelog. ADR 0005 reached seventeen, four of them
 revising one number, each claiming to supersede the others. 0004 hit six on 2026-09-11 and was
 consolidated in place the same day. The rebase that offsets the word counts below also places a
-seventh amendment ahead of the consolidation, so counting `**Amended` on this branch gives seven
-rather than the six the pass folded.
+seventh amendment ahead of the consolidation, so the file as it stood the moment before the pass
+carries seven `**Amended` markers rather than six. The consolidated file carries one, main's, which
+landed after the fold.
 
 **The `## Current rule` block stays under 250 words**, and the whole file under 1500. The block is
 what a reader is expected to read in full, so it has to be readable in one sitting; the file is what
