@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -127,10 +128,16 @@ var realExtractorCases = []string{
 // because dotnetCmd is the only place in the package that builds a dotnet
 // invocation and it calls this. The run has to say it means to drive the
 // toolchain: one that does reds on a machine that cannot serve it, one that
-// does not skips before the first dotnet call. Nothing here reads the machine,
-// and calling it twice decides the same way.
+// does not skips before the first dotnet call. Because it is that chokepoint,
+// it also makes membership of realExtractorCases a precondition of reaching the
+// toolchain, so a case the enforcement rows and the CI PASS loop do not cover
+// reds on any machine rather than skipping unnoticed. Nothing here reads the
+// machine, and calling it twice decides the same way.
 func requireRealDotnet(t *testing.T) {
 	t.Helper()
+	if !slices.Contains(realExtractorCases, t.Name()) {
+		t.Fatalf("%s drives the real dotnet toolchain but is not in realExtractorCases, so it gets no enforcement row and no CI PASS grep. Add it there and to ci.yml's loop.", t.Name())
+	}
 	if !enforceDotnet {
 		t.Skip(reasonUnset)
 	}
