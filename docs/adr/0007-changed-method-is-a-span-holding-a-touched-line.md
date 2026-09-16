@@ -48,6 +48,18 @@ read suppresses the drop for the whole run, because an uncounted digest would le
 look accounted for. A deleted submodule is skipped rather than read, since a gitlink's object id
 names a commit in another repository.
 
+**Amended 2026-09-16.** An added path the gate cannot read no longer suppresses the drop for the
+whole run. It counts as a claimant of every digest instead, because the content nobody could read
+could be the content any deleted path carried. The readable sibling the earlier wording protects is
+protected by the count: one delete against one readable add plus one unreadable add is two claimants
+against one delete, more adds than deletes, so nothing drops, which is what
+`TestAnAddNobodyCanReadLeavesEveryOtherAddMeasured` pins. What changes is a run whose deletes still
+explain their adds with the unreadable one counted in. Two deletes carrying a digest, one readable
+add carrying it and one add nobody can read is two claimants against two deletes, so the move drops,
+where suppressing the whole run measured a file that was only relocated. The counting rule in the
+block above is the whole rule, and an unreadable add is now counted by it rather than standing
+outside it.
+
 **Amended 2026-09-11.** `--diff-filter=ACM` excludes `T`, so a typechange contributes no touched
 lines in either direction. A source file replaced by a symlink is the wanted answer, since a link
 holds no source to measure. A symlink replaced by a real source file is an accepted gap, and its

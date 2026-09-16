@@ -165,6 +165,33 @@ func TestAnAddNobodyCanReadLeavesEveryOtherAddMeasured(t *testing.T) {
 		"0 of 1 changed methods over CRAP threshold 30, worst score 4.00\n")
 }
 
+func TestAnAddNobodyCanReadStillLeavesTheMovesTheDeletesExplainDropped(t *testing.T) {
+	const firstOrigin = "src/Ordering/First.cs"
+	const secondOrigin = "src/Ordering/Second.cs"
+	const moved = "src/Ordering/Moved.cs"
+	vanish := span{File: moved, Name: "Moved.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(firstOrigin, csharpFile(20))
+	f.write(secondOrigin, csharpFile(20))
+	f.commitAll("initial")
+	// Two deletes carry the one digest and only one readable add claims it, so
+	// the add stays accounted for even counting the unreadable add as a second
+	// claimant. The unreadable add makes no add unprovable on its own: it is
+	// one more claimant, not a switch that turns move detection off.
+	f.git("mv", firstOrigin, moved)
+	f.git("rm", secondOrigin)
+	f.symlinkTo(filepath.Join(f.root, "gone.md"), "notes.md")
+	f.git("add", "notes.md")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(moved), []span{vanish}),
+	}
+
+	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
+		"no changed methods, nothing to measure\n")
+}
+
 func TestMethodScoringExactlyAtTheThresholdPasses(t *testing.T) {
 	f := newFixture(t, "main")
 	boundaryFixture(t, f, 30)
