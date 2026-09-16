@@ -771,9 +771,9 @@ func TestMethodMovedWithinOneFileIsMeasuredAtItsNewLocation(t *testing.T) {
 // source file that becomes a symlink genuinely should not be measured, which
 // is why the flag stays pinned whole rather than narrowed to only the letters
 // this suite happens to exercise, the alternative issue 25 considered and
-// rejected. That reaches only the typechange: a `.cs` symlink added outright
+// rejected. That reaches only the typechange. A `.cs` symlink added outright
 // arrives as status A, passes ACM, and is handed to the extractor like any
-// other new file, the claim
+// other new file, which is the claim
 // TestASymlinkAddedOutrightIsHandedToTheExtractor pins.
 // TestASymlinkReplacedByASourceFileContributesNoChangedMethods
 // pins the opposite direction of the same typechange.
@@ -873,12 +873,16 @@ func TestATypechangeIsWithheldWhileTheRestOfTheDiffIsMeasured(t *testing.T) {
 // link's own text, the path it points at, as one line under an equally
 // claimed `.cs` path. The second of those is what makes the flag edit wrong.
 // The extractor is handed the link path, follows it, and reports the target
-// file's spans under the link's path. Touched line 1 then falls inside no
+// file's spans under the link's path, which is what
+// TestASymlinkAddedOutrightIsHandedToTheExtractor pins on the status A route.
+// Touched line 1 then falls inside no
 // span, so the guaranteed effect is touched_lines_outside_spans going 0 to 1
 // and nothing measured, at exit 0. Where the target's spans do cover the
 // link's first line, the worse effect follows. A method is measured under a
 // path that does not hold it, the coverage lookup against that path finds
-// nothing, and the run fails as an unknown changed method. Measuring the
+// nothing, and the run fails as an unknown changed method, which
+// TestASymlinkAddedOutrightMeasuringItsTargetsSpansFailsAsUnknown pins.
+// Measuring the
 // direction this case covers needs a
 // mode-aware pass classifying the new side of a typechange before anything
 // reaches the extractor, not a flag edit. That pass is the work this change
@@ -918,10 +922,16 @@ func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) 
 // typechange direction cases above rest on without stating it as a case of
 // its own. A `.cs` symlink added outright arrives as status A, passes
 // --diff-filter=ACM, and is handed to the extractor like any other new file.
-// TestASourceFileReplacedByASymlinkContributesNoChangedMethods and
-// TestASymlinkReplacedByASourceFileContributesNoChangedMethods both reason
-// from that claim to argue widening the filter to ACMT is the wrong remedy,
-// so it carries the argument for both, and until now nothing pinned it.
+// Both typechange direction cases rest on that claim and neither states it,
+// each putting it to different work.
+// TestASourceFileReplacedByASymlinkContributesNoChangedMethods reads it as
+// the reason the filter stays pinned whole rather than narrowed to the
+// letters this suite exercises, the alternative issue 25 rejected, since a
+// narrowed filter would reach the added symlink too.
+// TestASymlinkReplacedByASourceFileContributesNoChangedMethods reads it as
+// the reason widening the filter to ACMT is the wrong remedy, since ACMT
+// hands a link path to the extractor the way status A already does. One
+// claim carries both arguments, and until now nothing pinned it.
 //
 // The symlink points at OrderService.cs, its sibling in the same directory,
 // so the link is not dangling.
@@ -950,6 +960,51 @@ func TestASymlinkAddedOutrightIsHandedToTheExtractor(t *testing.T) {
 	// empty_changed_set instead, which differs in exactly that field.
 	f.run().assertMatches(t, "added_symlink", 0, f.baseLabel("main"),
 		"no changed methods, nothing to measure\n")
+
+	assertHandedToExtractor(t, handed, orderFile+"\n")
+}
+
+// TestASymlinkAddedOutrightMeasuringItsTargetsSpansFailsAsUnknown pins the
+// harmful half of what the case above establishes. The sibling picks a span
+// the link's one touched line cannot reach, so it lands at exit 0 with
+// nothing measured; this one picks a span covering line 1, which is the
+// arrangement that goes wrong. The extractor follows the link, reports
+// OrderService.cs's spans under Order.cs, a method is measured under a path
+// that does not hold it, the coverage lookup against that path finds
+// nothing, and the run fails as an unknown changed method.
+//
+// TestASymlinkReplacedByASourceFileContributesNoChangedMethods describes this
+// effect in prose as the reason an ACMT widen is the wrong remedy. On a
+// typechange it stays hypothetical, gated behind a widen nobody made. On the
+// added-symlink path it is live today, since status A passes ACM and reaches
+// the extractor, so this case records it as a document rather than an
+// argument.
+func TestASymlinkAddedOutrightMeasuringItsTargetsSpansFailsAsUnknown(t *testing.T) {
+	// The span starts at line 1, the link's only line, so following the link
+	// puts a measured method on a path holding nothing but the target's name.
+	orderHeader := span{File: orderFile, Name: "Order.Header", StartLine: 1, EndLine: 4, Complexity: 3}
+
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.symlinkTo(filepath.Base(orderService), orderFile)
+	f.git("add", orderFile)
+	f.assertAddedAs("main", orderFile, symlink)
+	// The report knows OrderService.cs, the file the link points at, and has
+	// never heard of Order.cs, the path the span arrives under. That mismatch
+	// is the failure, not a gap in the report.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	handed := filepath.Join(t.TempDir(), "handed")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderFile), []span{orderHeader}),
+		StdinLog:   handed,
+	}
+
+	f.run().assertMatches(t, "added_symlink_unknown_method", 1, f.baseLabel("main"),
+		"1 changed method could not be attributed to a coverage report\n"+
+			"0 of 1 changed methods over CRAP threshold 30, worst score 0.00\n")
 
 	assertHandedToExtractor(t, handed, orderFile+"\n")
 }
