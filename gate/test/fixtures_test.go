@@ -952,12 +952,12 @@ func (f *fixture) divergenceStderr(rel string) string {
 	return f.gitStderr(gitscope.DivergenceArgs([]srcpath.Path{srcpath.Path(rel)})...)
 }
 
-// deeplyNestedPaths lays out count source paths whose pathspec text together
-// passes the argv budget one divergence invocation is allowed, which is the
-// changeset gitscope has to batch rather than hand git whole. The bytes come
-// from depth rather than from file count, because the budget is a byte budget
-// and a fixture of the ten thousand files it would otherwise take costs the
-// suite seconds to write and stage.
+// deeplyNestedPaths lays out count source paths long enough together that
+// gitscope splits them over more than one divergence invocation, which is the
+// changeset it has to batch rather than hand git whole. The bytes come from
+// depth rather than from file count, because the budget is a byte budget and a
+// fixture of the ten thousand files it would otherwise take costs the suite
+// seconds to write and stage.
 //
 // Depth is what it is because macOS caps a whole path at 1024 bytes, a quarter
 // of Linux's, and the temp directory eats the first hundred and fifty of them.
@@ -973,33 +973,18 @@ func deeplyNestedPaths(t *testing.T, count int) []string {
 	for i := range count {
 		paths = append(paths, fmt.Sprintf("%s/Order%03d.cs", dir, i))
 	}
-	// A layout that quietly stopped crossing the budget would leave the case
-	// green while exercising one batch, which is the case that already exists.
-	if bytes := divergenceArgvBytes(paths); bytes <= divergenceBudget {
-		t.Fatalf("%d paths cost %d bytes of divergence argv, want past the %d budget", count, bytes, divergenceBudget)
-	}
-	return paths
-}
-
-// divergenceBudget is the pathspec text gitscope allows one invocation, held
-// here as the number the fixture has to beat. gitscope's own constant is
-// unexported, and a case that read it would move with it rather than pin it.
-const divergenceBudget = 64 << 10
-
-// divergenceArgvBytes is what one divergence invocation over paths costs in
-// the kernel's argv block, every argument plus the NUL terminating it. The
-// argv comes from the production builder, so the accounting is over what the
-// gate actually execs.
-func divergenceArgvBytes(paths []string) int {
+	// gitscope is asked whether this layout splits rather than told what the
+	// budget is. A layout that quietly stopped splitting, or a budget raised
+	// past it, would otherwise leave the case green as a single-invocation
+	// duplicate of the one-file case beside it.
 	specs := make([]srcpath.Path, 0, len(paths))
 	for _, path := range paths {
 		specs = append(specs, srcpath.Path(path))
 	}
-	bytes := 0
-	for _, arg := range gitscope.DivergenceArgs(specs) {
-		bytes += len(arg) + 1
+	if batches := gitscope.DivergenceBatchCount(specs); batches < 2 {
+		t.Fatalf("%d paths go to git in %d invocations, want the split the case is about", count, batches)
 	}
-	return bytes
+	return paths
 }
 
 // toonEscaped renders text the way a TOON string field escapes it, which is

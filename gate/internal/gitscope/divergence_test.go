@@ -26,10 +26,10 @@ const e2bigTarget = 2 << 20
 // nothing is not an error to git, it contributes no numstat record, so the
 // bytes are free and the expected answer is unchanged by them.
 func TestDivergentFromIndexFindsTheDirtyFileAmongMorePathspecsThanOneExecCarries(t *testing.T) {
-	repo, dirty := dirtyRepo(t)
+	repo, dirty := dirtyRepo(t, 1)
 	// The real path goes last, where a single unbounded argv puts it too, so
 	// nothing about the ordering makes the answer easier to reach.
-	paths := append(unmatchedPaths(e2bigTarget), dirty)
+	paths := append(unmatchedPaths(e2bigTarget), dirty...)
 	// Unbatched, this argv is one exec that fails with E2BIG and comes back as
 	// diff_unparseable, which says git could not parse a diff it never ran. A
 	// layout that stopped clearing the target would leave the case green
@@ -43,9 +43,51 @@ func TestDivergentFromIndexFindsTheDirtyFileAmongMorePathspecsThanOneExecCarries
 	// The paths are counted rather than printed. Printing them is two megabytes
 	// of synthetic filler in the CI log for a case whose whole answer is the one
 	// path it did or did not name.
-	if err != nil || !slices.Equal(divergent, []srcpath.Path{dirty}) {
-		t.Fatalf("DivergentFromIndex over %d paths named %d of them, erroring %v, want %s alone and no error", len(paths), len(divergent), err, dirty)
+	if err != nil || !slices.Equal(divergent, dirty) {
+		t.Fatalf("DivergentFromIndex over %d paths named %d of them, erroring %v, want %s alone and no error", len(paths), len(divergent), err, dirty[0])
 	}
+}
+
+// The answer is the union of what every batch named, and nothing else pins
+// that. The two cases either side of this one put their single divergent path
+// last, so a loop that kept only the final batch's records still returns it
+// and still passes. This one spreads three divergent paths over three
+// invocations, where keeping one batch loses two of them.
+func TestDivergentFromIndexUnionsTheDirtyFilesEveryBatchNames(t *testing.T) {
+	repo, dirty := dirtyRepo(t, 3)
+	// Every divergent path is followed by a budget's worth of pathspecs that
+	// match nothing, which forces a boundary before the next one, so no two of
+	// the three can come back from the same invocation. The filler repeats
+	// between them, which changes no answer, since a pathspec naming no file
+	// contributes no record however many times git is handed it.
+	var paths []srcpath.Path
+	for _, path := range dirty {
+		paths = append(paths, path)
+		paths = append(paths, unmatchedPaths(divergenceBudget)...)
+	}
+	if naming := batchesNaming(paths, dirty); naming != len(dirty) {
+		t.Fatalf("the %d divergent paths fall in %d batches, want one batch each", len(dirty), naming)
+	}
+
+	divergent, err := repo.DivergentFromIndex(paths)
+
+	if err != nil || !slices.Equal(divergent, dirty) {
+		t.Fatalf("DivergentFromIndex over %d paths named %v, erroring %v, want all of %v in that order", len(paths), divergent, err, dirty)
+	}
+}
+
+// batchesNaming counts the batches holding at least one of wanted. The union
+// case asserts on it rather than on the budget arithmetic, because what the
+// case needs is that its divergent paths really did arrive from different
+// invocations.
+func batchesNaming(paths, wanted []srcpath.Path) int {
+	naming := 0
+	for _, batch := range divergenceBatches(paths) {
+		if slices.ContainsFunc(batch, func(path srcpath.Path) bool { return slices.Contains(wanted, path) }) {
+			naming++
+		}
+	}
+	return naming
 }
 
 // unmatchedPaths lays out synthetic paths naming no file, enough of them that
@@ -75,28 +117,37 @@ func divergenceArgvBytes(paths []srcpath.Path) int {
 	return argv
 }
 
-// dirtyRepo is a repository holding one source file staged in one state and
-// left in another on disk, which is the divergence the guard exists to find.
-// This package tests parsers against canned git output everywhere else, so the
-// fixture is the smallest real repository that can answer a question about
-// what git itself reports: one commit, one staged edit, one edit after it.
-func dirtyRepo(t *testing.T) (Repo, srcpath.Path) {
+// dirtyRepo is a repository holding count source files, each staged in one
+// state and left in another on disk, which is the divergence the guard exists
+// to find. This package tests parsers against canned git output everywhere
+// else, so the fixture is the smallest real repository that can answer a
+// question about what git itself reports, one commit, one staged edit per
+// file, one edit on disk after it.
+func dirtyRepo(t *testing.T, count int) (Repo, []srcpath.Path) {
 	t.Helper()
 	dir := t.TempDir()
-	const rel = "src/Order.cs"
 	fixtureGit(t, dir, "init", "--quiet")
-	writeFixtureFile(t, dir, rel, "// one\n// two\n")
-	fixtureGit(t, dir, "add", rel)
+	paths := make([]srcpath.Path, 0, count)
+	for i := range count {
+		rel := fmt.Sprintf("src/Order%02d.cs", i)
+		paths = append(paths, srcpath.Path(rel))
+		writeFixtureFile(t, dir, rel, "// one\n// two\n")
+	}
+	fixtureGit(t, dir, "add", "--all")
 	fixtureGit(t, dir, "commit", "--quiet", "-m", "initial")
-	writeFixtureFile(t, dir, rel, "// one\n// staged\n")
-	fixtureGit(t, dir, "add", rel)
-	writeFixtureFile(t, dir, rel, "// one\n// on disk\n")
+	for _, path := range paths {
+		writeFixtureFile(t, dir, path.String(), "// one\n// staged\n")
+	}
+	fixtureGit(t, dir, "add", "--all")
+	for _, path := range paths {
+		writeFixtureFile(t, dir, path.String(), "// one\n// on disk\n")
+	}
 
 	root, err := srcpath.NewRoot(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Repo{root: root}, srcpath.Path(rel)
+	return Repo{root: root}, paths
 }
 
 // fixtureGit runs one git command against the fixture repository. The identity

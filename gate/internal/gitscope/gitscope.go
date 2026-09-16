@@ -570,17 +570,32 @@ func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
 func DivergenceArgs(paths []srcpath.Path) []string {
 	pathspecs := make([]string, 0, len(paths))
 	for _, path := range paths {
-		pathspecs = append(pathspecs, ":(literal)"+string(path))
+		pathspecs = append(pathspecs, pathspec(path))
 	}
 	return slices.Concat([]string{"-c", "core.fileMode=false"}, diffFlags,
 		[]string{"-w", "--numstat", "-z", "--no-renames", "--"}, pathspecs)
 }
 
+// pathspec is how one path travels to git. Both the argv builder and the
+// budget read it, so what a batch is charged is the text the batch sends, and
+// a magic word added here cannot leave the accounting behind.
+func pathspec(path srcpath.Path) string {
+	return ":(literal)" + string(path)
+}
+
 // divergenceBudget is the pathspec text one DivergentFromIndex invocation is
-// allowed to carry. It is a sixteenth of macOS's 1 MiB ARG_MAX and far under
-// Linux's, which leaves the environment and the fixed flags room on the same
-// limit. An ordinary changeset of a few hundred paths is a few KiB, so it
-// stays one invocation.
+// allowed to carry. It is a sixteenth of macOS's 1 MiB ARG_MAX, and an
+// ordinary changeset of a few hundred paths is a few KiB, so it stays one
+// invocation.
+//
+// It is not headroom against every Linux, only against the ones the gate runs
+// on. Linux takes the ceiling as max(min(6 MiB, RLIMIT_STACK/4), 131072), and
+// argv and the environment share it, so a process started under a small
+// `ulimit -s` gets 128 KiB for both together and 64 KiB of pathspecs beside a
+// 63 KiB environment would still be E2BIG. A default 8 MiB stack gives 2 MiB
+// and no caller reaches the floor today, so the budget is left a fixed number
+// rather than made to vary with whatever the caller's shell exported, which
+// would batch differently on two machines for no case that exists.
 const divergenceBudget = 64 << 10
 
 // divergenceBatches splits paths into the invocations DivergentFromIndex runs,
@@ -592,7 +607,7 @@ func divergenceBatches(paths []srcpath.Path) [][]srcpath.Path {
 	var batch []srcpath.Path
 	cost := 0
 	for _, path := range paths {
-		next := len(":(literal)") + len(path) + 1
+		next := len(pathspec(path)) + 1
 		// A path whose own pathspec passes the budget still goes, alone.
 		// Dropping it would answer a question about a file nobody asked about,
 		// so git or exec is left to be the one that refuses it.
@@ -607,6 +622,15 @@ func divergenceBatches(paths []srcpath.Path) [][]srcpath.Path {
 		batches = append(batches, batch)
 	}
 	return batches
+}
+
+// DivergenceBatchCount is how many invocations DivergentFromIndex makes over
+// paths. It is exported for the reason DivergenceArgs is, so the black-box
+// suite can ask the production code whether its fixture actually splits. The
+// budget itself stays unexported, because a case holding the byte figure is a
+// case that keeps passing against a stale copy of it after this one moves.
+func DivergenceBatchCount(paths []srcpath.Path) int {
+	return len(divergenceBatches(paths))
 }
 
 // parseNumstatPaths reads the set of paths out of `--numstat -z` output. It is
