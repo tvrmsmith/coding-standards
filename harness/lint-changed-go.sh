@@ -54,15 +54,25 @@ repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
 repo_root=$(cd "$repo_root" && pwd -P)
 cd "$repo_root" || exit 2
 
+# A linked worktree is the same adoption as the checkout it was made from, so the registry is
+# keyed on the main checkout rather than on where the commit happens to be taken. The hook is
+# shared anyway — it lives in the common git dir — so keying on $repo_root would install a hook
+# in every worktree that then skipped, which reads exactly like the layer being broken. The
+# common git dir is <main>/.git in both cases, so its parent is the main checkout.
+registry_key=$repo_root
+if common_git_dir=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P); then
+  registry_key=$(cd "$common_git_dir/.." && pwd -P)
+fi
+
 # Which repos are adopted is state the Go side has nowhere else to keep: nothing is installed in
 # the target and the binary is machine-wide, so without this file bootstrapping one repo would
 # silently start linting every other repo the hook guards.
 #
 # Skip, don't fail. A repo bootstrapped for TypeScript only must not have its commits blocked by
 # a Go branch that was never wired up.
-if [ ! -f "$registry" ] || ! grep -qxF "$repo_root" "$registry"; then
+if [ ! -f "$registry" ] || ! grep -qxF "$registry_key" "$registry"; then
   [ "$mode" = "--staged" ] \
-    || echo "lint-changed-go: $repo_root is not wired for Go — run 'bootstrap go $repo_root'" >&2
+    || echo "lint-changed-go: $registry_key is not wired for Go — run 'bootstrap go $registry_key'" >&2
   exit 0
 fi
 

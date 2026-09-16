@@ -116,11 +116,20 @@ Three things about it differ from the other two:
   already exists — an ESLint config in the package, a path-scoped `Import` in the props file —
   but the Go side installs nothing in the target and its binary is machine-wide, so without the
   registry, bootstrapping one repo would silently start linting every other repo the hook
-  guards.
+  guards. The line is the **main checkout**, even when `bootstrap go` is pointed at a linked
+  worktree, and `lint-changed-go.sh` resolves the same way before it looks itself up. Both use
+  `git rev-parse --git-common-dir`, whose parent is the main checkout in either case.
+  `test/lint-changed-go.test.js` pins all four combinations of registered/not and
+  worktree/not, because a skip that should have been a run is silent and looks exactly like a
+  repo with no findings.
 - **Findings report and never block**, the same position the .NET half is in and for the same
   reason. `--issues-exit-code=0` makes that explicit, which also means a non-zero exit is
   unambiguous: the run itself broke.
 - **There is no editor half yet.** The hook is the whole gate.
+
+`bootstrap go` is also the one mode that accepts the hub itself as its target. The other two
+would be pointing the hub's own tooling at the hub, which is a mistake every time; the Go one is
+not, because the hub carries real Go code of its own in `gate/`.
 
 ## Worktrees
 
@@ -129,6 +138,10 @@ the main checkout: bootstrap one worktree and the hook guards commits from all o
 branch. `.vscode/settings.json` is per-checkout, so run `bootstrap ts <worktree>` once in each
 worktree you actually open in an editor — it is cheap and idempotent, and the hook install is a
 no-op after the first.
+
+The Go registry follows the same rule from the other direction: it is keyed on the main
+checkout, so one `bootstrap go` covers every worktree the shared hook fires in. See
+[The Go half](#the-go-half).
 
 Two things this depends on, both verified against a linked worktree: paths are resolved
 with `git rev-parse --git-path` rather than `$repo/.git/…` (in a worktree `.git` is a *file*,

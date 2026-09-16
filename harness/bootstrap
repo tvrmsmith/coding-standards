@@ -69,7 +69,14 @@ repo=$(cd "$repo" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null) \
 # which MSBuild normalises but does not resolve, so a path reached through a symlink would
 # scope the analyzers to a prefix no project ever reports (research caveat 2).
 repo=$(cd "$repo" && pwd -P)
-[ "$repo" = "$hub" ] && die "point this at a target repository, not the hub itself"
+# The hub is not a target for ts or dotnet: both write into the repo they adopt (editor
+# settings, a path-scoped Import) and the hub's own packages are the thing being built rather
+# than a consumer of it. Go is different — it installs nothing but the shared hook and a
+# registry line — and the hub has Go code of its own in gate/ and go/, so it is a legitimate
+# target for that one language.
+if [ "$repo" = "$hub" ] && [ "$lang" != go ]; then
+  die "point $lang at a target repository, not the hub itself"
+fi
 
 printf 'Bootstrapping %s (%s)\n  harness: %s\n' "$repo" "$lang" "$harness"
 
@@ -328,11 +335,20 @@ step 'Registry'
 # The Go side installs nothing in the target and its binary is machine-wide, so unlike the other
 # two there is nothing in or around the repo that says "this one is adopted". Without this file,
 # bootstrapping one repo would silently start linting every other repo the hook guards.
-if [ -f "$go_repos" ] && grep -qxF "$repo" "$go_repos"; then
-  info "$go_repos already lists $repo"
+# Keyed on the main checkout, not on $repo: bootstrapping a linked worktree adopts the
+# repository, and lint-changed-go.sh resolves the same way, so one line covers every worktree.
+# The hook is shared between them regardless, because it lives in the common git dir.
+go_repo_key=$repo
+if go_common_git_dir=$(cd "$repo" && cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P); then
+  go_repo_key=$(cd "$go_common_git_dir/.." && pwd -P)
+fi
+[ "$go_repo_key" = "$repo" ] || info "$repo is a worktree of $go_repo_key; registering the repository"
+
+if [ -f "$go_repos" ] && grep -qxF "$go_repo_key" "$go_repos"; then
+  info "$go_repos already lists $go_repo_key"
 else
-  printf '%s\n' "$repo" >>"$go_repos"
-  info "added $repo to $go_repos"
+  printf '%s\n' "$go_repo_key" >>"$go_repos"
+  info "added $go_repo_key to $go_repos"
 fi
 fi  # lang = go
 
