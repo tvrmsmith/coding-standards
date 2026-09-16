@@ -773,7 +773,9 @@ func TestMethodMovedWithinOneFileIsMeasuredAtItsNewLocation(t *testing.T) {
 // this suite happens to exercise, the alternative issue 25 considered and
 // rejected. That reaches only the typechange: a `.cs` symlink added outright
 // arrives as status A, passes ACM, and is handed to the extractor like any
-// other new file. TestASymlinkReplacedByASourceFileContributesNoChangedMethods
+// other new file, the claim
+// TestASymlinkAddedOutrightIsHandedToTheExtractor pins.
+// TestASymlinkReplacedByASourceFileContributesNoChangedMethods
 // pins the opposite direction of the same typechange.
 func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) {
 	f := newFixture(t, "main")
@@ -910,6 +912,46 @@ func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) 
 	// extractor's input from that key set, which the mode-aware pass in issue
 	// 84 would do.
 	assertNotHandedToExtractor(t, handed)
+}
+
+// TestASymlinkAddedOutrightIsHandedToTheExtractor pins the claim the two
+// typechange direction cases above rest on without stating it as a case of
+// its own. A `.cs` symlink added outright arrives as status A, passes
+// --diff-filter=ACM, and is handed to the extractor like any other new file.
+// TestASourceFileReplacedByASymlinkContributesNoChangedMethods and
+// TestASymlinkReplacedByASourceFileContributesNoChangedMethods both reason
+// from that claim to argue widening the filter to ACMT is the wrong remedy,
+// so it carries the argument for both, and until now nothing pinned it.
+//
+// The symlink points at OrderService.cs, its sibling in the same directory,
+// so the link is not dangling.
+func TestASymlinkAddedOutrightIsHandedToTheExtractor(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.symlinkTo(filepath.Base(orderService), orderFile)
+	// `git add` is required, not incidental. ADR 0007's tracked-paths-only
+	// rule means an unstaged new file contributes nothing, exactly as
+	// TestANewFileNeverAddedToTheIndexContributesNoChangedMethods records.
+	f.git("add", orderFile)
+	f.assertAddedAs("main", orderFile, symlink)
+	handed := filepath.Join(t.TempDir(), "handed")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderFile), []span{orderTotal}),
+		StdinLog:   handed,
+	}
+
+	// The new side of an added symlink is one line holding the target path
+	// text, line 1, which falls outside Order.Total's 60-64 span, so
+	// touched_lines_outside_spans goes to 1 with nothing measured. That cell
+	// is what discriminates this golden from empty_changed_set: a gate that
+	// started dropping added symlinks from the changed set would emit
+	// empty_changed_set instead, which differs in exactly that field.
+	f.run().assertMatches(t, "added_symlink", 0, f.baseLabel("main"),
+		"no changed methods, nothing to measure\n")
+
+	assertHandedToExtractor(t, handed, orderFile+"\n")
 }
 
 // TestDeletingAMethodAttributesTheZeroLengthHunkToTheLineBeforeIt pins which

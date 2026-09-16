@@ -610,6 +610,32 @@ func (f *fixture) assertTypechange(base, rel string, committed, tree fileKind) {
 	}
 }
 
+// assertAddedAs fails the case unless rel is a live addition against base,
+// landing in the index at mode tree and standing in the working tree as tree.
+//
+// A case naming an added symlink in its title rests on status A, the same way
+// a typechange case rests on status T, so it needs the same precondition:
+// asserting a presence would pass while pinning nothing if the setup stopped
+// producing the status the case names. assertTypechange is that check for a
+// typechange; this is its sibling for a new path.
+func (f *fixture) assertAddedAs(base, rel string, tree fileKind) {
+	f.t.Helper()
+	if got := f.git("diff", "--name-status", base, "--", rel); got != "A\t"+rel {
+		f.t.Fatalf("git reports %q for %s, so this case is not exercising an addition", got, rel)
+	}
+	if got := f.git("ls-files", "-s", "--", rel); !strings.HasPrefix(got, tree.gitMode()) {
+		f.t.Fatalf("the index holds %q for %s, want %s at mode %s",
+			got, rel, tree, strings.TrimSpace(tree.gitMode()))
+	}
+	info, err := os.Lstat(filepath.Join(f.root, filepath.FromSlash(rel)))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if got := lstatKind(info.Mode()); got != tree {
+		f.t.Fatalf("the working tree holds %s as %s, want %s", rel, got, tree)
+	}
+}
+
 // assertHandedToExtractor fails the case unless the stub's stdin log at handed
 // holds exactly want, which is how a case pins the file list the gate handed
 // the extractor. An absent log means the gate never spawned the extractor for
