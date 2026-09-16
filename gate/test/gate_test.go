@@ -2777,9 +2777,9 @@ func TestNamedReportOutsideTheRepoIsNamedPastItsSymlink(t *testing.T) {
 	// --coverage, so the refusal quotes the target rather than the link the
 	// developer walked in through.
 	dir := t.TempDir()
-	real := filepath.Join(dir, "real")
-	link := symlinkedDir(t, real, filepath.Join(dir, "link"))
-	writeAbsolute(t, filepath.Join(real, "coverage.xml"),
+	realDir := filepath.Join(dir, "real")
+	link := symlinkedDir(t, realDir, filepath.Join(dir, "link"))
+	writeAbsolute(t, filepath.Join(realDir, "coverage.xml"),
 		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
 			coverageClass{filename: orderService, lines: spanCoverage(61, 4, 2)}))
 	f.stub = stubConfig{
@@ -2787,7 +2787,7 @@ func TestNamedReportOutsideTheRepoIsNamedPastItsSymlink(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	named := filepath.ToSlash(filepath.Join(resolvedPath(t, real), "coverage.xml"))
+	named := filepath.ToSlash(filepath.Join(resolvedPath(t, realDir), "coverage.xml"))
 	f.runWithArgs("--coverage", filepath.Join(link, "coverage.xml")).assertMatchesWith(
 		t, "named_report_outside_repo_stale", 1, f.baseLabel("main"),
 		"coverage report "+named+" was written before src/Ordering/OrderService.cs was last edited; "+
