@@ -265,6 +265,73 @@ func TestRelativizeReadsAnAbsentCaseDifferingPrefixAsOutside(t *testing.T) {
 	}
 }
 
+// A component that is a file rather than a directory is climbed past exactly
+// like an absent one: EvalSymlinks reports ENOTDIR partway down a path like
+// this one, not fs.ErrNotExist, and before the fix the climb guard only knew
+// the second, so it handed back the unresolved candidate untouched. That
+// candidate shares no prefix with a root reached through a symlink, so a
+// developer chasing a coverage report through a file misread as a directory
+// got told their report was outside the repo instead. The root here is
+// reached through a symlink for the same reason resolveExisting itself
+// exists, so the case fails on Linux too and not only where macOS hands every
+// run a symlinked /tmp already.
+func TestNameClimbsPastAFileComponentUnderASymlinkedRoot(t *testing.T) {
+	tmp := t.TempDir()
+	mkdir(t, filepath.Join(tmp, "actual", "repo"))
+	link := filepath.Join(tmp, "link")
+	if err := os.Symlink(filepath.Join(tmp, "actual"), link); err != nil {
+		t.Fatal(err)
+	}
+	root, err := NewRoot(filepath.Join(link, "repo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	touch(t, filepath.Join(root.Dir(), "README.md"))
+
+	name := root.Name(filepath.Join(link, "repo", "README.md", "TestResults", "coverage.cobertura.xml"))
+
+	if name != "README.md/TestResults/coverage.cobertura.xml" {
+		t.Errorf("Name through a file component under a symlinked root = %q, want %q", name, "README.md/TestResults/coverage.cobertura.xml")
+	}
+}
+
+// A symlink cycle is a real fault and not a component that is merely absent or
+// a file where a directory belongs, so the climb guard leaves it where it
+// found it. Treating ELOOP like the other two would rename a report that
+// might sit inside the repo into one read as though it sat outside, on the
+// strength of a loop that says nothing about location at all.
+func TestResolveExistingLeavesASymlinkCycleUnclimbed(t *testing.T) {
+	root := containmentRoot(t)
+	loop := filepath.Join(root.Dir(), "loop")
+	if err := os.Symlink(loop, loop); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(loop, "coverage.cobertura.xml")
+
+	if got := resolveExisting(path); got != path {
+		t.Errorf("resolveExisting on a path through a symlink cycle = %q, want it unchanged, %q", got, path)
+	}
+}
+
+// An ancestor the process may not search is a real fault too, and comes back
+// unclimbed for the same reason ELOOP does.
+func TestResolveExistingLeavesAnUnsearchableAncestorUnclimbed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root searches a directory whose mode denies it, so there is no stat failure to provoke")
+	}
+	root := containmentRoot(t)
+	denied := mkdir(t, filepath.Join(root.Dir(), "denied"))
+	if err := os.Chmod(denied, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(denied, 0o755) })
+	path := filepath.Join(denied, "sub", "coverage.cobertura.xml")
+
+	if got := resolveExisting(path); got != path {
+		t.Errorf("resolveExisting on a path under an unsearchable ancestor = %q, want it unchanged, %q", got, path)
+	}
+}
+
 func TestNamedRefusesAMisCasedRootPrefixAsASpellingRatherThanALocation(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)

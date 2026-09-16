@@ -45,6 +45,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"slices"
@@ -476,18 +477,27 @@ func cachedFlag(base Base) []string {
 // asked to ignore. numstat counts the lines the same patch holds, and a
 // whitespace-only difference leaves git printing no record for the path.
 //
-// Every path travels as a `:(literal)` pathspec on one invocation, because git
-// reads a bare pathspec as a wildmatch pattern. `Order[1].cs` would name a
-// character class and match neither the file it spells nor anything else, so the
-// guard would pass on the very file it was asked about, and `[id].tsx` is the
-// ordinary Next.js route filename rather than an exotic one. Pathspecs compose,
-// so `--numstat -z` names the divergent subset directly and a commit touching
-// two hundred files costs one git rather than two hundred. core.quotePath is
+// Every path travels as a `:(literal)` pathspec, because git reads a bare
+// pathspec as a wildmatch pattern. `Order[1].cs` would name a character class
+// and match neither the file it spells nor anything else, so the guard would
+// pass on the very file it was asked about, and `[id].tsx` is the ordinary
+// Next.js route filename rather than an exotic one. Pathspecs compose, so
+// `--numstat -z` names the divergent subset directly and a commit touching two
+// hundred files costs one git rather than two hundred. core.quotePath is
 // pinned false, so the NUL-separated records come back as git spells them, and
 // with renames off each record is the two counts and the path under one NUL,
 // which is why the path is what follows the second tab rather than a record of
 // its own. A record without those two tabs is a shape this parser does not know,
 // so it is refused rather than read as a path that happens to hold a tab.
+//
+// Those pathspecs go out in batches under divergenceBudget rather than all on
+// one command line, because a command line has a ceiling nothing here was
+// enforcing. A changeset on the order of ten thousand source files runs past
+// ARG_MAX, exec fails with E2BIG, and the gate reports diff_unparseable, which
+// names the wrong problem, since git parsed nothing because it never ran. The
+// union of what the batches name is the same answer the one invocation gave,
+// because the caller asks only whether any of the paths is divergent, and an
+// ordinary changeset still costs one git.
 //
 // In a repository whose clean driver transforms content, git-lfs or git-crypt
 // rather than the pass-through case above, this refuses more than the developer
@@ -525,17 +535,24 @@ func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
 	if len(paths) == 0 {
 		return nil, nil
 	}
+	// The drivers are resolved once rather than per batch. They are a property
+	// of the repository and not of the paths, so asking again would spawn a
+	// git per batch to learn the same answer.
 	drivers, err := r.filterDrivers()
 	if err != nil {
 		return nil, unreadableDiff(err)
 	}
-	out, err := r.gitBlanking(drivers, DivergenceArgs(paths)...)
-	if err != nil {
-		return nil, unreadableDiff(err)
-	}
-	named, err := parseNumstatPaths(out)
-	if err != nil {
-		return nil, err
+	named := map[srcpath.Path]bool{}
+	for _, batch := range divergenceBatches(paths) {
+		out, err := r.gitBlanking(drivers, DivergenceArgs(batch)...)
+		if err != nil {
+			return nil, unreadableDiff(err)
+		}
+		batchNamed, err := parseNumstatPaths(out)
+		if err != nil {
+			return nil, err
+		}
+		maps.Copy(named, batchNamed)
 	}
 	var divergent []srcpath.Path
 	for _, path := range paths {
@@ -546,10 +563,10 @@ func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
 	return divergent, nil
 }
 
-// DivergenceArgs is the whole argv DivergentFromIndex hands git for paths. It
-// is exported so the black-box suite can put the same question to git that the
-// gate puts, rather than restating the flags in a second place where one of
-// the two can drift.
+// DivergenceArgs is the whole argv DivergentFromIndex hands git for one batch
+// of paths. It is exported so the black-box suite can put the same question to
+// git that the gate puts, rather than restating the flags in a second place
+// where one of the two can drift.
 func DivergenceArgs(paths []srcpath.Path) []string {
 	pathspecs := make([]string, 0, len(paths))
 	for _, path := range paths {
@@ -557,6 +574,39 @@ func DivergenceArgs(paths []srcpath.Path) []string {
 	}
 	return slices.Concat([]string{"-c", "core.fileMode=false"}, diffFlags,
 		[]string{"-w", "--numstat", "-z", "--no-renames", "--"}, pathspecs)
+}
+
+// divergenceBudget is the pathspec text one DivergentFromIndex invocation is
+// allowed to carry. It is a sixteenth of macOS's 1 MiB ARG_MAX and far under
+// Linux's, which leaves the environment and the fixed flags room on the same
+// limit. An ordinary changeset of a few hundred paths is a few KiB, so it
+// stays one invocation.
+const divergenceBudget = 64 << 10
+
+// divergenceBatches splits paths into the invocations DivergentFromIndex runs,
+// keeping the order it was given. A path costs its pathspec plus the NUL that
+// terminates it in the kernel's argv block, and a batch closes when the next
+// path would take it past the budget.
+func divergenceBatches(paths []srcpath.Path) [][]srcpath.Path {
+	var batches [][]srcpath.Path
+	var batch []srcpath.Path
+	cost := 0
+	for _, path := range paths {
+		next := len(":(literal)") + len(path) + 1
+		// A path whose own pathspec passes the budget still goes, alone.
+		// Dropping it would answer a question about a file nobody asked about,
+		// so git or exec is left to be the one that refuses it.
+		if len(batch) > 0 && cost+next > divergenceBudget {
+			batches = append(batches, batch)
+			batch, cost = nil, 0
+		}
+		batch = append(batch, path)
+		cost += next
+	}
+	if len(batch) > 0 {
+		batches = append(batches, batch)
+	}
+	return batches
 }
 
 // parseNumstatPaths reads the set of paths out of `--numstat -z` output. It is

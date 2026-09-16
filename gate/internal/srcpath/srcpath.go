@@ -59,6 +59,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 // Path is a repo-relative, slash-separated source path.
@@ -390,20 +391,36 @@ func (r Root) Name(path string) Name {
 // and /var on macOS) and an unresolved path compared against the resolved root
 // escapes for the indirection rather than for where it actually is.
 //
-// Only a component that is not there is climbed past: a symlink loop or an
-// ancestor the process may not search is a real fault, and climbing over it
-// would rename a report that does sit inside the repo into one named as though
-// it sat outside.
+// Only a component with nothing resolvable at that depth is climbed past.
+// EvalSymlinks says so two ways, fs.ErrNotExist for a component that is
+// absent and ENOTDIR for one that is a file standing where a directory would
+// have to be, and a file holds nothing beneath it either, so the two report
+// the same thing about the depth and climb alike. A symlink loop or an
+// ancestor the process may not search is a real fault instead, not an
+// absence, and climbing over either would rename a report that does sit
+// inside the repo into one named as though it sat outside.
 func resolveExisting(abs string) string {
 	resolved, err := filepath.EvalSymlinks(abs)
 	if err == nil {
 		return resolved
 	}
 	parent := filepath.Dir(abs)
-	if !errors.Is(err, fs.ErrNotExist) || parent == abs {
+	if parent == abs || !nothingResolvableHere(err) {
 		return abs
 	}
 	return filepath.Join(resolveExisting(parent), filepath.Base(abs))
+}
+
+// nothingResolvableHere reports whether err is EvalSymlinks saying there is
+// nothing to resolve at this depth, an absent component or one that is a
+// regular file rather than a directory. The filesystem reports the second as
+// ENOTDIR rather than fs.ErrNotExist, since it is a file and not nothing, but
+// a file holds nothing beneath it either, so climbing past it is the same
+// move as climbing past an absence. A symlink loop or a directory the process
+// may not search is a different question, whether the path resolves at all,
+// and answers false.
+func nothingResolvableHere(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
 }
 
 // FromSlash adopts an already repo-relative, slash-separated path, which is
