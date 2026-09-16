@@ -193,6 +193,19 @@ The Go registry follows the same rule from the other direction: it is keyed on t
 checkout, so one `bootstrap go` covers every worktree the shared hook fires in. See
 [The Go half](#the-go-half).
 
+The .NET half is keyed on the main checkout too, and getting there took one extra move. Its
+registry is the path-scoped `<Import>` in `~/.config/coding-standards.props`, and that same
+`StartsWith('<repo>/')` condition is what MSBuild tests against `MSBuildProjectDirectory` when it
+decides whether to load the analyzers. A worktree outside the main checkout's path fails the test
+inside MSBuild no matter what the hook believes, so resolving the registry lookup alone would have
+fired the hook where no analyzer loads and reported nothing, which reads as a clean tree. So
+`lint-changed-dotnet.sh` imports the analyzer props directly rather than through the scoped
+wrapper: adoption is already settled by the registry check above it, and the condition has no
+second job to do. Ambient IDE and CLI builds still go through the wrapper, so **they** reach the
+main checkout only, and `bootstrap dotnet <worktree>` does not change that: it registers the
+worktree's main checkout, so no worktree path ever enters the condition. Commits from a worktree
+are linted; typing in one is not.
+
 Two things this depends on, both verified against a linked worktree: paths are resolved
 with `git rev-parse --git-path` rather than `$repo/.git/…` (in a worktree `.git` is a *file*,
 so the naive path is `not a directory`), and the hook carries a marker line so a reinstall
