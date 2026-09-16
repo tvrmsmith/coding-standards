@@ -345,7 +345,9 @@ func renderCobertura(stamp string, sources []string, classes ...coverageClass) s
 	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>` + "\n")
 	timestampAttr := ""
 	if stamp != "" {
-		timestampAttr = fmt.Sprintf(` timestamp="%s"`, xmlAttribute(stamp))
+		// Concatenated rather than formatted: xmlAttribute has already escaped
+		// the value for XML, and %q would escape it a second time for Go.
+		timestampAttr = ` timestamp="` + xmlAttribute(stamp) + `"`
 	}
 	fmt.Fprintf(&b, `<coverage line-rate="0" version="1.9"%s>`+"\n", timestampAttr)
 	if len(sources) == 0 {
