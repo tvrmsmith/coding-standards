@@ -52,12 +52,21 @@ func TestMain(m *testing.M) {
 	binDir = dir
 	if err := buildBinaries(dir); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.RemoveAll(dir)
+		removeBinDir(dir)
 		os.Exit(1)
 	}
 	code := m.Run()
-	os.RemoveAll(dir)
+	removeBinDir(dir)
 	os.Exit(code)
+}
+
+// removeBinDir takes the built binaries away again. TestMain has no *testing.T
+// to fail, so a directory left behind is reported on stderr: the next run
+// builds over it and would otherwise never say the temp tree is filling up.
+func removeBinDir(dir string) {
+	if err := os.RemoveAll(dir); err != nil {
+		fmt.Fprintf(os.Stderr, "removing the binary directory %s: %v\n", dir, err)
+	}
 }
 
 // buildBinaries compiles the gate and the stub extractor into dir.

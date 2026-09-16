@@ -110,9 +110,11 @@ func emit(stdout, stderr io.Writer, doc report.Document) (int, error) {
 		return 1, fmt.Errorf("writing the document to stdout: wrote %d of %d bytes", n, len(body))
 	}
 	// The document already reached the caller by this point, so a failure
-	// writing the human summary has nowhere left to complain. It is dropped
-	// rather than turned into a second exit-1 cause.
-	io.WriteString(stderr, doc.Stderr())
+	// writing the human summary has nowhere left to complain: the summary is
+	// what a complaint would be printed to. Dropped explicitly rather than
+	// turned into a second exit-1 cause, which would contradict the document
+	// the caller is already holding.
+	_, _ = io.WriteString(stderr, doc.Stderr())
 	return doc.ExitCode(), nil
 }
 

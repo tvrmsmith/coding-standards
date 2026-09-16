@@ -4019,7 +4019,11 @@ func TestStdoutRefusingTheWriteExitsOneRatherThanTheDocumentsOwnCode(t *testing.
 	if err != nil {
 		t.Fatalf("opening /dev/full: %v", err)
 	}
-	defer full.Close()
+	defer func() {
+		if err := full.Close(); err != nil {
+			t.Errorf("closing /dev/full: %v", err)
+		}
+	}()
 
 	f := newFixture(t, "main")
 	f.stub = stubConfig{Extensions: []string{".cs"}}

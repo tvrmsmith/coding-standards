@@ -170,10 +170,7 @@ func TestRelativizeReportsAPrefixTheFilesystemWillNotStat(t *testing.T) {
 		t.Fatal(err)
 	}
 	candidate := filepath.Join(parent, "REPO", "a.txt")
-	if err := os.Chmod(parent, 0o000); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+	denyAccess(t, parent, 0o000)
 
 	rel, place, err := root.relativize(candidate)
 
@@ -1066,10 +1063,7 @@ func TestNameNamesAReportItCannotWeighAgainstTheRepoRootByItsAbsolutePath(t *tes
 		t.Fatal(err)
 	}
 	path := filepath.Join(parent, "REPO", "TestResults", "coverage.cobertura.xml")
-	if err := os.Chmod(parent, 0o000); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+	denyAccess(t, parent, 0o000)
 	// Name answers the absolute path for anything it reads as outside the root,
 	// so without this the case stays green if the mode stops provoking a stat
 	// failure and the fault arm is never reached.
@@ -1312,23 +1306,29 @@ func rootUnderASymlinkedMiscasedParent(t *testing.T) (Root, string) {
 // keeps its own and calls this.
 func assertRootSpellingRefusal(t *testing.T, err error, name string) {
 	t.Helper()
-	unresolved := assertUnresolvedReason(t, err, "is not spelled as the repo root is")
-	if unresolved.Name != name {
-		t.Errorf("Name = %q, want the name as typed, %q", unresolved.Name, name)
+	assertUnresolvedReason(t, err, "is not spelled as the repo root is")
+	if got := unresolvedError(t, err).Name; got != name {
+		t.Errorf("Name = %q, want the name as typed, %q", got, name)
 	}
 }
 
 // assertUnresolvedReason is the refusal every named case that is about the path
-// wants back, read as the typed error rather than as message text, and returned
-// so a case that also cares which name it quotes can go on to check that.
-func assertUnresolvedReason(t *testing.T, err error, want string) *UnresolvedError {
+// wants back, read as the typed error rather than as message text.
+func assertUnresolvedReason(t *testing.T, err error, want string) {
+	t.Helper()
+	if reason := unresolvedError(t, err).Reason; reason != want {
+		t.Errorf("Reason = %q, want %q", reason, want)
+	}
+}
+
+// unresolvedError reads err as the typed refusal, so a case that cares about a
+// second field of it asks for the error rather than for one assertion's
+// leftovers.
+func unresolvedError(t *testing.T, err error) *UnresolvedError {
 	t.Helper()
 	var unresolved *UnresolvedError
 	if !errors.As(err, &unresolved) {
 		t.Fatalf("named returned %v, want an *UnresolvedError", err)
-	}
-	if unresolved.Reason != want {
-		t.Errorf("Reason = %q, want %q", unresolved.Reason, want)
 	}
 	return unresolved
 }
@@ -1412,6 +1412,23 @@ func mkdir(t *testing.T, dir string) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+// denyAccess puts dir into mode, which is how a case provokes a filesystem
+// that will not answer, and restores a mode the case can be cleaned up under
+// afterwards. The restore is checked rather than fired and forgotten, because
+// a chmod that failed leaves t.TempDir unable to remove the tree and reports
+// that somewhere other than the case that locked it.
+func denyAccess(t *testing.T, dir string, mode fs.FileMode) {
+	t.Helper()
+	if err := os.Chmod(dir, mode); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0o750); err != nil {
+			t.Errorf("restoring the mode of %s: %v", dir, err)
+		}
+	})
 }
 
 // touch writes an empty file at path, creating its parents.
