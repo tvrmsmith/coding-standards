@@ -1,7 +1,6 @@
 package report
 
 import (
-	"bufio"
 	"os"
 	"path/filepath"
 	"sort"
@@ -56,24 +55,20 @@ func goldenCodes(t *testing.T) map[string]bool {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(matches) == 0 {
+		t.Fatal("no goldens found; every code would read as unpinned for the wrong reason")
+	}
 	found := map[string]bool{}
 	for _, path := range matches {
-		file, err := os.Open(path)
+		body, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if code, ok := strings.CutPrefix(line, "code:"); ok {
+		for _, line := range strings.Split(string(body), "\n") {
+			if code, ok := strings.CutPrefix(strings.TrimSpace(line), "code:"); ok {
 				found[strings.TrimSpace(code)] = true
 			}
 		}
-		if err := scanner.Err(); err != nil {
-			file.Close()
-			t.Fatal(err)
-		}
-		file.Close()
 	}
 	return found
 }
