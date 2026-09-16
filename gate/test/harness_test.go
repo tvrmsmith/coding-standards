@@ -9,6 +9,7 @@ package gate_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -70,7 +71,7 @@ func buildBinaries(dir string) error {
 		cmd := exec.Command("go", "build", "-o", filepath.Join(dir, name), pkg)
 		cmd.Dir = ".."
 		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("building %s: %v\n%s", pkg, err, out)
+			return fmt.Errorf("building %s: %w\n%s", pkg, err, out)
 		}
 	}
 	return nil
@@ -296,10 +297,11 @@ func (f *fixture) execTo(dir, workdir string, args []string, out io.Writer, extr
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	exitCode := 0
-	switch e := err.(type) {
-	case nil:
-	case *exec.ExitError:
-		exitCode = e.ExitCode()
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+	case errors.As(err, &exit):
+		exitCode = exit.ExitCode()
 	default:
 		f.t.Fatalf("running metric-gate: %v", err)
 	}
