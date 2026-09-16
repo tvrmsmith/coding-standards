@@ -166,10 +166,10 @@ func (f *fixture) git(args ...string) string {
 func (f *fixture) write(rel, content string) {
 	f.t.Helper()
 	full := filepath.Join(f.root, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 		f.t.Fatal(err)
 	}
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
 		f.t.Fatal(err)
 	}
 }
@@ -276,7 +276,7 @@ func (f *fixture) stubConfigPath() string {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	if err := os.WriteFile(path, body, 0o644); err != nil {
+	if err := os.WriteFile(path, body, 0o600); err != nil {
 		f.t.Fatal(err)
 	}
 	return path

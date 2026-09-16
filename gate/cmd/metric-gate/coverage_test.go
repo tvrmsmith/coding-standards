@@ -127,10 +127,10 @@ func rootWithNoCoverageReport(t *testing.T) (srcpath.Root, []extract.Span) {
 	dir := t.TempDir()
 	const rel = "src/Ordering/OrderService.cs"
 	full := filepath.Join(dir, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(full, []byte("// source\n"), 0o644); err != nil {
+	if err := os.WriteFile(full, []byte("// source\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	root, err := srcpath.NewRoot(dir)

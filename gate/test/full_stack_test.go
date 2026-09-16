@@ -496,7 +496,7 @@ func localFeedConfig(t *testing.T, packDir string) string {
   </packageSources>
 </configuration>
 `
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path
