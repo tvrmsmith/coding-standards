@@ -227,7 +227,7 @@ func TestNamedRefusesAPathItCannotWeighAgainstTheRepoRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := root.named(name, dirNames{})
+	_, err := root.named(name, "", dirNames{})
 
 	var unresolved *UnresolvedError
 	if !errors.As(err, &unresolved) {
@@ -417,7 +417,7 @@ func TestNamedRefusesAMisCasedRootPrefixAsASpellingRatherThanALocation(t *testin
 	// complaint is that the gate sent the developer after the location.
 	name := filepath.Join(miscased, "src", "a.cs")
 
-	_, err := root.named(name, dirNames{})
+	_, err := root.named(name, "", dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
@@ -432,18 +432,12 @@ func TestNamedAcceptsARelativeNameResolvedThroughAMisCasedWorkingDirectory(t *te
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
-	// t.Chdir sets PWD as well as the process directory, which is what makes
-	// os.Getwd hand named the mis-cased spelling rather than the tree's own.
-	// os.Getwd only prefers PWD when it stats as the same file, so without this
-	// the case degrades into an ordinary inside reading that never reaches the
-	// fold and still passes.
-	t.Chdir(miscased)
-	if cwd, err := os.Getwd(); err != nil || cwd != miscased {
-		t.Fatalf("os.Getwd returned %q, %v, want the mis-cased %q; this case is not exercising the fold", cwd, err, miscased)
-	}
+	// Handing the mis-cased spelling in as cwd is what makes this the fold
+	// case; the tree's own spelling would be an ordinary inside reading that
+	// never reaches the fold and still passes.
 	assertFolds(t, root, filepath.Join(miscased, "src", "a.cs"))
 
-	rel, err := root.named(filepath.Join("src", "a.cs"), dirNames{})
+	rel, err := root.named(filepath.Join("src", "a.cs"), miscased, dirNames{})
 
 	if err != nil || rel != "src/a.cs" {
 		t.Errorf("named on a relative name under a mis-cased working directory returned %q, %v, want \"src/a.cs\", nil", rel, err)
@@ -458,10 +452,9 @@ func TestNamedRefusesAMisCasedRootPrefixARelativeNameClimbedOutTo(t *testing.T) 
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
-	t.Chdir(filepath.Join(root.Dir(), "src"))
 	name := filepath.Join("..", "..", filepath.Base(miscased), "src", "a.cs")
 
-	_, err := root.named(name, dirNames{})
+	_, err := root.named(name, filepath.Join(root.Dir(), "src"), dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
@@ -483,11 +476,10 @@ func TestNamedRefusesAMisCasedRootPrefixClimbedOutOfASymlinkedWorkingDirectory(t
 	if err := os.Symlink(elsewhere, filepath.Join(root.Dir(), "ln")); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(filepath.Join(root.Dir(), "ln"))
 	assertFolds(t, root, filepath.Join(miscased, "src", "a.cs"))
 	name := filepath.Join("..", "..", filepath.Base(miscased), "src", "a.cs")
 
-	_, err := root.named(name, dirNames{})
+	_, err := root.named(name, filepath.Join(root.Dir(), "ln"), dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
@@ -500,11 +492,10 @@ func TestNamedRefusesACaseDifferingRootSpellingClimbedOutOfASymlinkedWorkingDire
 	if err := os.Symlink(elsewhere, filepath.Join(realDir, "ln")); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(filepath.Join(realDir, "ln"))
 	assertFolds(t, root, filepath.Join(realDir, "src", "a.cs"))
 	name := filepath.Join("..", "..", filepath.Base(realDir), "src", "a.cs")
 
-	_, err := root.named(name, dirNames{})
+	_, err := root.named(name, filepath.Join(realDir, "ln"), dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
@@ -518,12 +509,11 @@ func TestNamedRefusesAMisCasedRootPrefixAnInteriorClimbReachedOutTo(t *testing.T
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
-	t.Chdir(root.Dir())
 	// Spelled rather than joined, because filepath.Join cleans its arguments and
 	// would hand named a name whose climb is already a leading parent.
 	name := filepath.FromSlash("src/../../" + filepath.Base(miscased) + "/src/a.cs")
 
-	_, err := root.named(name, dirNames{})
+	_, err := root.named(name, root.Dir(), dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
@@ -535,10 +525,9 @@ func TestNamedRefusesAMisCasedRootPrefixAnInteriorClimbReachedOutTo(t *testing.T
 func TestNamedRefusesACaseDifferingRootSpellingARelativeNameClimbedOutTo(t *testing.T) {
 	root, realDir := symlinkedMiscasedRoot(t)
 	touch(t, filepath.Join(realDir, "src", "a.cs"))
-	t.Chdir(filepath.Join(realDir, "src"))
 	name := filepath.Join("..", "..", filepath.Base(realDir), "src", "a.cs")
 
-	_, err := root.named(name, dirNames{})
+	_, err := root.named(name, filepath.Join(realDir, "src"), dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
@@ -547,12 +536,11 @@ func TestNamedRefusesACaseDifferingRootSpellingARelativeNameClimbedOutTo(t *test
 func TestNamedRefusesACaseDifferingRootSpellingAnInteriorClimbReachedOutTo(t *testing.T) {
 	root, realDir := symlinkedMiscasedRoot(t)
 	touch(t, filepath.Join(realDir, "src", "a.cs"))
-	t.Chdir(realDir)
 	// Spelled rather than joined, because filepath.Join cleans its arguments and
 	// would hand named a name whose climb is already a leading parent.
 	name := filepath.FromSlash("src/../../" + filepath.Base(realDir) + "/src/a.cs")
 
-	_, err := root.named(name, dirNames{})
+	_, err := root.named(name, realDir, dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
@@ -584,7 +572,7 @@ func TestNamedRefusesAMisCasedRootPrefixTypedThroughASymlinkedAncestor(t *testin
 	name := filepath.Join(tmp, filepath.Base(miscased), "src", "a.cs")
 	assertFolds(t, root, filepath.Join(miscased, "src", "a.cs"))
 
-	_, err = root.named(name, dirNames{})
+	_, err = root.named(name, "", dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
@@ -614,7 +602,7 @@ func TestNamedRefusesACaseDifferingRootSpellingTypedThroughASymlinkedAncestor(t 
 	name := filepath.Join(shortcut, "repo", "src", "a.cs")
 	assertFolds(t, root, filepath.Join(realDir, "src", "a.cs"))
 
-	_, err = root.named(name, dirNames{})
+	_, err = root.named(name, "", dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
@@ -630,7 +618,7 @@ func TestNamedRefusesAMisCasedRootPrefixWithAClimbBelowIt(t *testing.T) {
 	// away before named ever sees it.
 	name := filepath.FromSlash(filepath.ToSlash(miscased) + "/src/../src/a.cs")
 
-	_, err := root.named(name, dirNames{})
+	_, err := root.named(name, "", dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
@@ -641,7 +629,7 @@ func TestNamedRefusesACaseDifferingRootSpellingWithAClimbBelowIt(t *testing.T) {
 	touch(t, filepath.Join(realDir, "src", "a.cs"))
 	name := filepath.FromSlash(filepath.ToSlash(realDir) + "/src/../src/a.cs")
 
-	_, err := root.named(name, dirNames{})
+	_, err := root.named(name, "", dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
@@ -656,16 +644,12 @@ func TestNamedRefusesACaseDifferingRootSpellingWithAClimbBelowIt(t *testing.T) {
 func TestNamedAcceptsARelativeNameUnderAMisCasedParentOfTheRoot(t *testing.T) {
 	root, miscasedParent := miscasedParentRoot(t)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
-	t.Chdir(filepath.Join(miscasedParent, "repo", "src"))
-	if cwd, err := os.Getwd(); err != nil || cwd != filepath.Join(miscasedParent, "repo", "src") {
-		t.Fatalf("os.Getwd returned %q, %v, want the mis-cased spelling; this case is not exercising the fold", cwd, err)
-	}
 	assertFolds(t, root, filepath.Join(miscasedParent, "repo", "src", "a.cs"))
 	// "repo" spelled as the tree spells it. The mis-cased component is DEV,
 	// above it, which only the working directory supplied.
 	name := filepath.Join("..", "..", "repo", "src", "a.cs")
 
-	rel, err := root.named(name, dirNames{})
+	rel, err := root.named(name, filepath.Join(miscasedParent, "repo", "src"), dirNames{})
 
 	if err != nil || rel != "src/a.cs" {
 		t.Errorf("named on a name climbing out under a mis-cased parent returned %q, %v, want \"src/a.cs\", nil", rel, err)
@@ -689,7 +673,7 @@ func TestNamedRefusesAMisCasedRootPrefixAheadOfACountChangingSymlink(t *testing.
 	name := filepath.Join(miscased, "link", "a.cs")
 	assertFolds(t, root, filepath.Join(miscased, "deep", "inner", "a.cs"))
 
-	_, err := root.named(name, dirNames{})
+	_, err := root.named(name, "", dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
@@ -704,7 +688,7 @@ func TestNamedRefusesACaseDifferingRootSpellingAheadOfACountChangingSymlink(t *t
 	name := filepath.Join(realDir, "link", "a.cs")
 	assertFolds(t, root, filepath.Join(realDir, "deep", "inner", "a.cs"))
 
-	_, err := root.named(name, dirNames{})
+	_, err := root.named(name, "", dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
@@ -722,10 +706,9 @@ func TestNamedAcceptsARootReachedThroughALinkNamedSomethingElse(t *testing.T) {
 	if err := os.Symlink(miscased, filepath.Join(tmp, "link")); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(tmp)
 	assertFolds(t, root, filepath.Join(miscased, "src", "a.cs"))
 
-	rel, err := root.named(filepath.Join("link", "src", "a.cs"), dirNames{})
+	rel, err := root.named(filepath.Join("link", "src", "a.cs"), tmp, dirNames{})
 
 	if err != nil || rel != "src/a.cs" {
 		t.Errorf("named on a name reaching the root through a link of another name returned %q, %v, want \"src/a.cs\", nil", rel, err)
@@ -740,10 +723,9 @@ func TestNamedAcceptsACaseDifferingRootReachedThroughALinkNamedSomethingElse(t *
 	if err := os.Symlink(realDir, filepath.Join(tmp, "link")); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(tmp)
 	assertFolds(t, root, filepath.Join(realDir, "src", "a.cs"))
 
-	rel, err := root.named(filepath.Join("link", "src", "a.cs"), dirNames{})
+	rel, err := root.named(filepath.Join("link", "src", "a.cs"), tmp, dirNames{})
 
 	if err != nil || rel != "src/a.cs" {
 		t.Errorf("named on a name reaching the root through a link of another name returned %q, %v, want \"src/a.cs\", nil", rel, err)
@@ -759,14 +741,13 @@ func TestNamedAcceptsACaseDifferingRootReachedThroughALinkNamedSomethingElse(t *
 func TestNamedRefusesAMisCasedRootComponentAboveTheLastOneTheTextSpelled(t *testing.T) {
 	root, realDir := rootUnderASymlinkedMiscasedParent(t)
 	touch(t, filepath.Join(realDir, "src", "a.cs"))
-	t.Chdir(filepath.Join(realDir, "src"))
 	assertFolds(t, root, filepath.Join(realDir, "src", "a.cs"))
 	// The parent as the tree spells it, which is the spelling the root does not
 	// use on this side of the pair.
 	parent := filepath.Base(filepath.Dir(realDir))
 	name := filepath.Join("..", "..", "..", parent, filepath.Base(realDir), "src", "a.cs")
 
-	_, err := root.named(name, dirNames{})
+	_, err := root.named(name, filepath.Join(realDir, "src"), dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
@@ -777,11 +758,10 @@ func TestNamedRefusesAMisCasedRootComponentAboveTheLastOneTheTextSpelled(t *test
 func TestNamedRefusesAMisCasedParentOfTheRootTheTextSpelled(t *testing.T) {
 	root, miscasedParent := miscasedParentRoot(t)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
-	t.Chdir(filepath.Join(root.Dir(), "src"))
 	assertFolds(t, root, filepath.Join(miscasedParent, "repo", "src", "a.cs"))
 	name := filepath.Join("..", "..", "..", filepath.Base(miscasedParent), "repo", "src", "a.cs")
 
-	_, err := root.named(name, dirNames{})
+	_, err := root.named(name, filepath.Join(root.Dir(), "src"), dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
@@ -800,13 +780,12 @@ func TestNamedRefusesAMisCasedParentOfTheRootTheTextSpelled(t *testing.T) {
 func TestNamedAcceptsARelativeNameWhoseWorkingDirectoryIsMisCasedAboveTheRoot(t *testing.T) {
 	root, realDir := rootUnderASymlinkedMiscasedParent(t)
 	touch(t, filepath.Join(realDir, "src", "a.cs"))
-	t.Chdir(filepath.Join(realDir, "src"))
 	assertFolds(t, root, filepath.Join(realDir, "src", "a.cs"))
 	// "repo" spelled as the tree spells it. The mis-cased component is the
 	// parent above it, which only the working directory supplied.
 	name := filepath.Join("..", "..", filepath.Base(realDir), "src", "a.cs")
 
-	rel, err := root.named(name, dirNames{})
+	rel, err := root.named(name, filepath.Join(realDir, "src"), dirNames{})
 
 	if err != nil || rel != "src/a.cs" {
 		t.Errorf("named on a name climbing out under a mis-cased parent returned %q, %v, want \"src/a.cs\", nil", rel, err)
@@ -837,11 +816,10 @@ func TestNamedAcceptsAMisCasedRootSpellingReachedThroughASymlinkedWorkingDirecto
 		t.Fatal(err)
 	}
 	touch(t, filepath.Join(realDir, "src", "a.cs"))
-	t.Chdir(filepath.Join(tmp, "s", "dev", "repo", "src"))
 	assertFolds(t, root, filepath.Join(realDir, "src", "a.cs"))
 	name := filepath.Join("..", "..", "repo", "src", "a.cs")
 
-	rel, err := root.named(name, dirNames{})
+	rel, err := root.named(name, filepath.Join(tmp, "s", "dev", "repo", "src"), dirNames{})
 
 	if err != nil || rel != "src/a.cs" {
 		t.Errorf("named on a name climbing out through a symlinked working directory returned %q, %v, want \"src/a.cs\", nil", rel, err)
@@ -857,11 +835,10 @@ func TestNamedAcceptsAMisCasedRootSpellingReachedThroughASymlinkedWorkingDirecto
 func TestNamedAcceptsARelativeNameWhoseWorkingDirectoryReachesTheRootThroughASymlink(t *testing.T) {
 	root, realDir, shortcut := rootReachedThroughAShortcut(t)
 	touch(t, filepath.Join(realDir, "src", "a.cs"))
-	t.Chdir(filepath.Join(shortcut, "dev", "repo", "src"))
 	assertFolds(t, root, filepath.Join(realDir, "src", "a.cs"))
 	name := filepath.Join("..", "..", "repo", "src", "a.cs")
 
-	rel, err := root.named(name, dirNames{})
+	rel, err := root.named(name, filepath.Join(shortcut, "dev", "repo", "src"), dirNames{})
 
 	if err != nil || rel != "src/a.cs" {
 		t.Errorf("named on a name climbing out through a symlinked working directory returned %q, %v, want \"src/a.cs\", nil", rel, err)
@@ -877,11 +854,10 @@ func TestNamedAcceptsARelativeNameWhoseWorkingDirectoryReachesTheRootThroughASym
 func TestNamedRefusesAMisCasedParentTypedThroughAShortcutWorkingDirectory(t *testing.T) {
 	root, realDir, shortcut := rootReachedThroughAShortcut(t)
 	touch(t, filepath.Join(realDir, "src", "a.cs"))
-	t.Chdir(filepath.Join(shortcut, "dev", "repo", "src"))
 	assertFolds(t, root, filepath.Join(realDir, "src", "a.cs"))
 	name := filepath.Join("..", "..", "..", filepath.Base(filepath.Dir(realDir)), "repo", "src", "a.cs")
 
-	_, err := root.named(name, dirNames{})
+	_, err := root.named(name, filepath.Join(shortcut, "dev", "repo", "src"), dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
@@ -903,10 +879,9 @@ func TestNamedAcceptsARelativeNameWhoseSymlinkTargetSpellsTheRootMisCased(t *tes
 	if err := os.Symlink(filepath.Join(miscased, "src"), filepath.Join(tmp, "link")); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(tmp)
 	assertFolds(t, root, filepath.Join(miscased, "src", "a.cs"))
 
-	rel, err := root.named(filepath.Join("link", "a.cs"), dirNames{})
+	rel, err := root.named(filepath.Join("link", "a.cs"), tmp, dirNames{})
 
 	if err != nil || rel != "src/a.cs" {
 		t.Errorf("named on a name descending through a mis-cased symlink target returned %q, %v, want \"src/a.cs\", nil", rel, err)
@@ -922,10 +897,9 @@ func TestNamedAcceptsADescentThroughASymlinkUnderACaseDifferingRootSpelling(t *t
 	if err := os.Symlink(filepath.Join(realDir, "src"), filepath.Join(tmp, "link")); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(tmp)
 	assertFolds(t, root, filepath.Join(realDir, "src", "a.cs"))
 
-	rel, err := root.named(filepath.Join("link", "a.cs"), dirNames{})
+	rel, err := root.named(filepath.Join("link", "a.cs"), tmp, dirNames{})
 
 	if err != nil || rel != "src/a.cs" {
 		t.Errorf("named on a name descending through a symlink into the repo returned %q, %v, want \"src/a.cs\", nil", rel, err)
@@ -944,11 +918,10 @@ func TestNamedAcceptsADescentThroughASymlinkUnderACorrectlySpelledRootPrefix(t *
 	if err := os.Symlink(miscased, filepath.Join(root.Dir(), "link")); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(filepath.Dir(root.Dir()))
 	assertFolds(t, root, filepath.Join(miscased, "src", "a.cs"))
 	name := filepath.Join(filepath.Base(root.Dir()), "link", "src", "a.cs")
 
-	rel, err := root.named(name, dirNames{})
+	rel, err := root.named(name, filepath.Dir(root.Dir()), dirNames{})
 
 	if err != nil || rel != "src/a.cs" {
 		t.Errorf("named on a name descending through a link that re-cases the root returned %q, %v, want \"src/a.cs\", nil", rel, err)
@@ -963,11 +936,10 @@ func TestNamedAcceptsADescentThroughASymlinkSpellingTheRootAsTheTreeDoes(t *test
 	if err := os.Symlink(realDir, filepath.Join(realDir, "link")); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(filepath.Dir(realDir))
 	assertFolds(t, root, filepath.Join(realDir, "src", "a.cs"))
 	name := filepath.Join(filepath.Base(root.Dir()), "link", "src", "a.cs")
 
-	rel, err := root.named(name, dirNames{})
+	rel, err := root.named(name, filepath.Dir(realDir), dirNames{})
 
 	if err != nil || rel != "src/a.cs" {
 		t.Errorf("named on a name descending through a link back into the repo returned %q, %v, want \"src/a.cs\", nil", rel, err)
@@ -981,10 +953,9 @@ func TestNamedAcceptsADescentThroughASymlinkSpellingTheRootAsTheTreeDoes(t *test
 func TestNamedAcceptsANameTypedFromInsideACaseDifferingRootSpelling(t *testing.T) {
 	root, realDir := symlinkedMiscasedRoot(t)
 	touch(t, filepath.Join(realDir, "src", "a.cs"))
-	t.Chdir(filepath.Join(realDir, "src"))
 	assertFolds(t, root, filepath.Join(realDir, "src", "a.cs"))
 
-	rel, err := root.named("a.cs", dirNames{})
+	rel, err := root.named("a.cs", filepath.Join(realDir, "src"), dirNames{})
 
 	if err != nil || rel != "src/a.cs" {
 		t.Errorf("named on a name typed from inside the repo returned %q, %v, want \"src/a.cs\", nil", rel, err)
@@ -1000,14 +971,12 @@ func TestNamedRefusesABelowRootMisCaseReachedThroughAMisCasedWorkingDirectory(t 
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
-	t.Chdir(miscased)
-	if cwd, err := os.Getwd(); err != nil || cwd != miscased {
-		t.Fatalf("os.Getwd returned %q, %v, want the mis-cased %q; this case is not exercising the fold", cwd, err, miscased)
-	}
+	// The mis-cased spelling handed in as cwd is what folds the prefix; the
+	// tree's own spelling would never reach the fold road this case is about.
 	assertFolds(t, root, filepath.Join(miscased, "SRC", "a.cs"))
 	name := filepath.Join("SRC", "a.cs")
 
-	_, err := root.named(name, dirNames{})
+	_, err := root.named(name, miscased, dirNames{})
 
 	assertUnresolvedReason(t, err, "is not spelled as the file on disk is")
 }
@@ -1033,10 +1002,9 @@ func TestPlacementNamesItself(t *testing.T) {
 func TestNamedAcceptsARelativeNameThatOnlyDescendsUnderACaseDifferingRootSpelling(t *testing.T) {
 	root, realDir := symlinkedMiscasedRoot(t)
 	touch(t, filepath.Join(realDir, "src", "a.cs"))
-	t.Chdir(realDir)
 	assertFolds(t, root, filepath.Join(realDir, "src", "a.cs"))
 
-	rel, err := root.named(filepath.Join("src", "a.cs"), dirNames{})
+	rel, err := root.named(filepath.Join("src", "a.cs"), realDir, dirNames{})
 
 	if err != nil || rel != "src/a.cs" {
 		t.Errorf("named on a relative name under a case-differing root spelling returned %q, %v, want \"src/a.cs\", nil", rel, err)
@@ -1051,7 +1019,7 @@ func TestNamedRefusesACaseDifferingRootSpellingAsASpellingRatherThanALocation(t 
 	root, realDir := symlinkedMiscasedRoot(t)
 	name := touch(t, filepath.Join(realDir, "src", "a.cs"))
 
-	_, err := root.named(name, dirNames{})
+	_, err := root.named(name, "", dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
@@ -1062,7 +1030,7 @@ func TestNamedRefusesACaseDifferingRootSpellingAsASpellingRatherThanALocation(t 
 func TestNamedRefusesACaseDifferingRootSpellingOfTheRepoRootAsADirectory(t *testing.T) {
 	root, realDir := symlinkedMiscasedRoot(t)
 
-	_, err := root.named(realDir, dirNames{})
+	_, err := root.named(realDir, "", dirNames{})
 
 	assertUnresolvedReason(t, err, "is a directory, not a file")
 }
@@ -1076,7 +1044,7 @@ func TestNamedRefusesTheMisCasedRepoRootAsADirectory(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
 
-	_, err := root.named(miscased, dirNames{})
+	_, err := root.named(miscased, "", dirNames{})
 
 	assertUnresolvedReason(t, err, "is a directory, not a file")
 }
@@ -1084,7 +1052,7 @@ func TestNamedRefusesTheMisCasedRepoRootAsADirectory(t *testing.T) {
 func TestNamedRefusesTheRepoRootAsADirectory(t *testing.T) {
 	root := containmentRoot(t)
 
-	_, err := root.named(root.Dir(), dirNames{})
+	_, err := root.named(root.Dir(), "", dirNames{})
 
 	assertUnresolvedReason(t, err, "is a directory, not a file")
 }
@@ -1096,7 +1064,7 @@ func TestNamedStillRefusesAPathGenuinelyOutsideTheRoot(t *testing.T) {
 	root := containmentRoot(t)
 	name := touch(t, filepath.Join(filepath.Dir(root.Dir()), "outside.cs"))
 
-	_, err := root.named(name, dirNames{})
+	_, err := root.named(name, "", dirNames{})
 
 	assertUnresolvedReason(t, err, "is outside the repo root")
 }

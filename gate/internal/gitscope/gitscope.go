@@ -66,17 +66,32 @@ type Repo struct {
 	root srcpath.Root
 }
 
-// Open finds the repo containing the process working directory.
+// Open finds the repo containing the process working directory. Both of its
+// failure points, git failing to name a toplevel and the toplevel it named
+// failing to resolve, come back as report.Failure, so a run started outside a
+// git repository gets a typed code and a document rather than the empty
+// stdout ADR 0008 reserves for a malformed command line (issue 86).
 func Open() (Repo, error) {
 	out, err := run("", nil, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return Repo{}, err
+		return Repo{}, noGitRepo(err)
 	}
 	root, err := srcpath.NewRoot(strings.TrimSpace(out))
 	if err != nil {
-		return Repo{}, err
+		return Repo{}, noGitRepo(err)
 	}
 	return Repo{root: root}, nil
+}
+
+// noGitRepo types the failure to find a git repository at all. The message
+// carries git's own complaint rather than the argv, the convention
+// diff_unparseable follows, since the caller did nothing but start the gate
+// somewhere no repository resolves.
+func noGitRepo(err error) error {
+	return &report.Failure{
+		Code:    report.CodeNoGitRepo,
+		Message: "could not find a git repository: " + cause(err),
+	}
 }
 
 // Root is the repo's resolved root, the gate's one path currency.

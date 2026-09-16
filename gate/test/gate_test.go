@@ -3142,7 +3142,7 @@ func TestNamedReportThroughAFileComponentIsStillNamedRepoRelative(t *testing.T) 
 		"could not parse coverage report artifacts/coverage.xml/typo.xml; open: not a directory\n")
 }
 
-func TestAChangedFileMissingFromTheWorkingTreeCurrentlyStopsTheRunOutsideTheDocument(t *testing.T) {
+func TestAChangedFileMissingFromTheWorkingTreeFailsInsideTheDocument(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3167,19 +3167,12 @@ func TestAChangedFileMissingFromTheWorkingTreeCurrentlyStopsTheRunOutsideTheDocu
 		t.Fatalf("%s is still readable, which the case needs it not to be", orderService)
 	}
 
-	// This is the shape the run has today, not the shape it should have. A
-	// changed file the gate cannot stat is one of the known deviations the
-	// metric-gate package doc catalogues, landing after the changed methods are
-	// counted. Issue 31 gives the failure a typed code, and moves it inside the
-	// document; this case goes red the day it does, which is what it is here
-	// for.
-	result := f.runWithArgs()
-	if result.exitCode != 1 || result.stdout != "" {
-		t.Errorf("gate exited %d with stdout %q, want exit 1 and nothing on stdout", result.exitCode, result.stdout)
-	}
-	if want := "stat " + orderService + ": " + statErr.Error() + "\n"; result.stderr != want {
-		t.Errorf("stderr = %q, want %q", result.stderr, want)
-	}
+	// Issue 31: the base resolved and the changed method is counted, so the
+	// document is establishable and the failure belongs inside it. The message
+	// names the source path rather than the absolute one os.Stat's own error
+	// carries, which is what ADR 0004 asks of every path the document prints.
+	f.runWithArgs().assertMatches(t, "changed_file_unreadable", 1, f.baseLabel("main"),
+		"could not read "+orderService+" to date it against the coverage report: no such file or directory\n")
 }
 
 func TestCoverageFlagTakesAValueBeginningWithOneDashAsAPath(t *testing.T) {
@@ -4097,28 +4090,19 @@ func TestAbsoluteClassFilenameWithNoSourcesScores(t *testing.T) {
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
 
-func TestRunOutsideAGitRepoWritesNoDocumentAndExitsOne(t *testing.T) {
+// TestRunOutsideAGitRepoFailsWithATypedCodeAndADocument settles issue 86:
+// running outside a git repository gets a typed code and a document, the same
+// as every other exit-1 cause this early in the pipeline. scope comes from
+// argv, which parsed fine, and base is null, the shape no_diff_base already
+// pins for a branch with no commit.
+func TestRunOutsideAGitRepoFailsWithATypedCodeAndADocument(t *testing.T) {
 	f := &fixture{t: t, root: t.TempDir()}
 	if inRepo(t, f.root) {
 		t.Skip("the temp directory is itself inside a git repo")
 	}
 
-	result := f.run()
-
-	// This is the shape the run has today, not the shape it should have.
-	// Running outside a git repo is one of the known deviations the metric-gate
-	// package doc catalogues, landing upstream of the document before a base is
-	// resolved. Issue 86 asks whether the path gets a typed code and a document
-	// or whether ADR 0008 carves the deviation out permanently; this case goes
-	// red the day it gets a document. git's own explanation is in git's own
-	// language, but the failing argv is not, and gitError.Error carries it, so
-	// naming the invocation that failed keeps the case specific without pinning
-	// it to English. A panic or an unrelated wrapped error would satisfy "exit 1
-	// with something on stderr" and must not satisfy this.
-	if result.exitCode != 1 || result.stdout != "" || !strings.Contains(result.stderr, "rev-parse") {
-		t.Errorf("gate outside a repo: got exit %d, stdout %q, stderr %q; want exit 1, empty stdout, a failed rev-parse on stderr",
-			result.exitCode, result.stdout, result.stderr)
-	}
+	f.run().assertMatches(t, "no_git_repo", 1, "",
+		"could not find a git repository: fatal: not a git repository (or any of the parent directories): .git\n")
 }
 
 // inRepo reports whether dir sits inside a git working tree, which decides

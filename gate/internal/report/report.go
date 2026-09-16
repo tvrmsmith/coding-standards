@@ -18,21 +18,43 @@ import (
 // the spec version so a reader knows what produced the document.
 const Version = "0.1.0"
 
+// codes is the registry every typed error code declares itself into. register
+// is the only way an entry is added, so the declaration below and the
+// enumeration Codes returns cannot drift apart.
+var codes []string
+
+// register adds code to the registry and returns it, so a declaration like
+// `var CodeNoDiffBase = register("no_diff_base")` is the one act that both
+// creates the code and enumerates it.
+func register(code string) string {
+	codes = append(codes, code)
+	return code
+}
+
+// Codes is every typed error code this gate can emit, sorted so no caller
+// depends on package variable initialisation order.
+func Codes() []string {
+	sorted := append([]string{}, codes...)
+	sort.Strings(sorted)
+	return sorted
+}
+
 // The typed error codes for the exit-1 causes this gate can reach. An agent
 // branches on these rather than parsing the message.
-const (
-	CodeNoDiffBase                    = "no_diff_base"
-	CodeDiffUnparseable               = "diff_unparseable"
-	CodeExtractorFailed               = "extractor_failed"
-	CodeExtractorPathMismatch         = "extractor_path_mismatch"
-	CodeExtractorCapabilitiesMismatch = "extractor_capabilities_mismatch"
-	CodeExtractorDuplicateSpan        = "extractor_duplicate_span"
-	CodeExtractorInvalidSpan          = "extractor_invalid_span"
-	CodeParseFailed                   = "parse_failed"
-	CodeCoverageMissing               = "coverage_missing"
-	CodeCoverageUnparseable           = "coverage_unparseable"
-	CodeCoverageStale                 = "coverage_stale"
-	CodeUnknownChangedMethod          = "unknown_changed_method"
+var (
+	CodeNoGitRepo                     = register("no_git_repo")
+	CodeNoDiffBase                    = register("no_diff_base")
+	CodeDiffUnparseable               = register("diff_unparseable")
+	CodeExtractorFailed               = register("extractor_failed")
+	CodeExtractorPathMismatch         = register("extractor_path_mismatch")
+	CodeExtractorCapabilitiesMismatch = register("extractor_capabilities_mismatch")
+	CodeExtractorDuplicateSpan        = register("extractor_duplicate_span")
+	CodeExtractorInvalidSpan          = register("extractor_invalid_span")
+	CodeParseFailed                   = register("parse_failed")
+	CodeCoverageMissing               = register("coverage_missing")
+	CodeCoverageUnparseable           = register("coverage_unparseable")
+	CodeCoverageStale                 = register("coverage_stale")
+	CodeUnknownChangedMethod          = register("unknown_changed_method")
 	// CodeStagedFileDirty is a --staged run refusing a file staged in one
 	// state and on disk in another, which the join could otherwise attribute
 	// to the wrong content (issue 14). The check asks only about files an
@@ -42,7 +64,7 @@ const (
 	// deleted from disk is named for what it is rather than blamed on the
 	// extractor. A dirty path no extractor would have read never reaches this
 	// code under either rule.
-	CodeStagedFileDirty = "staged_file_dirty"
+	CodeStagedFileDirty = register("staged_file_dirty")
 	// CodeFileUnresolved is a --files path the gate could not place on a
 	// source file (issue 14). The path does not exist, it resolves above the
 	// repo root, it has no reading relative to the root at all, which is a
@@ -54,14 +76,26 @@ const (
 	// the path at all, which carries the operating system's own words. Every
 	// one of them lands here, so no refusal about a named path escapes the
 	// document.
-	CodeFileUnresolved = "file_unresolved"
+	CodeFileUnresolved = register("file_unresolved")
 	// The three coverage-path causes ADR 0004's 2026-09-03 amendment defers to
 	// issue 16: a source root MSBuild erased, a class resolving to two paths
 	// inside the repo root, and a report resolving only outside it.
 	// coverage.mergeInto owns the order they are checked in.
-	CodeCoverageSourceRootErased = "coverage_source_root_erased"
-	CodeFileAmbiguous            = "file_ambiguous"
-	CodeCoverageOutsideRepo      = "coverage_outside_repo"
+	CodeCoverageSourceRootErased = register("coverage_source_root_erased")
+	CodeFileAmbiguous            = register("file_ambiguous")
+	CodeCoverageOutsideRepo      = register("coverage_outside_repo")
+	// CodeChangedFileUnreadable is a changed file the gate cannot stat while
+	// dating it against the coverage report (issue 31). Its directory losing
+	// read permission between the extractor run and the stat is the reachable
+	// cause; the stat is one of the changed methods' own files, already a
+	// source path, so no path resolution is at stake the way CodeFileUnresolved
+	// covers.
+	CodeChangedFileUnreadable = register("changed_file_unreadable")
+	// CodeWorkingDirectoryUnreadable is the process working directory failing
+	// to read while resolving a relative --files or --coverage path against it
+	// (issue 31). One read serves both flags; see measure's doc comment for why
+	// it happens before gitscope.Open.
+	CodeWorkingDirectoryUnreadable = register("working_directory_unreadable")
 )
 
 // ReasonFileUnmatched is the typed reason on an unknown row: the changed
