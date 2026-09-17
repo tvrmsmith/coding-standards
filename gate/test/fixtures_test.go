@@ -102,7 +102,7 @@ func plantUnrunnableExtractor(t *testing.T, dir string) {
 	if os.Geteuid() == 0 {
 		t.Skip("running as root, which some platforms let exec a file with no execute bit")
 	}
-	if err := os.WriteFile(filepath.Join(dir, extractorName), []byte("#!/bin/sh\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, extractorName), []byte("#!/bin/sh\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -388,10 +388,10 @@ func xmlAttribute(value string) string {
 // coverage_outside_repo).
 func writeAbsolute(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -426,7 +426,7 @@ func namedOutsideRepoStderr(report, example, root string) string {
 // which is how the resolved reading of a path is told from the as-built one.
 func symlinkedDir(t *testing.T, target, link string) string {
 	t.Helper()
-	if err := os.MkdirAll(target, 0o755); err != nil {
+	if err := os.MkdirAll(target, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(target, link); err != nil {
@@ -441,7 +441,7 @@ func symlinkedDir(t *testing.T, target, link string) string {
 func caseInsensitiveFilesystem(t *testing.T, dir string) bool {
 	t.Helper()
 	probe := filepath.Join(dir, "case-probe")
-	if err := os.WriteFile(probe, nil, 0o644); err != nil {
+	if err := os.WriteFile(probe, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
@@ -495,7 +495,7 @@ func (f *fixture) denyRead(rel string) {
 		f.t.Skip("running as root, which reads a mode 0 directory anyway")
 	}
 	full := filepath.Join(f.root, filepath.FromSlash(rel))
-	if err := os.MkdirAll(full, 0o755); err != nil {
+	if err := os.MkdirAll(full, 0o750); err != nil {
 		f.t.Fatal(err)
 	}
 	if err := os.Chmod(full, 0o000); err != nil {
@@ -549,7 +549,7 @@ func (f *fixture) setExecutable(rel string) {
 func (f *fixture) symlinkTo(target, rel string) {
 	f.t.Helper()
 	full := filepath.Join(f.root, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 		f.t.Fatal(err)
 	}
 	if err := os.Symlink(target, full); err != nil {
@@ -772,7 +772,7 @@ func hideEditFilter(t *testing.T) (attributesFile, cleanCommand string) {
 	t.Helper()
 	dir := t.TempDir()
 	attributesFile = filepath.Join(dir, "attributes")
-	if err := os.WriteFile(attributesFile, []byte("*.cs filter=hide\n"), 0o644); err != nil {
+	if err := os.WriteFile(attributesFile, []byte("*.cs filter=hide\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// A path rather than a command line, because the config value has to survive
@@ -817,7 +817,7 @@ func cleanFilterParameters(t *testing.T) string {
 func unparseableGlobalConfigHome(t *testing.T) []string {
 	t.Helper()
 	home := t.TempDir()
-	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[core\n\tquotePath = false\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[core\n\tquotePath = false\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// XDG_CONFIG_HOME is the other place git looks for a global config, and an
@@ -995,7 +995,7 @@ func (f *fixture) corruptPackedRefs() {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(body, "not a ref line\n"...), 0o644); err != nil {
+	if err := os.WriteFile(path, append(body, "not a ref line\n"...), 0o600); err != nil {
 		f.t.Fatal(err)
 	}
 }

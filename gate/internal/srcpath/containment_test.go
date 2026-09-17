@@ -1408,7 +1408,7 @@ func containmentRoot(t *testing.T) Root {
 // rather than in four lines of error handling each.
 func mkdir(t *testing.T, dir string) string {
 	t.Helper()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -1435,7 +1435,7 @@ func denyAccess(t *testing.T, dir string, mode fs.FileMode) {
 func touch(t *testing.T, path string) string {
 	t.Helper()
 	mkdir(t, filepath.Dir(path))
-	if err := os.WriteFile(path, nil, 0o644); err != nil {
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path
