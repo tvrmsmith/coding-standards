@@ -1306,6 +1306,7 @@ func (r Repo) gitBlanking(keys []string, args ...string) (string, error) {
 // run executes git in dir, or the process working directory when dir is
 // empty, and returns its stdout.
 func run(dir string, extraEnv []string, args ...string) (string, error) {
+	//nolint:gosec // the executable is the literal "git"; args are subcommands and refs this package composes itself, and they are argv elements, so no shell parses them
 	cmd := exec.Command("git", append(append([]string{}, configOverrides...), args...)...)
 	cmd.Dir = dir
 	cmd.Env = append(sanitizedEnv(), extraEnv...)

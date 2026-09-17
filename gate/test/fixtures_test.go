@@ -516,6 +516,7 @@ func (f *fixture) denyReadKeepingEntry(rel string) {
 		f.t.Skip("running as root, which lists a directory with no read bit anyway")
 	}
 	full := filepath.Join(f.root, filepath.FromSlash(rel))
+	//nolint:gosec // 0o111 is the condition under test, a directory the gate can traverse but not list; any tighter mode removes the case
 	if err := os.Chmod(full, 0o111); err != nil {
 		f.t.Fatal(err)
 	}
@@ -664,6 +665,7 @@ func (f *fixture) assertAddedAs(base, rel string, kind fileKind) {
 // handed list exists to tell apart from one that measured the wrong thing.
 func assertHandedToExtractor(t *testing.T, handed, want string) {
 	t.Helper()
+	//nolint:gosec // handed is the stub's stdin log, a path the case itself chose inside t.TempDir before pointing the stub at it
 	switch body, err := os.ReadFile(handed); {
 	case err == nil:
 		if string(body) != want {
@@ -806,7 +808,8 @@ func hideEditFilter(t *testing.T) (attributesFile, cleanCommand string) {
 	// A path rather than a command line, because the config value has to survive
 	// GIT_CONFIG_PARAMETERS' own single-quote packing intact.
 	cleanCommand = filepath.Join(dir, "hide-edit")
-	if err := os.WriteFile(cleanCommand, []byte("#!/bin/sh\nexec sed 's/, edited//'\n"), 0o755); err != nil {
+	//nolint:gosec // git spawns this as filter.hide.clean, so the owner execute bit is required; 0o700 in a per-case TempDir is as tight as an executable gets
+	if err := os.WriteFile(cleanCommand, []byte("#!/bin/sh\nexec sed 's/, edited//'\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	return attributesFile, cleanCommand
@@ -874,7 +877,8 @@ func (f *fixture) configureCleanFilter() {
 func (f *fixture) configureProcessFilter() {
 	f.t.Helper()
 	script := filepath.Join(f.t.TempDir(), "mute-process")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	//nolint:gosec // git spawns this as filter.hide.process, so the owner execute bit is required; 0o700 in a per-case TempDir is as tight as an executable gets
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		f.t.Fatal(err)
 	}
 	f.write(".gitattributes", "*.cs filter=hide\n")
@@ -938,7 +942,8 @@ func (f *fixture) configureFsmonitorHook() string {
 	marker := filepath.Join(dir, "ran")
 	script := filepath.Join(dir, "fsmonitor")
 	body := fmt.Sprintf("#!/bin/sh\necho ran >> %s\nexit 1\n", marker)
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+	//nolint:gosec // git spawns this as core.fsmonitor, so the owner execute bit is required; 0o700 in a per-case TempDir is as tight as an executable gets
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
 		f.t.Fatal(err)
 	}
 	f.git("config", "core.fsmonitor", script)
@@ -951,7 +956,8 @@ func (f *fixture) configureFsmonitorHook() string {
 func constantTextconvScript(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "constant-textconv")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho constant\n"), 0o755); err != nil {
+	//nolint:gosec // git spawns this as a textconv driver, so the owner execute bit is required; 0o700 in a per-case TempDir is as tight as an executable gets
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho constant\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -972,6 +978,7 @@ func (f *fixture) removeLooseObject(sha string) {
 // asks the operating system for its own.
 func (f *fixture) gitStderr(args ...string) string {
 	f.t.Helper()
+	//nolint:gosec // the literal "git" with argv the calling case wrote, run against the fixture repo in t.TempDir to capture git's own complaint
 	cmd := exec.Command("git", args...)
 	cmd.Dir = f.root
 	cmd.Env = append(os.Environ(), gitEnv...)
@@ -1054,10 +1061,12 @@ func (f *fixture) corruptPackedRefs() {
 	f.t.Helper()
 	f.git("pack-refs", "--all")
 	path := filepath.Join(f.root, ".git", "packed-refs")
+	//nolint:gosec // path is .git/packed-refs under the fixture's own t.TempDir root, and damaging that file is the whole point of this helper
 	body, err := os.ReadFile(path)
 	if err != nil {
 		f.t.Fatal(err)
 	}
+	//nolint:gosec // same fixture-owned .git/packed-refs the read above came from
 	if err := os.WriteFile(path, append(body, "not a ref line\n"...), 0o600); err != nil {
 		f.t.Fatal(err)
 	}
@@ -1068,7 +1077,8 @@ func (f *fixture) corruptPackedRefs() {
 func externalDiffScript(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "silent-diff")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	//nolint:gosec // git spawns this as an external diff driver, so the owner execute bit is required; 0o700 in a per-case TempDir is as tight as an executable gets
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -1151,6 +1161,7 @@ func (f *fixture) pushOrphanHistoryToOrigin(branch string) {
 	f.git("-c", "remote.origin.followRemoteHEAD=never", "fetch", "--quiet", "origin")
 
 	f.git("rev-parse", "--verify", "--quiet", "origin/"+branch+"^{commit}")
+	//nolint:gosec // the literal "git merge-base" against a branch name the calling case passed in, as argv rather than a shell string
 	cmd := exec.Command("git", "merge-base", "HEAD", "origin/"+branch)
 	cmd.Dir = f.root
 	cmd.Env = append(os.Environ(), gitEnv...)

@@ -154,6 +154,7 @@ func requireRealDotnet(t *testing.T) {
 func dotnetCmd(t *testing.T, dir string, args ...string) *exec.Cmd {
 	t.Helper()
 	requireRealDotnet(t)
+	//nolint:gosec // the literal "dotnet" on PATH with argv this package writes; requireRealDotnet above is the only gate that matters here
 	cmd := exec.Command("dotnet", args...)
 	cmd.Dir = dir
 	return cmd
@@ -210,6 +211,7 @@ const childTimeout = "-test.timeout=2m"
 // It returns the child's combined output and its exit error.
 func runChild(t *testing.T, require string, args ...string) (string, error) {
 	t.Helper()
+	//nolint:gosec // re-execs os.Args[0], this very test binary, with -test.run flags this file builds; running a child copy of itself is what the helper is for
 	cmd := exec.Command(os.Args[0], append([]string{childTimeout}, args...)...)
 	cmd.Env = childEnv(require)
 	out, err := cmd.CombinedOutput()
@@ -383,6 +385,7 @@ func TestFullStackDrivesTheRealDotnetExtractor(t *testing.T) {
 // test rather than returning an error a caller might ignore.
 func readFixture(t *testing.T, rel string) string {
 	t.Helper()
+	//nolint:gosec // rel is a checked-in fixture path spelled by the calling case, resolved against the gate module root
 	body, err := os.ReadFile(rel)
 	if err != nil {
 		t.Fatal(err)

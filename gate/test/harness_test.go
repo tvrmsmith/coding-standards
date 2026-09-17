@@ -77,6 +77,7 @@ func buildBinaries(dir string) error {
 		extractorName: "./test/stub",
 	}
 	for name, pkg := range targets {
+		//nolint:gosec // the literal "go build" over the fixed targets map above, whose keys and package paths are constants in this file
 		cmd := exec.Command("go", "build", "-o", filepath.Join(dir, name), pkg)
 		cmd.Dir = ".."
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -92,6 +93,7 @@ func buildBinaries(dir string) error {
 func gateOnlyDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	//nolint:gosec // the literal "go build" of ./cmd/metric-gate into a t.TempDir; every argument but the output directory is a constant
 	cmd := exec.Command("go", "build", "-o", filepath.Join(dir, "metric-gate"), "./cmd/metric-gate")
 	cmd.Dir = ".."
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -152,6 +154,7 @@ func newFixture(t *testing.T, defaultBranch string) *fixture {
 // git runs one git command in the fixture and returns its trimmed stdout.
 func (f *fixture) git(args ...string) string {
 	f.t.Helper()
+	//nolint:gosec // the literal "git" with argv the calling case wrote, run inside the fixture repo in t.TempDir
 	cmd := exec.Command("git", args...)
 	cmd.Dir = f.root
 	cmd.Env = append(os.Environ(), gitEnv...)
@@ -298,6 +301,7 @@ func (f *fixture) exec(dir, workdir string, args []string, extraEnv ...string) r
 // field as the gate having printed nothing.
 func (f *fixture) execTo(dir, workdir string, args []string, out io.Writer, extraEnv ...string) (int, string) {
 	f.t.Helper()
+	//nolint:gosec // execs the metric-gate binary this suite built into dir; running it with case-supplied argv is exactly what the harness tests
 	cmd := exec.Command(filepath.Join(dir, "metric-gate"), args...)
 	cmd.Dir = workdir
 	cmd.Env = append(os.Environ(), append(append([]string{}, gitEnv...), extraEnv...)...)
@@ -347,6 +351,7 @@ func (r runResult) assertMatchesWith(t *testing.T, golden string, exitCode int, 
 // readGolden loads a golden document, substituting the resolved base.
 func readGolden(t *testing.T, name, base string) string {
 	t.Helper()
+	//nolint:gosec // reads test/golden/<name>.toon, a checked-in file named by the calling case
 	body, err := os.ReadFile(filepath.Join("golden", name+".toon"))
 	if err != nil {
 		t.Fatal(err)

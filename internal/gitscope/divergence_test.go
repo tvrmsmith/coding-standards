@@ -174,6 +174,7 @@ func dirtyRepo(t *testing.T, count int) (Repo, []srcpath.Path) {
 // pinned here reaches only the commands that build the repository.
 func fixtureGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
+	//nolint:gosec // a test helper running the literal "git" with argv this file writes, against a t.TempDir repo it just built
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
@@ -193,10 +194,10 @@ func fixtureGit(t *testing.T, dir string, args ...string) {
 func writeFixtureFile(t *testing.T, dir, rel, content string) {
 	t.Helper()
 	full := filepath.Join(dir, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

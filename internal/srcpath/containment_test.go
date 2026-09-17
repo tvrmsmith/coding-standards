@@ -397,10 +397,7 @@ func TestResolveExistingLeavesAnUnsearchableAncestorUnclimbed(t *testing.T) {
 	}
 	root, link := symlinkedRoot(t)
 	denied := mkdir(t, filepath.Join(root.Dir(), "denied"))
-	if err := os.Chmod(denied, 0o000); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(denied, 0o755) })
+	denyAccess(t, denied, 0o000)
 	path := filepath.Join(link, "repo", "denied", "sub", "coverage.cobertura.xml")
 
 	if got := resolveExisting(path); got != path {
@@ -1595,7 +1592,8 @@ func denyAccess(t *testing.T, dir string, mode fs.FileMode) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := os.Chmod(dir, 0o750); err != nil {
+		//nolint:gosec // dir is a directory, so t.TempDir's own removal needs the owner search bit back; 0o700 is the tightest mode that lets the tree be deleted
+		if err := os.Chmod(dir, 0o700); err != nil {
 			t.Errorf("restoring the mode of %s: %v", dir, err)
 		}
 	})
