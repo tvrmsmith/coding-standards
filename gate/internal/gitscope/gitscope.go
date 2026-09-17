@@ -518,12 +518,12 @@ func cachedFlag(base Base) []string {
 // a pair git scored as a rename would come back under one name and leave the
 // other file unnamed in the refusal.
 //
-// `core.fileMode=false` goes on this invocation alone, because the executable
-// bit is not content. Staging a file and then running chmod +x on it leaves the
-// text the extractor reads exactly as the index line numbers describe, so there
-// is nothing to misattribute, and without the pin git names the path, the run
-// refuses with staged_file_dirty and no edit clears it. The pin cannot hide a
-// content divergence, since git still compares the blobs.
+// `core.fileMode=false` goes on the divergence invocations alone, because the
+// executable bit is not content. Staging a file and then running chmod +x on
+// it leaves the text the extractor reads exactly as the index line numbers
+// describe, so there is nothing to misattribute, and without the pin git names
+// the path, the run refuses with staged_file_dirty and no edit clears it. The
+// pin cannot hide a content divergence, since git still compares the blobs.
 //
 // Every failure is typed, so a missing filter binary lands in the document's
 // error block rather than exiting 1 with an empty stdout, which is the shape
