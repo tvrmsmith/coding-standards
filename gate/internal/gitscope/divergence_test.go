@@ -7,18 +7,29 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
 )
 
 // e2bigTarget is how much argv one invocation has to build before exec refuses
-// it wherever the gate runs. macOS stops at 1 MiB, and Linux at a quarter of
-// the stack rlimit, which is 2 MiB on the 8 MiB stack CI's runners set, and the
-// environment rides on the same limit, so an argv past 2 MiB clears both.
-// Batched, the same list is e2bigTarget/divergenceBudget invocations, a size no
-// platform refuses.
-const e2bigTarget = 2 << 20
+// it on the host running the case. macOS stops at a fixed 1 MiB. Linux takes
+// max(min(6 MiB, RLIMIT_STACK/4), 128 KiB), so a container with a large or
+// unlimited stack accepts far more than the 8 MiB stack a developer's shell
+// hands out, and a target written down as a constant would exec fine there and
+// leave the case green against the unbatched code it exists to refuse. It is
+// read from the live rlimit instead, with a budget's slack on top, since argv
+// and the environment share the ceiling. Batched, the same list is
+// target/divergenceBudget invocations, a size no platform refuses.
+func e2bigTarget(t *testing.T) int {
+	t.Helper()
+	var stack syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_STACK, &stack); err != nil {
+		t.Fatal(err)
+	}
+	return int(max(min(uint64(6<<20), stack.Cur/4), 128<<10)) + divergenceBudget
+}
 
 // The defect issue 50 reports is an exec that never happens. Reproducing it
 // takes more pathspec bytes than any black-box fixture can put on disk, which
@@ -27,15 +38,16 @@ const e2bigTarget = 2 << 20
 // bytes are free and the expected answer is unchanged by them.
 func TestDivergentFromIndexFindsTheDirtyFileAmongMorePathspecsThanOneExecCarries(t *testing.T) {
 	repo, dirty := dirtyRepo(t, 1)
+	target := e2bigTarget(t)
 	// The real path goes last, where a single unbounded argv puts it too, so
 	// nothing about the ordering makes the answer easier to reach.
-	paths := append(unmatchedPaths(e2bigTarget), dirty...)
+	paths := append(unmatchedPaths(target), dirty...)
 	// Unbatched, this argv is one exec that fails with E2BIG and comes back as
 	// diff_unparseable, which says git could not parse a diff it never ran. A
 	// layout that stopped clearing the target would leave the case green
 	// against exactly the code it exists to refuse.
-	if argv := divergenceArgvBytes(paths); argv <= e2bigTarget {
-		t.Fatalf("the argv over %d paths is %d bytes, want past the %d target no exec accepts", len(paths), argv, e2bigTarget)
+	if argv := divergenceArgvBytes(paths); argv <= target {
+		t.Fatalf("the argv over %d paths is %d bytes, want past the %d target no exec accepts", len(paths), argv, target)
 	}
 
 	divergent, err := repo.DivergentFromIndex(paths)
@@ -76,6 +88,30 @@ func TestDivergentFromIndexUnionsTheDirtyFilesEveryBatchNames(t *testing.T) {
 	}
 }
 
+// A batch that git refuses has to end the call, not be skipped. The union
+// makes a swallowed failure look like an answer: the earlier batches already
+// named paths, so returning what they found hands the caller a shorter
+// divergent list than the truth and the gate passes a changeset it never
+// finished asking about. The first batch failing is a shape the unbatched code
+// already had, so the case drives the failure out of the second one.
+func TestDivergentFromIndexFailsWhenALaterBatchDoes(t *testing.T) {
+	repo, dirty := dirtyRepo(t, 1)
+	// git refuses a pathspec leading out of the repository, which is a failure
+	// of the invocation carrying it rather than of the paths beside it.
+	outside := srcpath.Path("../outside.cs")
+	paths := slices.Concat(dirty, unmatchedPaths(divergenceBudget), []srcpath.Path{outside})
+	batches := divergenceBatches(paths)
+	if len(batches) < 2 || slices.Contains(batches[0], outside) {
+		t.Fatalf("the layout split into %d batches with the refused pathspec in the first, want it in a later one", len(batches))
+	}
+
+	divergent, err := repo.DivergentFromIndex(paths)
+
+	if err == nil || divergent != nil {
+		t.Fatalf("DivergentFromIndex with a refused second batch named %v, erroring %v, want no paths and an error rather than the first batch's union", divergent, err)
+	}
+}
+
 // batchesNaming counts the batches holding at least one of wanted. The union
 // case asserts on it rather than on the budget arithmetic, because what the
 // case needs is that its divergent paths really did arrive from different
@@ -97,7 +133,7 @@ func batchesNaming(paths, wanted []srcpath.Path) int {
 func unmatchedPaths(target int) []srcpath.Path {
 	const absent = "src/Absent/%s%05d.cs"
 	filler := strings.Repeat("m", 500)
-	perPath := len(":(literal)") + len(fmt.Sprintf(absent, filler, 0)) + 1
+	perPath := len(pathspec(srcpath.Path(fmt.Sprintf(absent, filler, 0)))) + 1
 	paths := make([]srcpath.Path, 0, target/perPath+1)
 	for i := range target/perPath + 1 {
 		paths = append(paths, srcpath.Path(fmt.Sprintf(absent, filler, i)))

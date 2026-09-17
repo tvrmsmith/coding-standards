@@ -338,6 +338,11 @@ func (n Name) String() string { return string(n) }
 // classes that placed nothing, and the whole point here is to name a path that
 // may be nothing at all.
 //
+// An absolute path is cleaned before anything reads it, so a developer who
+// typed a trailing slash or a `.` component gets the name the same path without
+// them gets. This is the single entry point a human-typed path arrives at, so
+// the normalisation lives here rather than in each caller that builds one.
+//
 // It answers one of three shapes. A path under the repo root is named
 // repo-relative, whether the root prefix is spelled as the root is or in another
 // case that os.SameFile confirms reaches the same directory: the report sits
@@ -375,7 +380,7 @@ func (r Root) Name(path string) Name {
 	if !filepath.IsAbs(path) {
 		return Name(filepath.ToSlash(path))
 	}
-	resolved := resolveExisting(path)
+	resolved := resolveExisting(filepath.Clean(path))
 	rel, place, err := r.relativize(resolved)
 	if err != nil || place == outside {
 		return Name(filepath.ToSlash(resolved))

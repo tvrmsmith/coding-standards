@@ -286,6 +286,49 @@ func TestNameClimbsPastAFileComponentUnderASymlinkedRoot(t *testing.T) {
 	}
 }
 
+// The climb past a file component is what stops a report that really sits
+// outside the repository being named as though it sat inside. A symlink in the
+// tree pointing out of it, with a regular file standing partway down the
+// candidate, used to come back unresolved, match the root prefix on the
+// developer's own spelling, and be printed as "link/README.md/...". Climbing
+// resolves the link and the containment test then reads the report where it
+// actually is. This is the other half of the file-component climb, and without
+// it the ENOTDIR arm can be reverted with every other case still green.
+func TestNameRefusesAFileComponentReachedThroughASymlinkOutOfTheRepo(t *testing.T) {
+	root := containmentRoot(t)
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	touch(t, filepath.Join(outside, "README.md"))
+	if err := os.Symlink(outside, filepath.Join(root.Dir(), "link")); err != nil {
+		t.Fatal(err)
+	}
+
+	name := root.Name(filepath.Join(root.Dir(), "link", "README.md", "TestResults", "coverage.cobertura.xml"))
+
+	want := Name(filepath.ToSlash(filepath.Join(outside, "README.md", "TestResults", "coverage.cobertura.xml")))
+	if name != want {
+		t.Errorf("Name through a file component under a symlink out of the repo = %q, want the resolved %q", name, want)
+	}
+}
+
+// A trailing slash is a spelling of the same path, so it has to name the same
+// thing. Without the clean, EvalSymlinks reports ENOTDIR for "<root>/README.md/",
+// the climb takes filepath.Dir back to "<root>/README.md" and rejoins
+// filepath.Base's "README.md" onto it, and the developer is shown a report at
+// "README.md/README.md" that no fault ever explains.
+func TestNameReadsATrailingSlashAsTheSamePathWithoutIt(t *testing.T) {
+	root := containmentRoot(t)
+	touch(t, filepath.Join(root.Dir(), "README.md"))
+
+	name := root.Name(filepath.Join(root.Dir(), "README.md") + string(filepath.Separator))
+
+	if name != "README.md" {
+		t.Errorf("Name on a path spelled with a trailing slash = %q, want %q", name, "README.md")
+	}
+}
+
 // A symlink cycle is a real fault and not a component that is merely absent or
 // a file where a directory belongs, so the climb guard leaves it where it
 // found it. Treating ELOOP like the other two would rename a report that

@@ -73,13 +73,15 @@ func TestDivergenceBatchesOfNoPathsAreNone(t *testing.T) {
 // budget, which is the smallest fixture that has to split.
 var budgetCrossingCount = divergenceBudget/pathspecCost(ordinaryPaths(1)) + 1
 
-// pathspecCost is what a set of paths costs in the kernel's argv block, the
-// same accounting divergenceBatches does, restated here so a case can check
-// the split rather than trust it.
+// pathspecCost is what a set of paths costs in the kernel's argv block, every
+// pathspec plus the NUL terminating it. The pathspec text comes from the
+// production builder, so a magic word added there cannot leave this accounting
+// behind and let a real batch run past the budget with the split case green.
+// Only the NUL is the case's own restatement.
 func pathspecCost(paths []srcpath.Path) int {
 	total := 0
 	for _, path := range paths {
-		total += len(":(literal)") + len(path) + 1
+		total += len(pathspec(path)) + 1
 	}
 	return total
 }
