@@ -110,9 +110,11 @@ func emit(stdout, stderr io.Writer, doc report.Document) (int, error) {
 		return 1, fmt.Errorf("writing the document to stdout: wrote %d of %d bytes", n, len(body))
 	}
 	// The document already reached the caller by this point, so a failure
-	// writing the human summary has nowhere left to complain. It is dropped
-	// rather than turned into a second exit-1 cause.
-	io.WriteString(stderr, doc.Stderr())
+	// writing the human summary has nowhere left to complain: the summary is
+	// what a complaint would be printed to. Dropped explicitly rather than
+	// turned into a second exit-1 cause, which would contradict the document
+	// the caller is already holding.
+	_, _ = io.WriteString(stderr, doc.Stderr())
 	return doc.ExitCode(), nil
 }
 
@@ -136,15 +138,19 @@ func measure(sc scope.Scope) (report.Document, error) {
 	}
 	// A selection that failed part-way still carries what it did establish,
 	// so a base resolved before the extractor broke is still the base the
-	// document names.
+	// document names. Failure travels with them: a selection returning an
+	// error carries no typed cause, since failing is the only thing that sets
+	// the field and it keeps the error instead whenever it cannot type it.
 	doc.Base = selected.Base
 	doc.TouchedLinesOutsideSpans = selected.TouchedLinesOutsideSpans
 	doc.SkippedPaths = selected.SkippedPaths
+	doc.Failure = selected.Failure
 	if err != nil {
 		return doc, err
 	}
-	if selected.Failure != nil {
-		doc.Failure = selected.Failure
+	// A typed cause the selection established is already the whole verdict.
+	// No metric runs behind it, so the document is finished here.
+	if doc.Failed() {
 		return doc, nil
 	}
 
@@ -215,8 +221,7 @@ func selectDiff(repo gitscope.Repo, sc scope.Scope) (selection, error) {
 	if err != nil {
 		var noBase gitscope.NoBaseError
 		if errors.As(err, &noBase) {
-			selected.Failure = &report.Failure{Code: report.CodeNoDiffBase, Message: noBase.Error()}
-			return selected, nil
+			return refusing(selected, &report.Failure{Code: report.CodeNoDiffBase, Message: noBase.Error()})
 		}
 		return failing(selected, err)
 	}
@@ -232,8 +237,7 @@ func selectDiff(repo gitscope.Repo, sc scope.Scope) (selection, error) {
 	extracted, err := extract.Extract(repo.Root(), files)
 	if err != nil {
 		if dirty := dirtyBehindExtraction(repo, base, files); dirty != nil {
-			selected.Failure = dirty
-			return selected, nil
+			return refusing(selected, dirty)
 		}
 		return failing(selected, err)
 	}
@@ -247,8 +251,7 @@ func selectDiff(repo gitscope.Repo, sc scope.Scope) (selection, error) {
 			return failing(selected, err)
 		}
 		if dirty != nil {
-			selected.Failure = dirty
-			return selected, nil
+			return refusing(selected, dirty)
 		}
 	}
 
@@ -306,8 +309,7 @@ func selectFiles(repo gitscope.Repo, names []string) (selection, error) {
 		// package doc above catalogues.
 		var unresolved *srcpath.UnresolvedError
 		if errors.As(err, &unresolved) {
-			selected.Failure = &report.Failure{Code: report.CodeFileUnresolved, Message: unresolved.Error()}
-			return selected, nil
+			return refusing(selected, &report.Failure{Code: report.CodeFileUnresolved, Message: unresolved.Error()})
 		}
 		return failing(selected, err)
 	}
@@ -350,7 +352,9 @@ func resolveBase(repo gitscope.Repo, sc scope.Scope) (gitscope.Base, error) {
 // stagedDirty renders the refusal when any of paths is staged in one state and
 // on disk in another, and nil when none is. The failure to ask comes back
 // separately from the answer, because one caller reports it and the other is
-// already carrying a cause it would rather keep.
+// already carrying a cause it would rather keep. Both are typed causes by the
+// time they get here, DivergentFromIndex having typed its own, so the two
+// channels are the only thing telling them apart.
 func stagedDirty(repo gitscope.Repo, paths []srcpath.Path) (*report.Failure, error) {
 	dirty, err := repo.DivergentFromIndex(paths)
 	if err != nil {
@@ -592,6 +596,18 @@ func unknownMessage(unknown int) string {
 // extractor sees the same stdin on every run.
 func changedFiles(touched map[srcpath.Path][]int) []srcpath.Path {
 	return slices.Sorted(maps.Keys(touched))
+}
+
+// refusing is the selection carrying a typed cause it established as an
+// answer rather than caught as an error: the file it was asked about is
+// staged in one state and on disk in another, or the base will not resolve.
+// The selection is done, and the run exits 1 off the Failure field, so there
+// is no error left to return. Sharing failing's shape keeps every exit from a
+// selection on one of two named calls, neither of which reads as a check that
+// found a problem and then said nothing.
+func refusing(selected selection, failure *report.Failure) (selection, error) {
+	selected.Failure = failure
+	return selected, nil
 }
 
 // failing folds a typed exit-1 cause into the selection that was carrying it
