@@ -619,13 +619,41 @@ func (f *fixture) assertTypechange(base, rel string, committed, tree fileKind) {
 		f.t.Fatalf("%s holds %q for %s, want %s at mode %s",
 			base, got, rel, committed, strings.TrimSpace(committed.gitMode()))
 	}
+	f.assertWorkingTreeKind(rel, tree)
+}
+
+// assertWorkingTreeKind fails the case unless rel stands in the working tree
+// as want, which is the half of a kind precondition that git's own notation
+// never reports.
+func (f *fixture) assertWorkingTreeKind(rel string, want fileKind) {
+	f.t.Helper()
 	info, err := os.Lstat(filepath.Join(f.root, filepath.FromSlash(rel)))
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	if got := lstatKind(info.Mode()); got != tree {
-		f.t.Fatalf("the working tree holds %s as %s, want %s", rel, got, tree)
+	if got := lstatKind(info.Mode()); got != want {
+		f.t.Fatalf("the working tree holds %s as %s, want %s", rel, got, want)
 	}
+}
+
+// assertAddedAs fails the case unless rel is a live addition against base,
+// arriving as kind in both the index and the working tree.
+//
+// A case naming an added symlink in its title rests on status A, the same way
+// a typechange case rests on status T, so it needs the same precondition:
+// asserting a presence would pass while pinning nothing if the setup stopped
+// producing the status the case names. assertTypechange is that check for a
+// typechange; this is its sibling for a new path.
+func (f *fixture) assertAddedAs(base, rel string, kind fileKind) {
+	f.t.Helper()
+	if got := f.git("diff", "--name-status", base, "--", rel); got != "A\t"+rel {
+		f.t.Fatalf("git reports %q for %s, so this case is not exercising an addition", got, rel)
+	}
+	if got := f.git("ls-files", "-s", "--", rel); !strings.HasPrefix(got, kind.gitMode()) {
+		f.t.Fatalf("the index holds %q for %s, want %s at mode %s",
+			got, rel, kind, strings.TrimSpace(kind.gitMode()))
+	}
+	f.assertWorkingTreeKind(rel, kind)
 }
 
 // assertHandedToExtractor fails the case unless the stub's stdin log at handed
