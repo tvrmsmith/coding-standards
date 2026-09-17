@@ -217,35 +217,52 @@ done
   || die "tvrmsmith-scope-changed.sh is staged but not executable; changed-file scoping would silently do nothing"
 info "staged $artifacts"
 
+# Keyed on the main checkout, not on $repo: bootstrapping a linked worktree adopts the
+# repository, and lint-changed-dotnet.sh resolves the same way, so one entry covers every
+# worktree the hook fires in. The scoping condition below still names only this path, so an
+# ambient IDE or CLI build gets the analyzers in the main checkout alone; the hook does not
+# rely on it, because it imports the analyzer props directly.
+dotnet_key=$repo
+if dotnet_common_git_dir=$(cd "$repo" && cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P); then
+  dotnet_key=$(cd "$dotnet_common_git_dir/.." && pwd -P)
+fi
+[ "$dotnet_key" = "$repo" ] || info "$repo is a worktree of $dotnet_key; registering the repository"
+
 # One path-scoped Import per adopted repo. The trailing slash is not cosmetic: without it
 # StartsWith('/a/b') also matches /a/b-other, and the blast radius of this file is the one thing
 # it exists to control. MSBuildProjectDirectory carries no trailing slash, so a .csproj sitting
-# at the repo root reports exactly $repo and the prefix test can never match it — hence the
-# second branch rather than dropping the slash.
-import_cond="          Condition=\"\$(MSBuildProjectDirectory.StartsWith('$repo/')) or '\$(MSBuildProjectDirectory)' == '$repo'\" />"
+# at the repo root reports exactly $dotnet_key and the prefix test can never match it — hence
+# the second branch rather than dropping the slash.
+import_cond="          Condition=\"\$(MSBuildProjectDirectory.StartsWith('$dotnet_key/')) or '\$(MSBuildProjectDirectory)' == '$dotnet_key'\" />"
 import_line="  <Import Project=\"$local_props\"
 $import_cond"
 
 if [ ! -f "$analyzer_props" ]; then
   printf '<Project>\n%s\n</Project>\n' "$import_line" >"$analyzer_props"
   info "created $analyzer_props"
-elif grep -qF "== '$repo'" "$analyzer_props"; then
-  info "$analyzer_props already scopes $repo"
-elif grep -qF "StartsWith('$repo/')" "$analyzer_props"; then
+elif grep -qF "== '$dotnet_key'" "$analyzer_props"; then
+  info "$analyzer_props already scopes $dotnet_key"
+elif grep -qF "StartsWith('$dotnet_key/')" "$analyzer_props"; then
   # Written by a bootstrap from before the root-project branch existed: rewrite that repo's
   # condition line in place rather than adding a second Import of the same file.
   tmp=$(mktemp)
-  awk -v needle="StartsWith('$repo/')" -v cond="$import_cond" \
+  awk -v needle="StartsWith('$dotnet_key/')" -v cond="$import_cond" \
     'index($0, needle) { print cond; next } { print }' "$analyzer_props" >"$tmp" \
     && mv "$tmp" "$analyzer_props"
-  info "widened $repo's condition in $analyzer_props to cover a project at the repo root"
+  info "widened $dotnet_key's condition in $analyzer_props to cover a project at the repo root"
 else
   # Insert before the closing tag rather than appending, so repeated runs against different
   # repos accumulate instead of producing a file with two roots.
+  #
+  # The Import spans two lines and awk -v cannot carry a newline in a variable, so the pair is
+  # passed as two variables and printed as two records.
   tmp=$(mktemp)
-  awk -v line="$import_line" '/<\/Project>/ && !done { print line; done = 1 } { print }' \
-    "$analyzer_props" >"$tmp" && mv "$tmp" "$analyzer_props"
-  info "added $repo to $analyzer_props"
+  awk -v head="  <Import Project=\"$local_props\"" -v cond="$import_cond" \
+    '/<\/Project>/ && !done { print head; print cond; done = 1 } { print }' \
+    "$analyzer_props" >"$tmp" \
+    && mv "$tmp" "$analyzer_props" \
+    || die "could not add $dotnet_key to $analyzer_props"
+  info "added $dotnet_key to $analyzer_props"
 fi
 
 # ---------------------------------------------------------------------------------------
@@ -410,11 +427,15 @@ if [ "$lang" = dotnet ]; then
   # A repo may ship bare <Project> stubs as architecture-fitness fixtures, and probing one of
   # those reports an empty Analyzer item group that looks exactly like a broken condition.
   # Require the Sdk attribute, and prefer the shallowest match so the probe is a real project.
-  probe=$(cd "$repo" && grep -rl --include='*.csproj' --exclude-dir=obj --exclude-dir=bin \
+  #
+  # Probed in $dotnet_key rather than $repo: the scoping condition names the main checkout, so
+  # a project inside a linked worktree is outside it by design and would report an empty
+  # Analyzer item group that reads exactly like a broken condition.
+  probe=$(cd "$dotnet_key" && grep -rl --include='*.csproj' --exclude-dir=obj --exclude-dir=bin \
     --exclude-dir=node_modules 'Sdk="Microsoft.NET.Sdk' . 2>/dev/null \
     | awk -F/ '{ print NF, $0 }' | sort -n | head -1 | cut -d' ' -f2-)
-  [ -n "$probe" ] || die "no SDK-style .csproj found under $repo"
-  probe=$repo/${probe#./}
+  [ -n "$probe" ] || die "no SDK-style .csproj found under $dotnet_key"
+  probe=$dotnet_key/${probe#./}
   info "probing $(basename "$probe")"
 
   evaluated=$(cd "$(dirname "$probe")" && CustomAfterMicrosoftCommonProps="$analyzer_props" \
