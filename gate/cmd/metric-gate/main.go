@@ -14,17 +14,19 @@
 //
 // Any error that is not typed as a report.Failure writes its cause to stderr
 // and exits 1 with no typed code. Exactly two exits have that shape, and this
-// command reaches no other. A third untyped return exists, the encoder
-// refusing to render the document, which emit reports and this doc counts out
-// because no document the gate builds reaches it.
+// command reaches no other. Two more untyped returns exist, in the encoder
+// refusing to render the document and in coverage discovery, but no input
+// reaches them: emit reports the first and nothing the gate builds makes the
+// encoder refuse, and discovery's own walk hands back no error.
 //
 // ADR 0008 carves out one of the two: a malformed command line, which exits
 // before measure ever runs, empty stdout and all, because argv failed before
 // the run had a shape to report. Every cause measure can reach, by contrast,
 // carries a typed code and a document: failing to run git, failing to find a
-// git repository, failing to resolve the root git named, failing to read the
-// process working directory, failing to stat a changed file to date it against
-// the coverage report, all land inside the document rather than beside it.
+// git repository, a repository git will not answer about, failing to resolve
+// the root git named, failing to read the process working directory, failing
+// to stat a changed file to date it against the coverage report, all land
+// inside the document rather than beside it.
 // Issue 86 and issue 31 moved these in, one at a time; this is the one place
 // that says none are left outside it, so a case in gate/test pinning such an
 // exit points here rather than restate it.
@@ -540,6 +542,14 @@ func cause(err error) error {
 	var pathErr *os.PathError
 	if errors.As(err, &pathErr) {
 		return pathErr.Err
+	}
+	// os.Getwd reports its failure as an *os.SyscallError, which prefixes the
+	// syscall's name onto what the operating system said. The sentence the
+	// code carries already names the read that failed, so the name would be
+	// said twice.
+	var syscallErr *os.SyscallError
+	if errors.As(err, &syscallErr) {
+		return syscallErr.Err
 	}
 	return err
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"syscall"
 	"testing"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/report"
@@ -14,8 +15,12 @@ import (
 // the same directory, since gitscope.Open shells out to git in that same
 // directory. So the seam is the only way to drive it, a stub getwd standing
 // in for the real read the way emit_test.go stubs a broken stdout.
+//
+// The stub answers in the shape os.Getwd answers in, an *os.SyscallError over
+// the errno, so the golden is the document a real refused getwd produces
+// rather than one only a stub can make.
 func TestMeasureFailsInsideTheDocumentWhenTheWorkingDirectoryCannotBeRead(t *testing.T) {
-	getwd := func() (string, error) { return "", os.ErrPermission }
+	getwd := func() (string, error) { return "", os.NewSyscallError("getwd", syscall.EACCES) }
 
 	doc, err := measure(scope.Scope{Mode: scope.ModeMergeBase}, getwd)
 	if err != nil {

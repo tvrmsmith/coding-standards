@@ -7,5 +7,5 @@ changed_methods: 0
 touched_lines_outside_spans: 0
 skipped_paths: []
 error:
-  code: git_unavailable
-  message: "could not run git: exec: \"git\": executable file not found in $PATH"
+  code: git_repo_unreadable
+  message: "could not read the git repository: fatal: this operation must be run in a work tree"

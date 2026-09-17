@@ -4105,6 +4105,49 @@ func TestRunOutsideAGitRepoFailsWithATypedCodeAndADocument(t *testing.T) {
 		"could not find a git repository: fatal: not a git repository (or any of the parent directories): .git\n")
 }
 
+// The three exit-1 causes that share the non-repo case's place in the run,
+// each carrying its own code because a caller branches on the code and each
+// names a different thing to go and fix. They are driven here rather than at
+// the seam because the black-box suite is where a whole document is compared
+// (ADR 0008), and the environment the gate inherits is enough to stage all
+// three.
+
+// A runner with no git on PATH. Told to init a repository it would go looking
+// for one it already has.
+func TestRunWithNoGitOnPathFailsWithItsOwnCodeRatherThanNoGitRepo(t *testing.T) {
+	f := newFixture(t, "main")
+
+	f.runWithEnv("PATH=").assertMatches(t, "git_unavailable", 1, "",
+		"could not run git: exec: \"git\": executable file not found in $PATH\n")
+}
+
+// A bare repository, which git opens and then refuses to name a toplevel for,
+// since there is no work tree to measure. git found the repository, so
+// no_git_repo would be the wrong answer.
+func TestRunInABareRepositoryFailsWithItsOwnCodeRatherThanNoGitRepo(t *testing.T) {
+	f := &fixture{t: t, root: t.TempDir()}
+	f.git("init", "--bare", "--quiet")
+
+	f.run().assertMatches(t, "git_repo_unreadable", 1, "",
+		"could not read the git repository: fatal: this operation must be run in a work tree\n")
+}
+
+// A toplevel git named that is not on disk. Real git cannot be made to answer
+// that way, since it prints the directory it is already running in, so the
+// case stands a git of its own on PATH. The arm still has to answer for the
+// filesystem losing the root between the two calls.
+func TestRunWhereTheRootGitNamesDoesNotResolveFailsInsideTheDocument(t *testing.T) {
+	f := newFixture(t, "main")
+	bin := t.TempDir()
+	script := "#!/bin/sh\necho " + filepath.Join(t.TempDir(), "gone") + "\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	f.runWithEnv("PATH="+bin).assertMatches(t, "repo_root_unresolvable", 1, "",
+		"could not resolve the repo root git named: no such file or directory\n")
+}
+
 // inRepo reports whether dir sits inside a git working tree, which decides
 // whether the non-repo case can run at all.
 func inRepo(t *testing.T, dir string) bool {
