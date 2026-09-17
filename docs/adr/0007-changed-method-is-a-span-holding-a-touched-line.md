@@ -60,7 +60,7 @@ the target's spans cover line 1, a method is measured under a path that does not
 fails on an unknown changed method. Measuring the second direction needs a pass classifying the new
 side's mode before extraction, which is
 [issue 84](https://github.com/tvrmsmith/coding-standards/issues/84) rather than work taken here.
-Issues 25 and 75 pin both directions in `gate/test/gate_test.go`.
+Issues 25, 75 and 83 pin these cases in `gate/test/gate_test.go`.
 
 ## The gate pins every git setting its parsers depend on
 
