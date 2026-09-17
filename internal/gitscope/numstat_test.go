@@ -6,8 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/tvrmsmith/coding-standards/gate/internal/report"
-	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
+	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
 // The numstat parser is the one rule in this package a black-box case cannot
@@ -47,13 +46,13 @@ func TestNumstatPathsKeepsATabInsideAPath(t *testing.T) {
 func TestNumstatPathsRefusesARecordItDoesNotKnow(t *testing.T) {
 	named, err := parseNumstatPaths("1 2 src/a.cs\x00")
 
-	var failure *report.Failure
-	if named != nil || !errors.As(err, &failure) {
+	var unreadable *UnreadableDiffError
+	if named != nil || !errors.As(err, &unreadable) {
 		t.Fatalf("parseNumstatPaths on a malformed record returned %v, %v, want no paths and a typed failure", named, err)
 	}
 	const wantMessage = `could not read the diff: git printed the numstat record "1 2 src/a.cs"`
-	if failure.Code != report.CodeDiffUnparseable || failure.Message != wantMessage {
-		t.Errorf("the refusal is %s %q, want %s %q", failure.Code, failure.Message, report.CodeDiffUnparseable, wantMessage)
+	if unreadable.Message != wantMessage {
+		t.Errorf("the refusal reads %q, want %q", unreadable.Message, wantMessage)
 	}
 }
 

@@ -11,7 +11,7 @@ import (
 	"github.com/tvrmsmith/coding-standards/gate/internal/extract"
 	"github.com/tvrmsmith/coding-standards/gate/internal/metric"
 	"github.com/tvrmsmith/coding-standards/gate/internal/report"
-	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
+	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
 // The selections below are built here rather than read out of metric.Hosted,

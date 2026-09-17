@@ -56,12 +56,12 @@ import (
 	"github.com/tvrmsmith/coding-standards/gate/internal/coverage"
 	"github.com/tvrmsmith/coding-standards/gate/internal/crap"
 	"github.com/tvrmsmith/coding-standards/gate/internal/extract"
-	"github.com/tvrmsmith/coding-standards/gate/internal/gitscope"
 	"github.com/tvrmsmith/coding-standards/gate/internal/join"
 	"github.com/tvrmsmith/coding-standards/gate/internal/metric"
 	"github.com/tvrmsmith/coding-standards/gate/internal/report"
 	"github.com/tvrmsmith/coding-standards/gate/internal/scope"
-	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
+	"github.com/tvrmsmith/coding-standards/internal/gitscope"
+	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
 func main() {
@@ -677,10 +677,42 @@ func failing(selected selection, err error) (selection, error) {
 }
 
 // asFailure unwraps a typed exit-1 cause out of an error.
+//
+// gitscope has no vocabulary for a document code, so the mapping from its
+// diff-reading error onto CodeDiffUnparseable, and from each of Open's kinds
+// onto the code ADR 0008 gives it, lives here. Doing it at this single site
+// rather than at each gitscope call keeps the property the package doc claims:
+// a cause added under TouchedLines reaches the error block without anything
+// here being extended to let it.
 func asFailure(err error) (*report.Failure, bool) {
 	var failure *report.Failure
 	if errors.As(err, &failure) {
 		return failure, true
 	}
+	var unreadable *gitscope.UnreadableDiffError
+	if errors.As(err, &unreadable) {
+		return &report.Failure{Code: report.CodeDiffUnparseable, Message: unreadable.Message}, true
+	}
+	var open gitscope.OpenError
+	if errors.As(err, &open) {
+		return &report.Failure{Code: openCode(open.Kind), Message: open.Message}, true
+	}
 	return nil, false
+}
+
+// openCode is ADR 0008's code for each way Open can fail. An unhandled kind
+// would be a code the document has no word for, so the switch is exhaustive
+// and the default panics rather than emitting an empty code.
+func openCode(kind gitscope.OpenKind) string {
+	switch kind {
+	case gitscope.OpenGitUnavailable:
+		return report.CodeGitUnavailable
+	case gitscope.OpenRepoUnreadable:
+		return report.CodeGitRepoUnreadable
+	case gitscope.OpenNoRepo:
+		return report.CodeNoGitRepo
+	case gitscope.OpenRootUnresolvable:
+		return report.CodeRepoRootUnresolvable
+	}
+	panic(fmt.Sprintf("unmapped gitscope.OpenKind %d", kind))
 }

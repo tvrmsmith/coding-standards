@@ -10,7 +10,7 @@ import (
 	"github.com/tvrmsmith/coding-standards/gate/internal/extract"
 	"github.com/tvrmsmith/coding-standards/gate/internal/join"
 	"github.com/tvrmsmith/coding-standards/gate/internal/report"
-	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
+	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
 // TestChangedReturnsSpansInAscendingOrder pins the order Changed promises its

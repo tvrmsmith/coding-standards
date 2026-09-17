@@ -53,8 +53,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tvrmsmith/coding-standards/gate/internal/report"
-	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
+	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
 // BaseCandidates is ADR 0007's base resolution order. There is no HEAD~1
@@ -68,13 +67,13 @@ type Repo struct {
 }
 
 // Open finds the repo containing the process working directory. Every failure
-// point comes back as a report.Failure, so a run started outside a git
-// repository gets a typed code and a document rather than the empty stdout
-// ADR 0008 reserves for a malformed command line (issue 86).
+// point comes back as an OpenError, so a run started outside a git repository
+// gets a typed cause and a document rather than the empty stdout ADR 0008
+// reserves for a malformed command line (issue 86).
 //
-// A toplevel git named that the gate cannot resolve is repo_root_unresolvable:
-// the repository is there and the filesystem is what failed. openFailure
-// separates the rest.
+// A toplevel git named that cannot be resolved is OpenRootUnresolvable: the
+// repository is there and the filesystem is what failed. openFailure separates
+// the rest.
 func Open() (Repo, error) {
 	out, err := run("", nil, "rev-parse", "--show-toplevel")
 	if err != nil {
@@ -82,52 +81,82 @@ func Open() (Repo, error) {
 	}
 	root, err := srcpath.NewRoot(strings.TrimSpace(out))
 	if err != nil {
-		return Repo{}, &report.Failure{
-			Code:    report.CodeRepoRootUnresolvable,
+		return Repo{}, OpenError{
+			Kind:    OpenRootUnresolvable,
 			Message: "could not resolve the repo root git named: " + cause(err),
 		}
 	}
 	return Repo{root: root}, nil
 }
 
+// OpenKind names which of Open's failure points a caller is looking at. It is
+// this package's own vocabulary rather than a document code, for the reason
+// UnreadableDiffError gives: the words a cause is reported in belong to the
+// caller. metric-gate maps each kind onto one of ADR 0008's codes at the single
+// site that already maps this package's other errors.
+type OpenKind int
+
+const (
+	// OpenGitUnavailable is git never running at all.
+	OpenGitUnavailable OpenKind = iota
+	// OpenRepoUnreadable is a repository git found and then refused to answer
+	// about.
+	OpenRepoUnreadable
+	// OpenNoRepo is git answering that there is no repository here.
+	OpenNoRepo
+	// OpenRootUnresolvable is a toplevel git named that would not resolve to a
+	// root path.
+	OpenRootUnresolvable
+)
+
+// OpenError is Open failing to establish which repository the run measures. It
+// carries a rendered message beside the kind, so a caller with no document
+// prints the sentence and one with a document picks its own code off Kind.
+type OpenError struct {
+	Kind    OpenKind
+	Message string
+}
+
+func (e OpenError) Error() string { return e.Message }
+
 // openFailure types a `rev-parse --show-toplevel` that did not answer. The
-// three codes are apart because a caller branches on the code rather than on
+// three kinds are apart because a caller branches on the kind rather than on
 // the message, and each names a different thing to go and fix.
 //
-// git never running at all is git_unavailable, which covers a runner with no
+// git never running at all is OpenGitUnavailable, which covers a runner with no
 // git on PATH and one whose git is not executable, since both come back as
 // *exec.Error and neither is answered by running `git init`. The message is
 // exec's own words rather than cause's, because there is no stderr to quote
 // and the argv would be all that survived.
 //
 // A repository git did find, and then refused to answer about, is
-// git_repo_unreadable: a bare repository, which rev-parse says must be run in
+// OpenRepoUnreadable: a bare repository, which rev-parse says must be run in
 // a work tree, or a .git the store cannot read. The two are told apart by
 // asking git for the git directory rather than by reading its sentence, since
 // the sentence is English and git ships translations. That probe answers for
 // every repository git can open, work tree or not, so exit 0 means a
 // repository is there and the toplevel is what could not be had.
 //
-// no_git_repo is what is left, git answering that there is no repository here
-// at all, the one a caller fixes by running `git init` or by starting the gate
+// OpenNoRepo is what is left, git answering that there is no repository here
+// at all, the one a caller fixes by running `git init` or by starting the run
 // somewhere else. Its message carries git's own complaint rather than the
-// argv, the convention diff_unparseable follows.
+// argv, the convention UnreadableDiffError follows.
 func openFailure(err error) error {
 	var launch *exec.Error
 	if errors.As(err, &launch) {
-		return &report.Failure{
-			Code:    report.CodeGitUnavailable,
+		return OpenError{
+			Kind:    OpenGitUnavailable,
 			Message: "could not run git: " + launch.Error(),
 		}
 	}
 	if _, probe := run("", nil, "rev-parse", "--git-dir"); probe == nil {
-		return &report.Failure{
-			Code:    report.CodeGitRepoUnreadable,
+		return OpenError{
+			Kind:    OpenRepoUnreadable,
 			Message: "could not read the git repository: " + cause(err),
 		}
 	}
-	return &report.Failure{
-		Code:    report.CodeNoGitRepo,
+	return OpenError{
+		Kind:    OpenNoRepo,
 		Message: "could not find a git repository: " + cause(err),
 	}
 }
@@ -200,6 +229,23 @@ func (e NoBaseError) Error() string {
 		return "no diff base: tried " + strings.Join(BaseCandidates, ", ") + "; name one with --since <ref>"
 	}
 }
+
+// UnreadableDiffError is this package failing to establish what a change
+// touched: git would not answer, or it answered in a shape the parsers here
+// refuse. Every cause between asking git for the diff and holding a set of
+// touched lines arrives as this one type, so a caller measuring nothing can
+// tell "the change touched nothing" from "the diff could not be read", which
+// are the same empty map otherwise.
+//
+// It carries a rendered message rather than a code, because the vocabulary a
+// cause is reported in belongs to the caller. metric-gate maps this onto its
+// document's error block under report.CodeDiffUnparseable; a caller with no
+// document prints the sentence. Holding the code here instead is what tied this
+// package to that document, and it is the one thing that had to be cut for the
+// package to sit above gate/ and be shared.
+type UnreadableDiffError struct{ Message string }
+
+func (e *UnreadableDiffError) Error() string { return e.Message }
 
 // errNoSuchRev is git exiting 1 on a `rev-parse --verify`, which is git
 // answering that it resolves no such rev. It never reaches a caller of this
@@ -453,13 +499,15 @@ func (r Repo) objectType(oid string) (string, error) {
 // which is issue 84 rather than a wider letter set. See the ADR 0007 amendment
 // beginning "`--diff-filter=ACM` excludes `T`,".
 //
-// Nothing gets out of here untyped. Base resolution has already succeeded, so
-// the document exists and ADR 0008's one-document rule binds: every cause below
-// this line, a git invocation that failed as much as a patch the parser refused,
-// comes back as a report.Failure so main can put it in the document's error
-// block. Exiting 1 with an empty stdout instead is a shape the caller cannot
-// tell from a crash, and typing the boundary rather than the individual return
-// sites is what stops the next cause added underneath it reopening that hole.
+// Nothing gets out of here untyped. Every cause below this line, a git
+// invocation that failed as much as a patch the parser refused, comes back as
+// an UnreadableDiffError, which each caller renders in whatever way it reports
+// a cause: metric-gate maps it onto the document's error block, where ADR 0008's
+// one-document rule binds, because base resolution having succeeded means the
+// document exists. Exiting 1 with an empty stdout instead is a shape the caller
+// cannot tell from a crash, and typing the boundary rather than the individual
+// return sites is what stops the next cause added underneath it reopening that
+// hole.
 func (r Repo) TouchedLines(base Base) (map[srcpath.Path][]int, error) {
 	touched, err := r.touchedLines(base)
 	if err != nil {
@@ -706,8 +754,7 @@ func parseNumstatPaths(out string) (map[srcpath.Path]bool, error) {
 	for _, record := range nulRecords(out) {
 		fields := strings.SplitN(record, "\t", 3)
 		if len(fields) != 3 {
-			return nil, &report.Failure{
-				Code:    report.CodeDiffUnparseable,
+			return nil, &UnreadableDiffError{
 				Message: "could not read the diff: git printed the numstat record " + strconv.Quote(record),
 			}
 		}
@@ -1064,19 +1111,16 @@ func parseHunkHeader(header string) (start, count int, err error) {
 }
 
 // unreadableDiff types whatever went wrong between asking git for the diff and
-// having a set of touched lines. One code covers the whole stretch because every
-// cause on it says the same thing to a caller, that the gate could not establish
-// what the change touched and therefore measured nothing, and because a code per
+// having a set of touched lines. One type covers the whole stretch because every
+// cause on it says the same thing to a caller, that the run could not establish
+// what the change touched and therefore measured nothing, and because a type per
 // cause would be a list to extend every time a line is added under the boundary.
 func unreadableDiff(err error) error {
-	var failure *report.Failure
-	if errors.As(err, &failure) {
-		return failure
+	var unreadable *UnreadableDiffError
+	if errors.As(err, &unreadable) {
+		return unreadable
 	}
-	return &report.Failure{
-		Code:    report.CodeDiffUnparseable,
-		Message: "could not read the diff: " + cause(err),
-	}
+	return &UnreadableDiffError{Message: "could not read the diff: " + cause(err)}
 }
 
 // configOverrides pin, per invocation, every git setting that can reshape the

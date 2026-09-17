@@ -16,8 +16,8 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"github.com/tvrmsmith/coding-standards/gate/internal/gitscope"
-	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
+	"github.com/tvrmsmith/coding-standards/internal/gitscope"
+	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
 // csharpFile renders a C# source file of exactly lines lines. The stub

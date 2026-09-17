@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/scope"
-	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
 	"github.com/tvrmsmith/coding-standards/gate/internal/toon"
+	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
 // Version is the gate's own version, pinned in the document header beside

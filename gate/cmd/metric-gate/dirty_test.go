@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
+	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
 // Both callers hand dirtyMessage a sorted list today, so a black-box case

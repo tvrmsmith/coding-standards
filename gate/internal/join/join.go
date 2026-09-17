@@ -11,7 +11,7 @@ import (
 	"github.com/tvrmsmith/coding-standards/gate/internal/coverage"
 	"github.com/tvrmsmith/coding-standards/gate/internal/extract"
 	"github.com/tvrmsmith/coding-standards/gate/internal/report"
-	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
+	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
 // Changed returns the spans holding at least one touched line, and the count

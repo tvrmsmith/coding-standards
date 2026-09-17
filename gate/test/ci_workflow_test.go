@@ -26,9 +26,11 @@ const gateJob = "gate"
 const suiteStep = "Run the gate suite and prove the full-stack cases ran"
 
 // gateWorkingDir is the directory the step declares, relative to the repository
-// root. `go test ./...` selects this module's packages only because it runs
-// there.
-const gateWorkingDir = "gate"
+// root, and the empty string is the root itself. It has to be the root: the
+// module covers internal/ as well as gate/, and `go test ./...` selects the
+// packages under the directory it runs in, so declaring `gate` here would skip
+// the shared packages without failing.
+const gateWorkingDir = ""
 
 // suiteGuardStepID is the step the guard names, suiteGuardReference is
 // how the guard expression reads that step's outcome, and suiteGuard is the
@@ -188,7 +190,7 @@ func TestCIDeclaresTheSuiteStep(t *testing.T) {
 			}
 		}
 		if step.WorkingDirectory != gateWorkingDir {
-			t.Errorf("%s: the %q step declares working-directory %q, want %q, which is where its `go test ./...` selects this module",
+			t.Errorf("%s: the %q step declares working-directory %q, want %q, the repository root, which is where its `go test ./...` reaches every package in the module rather than gate/ alone",
 				ciWorkflow, suiteStep, step.WorkingDirectory, gateWorkingDir)
 		}
 
