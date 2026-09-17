@@ -14,14 +14,16 @@
 //
 // Any error that is not typed as a report.Failure writes its cause to stderr
 // and exits 1 with no typed code. Exactly two exits have that shape, and this
-// command reaches no other.
+// command reaches no other. A third untyped return exists, the encoder
+// refusing to render the document, which emit reports and this doc counts out
+// because no document the gate builds reaches it.
 //
-// ADR 0008 carves out one of them: a malformed command line, which exits
+// ADR 0008 carves out one of the two: a malformed command line, which exits
 // before measure ever runs, empty stdout and all, because argv failed before
 // the run had a shape to report. Every cause measure can reach, by contrast,
-// carries a typed code and a document: failing to open a git repository,
-// failing to read the working directory --files and --coverage resolve
-// relative paths against, failing to stat a changed file to date it against
+// carries a typed code and a document: failing to run git, failing to find a
+// git repository, failing to resolve the root git named, failing to read the
+// process working directory, failing to stat a changed file to date it against
 // the coverage report, all land inside the document rather than beside it.
 // Issue 86 and issue 31 moved these in, one at a time; this is the one place
 // that says none are left outside it, so a case in gate/test pinning such an
@@ -135,9 +137,8 @@ func measure(sc scope.Scope, getwd func() (string, error)) (report.Document, err
 	cwd, err := getwd()
 	if err != nil {
 		doc.Failure = &report.Failure{
-			Code: report.CodeWorkingDirectoryUnreadable,
-			Message: "could not read the working directory that --files and --coverage paths resolve against: " +
-				cause(err).Error(),
+			Code:    report.CodeWorkingDirectoryUnreadable,
+			Message: "could not read the process working directory: " + cause(err).Error(),
 		}
 		return doc, nil
 	}

@@ -45,6 +45,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"os/exec"
@@ -66,32 +67,44 @@ type Repo struct {
 	root srcpath.Root
 }
 
-// Open finds the repo containing the process working directory. Both of its
-// failure points, git failing to name a toplevel and the toplevel it named
-// failing to resolve, come back as report.Failure, so a run started outside a
-// git repository gets a typed code and a document rather than the empty
-// stdout ADR 0008 reserves for a malformed command line (issue 86).
+// Open finds the repo containing the process working directory. Each of its
+// three failure points comes back as a report.Failure, so a run started
+// outside a git repository gets a typed code and a document rather than the
+// empty stdout ADR 0008 reserves for a malformed command line (issue 86).
+//
+// The three are separate codes because a caller branches on the code rather
+// than on the message. git answering that no repository resolves is
+// no_git_repo, the one a caller answers by running `git init` or by starting
+// the gate somewhere else. git never running at all, which is a runner with no
+// git on PATH, is git_unavailable, and telling that caller to init a repository
+// sends them after the wrong thing. A toplevel git did name and the gate could
+// not resolve is repo_root_unresolvable, which is neither: the repository is
+// there and the filesystem is what failed.
 func Open() (Repo, error) {
 	out, err := run("", nil, "rev-parse", "--show-toplevel")
+	if errors.Is(err, exec.ErrNotFound) {
+		return Repo{}, &report.Failure{
+			Code:    report.CodeGitUnavailable,
+			Message: "could not run git: " + cause(err),
+		}
+	}
 	if err != nil {
-		return Repo{}, noGitRepo(err)
+		// git's own complaint is carried rather than the argv, the convention
+		// diff_unparseable follows, since the caller did nothing but start the
+		// gate somewhere no repository resolves.
+		return Repo{}, &report.Failure{
+			Code:    report.CodeNoGitRepo,
+			Message: "could not find a git repository: " + cause(err),
+		}
 	}
 	root, err := srcpath.NewRoot(strings.TrimSpace(out))
 	if err != nil {
-		return Repo{}, noGitRepo(err)
+		return Repo{}, &report.Failure{
+			Code:    report.CodeRepoRootUnresolvable,
+			Message: "could not resolve the repo root git named: " + cause(err),
+		}
 	}
 	return Repo{root: root}, nil
-}
-
-// noGitRepo types the failure to find a git repository at all. The message
-// carries git's own complaint rather than the argv, the convention
-// diff_unparseable follows, since the caller did nothing but start the gate
-// somewhere no repository resolves.
-func noGitRepo(err error) error {
-	return &report.Failure{
-		Code:    report.CodeNoGitRepo,
-		Message: "could not find a git repository: " + cause(err),
-	}
 }
 
 // Root is the repo's resolved root, the gate's one path currency.
@@ -1182,10 +1195,19 @@ func (e *gitError) Error() string {
 func (e *gitError) Unwrap() error { return e.err }
 
 // cause is what git said, or the whole error when it was not git that spoke.
+//
+// A filesystem failure carries the operating system's own words without the
+// fs.PathError around them, which quotes an absolute path the document is not
+// allowed to print (ADR 0004) and which reads differently on every machine.
+// The sentence naming what the gate was doing supplies the rest.
 func cause(err error) string {
 	var gitErr *gitError
 	if errors.As(err, &gitErr) && gitErr.stderr != "" {
 		return gitErr.stderr
+	}
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err.Error()
 	}
 	return err.Error()
 }

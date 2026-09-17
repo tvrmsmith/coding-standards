@@ -14,6 +14,12 @@ import (
 // rather than exiting 1 with empty stdout. The black-box suite runs the built
 // binary, so this is the only place the typed error itself is observable.
 func TestOpenOutsideAGitRepositoryIsTyped(t *testing.T) {
+	// git ships translations and sanitizedEnv passes the locale straight
+	// through, so the assertion below is held to English the way
+	// gate/test/harness_test.go holds its goldens to it. LANGUAGE is emptied
+	// beside LC_ALL because it outranks LC_ALL for message translation.
+	t.Setenv("LC_ALL", "C")
+	t.Setenv("LANGUAGE", "")
 	t.Chdir(t.TempDir())
 
 	_, err := Open()

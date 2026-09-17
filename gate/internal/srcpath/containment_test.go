@@ -634,6 +634,35 @@ func TestNamedRefusesACaseDifferingRootSpellingWithAClimbBelowIt(t *testing.T) {
 	assertRootSpellingRefusal(t, err, name)
 }
 
+// An absolute name typed from a shell sitting deep inside the repo, which is
+// what every run the gate performs hands named: measure reads the working
+// directory once and passes it in whatever the name looks like. An absolute
+// name says where it is on its own, so named clears the directory before
+// weighing the root prefix. Left uncleared, its component count starts the walk
+// past the mis-cased root component and the name is accepted. The case below
+// runs the same arm on a case-sensitive filesystem.
+func TestNamedRefusesAMisCasedRootPrefixTypedFromADeepWorkingDirectory(t *testing.T) {
+	root := containmentRoot(t)
+	miscased := miscasedRoot(t, root)
+	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
+	name := filepath.Join(miscased, "src", "a.cs")
+
+	_, err := root.named(name, filepath.Join(root.Dir(), "src"), dirNames{})
+
+	assertRootSpellingRefusal(t, err, name)
+}
+
+// The same refusal on a case-sensitive filesystem, so the merge gate runs it.
+func TestNamedRefusesACaseDifferingRootSpellingTypedFromADeepWorkingDirectory(t *testing.T) {
+	root, real := symlinkedMiscasedRoot(t)
+	touch(t, filepath.Join(real, "src", "a.cs"))
+	name := filepath.Join(real, "src", "a.cs")
+
+	_, err := root.named(name, filepath.Join(real, "src"), dirNames{})
+
+	assertRootSpellingRefusal(t, err, name)
+}
+
 // A mis-case the shell introduced above the repo root, on a name that climbs,
 // in the shape a developer actually types: they cd'd through a mis-cased parent
 // of the repo and the filesystem folded it. The root component in their --files

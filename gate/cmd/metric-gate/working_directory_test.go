@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/tvrmsmith/coding-standards/gate/internal/report"
 	"github.com/tvrmsmith/coding-standards/gate/internal/scope"
 )
 
@@ -21,20 +22,27 @@ func TestMeasureFailsInsideTheDocumentWhenTheWorkingDirectoryCannotBeRead(t *tes
 		t.Fatalf("measure: %v", err)
 	}
 
-	body, renderErr := doc.Stdout()
-	if renderErr != nil {
-		t.Fatalf("doc.Stdout(): %v", renderErr)
+	assertDocumentMatches(t, doc, "working_directory_unreadable",
+		"could not read the process working directory: permission denied\n")
+}
+
+// assertDocumentMatches holds a typed exit-1 document to its golden, its exit
+// code and its stderr line. The golden is named rather than the code, since
+// the golden is what carries both.
+func assertDocumentMatches(t *testing.T, doc report.Document, golden, stderr string) {
+	t.Helper()
+	body, err := doc.Stdout()
+	if err != nil {
+		t.Fatalf("doc.Stdout(): %v", err)
 	}
-	want := readGolden(t, "working_directory_unreadable")
-	if string(body) != want {
+	if want := readGolden(t, golden); string(body) != want {
 		t.Errorf("stdout =\n%s\nwant\n%s", body, want)
 	}
 	if doc.ExitCode() != 1 {
 		t.Errorf("ExitCode() = %d, want 1", doc.ExitCode())
 	}
-	const wantStderr = "could not read the working directory that --files and --coverage paths resolve against: permission denied\n"
-	if doc.Stderr() != wantStderr {
-		t.Errorf("Stderr() = %q, want %q", doc.Stderr(), wantStderr)
+	if doc.Stderr() != stderr {
+		t.Errorf("Stderr() = %q, want %q", doc.Stderr(), stderr)
 	}
 }
 

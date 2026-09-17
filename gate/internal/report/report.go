@@ -42,7 +42,21 @@ func Codes() []string {
 // The typed error codes for the exit-1 causes this gate can reach. An agent
 // branches on these rather than parsing the message.
 var (
-	CodeNoGitRepo                     = register("no_git_repo")
+	// CodeNoGitRepo is git answering that the working directory sits in no
+	// repository (issue 86). It is the one of gitscope.Open's three failures a
+	// caller answers by running `git init` or by starting the gate somewhere
+	// else, which is why the other two carry their own codes.
+	CodeNoGitRepo = register("no_git_repo")
+	// CodeGitUnavailable is git never running at all, a runner with no git on
+	// PATH. Reported as no_git_repo it would send a caller branching on the
+	// code after a repository that is already there.
+	CodeGitUnavailable = register("git_unavailable")
+	// CodeRepoRootUnresolvable is git naming a toplevel the gate cannot
+	// resolve to a real directory. The repository exists and the filesystem is
+	// what failed, so it is neither of the two above. The message carries the
+	// operating system's words alone, since ADR 0004 keeps absolute paths out
+	// of the document.
+	CodeRepoRootUnresolvable          = register("repo_root_unresolvable")
 	CodeNoDiffBase                    = register("no_diff_base")
 	CodeDiffUnparseable               = register("diff_unparseable")
 	CodeExtractorFailed               = register("extractor_failed")
