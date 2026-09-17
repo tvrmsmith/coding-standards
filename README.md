@@ -70,7 +70,7 @@ go/                                  # the Go lint layer: one golangci-lint bina
   golangci.yml                       #   the curated config, passed to the target with --config
   test/                              #   a fixture per enabled linter, and the proof each fires
 go.mod                               # one Go module, rooted here, covering internal/ and gate/
-internal/                            # shared by every Go binary in the repo
+internal/                            # laid out to be shared by the Go binaries in this module
   gitscope/                          #   which commit a run diffs against, and which lines it touched
   srcpath/                           #   the one path currency: repo-relative, resolved
 gate/                                # the metric gate: a Go binary, one TOON document on stdout

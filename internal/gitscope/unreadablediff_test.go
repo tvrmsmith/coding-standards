@@ -10,7 +10,7 @@ import (
 // message that opens with those words, which is what the caller prints, so the
 // document would carry the sentence twice.
 func TestUnreadableDiffKeepsACauseThatAlreadyTypedItself(t *testing.T) {
-	typed := &UnreadableDiffError{Message: `could not read the diff: git printed the numstat record "1 2 src/a.cs"`}
+	typed := UnreadableDiffError{Message: `could not read the diff: git printed the numstat record "1 2 src/a.cs"`}
 
 	got := unreadableDiff(fmt.Errorf("reading the pure moves: %w", typed))
 

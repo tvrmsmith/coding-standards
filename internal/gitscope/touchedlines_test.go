@@ -41,7 +41,7 @@ func TestTouchedLinesTypesAGitRefusalAsAnUnreadableDiff(t *testing.T) {
 
 	touched, err := repo.TouchedLines(Base{Ref: "absent", Commit: absent})
 
-	var unreadable *UnreadableDiffError
+	var unreadable UnreadableDiffError
 	if touched != nil || !errors.As(err, &unreadable) {
 		t.Fatalf("TouchedLines against a missing commit returned %v, erroring %v, want no paths and an UnreadableDiffError", touched, err)
 	}

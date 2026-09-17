@@ -689,7 +689,7 @@ func asFailure(err error) (*report.Failure, bool) {
 	if errors.As(err, &failure) {
 		return failure, true
 	}
-	var unreadable *gitscope.UnreadableDiffError
+	var unreadable gitscope.UnreadableDiffError
 	if errors.As(err, &unreadable) {
 		return &report.Failure{Code: report.CodeDiffUnparseable, Message: unreadable.Message}, true
 	}

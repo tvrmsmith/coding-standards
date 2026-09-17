@@ -25,11 +25,15 @@ const gateJob = "gate"
 // file finds the step.
 const suiteStep = "Run the gate suite and prove the full-stack cases ran"
 
-// gateWorkingDir is the directory the step declares, relative to the repository
-// root, and the empty string is the root itself. It has to be the root: the
-// module covers internal/ as well as gate/, and `go test ./...` selects the
-// packages under the directory it runs in, so declaring `gate` here would skip
-// the shared packages without failing.
+// vetScript is the run: of the step that vets the module. The step carries no
+// name:, so its script is how this file finds it.
+const vetScript = "go vet ./..."
+
+// gateWorkingDir is the directory each of those steps declares, relative to the
+// repository root, and the empty string is the root itself. It has to be the
+// root: the module covers internal/ as well as gate/, and both `go test ./...`
+// and `go vet ./...` select the packages under the directory they run in, so
+// declaring `gate` would skip the shared packages without failing.
 const gateWorkingDir = ""
 
 // suiteGuardStepID is the step the guard names, suiteGuardReference is
@@ -101,7 +105,8 @@ fi
 // TestCIDeclaresTheSuiteStep reads ci.yml as the declarative contract it is
 // and asserts the gate job declares the PASS check step once, gated on a step
 // declared ahead of it, running where `go test ./...` selects this module, with
-// enforcement on and the reviewed script underneath. Every one of those can
+// enforcement on and the reviewed script underneath. It holds the vet step to
+// the same directory for the same reason. Every one of those can
 // drift without any Go test noticing, because the step runs on the runner
 // rather than here.
 func TestCIDeclaresTheSuiteStep(t *testing.T) {
@@ -141,7 +146,7 @@ func TestCIDeclaresTheSuiteStep(t *testing.T) {
 		t.Fatal("realExtractorCases is empty, so the name check below would pass over a script naming nothing")
 	}
 
-	var found, guardTargets int
+	var found, vetFound, guardTargets int
 	guardDeclared := false
 	for i, step := range job.Steps {
 		declaredBefore := guardDeclared
@@ -158,6 +163,14 @@ func TestCIDeclaresTheSuiteStep(t *testing.T) {
 			t.Errorf("%s: step %d of the %q job (%q) reads %s, which no earlier step declares id: %s for. The expression renders empty for a step that has not finished, its own step included, so the guard is false and the step skips with the job green",
 				ciWorkflow, i+1, gateJob, step.Name, suiteGuardReference, suiteGuardStepID)
 		}
+		if strings.TrimSpace(step.Run) == vetScript {
+			vetFound++
+			if step.WorkingDirectory != gateWorkingDir {
+				t.Errorf("%s: the `%s` step declares working-directory %q, want %q, the repository root, which is where it vets internal/gitscope and internal/srcpath rather than gate/ alone",
+					ciWorkflow, vetScript, step.WorkingDirectory, gateWorkingDir)
+			}
+		}
+
 		if step.Name != suiteStep {
 			continue
 		}
@@ -213,6 +226,10 @@ func TestCIDeclaresTheSuiteStep(t *testing.T) {
 	if found != 1 {
 		t.Errorf("%s: the %q job holds %d steps named %q, want exactly one",
 			ciWorkflow, gateJob, found, suiteStep)
+	}
+	if vetFound != 1 {
+		t.Errorf("%s: the %q job holds %d steps running `%s`, want exactly one. Without it nothing pins where vet runs, and a step declaring working-directory: gate would stop vetting the shared packages with nothing red",
+			ciWorkflow, gateJob, vetFound, vetScript)
 	}
 	if guardTargets != 1 {
 		t.Errorf("%s: the %q job declares %d steps with id: %s, want exactly one. The PASS check's guard reads %s, which is false for a step that does not exist, so the check would never run",

@@ -1,9 +1,9 @@
 // Package gitscope answers the two questions ADR 0007 puts to git: which
-// commit the run diffs against, and which lines that diff touched. The gate
-// runs git itself rather than taking hunks from a wrapper, so `-w` and
+// commit the run diffs against, and which lines that diff touched. This
+// package runs git itself rather than taking hunks from a wrapper, so `-w` and
 // `--diff-filter` are fixed in one place and no caller can get them wrong.
 //
-// A gate that measures nothing passes, so anything able to reshape the diff
+// A run that measures nothing passes, so anything able to reshape the diff
 // into something the hunk parser reads as empty is a silent green build. Four
 // separate mechanisms can do that and each needs its own answer.
 //
@@ -245,7 +245,7 @@ func (e NoBaseError) Error() string {
 // package to sit above gate/ and be shared.
 type UnreadableDiffError struct{ Message string }
 
-func (e *UnreadableDiffError) Error() string { return e.Message }
+func (e UnreadableDiffError) Error() string { return e.Message }
 
 // errNoSuchRev is git exiting 1 on a `rev-parse --verify`, which is git
 // answering that it resolves no such rev. It never reaches a caller of this
@@ -754,7 +754,7 @@ func parseNumstatPaths(out string) (map[srcpath.Path]bool, error) {
 	for _, record := range nulRecords(out) {
 		fields := strings.SplitN(record, "\t", 3)
 		if len(fields) != 3 {
-			return nil, &UnreadableDiffError{
+			return nil, UnreadableDiffError{
 				Message: "could not read the diff: git printed the numstat record " + strconv.Quote(record),
 			}
 		}
@@ -1116,11 +1116,11 @@ func parseHunkHeader(header string) (start, count int, err error) {
 // what the change touched and therefore measured nothing, and because a type per
 // cause would be a list to extend every time a line is added under the boundary.
 func unreadableDiff(err error) error {
-	var unreadable *UnreadableDiffError
+	var unreadable UnreadableDiffError
 	if errors.As(err, &unreadable) {
 		return unreadable
 	}
-	return &UnreadableDiffError{Message: "could not read the diff: " + cause(err)}
+	return UnreadableDiffError{Message: "could not read the diff: " + cause(err)}
 }
 
 // configOverrides pin, per invocation, every git setting that can reshape the

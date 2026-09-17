@@ -14,7 +14,7 @@ import (
 // here and nowhere else. A black-box case would have to make a real git fail
 // to reach it, which is the reason the mapping is driven directly instead.
 func TestUnreadableDiffReachesTheDocumentAsDiffUnparseable(t *testing.T) {
-	failure, ok := asFailure(&gitscope.UnreadableDiffError{Message: "could not read the diff: git printed nothing"})
+	failure, ok := asFailure(gitscope.UnreadableDiffError{Message: "could not read the diff: git printed nothing"})
 
 	if !ok {
 		t.Fatalf("asFailure did not type an UnreadableDiffError, so the run would exit 1 with no document")
@@ -31,7 +31,7 @@ func TestUnreadableDiffReachesTheDocumentAsDiffUnparseable(t *testing.T) {
 // way up, and errors.As is what keeps the wrapping from costing the document
 // its typed code.
 func TestAWrappedUnreadableDiffStillReachesTheDocument(t *testing.T) {
-	wrapped := fmt.Errorf("resolving the diff: %w", &gitscope.UnreadableDiffError{Message: "could not read the diff: exit status 128"})
+	wrapped := fmt.Errorf("resolving the diff: %w", gitscope.UnreadableDiffError{Message: "could not read the diff: exit status 128"})
 
 	failure, ok := asFailure(wrapped)
 

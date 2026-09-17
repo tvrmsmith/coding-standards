@@ -46,7 +46,7 @@ func TestNumstatPathsKeepsATabInsideAPath(t *testing.T) {
 func TestNumstatPathsRefusesARecordItDoesNotKnow(t *testing.T) {
 	named, err := parseNumstatPaths("1 2 src/a.cs\x00")
 
-	var unreadable *UnreadableDiffError
+	var unreadable UnreadableDiffError
 	if named != nil || !errors.As(err, &unreadable) {
 		t.Fatalf("parseNumstatPaths on a malformed record returned %v, %v, want no paths and a typed failure", named, err)
 	}
