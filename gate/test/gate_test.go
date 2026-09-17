@@ -4140,7 +4140,8 @@ func TestRunWhereTheRootGitNamesDoesNotResolveFailsInsideTheDocument(t *testing.
 	f := newFixture(t, "main")
 	bin := t.TempDir()
 	script := "#!/bin/sh\necho " + filepath.Join(t.TempDir(), "gone") + "\n"
-	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+	//nolint:gosec // the case puts this stand-in git on PATH for the gate to spawn, so the owner execute bit is required; 0o700 in a per-case TempDir is as tight as an executable gets
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
