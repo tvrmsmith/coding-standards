@@ -872,15 +872,17 @@ func TestATypechangeIsWithheldWhileTheRestOfTheDiffIsMeasured(t *testing.T) {
 // claimed under Order.cs, while the case above gets a new side holding the
 // link's own text, the path it points at, as one line under an equally
 // claimed `.cs` path. The second of those is what makes the flag edit wrong.
-// The extractor is handed the link path, follows it, and reports the target
-// file's spans under the link's path, which is what
+// The extractor is handed the link path, which is the half
 // TestASymlinkAddedOutrightIsHandedToTheExtractor pins on the status A route.
+// An extractor that follows the link then reports the target file's spans
+// under the link's path; that step is the premise both added-symlink cases
+// feed their stub, not behaviour this suite verifies.
 // Touched line 1 then falls inside no
 // span, so the guaranteed effect is touched_lines_outside_spans going 0 to 1
 // and nothing measured, at exit 0. Where the target's spans do cover the
 // link's first line, the worse effect follows. A method is measured under a
 // path that does not hold it, the coverage lookup against that path finds
-// nothing, and the run fails as an unknown changed method, which
+// nothing, and the run fails as an unknown changed method, the gate response
 // TestASymlinkAddedOutrightMeasuringItsTargetsSpansFailsAsUnknown pins.
 // Measuring the
 // direction this case covers needs a
@@ -921,7 +923,11 @@ func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) 
 // TestASymlinkAddedOutrightIsHandedToTheExtractor pins the claim the two
 // typechange direction cases above rest on without stating it as a case of
 // its own. A `.cs` symlink added outright arrives as status A, passes
-// --diff-filter=ACM, and is handed to the extractor like any other new file.
+// --diff-filter=ACM, and is handed to the extractor, which is the
+// arrangement this case runs. The claim does not hold for every added link:
+// issue 110 records that on the working-tree path addedContent reads an
+// added link with os.ReadFile, so a link whose target's content matches a
+// deleted file's is dropped as a pure move, while a staged run keeps it.
 // Both typechange direction cases rest on that claim and neither states it,
 // each putting it to different work.
 // TestASourceFileReplacedByASymlinkContributesNoChangedMethods reads it as
@@ -968,10 +974,12 @@ func TestASymlinkAddedOutrightIsHandedToTheExtractor(t *testing.T) {
 // harmful half of what the case above establishes. The sibling picks a span
 // the link's one touched line cannot reach, so it lands at exit 0 with
 // nothing measured; this one picks a span covering line 1, which is the
-// arrangement that goes wrong. The extractor follows the link, reports
-// OrderService.cs's spans under Order.cs, a method is measured under a path
-// that does not hold it, the coverage lookup against that path finds
-// nothing, and the run fails as an unknown changed method.
+// arrangement that goes wrong. The stub stands in for an extractor that
+// follows the link and reports OrderService.cs's spans under Order.cs; what
+// this case pins is the gate's response to a span arriving under a path the
+// coverage report does not name. A method is measured under a path that does
+// not hold it, the coverage lookup against that path finds nothing, and the
+// run fails as an unknown changed method.
 //
 // TestASymlinkReplacedByASourceFileContributesNoChangedMethods describes this
 // effect in prose as the reason an ACMT widen is the wrong remedy. On a
@@ -979,6 +987,12 @@ func TestASymlinkAddedOutrightIsHandedToTheExtractor(t *testing.T) {
 // added-symlink path it is live today, since status A passes ACM and reaches
 // the extractor, so this case records it as a document rather than an
 // argument.
+//
+// Issue 109 owns that live false failure: an in-repo added `.cs` symlink
+// whose target's spans cover line 1 exits 1 and no edit clears it. The golden
+// below records what the gate does today, not the wanted answer, so issue
+// 109's fix will rewrite it. Issue 84 is the typechange direction and issue
+// 103 the out-of-root target; 109 is a third, distinct failure.
 func TestASymlinkAddedOutrightMeasuringItsTargetsSpansFailsAsUnknown(t *testing.T) {
 	// The span starts at line 1, the link's only line, so following the link
 	// puts a measured method on a path holding nothing but the target's name.
