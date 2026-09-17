@@ -60,7 +60,7 @@ var (
 	CodeGitRepoUnreadable = register("git_repo_unreadable")
 	// CodeRepoRootUnresolvable is git naming a toplevel the gate cannot
 	// resolve to a real directory. The repository exists and the filesystem is
-	// what failed, so it is neither of the two above. The message carries the
+	// what failed, so it is none of the three above. The message carries the
 	// operating system's words alone, since ADR 0004 keeps absolute paths out
 	// of the document.
 	CodeRepoRootUnresolvable          = register("repo_root_unresolvable")
