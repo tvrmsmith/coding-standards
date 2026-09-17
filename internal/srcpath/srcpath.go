@@ -1,4 +1,4 @@
-// Package srcpath owns the gate's one path currency (ADR 0004): a
+// Package srcpath owns one path currency (ADR 0004) for every caller: a
 // repo-relative, slash-separated path from `git rev-parse --show-toplevel`.
 // Every conversion that produces a Path lives here, so the invariant is
 // enforced once rather than separately in extract and coverage.

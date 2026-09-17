@@ -31,7 +31,7 @@ import (
 	"time"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/report"
-	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
+	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
 // ReportName is the file name coverlet writes a Cobertura report under.

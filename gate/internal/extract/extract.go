@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/report"
-	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
+	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
 // languages is the built-in table ADR 0009 fixes: a language yields a binary

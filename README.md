@@ -69,15 +69,24 @@ go/                                  # the Go lint layer: one golangci-lint bina
   plugin/                            #   custom analyzers compiled into it
   golangci.yml                       #   the curated config, passed to the target with --config
   test/                              #   a fixture per enabled linter, and the proof each fires
+go.mod                               # one Go module, rooted here, covering internal/ and gate/
+internal/                            # laid out to be shared by the Go binaries in this module
+  gitscope/                          #   which commit a run diffs against, and which lines it touched
+  srcpath/                           #   the one path currency: repo-relative, resolved
 gate/                                # the metric gate: a Go binary, one TOON document on stdout
   cmd/metric-gate/
-  internal/                          # scope selection, diff, coverage, join, CRAP, TOON encoder
+  internal/                          # scope selection, coverage, join, CRAP, TOON encoder
   test/                              # black-box tests against the built binary, with goldens
 harness/                             # machine-local adoption harness: editor layer + pre-commit
 ```
 
-The plugin loader ignores `packages/`, `dotnet/`, `go/` and `gate/` — it reads only `.claude-plugin/` and
-`skills/`.
+`go/` carries its own modules, one per fixture and one for the plugin, because a golangci-lint
+plugin is compiled into the linter rather than imported by it. Everything else Go in the repo is
+one module, so a package two binaries both need moves to the root `internal/` instead of being
+copied or imported across a module edge.
+
+The plugin loader ignores `packages/`, `dotnet/`, `go/`, `internal/` and `gate/`. It reads only
+`.claude-plugin/` and `skills/`.
 
 ## The custom rules
 

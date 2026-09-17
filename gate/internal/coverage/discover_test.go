@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
+	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
 // A discovered report is named by the path the walk reached it at. fs.WalkDir

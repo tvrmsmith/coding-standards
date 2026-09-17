@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
+	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
 // The batching is what keeps a large staged changeset off one oversized argv,

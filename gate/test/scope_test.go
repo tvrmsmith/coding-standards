@@ -626,7 +626,7 @@ func TestFilesNamingAMisCasedRepoRootPrefixRefusesTheSpellingNotTheLocation(t *t
 // NewRoot runs EvalSymlinks over the whole path, so a real Root's resolved field
 // is symlink-free and spelled exactly as the tree spells it, and on a
 // case-sensitive filesystem no other spelling reaches that directory. The unit
-// cases in gate/internal/srcpath do run the folded arm on Linux, but they
+// cases in internal/srcpath do run the folded arm on Linux, but they
 // hand-build a Root the constructor cannot produce, so they test the arm's logic
 // rather than a state a Linux user reaches. Symlinking an upper-cased name onto
 // the fixture repo here would not help: EvalSymlinks collapses the link and

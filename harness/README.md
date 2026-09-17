@@ -129,7 +129,7 @@ Three things about it differ from the other two:
 
 `bootstrap go` is also the one mode that accepts the hub itself as its target. The other two
 would be pointing the hub's own tooling at the hub, which is a mistake every time; the Go one is
-not, because the hub carries real Go code of its own in `gate/`.
+not, because the hub carries real Go code of its own in `gate/` and `internal/`.
 
 ## Worktrees
 

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/extract"
-	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
+	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
 // TestClaimsAnswersMembership pins the query join.Changed asks per touched

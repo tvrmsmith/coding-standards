@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
+	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
 // The defect issue 50 reports is an exec that never happens. Reproducing it

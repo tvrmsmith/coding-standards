@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/coverage"
-	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
+	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
 // coverletFixtureFramework is the target framework both fixture projects

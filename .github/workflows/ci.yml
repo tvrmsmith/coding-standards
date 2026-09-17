@@ -42,12 +42,12 @@ jobs:
         with:
           # The version lives in go.mod so the runner and a developer's machine
           # cannot disagree about it.
-          go-version-file: gate/go.mod
+          go-version-file: go.mod
           # Both files are listed so the cache key covers the module graph and
-          # the checksums of the one dependency gate declares.
+          # the checksums of the one dependency the module declares.
           cache-dependency-path: |
-            gate/go.mod
-            gate/go.sum
+            go.mod
+            go.sum
       - uses: actions/setup-dotnet@v4
         with:
           # Two installs, each for its own reason. global-json-file brings the
@@ -67,7 +67,6 @@ jobs:
       # explicit guard the tests do rather than inheriting the implicit
       # success() that a failed SDK install would trip.
       - run: go vet ./...
-        working-directory: gate
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
       # A vet finding is not a reason to withhold the test result, so the tests
       # run anyway. Go setup is their precondition, so a failed one skips them
@@ -98,7 +97,6 @@ jobs:
       # cold restore on a slower runner. Under the default a slow restore
       # surfaces as an opaque panic instead.
       - name: Run the gate suite and prove the full-stack cases ran
-        working-directory: gate
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         env:
           METRIC_GATE_REQUIRE_DOTNET: "1"
@@ -302,7 +300,7 @@ jobs:
           dotnet/tests/Tvrmsmith.Analyzers.Tests/Tvrmsmith.Analyzers.Tests.csproj
           dotnet/tests/Tvrmsmith.MetricGate.CSharp.Tests/Tvrmsmith.MetricGate.CSharp.Tests.csproj
           dotnet/tests/verify-severities.sh
-          gate/go.mod
+          go.mod
           go/plugin/go.mod
           go/test/go.mod
           go/test/smoke/go.mod
