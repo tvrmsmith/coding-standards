@@ -998,6 +998,41 @@ func (f *fixture) divergenceStderr(rel string) string {
 	return f.gitStderr(gitscope.DivergenceArgs([]srcpath.Path{srcpath.Path(rel)})...)
 }
 
+// deeplyNestedPaths lays out count source paths long enough together that
+// gitscope splits them over more than one divergence invocation, which is the
+// changeset it has to batch rather than hand git whole. The bytes come from
+// depth rather than from file count, because the budget is a byte budget and a
+// fixture of the ten thousand files it would otherwise take costs the suite
+// seconds to write and stage.
+//
+// Depth is what it is because macOS caps a whole path at 1024 bytes, a quarter
+// of Linux's, and the temp directory eats the first hundred and fifty of them.
+// Four components of under NAME_MAX each leave the deepest absolute path
+// comfortably inside that cap, and the count makes up the rest of the bytes.
+func deeplyNestedPaths(t *testing.T, count int) []string {
+	t.Helper()
+	dir := "src"
+	for i := range 3 {
+		dir += "/" + strings.Repeat(string(rune('a'+i)), 190)
+	}
+	paths := make([]string, 0, count)
+	for i := range count {
+		paths = append(paths, fmt.Sprintf("%s/Order%03d.cs", dir, i))
+	}
+	// gitscope is asked whether this layout splits rather than told what the
+	// budget is. A layout that quietly stopped splitting, or a budget raised
+	// past it, would otherwise leave the case green as a single-invocation
+	// duplicate of the one-file case beside it.
+	specs := make([]srcpath.Path, 0, len(paths))
+	for _, path := range paths {
+		specs = append(specs, srcpath.Path(path))
+	}
+	if batches := gitscope.DivergenceBatchCount(specs); batches < 2 {
+		t.Fatalf("%d paths go to git in %d invocations, want the split the case is about", count, batches)
+	}
+	return paths
+}
+
 // toonEscaped renders text the way a TOON string field escapes it, which is
 // what a golden's hole holds when the cause it stands for carries a quote or a
 // newline. git's own complaint about a file it cannot open carries both.

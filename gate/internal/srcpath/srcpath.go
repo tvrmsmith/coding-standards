@@ -59,6 +59,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 // Path is a repo-relative, slash-separated source path.
@@ -337,6 +338,13 @@ func (n Name) String() string { return string(n) }
 // classes that placed nothing, and the whole point here is to name a path that
 // may be nothing at all.
 //
+// An absolute path has the separators it ends in trimmed before anything reads
+// it, so a developer who typed a trailing slash gets the name the same path
+// without one gets. This is the single entry point a human-typed path arrives
+// at, so the normalisation lives here rather than in each caller that builds
+// one, and it goes no further than the trailing run for the reason
+// trimTrailingSeparators gives.
+//
 // It answers one of three shapes. A path under the repo root is named
 // repo-relative, whether the root prefix is spelled as the root is or in another
 // case that os.SameFile confirms reaches the same directory: the report sits
@@ -374,12 +382,34 @@ func (r Root) Name(path string) Name {
 	if !filepath.IsAbs(path) {
 		return Name(filepath.ToSlash(path))
 	}
-	resolved := resolveExisting(path)
+	resolved := resolveExisting(trimTrailingSeparators(path))
 	rel, place, err := r.relativize(resolved)
 	if err != nil || place == outside {
 		return Name(filepath.ToSlash(resolved))
 	}
 	return Name(rel)
+}
+
+// trimTrailingSeparators drops the separators abs ends in, down to but not
+// through the volume root, so "<root>/README.md/" asks about the same file
+// "<root>/README.md" asks about. Untrimmed, EvalSymlinks answers ENOTDIR for
+// the trailing slash on a regular file, resolveExisting climbs, and rejoining
+// filepath.Base onto filepath.Dir names the report "README.md/README.md".
+//
+// Only the trailing run goes. filepath.Clean would also pop ".." against the
+// component before it, and that is the one normalisation containment cannot
+// afford: with "<root>/link" a symlink out of the repository, the lexical pop
+// turns "<root>/link/../x" into "<root>/x" and a report that sits elsewhere is
+// named repo-relative, where EvalSymlinks pops the same ".." against the
+// resolved link and answers where the file really is. Root.Place resolves
+// without cleaning for the same reason, so the two agree about one string.
+func trimTrailingSeparators(abs string) string {
+	root := len(filepath.VolumeName(abs)) + 1
+	trimmed := abs
+	for len(trimmed) > root && os.IsPathSeparator(trimmed[len(trimmed)-1]) {
+		trimmed = trimmed[:len(trimmed)-1]
+	}
+	return trimmed
 }
 
 // resolveExisting resolves the symlinks of the deepest ancestor of abs that is
@@ -390,20 +420,36 @@ func (r Root) Name(path string) Name {
 // and /var on macOS) and an unresolved path compared against the resolved root
 // escapes for the indirection rather than for where it actually is.
 //
-// Only a component that is not there is climbed past: a symlink loop or an
-// ancestor the process may not search is a real fault, and climbing over it
-// would rename a report that does sit inside the repo into one named as though
-// it sat outside.
+// Only a component with nothing resolvable at that depth is climbed past.
+// EvalSymlinks says so two ways, fs.ErrNotExist for a component that is
+// absent and ENOTDIR for one that is a file standing where a directory would
+// have to be, and a file holds nothing beneath it either, so the two report
+// the same thing about the depth and climb alike. A symlink loop or an
+// ancestor the process may not search is a real fault instead, not an
+// absence, and climbing over either would rename a report that does sit
+// inside the repo into one named as though it sat outside.
 func resolveExisting(abs string) string {
 	resolved, err := filepath.EvalSymlinks(abs)
 	if err == nil {
 		return resolved
 	}
 	parent := filepath.Dir(abs)
-	if !errors.Is(err, fs.ErrNotExist) || parent == abs {
+	if parent == abs || !nothingResolvableHere(err) {
 		return abs
 	}
 	return filepath.Join(resolveExisting(parent), filepath.Base(abs))
+}
+
+// nothingResolvableHere reports whether err is EvalSymlinks saying there is
+// nothing to resolve at this depth, an absent component or one that is a
+// regular file rather than a directory. The filesystem reports the second as
+// ENOTDIR rather than fs.ErrNotExist, since it is a file and not nothing, but
+// a file holds nothing beneath it either, so climbing past it is the same
+// move as climbing past an absence. A symlink loop or a directory the process
+// may not search is a different question, whether the path resolves at all,
+// and answers false.
+func nothingResolvableHere(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
 }
 
 // FromSlash adopts an already repo-relative, slash-separated path, which is

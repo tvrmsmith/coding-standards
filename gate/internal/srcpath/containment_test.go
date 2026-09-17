@@ -262,6 +262,152 @@ func TestRelativizeReadsAnAbsentCaseDifferingPrefixAsOutside(t *testing.T) {
 	}
 }
 
+// A component that is a file rather than a directory is climbed past exactly
+// like an absent one: EvalSymlinks reports ENOTDIR partway down a path like
+// this one, not fs.ErrNotExist, and before the fix the climb guard only knew
+// the second, so it handed back the unresolved candidate untouched. That
+// candidate shares no prefix with a root reached through a symlink, so a
+// developer chasing a coverage report through a file misread as a directory
+// got told their report was outside the repo instead. The root here is
+// reached through a symlink for the same reason resolveExisting itself
+// exists, so the case fails on Linux too and not only where macOS hands every
+// run a symlinked /tmp already.
+func TestNameClimbsPastAFileComponentUnderASymlinkedRoot(t *testing.T) {
+	root, link := symlinkedRoot(t)
+	touch(t, filepath.Join(root.Dir(), "README.md"))
+
+	name := root.Name(filepath.Join(link, "repo", "README.md", "TestResults", "coverage.cobertura.xml"))
+
+	if name != "README.md/TestResults/coverage.cobertura.xml" {
+		t.Errorf("Name through a file component under a symlinked root = %q, want %q", name, "README.md/TestResults/coverage.cobertura.xml")
+	}
+}
+
+// The climb past a file component is what stops a report that really sits
+// outside the repository being named as though it sat inside. A symlink in the
+// tree pointing out of it, with a regular file standing partway down the
+// candidate, used to come back unresolved, match the root prefix on the
+// developer's own spelling, and be printed as "link/README.md/...". Climbing
+// resolves the link and the containment test then reads the report where it
+// actually is. This is the other half of the file-component climb, and without
+// it the ENOTDIR arm can be reverted with every other case still green.
+func TestNameRefusesAFileComponentReachedThroughASymlinkOutOfTheRepo(t *testing.T) {
+	root := containmentRoot(t)
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	touch(t, filepath.Join(outside, "README.md"))
+	if err := os.Symlink(outside, filepath.Join(root.Dir(), "link")); err != nil {
+		t.Fatal(err)
+	}
+
+	name := root.Name(filepath.Join(root.Dir(), "link", "README.md", "TestResults", "coverage.cobertura.xml"))
+
+	want := Name(filepath.ToSlash(filepath.Join(outside, "README.md", "TestResults", "coverage.cobertura.xml")))
+	if name != want {
+		t.Errorf("Name through a file component under a symlink out of the repo = %q, want the resolved %q", name, want)
+	}
+}
+
+// A trailing slash is a spelling of the same path, so it has to name the same
+// thing. Without the clean, EvalSymlinks reports ENOTDIR for "<root>/README.md/",
+// the climb takes filepath.Dir back to "<root>/README.md" and rejoins
+// filepath.Base's "README.md" onto it, and the developer is shown a report at
+// "README.md/README.md" that no fault ever explains.
+func TestNameReadsATrailingSlashAsTheSamePathWithoutIt(t *testing.T) {
+	root := containmentRoot(t)
+	touch(t, filepath.Join(root.Dir(), "README.md"))
+
+	name := root.Name(filepath.Join(root.Dir(), "README.md") + string(filepath.Separator))
+
+	if name != "README.md" {
+		t.Errorf("Name on a path spelled with a trailing slash = %q, want %q", name, "README.md")
+	}
+}
+
+// ".." belongs to the filesystem, not to the string. A symlink in the tree
+// pointing out of the repository, followed by "..", leaves the repository, and
+// EvalSymlinks pops the ".." against the directory the link resolved to, which
+// is how the report is read as outside. Popping it lexically first would pop it
+// against the link's own name instead, put the candidate back under the root,
+// and print an outside report as repo-relative while the parser goes on reading
+// the file where it really sits. The normalisation on entry is therefore the
+// trailing-separator trim alone and never filepath.Clean.
+func TestNameRefusesADotDotThatLeavesTheRepoThroughASymlink(t *testing.T) {
+	root := containmentRoot(t)
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	touch(t, filepath.Join(outside, "x"))
+	if err := os.Symlink(mkdir(t, filepath.Join(outside, "sub")), filepath.Join(root.Dir(), "link")); err != nil {
+		t.Fatal(err)
+	}
+	// Built by hand rather than with filepath.Join, which cleans, and a cleaned
+	// candidate is the very input this case exists to keep out of resolution.
+	sep := string(filepath.Separator)
+	candidate := filepath.Join(root.Dir(), "link") + sep + ".." + sep + "x"
+
+	name := root.Name(candidate)
+
+	want := Name(filepath.ToSlash(filepath.Join(outside, "x")))
+	if name != want {
+		t.Errorf("Name on %q, whose \"..\" leaves the repo through a symlink, = %q, want the resolved %q", candidate, name, want)
+	}
+}
+
+// A symlink cycle is a real fault and not a component that is merely absent or
+// a file where a directory belongs, so the climb guard leaves it where it
+// found it. Treating ELOOP like the other two would rename a report that
+// might sit inside the repo into one read as though it sat outside, on the
+// strength of a loop that says nothing about location at all.
+//
+// The loop sits behind symlinkedRoot's link rather than off root.Dir()
+// directly, which is what makes the assertion mean anything. Off root.Dir()
+// the climb is a no-op, resolveExisting(root.Dir()) already answers
+// root.Dir(), so a guard that wrongly climbs past ELOOP would still rejoin
+// the identical string a correct guard leaves untouched by never climbing at
+// all, and the test could not tell the two apart. Through the link, a guard
+// that wrongly climbs reaches an ancestor still on the linked side, resolves
+// it to the real directory, and hands back a string with "link" gone,
+// visibly different from the input the correct guard returns unchanged.
+func TestResolveExistingLeavesASymlinkCycleUnclimbed(t *testing.T) {
+	root, link := symlinkedRoot(t)
+	loop := filepath.Join(root.Dir(), "loop")
+	if err := os.Symlink(loop, loop); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(link, "repo", "loop", "coverage.cobertura.xml")
+
+	if got := resolveExisting(path); got != path {
+		t.Errorf("resolveExisting on a path through a symlink cycle = %q, want it unchanged, %q", got, path)
+	}
+}
+
+// An ancestor the process may not search is a real fault too, and comes back
+// unclimbed for the same reason ELOOP does. It is reached through
+// symlinkedRoot's link for the same reason: off root.Dir() directly, climbing
+// past the denied directory and rejoining its own name reconstructs the exact
+// input, so nothing distinguishes a guard that wrongly climbs on EACCES from
+// one that never climbs on it at all.
+func TestResolveExistingLeavesAnUnsearchableAncestorUnclimbed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root searches a directory whose mode denies it, so there is no stat failure to provoke")
+	}
+	root, link := symlinkedRoot(t)
+	denied := mkdir(t, filepath.Join(root.Dir(), "denied"))
+	if err := os.Chmod(denied, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(denied, 0o755) })
+	path := filepath.Join(link, "repo", "denied", "sub", "coverage.cobertura.xml")
+
+	if got := resolveExisting(path); got != path {
+		t.Errorf("resolveExisting on a path under an unsearchable ancestor = %q, want it unchanged, %q", got, path)
+	}
+}
+
 func TestNamedRefusesAMisCasedRootPrefixAsASpellingRatherThanALocation(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
@@ -1182,6 +1328,33 @@ func TestNameReadsAPathTypedThroughASymlinkedRootAsRepoRelative(t *testing.T) {
 	if name != "TestResults/coverage.xml" {
 		t.Errorf("Name on a path through the root's own symlink = %q, want %q", name, "TestResults/coverage.xml")
 	}
+}
+
+// symlinkedRoot is a Root reached through an ordinary symlink with no case
+// difference in it, returned with the link. Root.Dir() is fully resolved, the
+// real directory the link points to, but a path built through link instead
+// still carries the link's own spelling. That gap is what a resolveExisting
+// case needs to tell a guard that climbs past a real fault from one that
+// does not: climbing from a point still under link and resolving what is
+// left reaches the real spelling, textually different from the linked
+// spelling the fault sat behind, where the correct guard's refusal to climb
+// leaves the input exactly as given. Off root.Dir() alone the two guards
+// cannot be told apart, because resolving an already-resolved root is a
+// no-op and rejoining its own trailing components reconstructs the identical
+// string whether or not a climb happened.
+func symlinkedRoot(t *testing.T) (root Root, link string) {
+	t.Helper()
+	tmp := t.TempDir()
+	mkdir(t, filepath.Join(tmp, "actual", "repo"))
+	link = filepath.Join(tmp, "link")
+	if err := os.Symlink(filepath.Join(tmp, "actual"), link); err != nil {
+		t.Fatal(err)
+	}
+	root, err := NewRoot(filepath.Join(link, "repo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root, link
 }
 
 // symlinkedMiscasedRoot is a Root whose resolved directory is an upper-cased

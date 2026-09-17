@@ -3117,6 +3117,31 @@ func TestAbsentNamedReportUnderASymlinkedRootIsStillNamedRepoRelative(t *testing
 		"could not parse coverage report artifacts/typo.xml; open: no such file or directory\n")
 }
 
+func TestNamedReportThroughAFileComponentIsStillNamedRepoRelative(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write("artifacts/coverage.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// The typo puts a filename where a directory belongs, which the filesystem
+	// answers with ENOTDIR rather than with an absence. The path still reaches
+	// the repo through a symlink, as an absolute path typed on macOS does, so a
+	// resolution that stops at the first component naming no directory leaves
+	// the link unresolved, the document escapes the repo for the indirection
+	// alone and quotes a machine-specific absolute path where ADR 0004 asks for
+	// a repo-relative one.
+	link := symlinkedDir(t, f.root, filepath.Join(t.TempDir(), "link"))
+	f.runWithArgs("--coverage", filepath.Join(link, "artifacts", "coverage.xml", "typo.xml")).assertMatches(
+		t, "named_report_through_a_file", 1, f.baseLabel("main"),
+		"could not parse coverage report artifacts/coverage.xml/typo.xml; open: not a directory\n")
+}
+
 func TestAChangedFileMissingFromTheWorkingTreeCurrentlyStopsTheRunOutsideTheDocument(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
