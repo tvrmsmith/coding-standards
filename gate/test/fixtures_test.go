@@ -665,8 +665,8 @@ func (f *fixture) assertAddedAs(base, rel string, kind fileKind) {
 // handed list exists to tell apart from one that measured the wrong thing.
 func assertHandedToExtractor(t *testing.T, handed, want string) {
 	t.Helper()
-	//nolint:gosec // handed is the stub's stdin log, a path the case itself chose inside t.TempDir before pointing the stub at it
-	switch body, err := os.ReadFile(handed); {
+	body, err := os.ReadFile(handed) //nolint:gosec // handed is the stub's stdin log, a path the case itself chose inside t.TempDir before pointing the stub at it
+	switch {
 	case err == nil:
 		if string(body) != want {
 			t.Errorf("the extractor was handed %q, want %q", body, want)

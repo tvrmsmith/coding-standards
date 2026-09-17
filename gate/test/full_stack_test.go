@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// pointsFixture is the path, relative to the gate module root, to the C#
+// pointsFixture is the path, relative to gate/test/, to the C#
 // method the dotnet extractor's own suite already scores at complexity 9.
 // Copying it verbatim keeps this case's golden numbers tied to the real
 // tool's fixture rather than to a value retyped by hand.
@@ -381,11 +381,11 @@ func TestFullStackDrivesTheRealDotnetExtractor(t *testing.T) {
 		"1 of 1 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
 
-// readFixture reads a file relative to the gate module root, failing the
-// test rather than returning an error a caller might ignore.
+// readFixture reads a file relative to gate/test/, failing the test rather
+// than returning an error a caller might ignore.
 func readFixture(t *testing.T, rel string) string {
 	t.Helper()
-	//nolint:gosec // rel is a checked-in fixture path spelled by the calling case, resolved against the gate module root
+	//nolint:gosec // rel is a checked-in fixture path spelled by the calling case, resolved relative to gate/test/ and reaching the dotnet fixtures at the repo root
 	body, err := os.ReadFile(rel)
 	if err != nil {
 		t.Fatal(err)

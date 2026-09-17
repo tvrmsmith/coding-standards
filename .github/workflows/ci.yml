@@ -141,6 +141,32 @@ jobs:
             exit 1
           fi
 
+      # vet and the suite say the gate compiles and behaves. Neither says the
+      # personal preset still reports nothing over it, and until this step
+      # existed the only thing linting gate/*.go was harness/lint-changed-go.sh,
+      # which passes --issues-exit-code 0 and never blocks. So a new
+      # exec.Command or os.ReadFile could reintroduce a G204 or G304 with CI
+      # green. The bootstrap is the same two lines the golint job uses, because
+      # `golangci-lint custom` builds the version .custom-gcl.yml pins rather
+      # than its own.
+      - name: Build the personal binary
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          pinned=$(sed -n 's/^version: *//p' go/.custom-gcl.yml | head -1)
+          go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$pinned"
+          ./go/build.sh
+
+      # No --issues-exit-code here on purpose: the default is 1, and a finding
+      # reds the job. Clearing one means tightening the code or adding a
+      # //nolint naming the linter and giving a site-specific reason, never an
+      # entry in go/golangci.yml's excludes, which runs over other repositories
+      # too.
+      - name: Lint the gate with the personal preset
+        working-directory: gate
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: ../go/bin/tvrmsmith-gcl run --config ../go/golangci.yml --output.text.print-issued-lines=false ./...
+
   golint:
     name: lint plugin (go)
     runs-on: ubuntu-latest
