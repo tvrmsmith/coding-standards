@@ -654,11 +654,11 @@ func TestNamedRefusesAMisCasedRootPrefixTypedFromADeepWorkingDirectory(t *testin
 
 // The same refusal on a case-sensitive filesystem, so the merge gate runs it.
 func TestNamedRefusesACaseDifferingRootSpellingTypedFromADeepWorkingDirectory(t *testing.T) {
-	root, real := symlinkedMiscasedRoot(t)
-	touch(t, filepath.Join(real, "src", "a.cs"))
-	name := filepath.Join(real, "src", "a.cs")
+	root, realDir := symlinkedMiscasedRoot(t)
+	touch(t, filepath.Join(realDir, "src", "a.cs"))
+	name := filepath.Join(realDir, "src", "a.cs")
 
-	_, err := root.named(name, filepath.Join(real, "src"), dirNames{})
+	_, err := root.named(name, filepath.Join(realDir, "src"), dirNames{})
 
 	assertRootSpellingRefusal(t, err, name)
 }
