@@ -214,11 +214,17 @@ type Document struct {
 	Metrics []Metric
 }
 
+// Failed reports whether a typed cause fired. A Failure is the document's
+// error block, data the document carries to its reader, rather than an error
+// a caller propagates. Every reader asks this instead of comparing the field
+// against nil, so a presence question never reads as an error check.
+func (d Document) Failed() bool { return d.Failure != nil }
+
 // Status is the document's verdict: error when a typed cause fired, fail when
 // a scored method is over threshold, pass otherwise. Any one metric failing
 // fails the run, so a selection passes only when every metric in it passed.
 func (d Document) Status() string {
-	if d.Failure != nil {
+	if d.Failed() {
 		return "error"
 	}
 	for _, m := range d.Metrics {
@@ -252,7 +258,7 @@ func (d Document) ExitCode() int {
 // is about the set, not about any metric's reading of it.
 func (d Document) Stderr() string {
 	var b strings.Builder
-	if d.Failure != nil {
+	if d.Failed() {
 		b.WriteString(d.Failure.Message + "\n")
 	}
 	if len(d.Metrics) == 0 {

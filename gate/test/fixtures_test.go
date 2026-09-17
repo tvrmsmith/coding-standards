@@ -345,7 +345,9 @@ func renderCobertura(stamp string, sources []string, classes ...coverageClass) s
 	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>` + "\n")
 	timestampAttr := ""
 	if stamp != "" {
-		timestampAttr = fmt.Sprintf(` timestamp="%s"`, xmlAttribute(stamp))
+		// Concatenated rather than formatted: xmlAttribute has already escaped
+		// the value for XML, and %q would escape it a second time for Go.
+		timestampAttr = ` timestamp="` + xmlAttribute(stamp) + `"`
 	}
 	fmt.Fprintf(&b, `<coverage line-rate="0" version="1.9"%s>`+"\n", timestampAttr)
 	if len(sources) == 0 {
@@ -442,7 +444,11 @@ func caseInsensitiveFilesystem(t *testing.T, dir string) bool {
 	if err := os.WriteFile(probe, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(probe)
+	defer func() {
+		if err := os.Remove(probe); err != nil {
+			t.Errorf("removing the case-probe file: %v", err)
+		}
+	}()
 	_, err := os.Stat(filepath.Join(dir, "CASE-PROBE"))
 	switch {
 	case err == nil:
@@ -468,6 +474,18 @@ func resolvedPath(t *testing.T, path string) string {
 	return filepath.ToSlash(resolved)
 }
 
+// restoreMode schedules the path back to a mode the case can be cleaned up
+// under. A restore that failed is reported rather than dropped: left denied,
+// the directory defeats t.TempDir's own removal and the fault surfaces on some
+// later case instead of this one.
+func (f *fixture) restoreMode(full string, mode fs.FileMode) {
+	f.t.Cleanup(func() {
+		if err := os.Chmod(full, mode); err != nil {
+			f.t.Errorf("restoring the mode of %s: %v", full, err)
+		}
+	})
+}
+
 // denyRead creates a directory at rel that the process cannot read, so the
 // coverage walk hits a permission error on it. Root ignores the mode, so a
 // case relying on this skips there.
@@ -483,7 +501,7 @@ func (f *fixture) denyRead(rel string) {
 	if err := os.Chmod(full, 0o000); err != nil {
 		f.t.Fatal(err)
 	}
-	f.t.Cleanup(func() { os.Chmod(full, 0o755) })
+	f.restoreMode(full, 0o750)
 }
 
 // denyReadKeepingEntry makes the existing directory at rel impossible to list
@@ -501,7 +519,7 @@ func (f *fixture) denyReadKeepingEntry(rel string) {
 	if err := os.Chmod(full, 0o111); err != nil {
 		f.t.Fatal(err)
 	}
-	f.t.Cleanup(func() { os.Chmod(full, 0o755) })
+	f.restoreMode(full, 0o750)
 }
 
 // setExecutable turns the executable bit on for the file at rel, which is the
@@ -689,7 +707,7 @@ func (f *fixture) denyReadFile(rel string) {
 	if err := os.Chmod(full, 0o000); err != nil {
 		f.t.Fatal(err)
 	}
-	f.t.Cleanup(func() { os.Chmod(full, 0o644) })
+	f.restoreMode(full, 0o600)
 }
 
 // readCause is the cause the gate renders when it cannot read the file at rel:

@@ -9,6 +9,7 @@ package gate_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -51,12 +52,21 @@ func TestMain(m *testing.M) {
 	binDir = dir
 	if err := buildBinaries(dir); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.RemoveAll(dir)
+		removeBinDir(dir)
 		os.Exit(1)
 	}
 	code := m.Run()
-	os.RemoveAll(dir)
+	removeBinDir(dir)
 	os.Exit(code)
+}
+
+// removeBinDir takes the built binaries away again. TestMain has no *testing.T
+// to fail, so a directory left behind is reported on stderr: the next run
+// builds over it and would otherwise never say the temp tree is filling up.
+func removeBinDir(dir string) {
+	if err := os.RemoveAll(dir); err != nil {
+		fmt.Fprintf(os.Stderr, "removing the binary directory %s: %v\n", dir, err)
+	}
 }
 
 // buildBinaries compiles the gate and the stub extractor into dir.
@@ -70,7 +80,7 @@ func buildBinaries(dir string) error {
 		cmd := exec.Command("go", "build", "-o", filepath.Join(dir, name), pkg)
 		cmd.Dir = ".."
 		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("building %s: %v\n%s", pkg, err, out)
+			return fmt.Errorf("building %s: %w\n%s", pkg, err, out)
 		}
 	}
 	return nil
@@ -296,10 +306,11 @@ func (f *fixture) execTo(dir, workdir string, args []string, out io.Writer, extr
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	exitCode := 0
-	switch e := err.(type) {
-	case nil:
-	case *exec.ExitError:
-		exitCode = e.ExitCode()
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+	case errors.As(err, &exit):
+		exitCode = exit.ExitCode()
 	default:
 		f.t.Fatalf("running metric-gate: %v", err)
 	}

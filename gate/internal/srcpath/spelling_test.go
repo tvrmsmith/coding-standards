@@ -50,10 +50,7 @@ func TestSpelledAsOnDiskReportsADirectoryItCannotRead(t *testing.T) {
 	}
 	root := spellingRoot(t)
 	closed := filepath.Join(root.Dir(), "src", "Ordering")
-	if err := os.Chmod(closed, 0o111); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(closed, 0o755) })
+	denyAccess(t, closed, 0o111)
 
 	// A filesystem that will not answer is neither a match nor a mismatch, and
 	// reported as a mismatch it would tell the developer their spelling is
