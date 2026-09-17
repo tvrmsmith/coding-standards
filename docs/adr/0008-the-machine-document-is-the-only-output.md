@@ -4,6 +4,14 @@
 [ADR 0005](0005-the-machine-document-is-the-only-output.md) and its seventeen amendments. The
 decision is unchanged; 0005 holds the reasoning that got here.
 
+**Consolidated 2026-09-17.** This folds the five dated amendments this file carried back into the
+body and adds the stdout write carve-out the code has implemented since
+[issue 81](https://github.com/tvrmsmith/coding-standards/issues/81). No rule is dropped and no
+decision changes. The amendments recorded what consolidation from 0005 had lost, the `crap: []`
+encoding, the `action` tokens, the `skipped_paths` producers and their order, and the flag list,
+so folding them in is the point rather than a side effect. `git log -p` on this file keeps them as
+they were written.
+
 ## Current rule
 
 `metric-gate` is one flat command. There are no subcommands.
@@ -17,87 +25,56 @@ pipe drops them.
 tool error. A caller distinguishes "the code is bad" from "the gate is broken" on the exit code
 alone, before parsing anything.
 
-Every exit-1 cause carries a typed `error.code`. The codes are enumerated in
-`gate/internal/report`, where `register` declares each one, and that registry is the contract.
-`error.message` beside it is prose for a human and no caller branches on it.
+Every exit-1 cause carries a typed `error.code`. `gate/internal/report` enumerates the codes, where
+`register` declares each one, and that registry is the contract. `error.message` beside it is prose
+for a human and no caller branches on it. Adding a code is a contract change, registering it and
+writing the golden that pins it; `report.TestEveryErrorCodeIsPinnedByAGolden` fails on a code no
+golden names, and on a golden naming a code the registry does not know.
 
-Adding a code is a contract change. It means registering the code and writing the golden that pins
-it; `report.TestEveryErrorCodeIsPinnedByAGolden` fails on a code no golden names, and on a golden
-naming a code the registry does not know.
+Two exits carry neither. A malformed command line exits 1 with empty stdout and no typed code,
+because argv failed before the run had a shape to report. A stdout write that fails exits 1 with no
+typed code either, because the document is the thing that did not arrive and the code would have to
+be printed where the write just failed. Nothing else leaves the document behind.
 
-**Amended 2026-09-16.** This removes the seventeen-code list that stood in the paragraph above and
-leaves the rule. The list was a second copy of `gate/internal/report`'s declarations with nothing
-keeping the two honest, which is the same failure the two amendments below record: consolidation
-dropped the `crap: []` encoding and the `action` token enumeration from this file while the code
-kept implementing both. A prose copy of an enumeration drifts. The registry is now the one place a
-code exists, and a test rather than a reviewer enforces that every code is pinned. Two sentences
-told a future author to edit the list, the `action` token paragraph and the first in
-`## Consequences`; both now name the registry. `README.md` counted the codes and no longer does, a
-count being the same drift in small.
+## One document, one shape
+
+The document is a fixed shape rather than a shape that grows with the run. The scalar fields are
+always present and the field list does not vary with the outcome, so a consumer writes one parser
+rather than one per status.
 
 `scope` is one of `merge-base`, `staged`, `since`, `files`. `base` is null under `files`, which has
 no base to name.
 
 The crap table is present exactly when the join ran: exit 0 with methods scored, exit 2, and
-`unknown_changed_method`. Its field list is fixed and does not vary with the outcome, so a consumer
-writes one parser rather than one per status. A malformed command line exits 1 with empty stdout and
-no typed code, because argv failed before the run had a shape to report.
+`unknown_changed_method`. A table with no rows encodes as `crap: []`, since with no elements there
+is no uniform shape to declare.
 
-## One document, one shape
+`action` and `target_coverage` are typed cells in the table rather than prose, so a consumer reading
+"raise coverage to 0.8" reads `0.8` and not a sentence. `action` is one of `raise_coverage`,
+`split_method` or `none`. `target_coverage` is the coverage that would bring the method under the
+threshold at its current complexity, and it is `null` on every row whose `action` is not
+`raise_coverage`; `internal/crap` owns the arithmetic and the direction it rounds. On a scored row,
+`measured` or `structural_na`, `split_method` is emitted exactly when complexity exceeds the
+threshold, because at full coverage CRAP reduces to complexity and no test can rescue the method. An
+`unknown` row carries `none` whatever its complexity, since the join produced no score to act on.
+Adding a token is a contract change and edits this paragraph on the same commit, the same way adding
+a cause registers its `error.code` in `gate/internal/report`.
 
-The document is a fixed shape rather than a shape that grows with the run. The scalar fields are
-always present. `action` and `target_coverage` are typed cells in the table rather than prose, so a
-consumer reading "raise coverage to 0.8" reads `0.8` and not a sentence.
+`skipped_paths` lists paths no extractor claimed, and two things produce it. The first is a
+`--files` path that resolves to a real file no extractor claims. The second is coverage discovery,
+covering the paths it could not read, a directory it cannot enter among them, and the reports it
+found superseded (issue 32). Both proceed and neither fails the run, unless a superseded report is
+the only coverage the run found, in which case the run still fails with `coverage_stale`. Nothing
+produces an entry for a changed file whose extension no extractor handles, because no diff-scope
+selection writes the field; discovery still writes it under every scope, so a merge-base run does
+emit entries. The two are ordered, the `--files` paths first and the discovery skips after them,
+which `cmd/metric-gate` enforces with a deliberate append and
+`gate/test/golden/files_skip_before_discovery_skip.toon` pins. Merging the two lists and sorting the
+result reads as tidier and breaks it.
 
-**Amended 2026-09-09.** A table with no rows encodes as `crap: []`, since with no elements there is
-no uniform shape to declare. This qualifies "Its field list is fixed and does not vary with the
-outcome". ADR 0005 fixed that encoding and this file lost it in consolidation, while `internal/toon`
-still implements it.
-
-**Amended 2026-09-14.** This completes "`action` and `target_coverage` are typed cells in the table
-rather than prose", which requires both cells to be typed and never says what they hold. `action` is
-one of `raise_coverage`, `split_method` or `none`. `target_coverage` is the coverage that would
-bring the method under the threshold at its current complexity, and it is `null` on every row whose
-`action` is not `raise_coverage`; `internal/crap` owns the arithmetic and the direction it rounds.
-On a scored row, `measured` or `structural_na`, `split_method` is emitted exactly when complexity
-exceeds the threshold, because at full coverage CRAP reduces to complexity and no test can rescue
-the method. An `unknown` row carries `none` whatever its complexity, since the join produced no
-score to act on. ADR 0005 fixed
-this enumeration and this file lost it in consolidation, while `internal/crap` still emits the
-tokens and `gate/test/golden` still pins them. Adding a token is a contract change and edits this
-paragraph on the same commit, the same way adding a cause registers its `error.code` in
-`gate/internal/report`.
-
-`skipped_paths` lists paths no extractor claimed. Two things produce it: a changed file whose
-extension no extractor in the language table handles, and a `--files` path that resolves to a real
-file no extractor claims. Both proceed; neither fails the run.
-
-**Amended 2026-09-09.** A third thing produces `skipped_paths`: a discovered coverage report a
-fresher run already superseded (issue 32). It proceeds too, unless it is the only coverage the run
-found, in which case the run still fails with `coverage_stale`.
-
-**Amended 2026-09-11.** This corrects the producer count in both "Two things produce it" above and
-"A third thing produces `skipped_paths`" in the amendment between, which together reach three and
-name the wrong ones. There are two. The first is a `--files` path resolving to a real file no
-extractor claims. The second is coverage discovery, covering the paths it could not read, a
-directory it cannot enter among them, and the reports it found superseded. The `coverage_stale`
-caveat in that intervening amendment stands. Nothing produces an entry for a changed file whose
-extension no extractor handles, because no diff-scope selection writes the field; discovery still
-writes it under every scope, so a merge-base run does emit entries. The two are ordered, the
-`--files` paths first and the discovery skips after them. ADR 0005 fixed that order and this file
-lost it in consolidation, while `cmd/metric-gate` still enforces it with a deliberate append and
-`gate/test/golden/files_skip_before_discovery_skip.toon` still pins it. Merging the two lists and
-sorting the result reads as tidier and breaks it.
-
-One parser owns argv. Every flag the command takes, `--staged`, `--since`, `--files` and
-`--coverage`, is parsed in one place and printed in one usage block. Two parsers, each rejecting the
-other's flags as unknown, cannot print a usage block that tells the truth.
-
-**Amended 2026-09-14.** The sentence above enumerates four flags. Issue 19 adds two more,
-`--metric <name>` and `--threshold <name>=<n>`, both repeatable and both specified by the parent
-spec, so the list now reads `--staged`, `--since`, `--files`, `--coverage`, `--metric` and
-`--threshold`. The rule is unchanged: one parser owns all six and one usage block prints all six.
-The enumeration is what went stale, which is the cost of naming the flags rather than the rule.
+One parser owns argv. Every flag the command takes, `--staged`, `--since`, `--files`, `--coverage`,
+`--metric` and `--threshold`, is parsed in one place and printed in one usage block. Two parsers,
+each rejecting the other's flags as unknown, cannot print a usage block that tells the truth.
 
 ## Considered options
 
@@ -120,6 +97,12 @@ part of the error that is a contract; the message is not.
 **Exit 1 for every failure, pass or broken.** Rejected because CI cannot tell a red build from a
 broken tool without parsing, and the one thing a gate owes its caller is that distinction at the
 cheapest possible price.
+
+**A typed code for the stdout write failure too.** Rejected because there is nowhere to put it. The
+cause is stdout refusing the bytes, so the document carrying the code would take the same path that
+just failed, and a short write leaves a truncated document behind rather than nothing. The exit code
+is the only signal a caller can trust on this one cause, which is why the rule above carves it out
+rather than asking the gate to honour a contract stdout has already broken.
 
 ## Consequences
 
