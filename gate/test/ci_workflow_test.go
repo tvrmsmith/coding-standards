@@ -20,18 +20,18 @@ const ciWorkflow = "../../.github/workflows/ci.yml"
 // gateJob is the key under jobs: whose steps run this package.
 const gateJob = "gate"
 
-// passCheckStep is the name: of the step that runs the suite and then proves
+// suiteStep is the name: of the step that runs the suite and then proves
 // every case the step's own loop names reported PASS. The name is how this
 // file finds the step.
-const passCheckStep = "Run the gate suite and prove the full-stack cases ran"
+const suiteStep = "Run the gate suite and prove the full-stack cases ran"
 
 // gateWorkingDir is the directory the step declares, relative to the repository
 // root. `go test ./...` selects this module's packages only because it runs
 // there.
 const gateWorkingDir = "gate"
 
-// passCheckGuardStepID is the step the guard names, passCheckGuardReference is
-// how the guard expression reads that step's outcome, and passCheckGuard is the
+// suiteGuardStepID is the step the guard names, suiteGuardReference is
+// how the guard expression reads that step's outcome, and suiteGuard is the
 // whole if: the step carries, built from the other two so the id is stated
 // once. Comparing the whole expression is what makes `if: false` red.
 //
@@ -41,25 +41,25 @@ const gateWorkingDir = "gate"
 // same reason, so the step declaring the id must come first. A guard naming a
 // step that installs something else renders true while it stops meaning the Go
 // toolchain installed, so the step carrying the id must run
-// passCheckGuardStepUses.
+// suiteGuardStepUses.
 const (
-	passCheckGuardStepID    = "setup"
-	passCheckGuardStepUses  = "actions/setup-go@"
-	passCheckGuardReference = "steps." + passCheckGuardStepID + ".outcome"
-	passCheckGuard          = "${{ !cancelled() && " + passCheckGuardReference + " == 'success' }}"
+	suiteGuardStepID    = "setup"
+	suiteGuardStepUses  = "actions/setup-go@"
+	suiteGuardReference = "steps." + suiteGuardStepID + ".outcome"
+	suiteGuard          = "${{ !cancelled() && " + suiteGuardReference + " == 'success' }}"
 )
 
-// passCheckScript is the step's run: script, held here as an intentional
+// suiteScript is the step's run: script, held here as an intentional
 // snapshot of a machine-consumed declarative artifact rather than grepped for
 // tokens. Nothing in this suite executes the script, so a snapshot is what
 // makes every edit to it deliberate: a dropped case name, a deleted trailing
 // exit 1, a rewritten loop, a narrowed `go test` pattern, each reds this case
 // until someone updates the constant to match.
-const passCheckScript = `set -euo pipefail
+const suiteScript = `set -euo pipefail
 go test ./... -count=1 -v -timeout 12m | tee "$RUNNER_TEMP/gate-tests.txt"
 # One name per case in the suite's realExtractorCases list. The names
 # are retyped here rather than read out of the Go source, so add a new
-# case in both places. TestCIDeclaresThePassCheckStep holds this whole
+# case in both places. TestCIDeclaresTheSuiteStep holds this whole
 # script as a snapshot constant and compares it byte for byte, so no
 # edit here lands without a deliberate edit there. What this loop
 # itself catches is a name listed here that stopped reporting PASS.
@@ -96,13 +96,13 @@ if [ -n "$missing" ]; then
 fi
 `
 
-// TestCIDeclaresThePassCheckStep reads ci.yml as the declarative contract it is
+// TestCIDeclaresTheSuiteStep reads ci.yml as the declarative contract it is
 // and asserts the gate job declares the PASS check step once, gated on a step
 // declared ahead of it, running where `go test ./...` selects this module, with
 // enforcement on and the reviewed script underneath. Every one of those can
 // drift without any Go test noticing, because the step runs on the runner
 // rather than here.
-func TestCIDeclaresThePassCheckStep(t *testing.T) {
+func TestCIDeclaresTheSuiteStep(t *testing.T) {
 	body, err := os.ReadFile(ciWorkflow)
 	if err != nil {
 		t.Fatalf("reading the workflow this case reads as a contract at %s: %v", ciWorkflow, err)
@@ -143,31 +143,31 @@ func TestCIDeclaresThePassCheckStep(t *testing.T) {
 	guardDeclared := false
 	for i, step := range job.Steps {
 		declaredBefore := guardDeclared
-		if step.ID == passCheckGuardStepID {
+		if step.ID == suiteGuardStepID {
 			guardTargets++
 			guardDeclared = true
-			if !strings.HasPrefix(step.Uses, passCheckGuardStepUses) {
+			if !strings.HasPrefix(step.Uses, suiteGuardStepUses) {
 				t.Errorf("%s: step %d of the %q job declares id: %s but runs %q, want an action beginning %s. The guard stays true over any action carrying the id, so on another one it renders success while it has stopped meaning the Go toolchain installed",
-					ciWorkflow, i+1, gateJob, passCheckGuardStepID, step.Uses, passCheckGuardStepUses)
+					ciWorkflow, i+1, gateJob, suiteGuardStepID, step.Uses, suiteGuardStepUses)
 			}
 		}
 		guard := step.If.Value
-		if !declaredBefore && strings.Contains(guard, passCheckGuardReference) {
+		if !declaredBefore && strings.Contains(guard, suiteGuardReference) {
 			t.Errorf("%s: step %d of the %q job (%q) reads %s, which no earlier step declares id: %s for. The expression renders empty for a step that has not finished, its own step included, so the guard is false and the step skips with the job green",
-				ciWorkflow, i+1, gateJob, step.Name, passCheckGuardReference, passCheckGuardStepID)
+				ciWorkflow, i+1, gateJob, step.Name, suiteGuardReference, suiteGuardStepID)
 		}
-		if step.Name != passCheckStep {
+		if step.Name != suiteStep {
 			continue
 		}
 		found++
 
-		if guard != passCheckGuard {
+		if guard != suiteGuard {
 			t.Errorf("%s: the %q step carries if: %q, want %q. Any other expression is the check running when it should not or, worse, quietly not running",
-				ciWorkflow, passCheckStep, guard, passCheckGuard)
+				ciWorkflow, suiteStep, guard, suiteGuard)
 		}
-		if step.Run != passCheckScript {
-			t.Errorf("%s: the %q step's run: script is not the reviewed one. Update passCheckScript once the new script is what this repo wants to run. got:\n%s\nwant:\n%s",
-				ciWorkflow, passCheckStep, step.Run, passCheckScript)
+		if step.Run != suiteScript {
+			t.Errorf("%s: the %q step's run: script is not the reviewed one. Update suiteScript once the new script is what this repo wants to run. got:\n%s\nwant:\n%s",
+				ciWorkflow, suiteStep, step.Run, suiteScript)
 		}
 
 		// The snapshot above says ci.yml still carries the reviewed script. It
@@ -178,18 +178,18 @@ func TestCIDeclaresThePassCheckStep(t *testing.T) {
 		// and never finds.
 		switch looped, err := scriptLoopNames(step.Run); {
 		case err != nil:
-			t.Errorf("%s: the %q step's script: %v", ciWorkflow, passCheckStep, err)
+			t.Errorf("%s: the %q step's script: %v", ciWorkflow, suiteStep, err)
 		default:
 			wantNames := slices.Sorted(slices.Values(realExtractorCases))
 			slices.Sort(looped)
 			if !slices.Equal(looped, wantNames) {
 				t.Errorf("%s: the %q step's loop walks %v, want exactly the suite's realExtractorCases %v. A name the suite no longer defines makes CI grep for a case that can never report PASS, and a case the suite defines but the loop omits runs on CI unproven",
-					ciWorkflow, passCheckStep, looped, wantNames)
+					ciWorkflow, suiteStep, looped, wantNames)
 			}
 		}
 		if step.WorkingDirectory != gateWorkingDir {
 			t.Errorf("%s: the %q step declares working-directory %q, want %q, which is where its `go test ./...` selects this module",
-				ciWorkflow, passCheckStep, step.WorkingDirectory, gateWorkingDir)
+				ciWorkflow, suiteStep, step.WorkingDirectory, gateWorkingDir)
 		}
 
 		// The env key is read through the suite's own parser rather than
@@ -201,20 +201,20 @@ func TestCIDeclaresThePassCheckStep(t *testing.T) {
 		switch enforce, err := requireDotnet(raw, set); {
 		case err != nil:
 			t.Errorf("%s: the %q step sets %s=%q, which this suite rejects: %v",
-				ciWorkflow, passCheckStep, envRequireDotnet, raw, err)
+				ciWorkflow, suiteStep, envRequireDotnet, raw, err)
 		case !enforce:
 			t.Errorf("%s: the %q step does not set %s to a value that enables enforcement, so both real-toolchain cases would skip",
-				ciWorkflow, passCheckStep, envRequireDotnet)
+				ciWorkflow, suiteStep, envRequireDotnet)
 		}
 	}
 
 	if found != 1 {
 		t.Errorf("%s: the %q job holds %d steps named %q, want exactly one",
-			ciWorkflow, gateJob, found, passCheckStep)
+			ciWorkflow, gateJob, found, suiteStep)
 	}
 	if guardTargets != 1 {
 		t.Errorf("%s: the %q job declares %d steps with id: %s, want exactly one. The PASS check's guard reads %s, which is false for a step that does not exist, so the check would never run",
-			ciWorkflow, gateJob, guardTargets, passCheckGuardStepID, passCheckGuardReference)
+			ciWorkflow, gateJob, guardTargets, suiteGuardStepID, suiteGuardReference)
 	}
 }
 

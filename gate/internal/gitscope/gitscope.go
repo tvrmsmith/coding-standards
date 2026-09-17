@@ -760,10 +760,12 @@ func noMatch(err error) bool {
 // wall of failures ADR 0007 gives `-w` to prevent.
 //
 // Every unreadable side resolves towards measuring, which is the conservative
-// direction. An added path the gate cannot read stays measured, and so does
-// every other add in that run: the unknown content could be the one a deleted
-// blob explains, so counting without it would leave a readable sibling looking
-// accounted for and drop a file nobody moved. An add paired with a deleted
+// direction. An added path the gate cannot read stays measured, and it counts
+// against every other add in that run: the unknown content could be the one a
+// deleted blob explains, so counting without it would leave a readable sibling
+// looking accounted for and drop a file nobody moved. It is counted rather
+// than used to switch move detection off, so a run with more deletes than adds
+// still drops the moves the deletes do explain. An add paired with a deleted
 // object the gate cannot read stays measured too: a `cat-file` failure, which
 // is what a blobless partial clone gives offline, drops that object from the
 // comparison rather than escaping and leaving the run with no document at all.
@@ -802,13 +804,18 @@ func (r Repo) pureMoves(base Base, drivers []string) ([]srcpath.Path, error) {
 	}
 	digests := map[srcpath.Path][sha256.Size]byte{}
 	claimants := map[[sha256.Size]byte]int{}
+	unreadable := 0
 	for _, add := range added {
 		body, err := r.addedContent(base, add)
 		if err != nil {
-			// Move detection is off for the whole run, not for this add
-			// alone: the content the gate cannot read could be the one a
-			// deleted blob explains, so no add can be proven a move.
-			return nil, nil
+			// ADR 0007's 2026-09-16 amendment. An add the gate cannot
+			// digest could be carrying any deleted
+			// blob's content, so it is counted as a claimant of every digest
+			// rather than of none. It can never be proven a move itself, and
+			// it leaves every readable add one claimant nearer to unproven,
+			// which is the conservative direction: the run measures it.
+			unreadable++
+			continue
 		}
 		digest := squashedDigest(body)
 		digests[add.Path] = digest
@@ -816,8 +823,11 @@ func (r Repo) pureMoves(base Base, drivers []string) ([]srcpath.Path, error) {
 	}
 	var moves []srcpath.Path
 	for _, add := range added {
-		digest := digests[add.Path]
-		if carried[digest] == 0 || claimants[digest] > carried[digest] {
+		digest, read := digests[add.Path]
+		if !read {
+			continue
+		}
+		if carried[digest] == 0 || claimants[digest]+unreadable > carried[digest] {
 			continue
 		}
 		moves = append(moves, add.Path)

@@ -17,14 +17,14 @@ func TestDiscoverNamesASymlinkedReportByItsPathInsideTheRepo(t *testing.T) {
 	tmp := t.TempDir()
 	repo := filepath.Join(tmp, "repo")
 	results := filepath.Join(repo, "TestResults")
-	if err := os.MkdirAll(results, 0o755); err != nil {
+	if err := os.MkdirAll(results, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	elsewhere := filepath.Join(tmp, "build", "out.xml")
-	if err := os.MkdirAll(filepath.Dir(elsewhere), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(elsewhere), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(elsewhere, []byte("<coverage/>"), 0o644); err != nil {
+	if err := os.WriteFile(elsewhere, []byte("<coverage/>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(elsewhere, filepath.Join(results, ReportName)); err != nil {

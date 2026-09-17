@@ -107,7 +107,7 @@ jobs:
           go test ./... -count=1 -v -timeout 12m | tee "$RUNNER_TEMP/gate-tests.txt"
           # One name per case in the suite's realExtractorCases list. The names
           # are retyped here rather than read out of the Go source, so add a new
-          # case in both places. TestCIDeclaresThePassCheckStep holds this whole
+          # case in both places. TestCIDeclaresTheSuiteStep holds this whole
           # script as a snapshot constant and compares it byte for byte, so no
           # edit here lands without a deliberate edit there. What this loop
           # itself catches is a name listed here that stopped reporting PASS.

@@ -339,23 +339,23 @@ func TestSinceNamingATagThatDoesNotPointAtACommitFailsNamingThatRef(t *testing.T
 		"no diff base: --since treetag does not name a commit\n")
 }
 
+// An annotated tag over a tree, the one shape where the id verify hands
+// over is itself a tag object and what it wraps is still nothing the run
+// can diff. It shares the lightweight case's golden because the document
+// is the same; the input shape is what differs. What this case pins is
+// the answer the developer gets for it, a ref they can fix by naming
+// another rather than an unreadable diff. It says nothing about the `^{}`:
+// `cat-file -t` on the tag object bare answers `tag`, which is not
+// `commit` either, so this stays green with the peel dropped. The peel is
+// what TestSinceNamingAnAnnotatedTagResolvesTheBaseThroughIt and
+// TestSinceNamingAnAnnotatedTagWhoseCommitObjectIsGoneReportsAnUnreadableDiff
+// hold, and neither is redundant with this one.
 func TestSinceNamingAnAnnotatedTagOverATreeFailsNamingThatRef(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.git("tag", "-a", "treetag", "-m", "the tree", f.git("rev-parse", "HEAD^{tree}"))
 
-	// An annotated tag over a tree, the one shape where the id verify hands
-	// over is itself a tag object and what it wraps is still nothing the run
-	// can diff. It shares the lightweight case's golden because the document
-	// is the same; the input shape is what differs. What this case pins is
-	// the answer the developer gets for it, a ref they can fix by naming
-	// another rather than an unreadable diff. It says nothing about the `^{}`:
-	// `cat-file -t` on the tag object bare answers `tag`, which is not
-	// `commit` either, so this stays green with the peel dropped. The peel is
-	// what TestSinceNamingAnAnnotatedTagResolvesTheBaseThroughIt and
-	// TestSinceNamingAnAnnotatedTagWhoseCommitObjectIsGoneReportsAnUnreadableDiff
-	// hold, and neither is redundant with this one.
 	f.runArgs("--since", "treetag").assertMatches(t, "since_tag_not_a_commit", 1, "",
 		"no diff base: --since treetag does not name a commit\n")
 }

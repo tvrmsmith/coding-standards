@@ -50,10 +50,7 @@ func TestSpelledAsOnDiskReportsADirectoryItCannotRead(t *testing.T) {
 	}
 	root := spellingRoot(t)
 	closed := filepath.Join(root.Dir(), "src", "Ordering")
-	if err := os.Chmod(closed, 0o111); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(closed, 0o755) })
+	denyAccess(t, closed, 0o111)
 
 	// A filesystem that will not answer is neither a match nor a mismatch, and
 	// reported as a mismatch it would tell the developer their spelling is
@@ -86,7 +83,7 @@ func TestNamedSaysAPathHasNoReadingRelativeToTheRootRatherThanCallingItOutside(t
 	// absolute, so it is not the working-directory join either.
 	dir := t.TempDir()
 	file := filepath.Join(dir, "OrderService.cs")
-	if err := os.WriteFile(file, nil, 0o644); err != nil {
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	root := Root{resolved: filepath.Join("relative", "root")}
@@ -110,10 +107,10 @@ func TestNamedSaysAPathHasNoReadingRelativeToTheRootRatherThanCallingItOutside(t
 func spellingRoot(t *testing.T) Root {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "src", "Ordering"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "src", "Ordering"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "src", "Ordering", "OrderService.cs"), nil, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "src", "Ordering", "OrderService.cs"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	root, err := NewRoot(dir)

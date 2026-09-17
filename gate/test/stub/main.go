@@ -69,7 +69,7 @@ func drainStdin(cfg config) error {
 	if cfg.StdinLog == "" {
 		return nil
 	}
-	if err := os.WriteFile(cfg.StdinLog, body, 0o644); err != nil {
+	if err := os.WriteFile(cfg.StdinLog, body, 0o600); err != nil {
 		return fmt.Errorf("stub extractor: %w", err)
 	}
 	return nil
