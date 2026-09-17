@@ -19,7 +19,7 @@
 // reaches them: emit reports the first and nothing the gate builds makes the
 // encoder refuse, and discovery's own walk hands back no error.
 //
-// ADR 0008 carves out one of the two: a malformed command line, which exits
+// ADR 0008 carves out both. The first is a malformed command line, which exits
 // before measure ever runs, empty stdout and all, because argv failed before
 // the run had a shape to report. Every cause measure can reach, by contrast,
 // carries a typed code and a document: failing to run git, failing to find a
@@ -31,9 +31,9 @@
 // that says none are left outside it, so a case in gate/test pinning such an
 // exit points here rather than restate it.
 //
-// The second is a known deviation rather than something 0008 grants, and it
-// is reachable only after the document is built: stdout refusing the write
-// that carries it, a full disk or a closed descriptor among the causes. The
+// The second is reachable only after the document is built, stdout refusing
+// the write that carries it, a full disk or a closed descriptor among the
+// causes. 0008 named it as a carve-out on its 2026-09-17 consolidation. The
 // gate did produce a document, and it still exits 1 with no typed code,
 // because the document is the thing that could not be delivered. A write that
 // came up short leaves a truncated document behind, so on this cause alone
@@ -91,9 +91,9 @@ func main() {
 // rendered one and could not deliver it, must both look like something other
 // than a pass.
 //
-// This is a known deviation from ADR 0008: the failure carries no typed
-// error.code, because the code would have nowhere to be printed, stdout
-// being the thing that is unusable. See the package doc above.
+// ADR 0008 carves this out. The failure carries no typed error.code, because
+// the code would have nowhere to be printed, stdout being the thing that is
+// unusable. See the package doc above.
 func emit(stdout, stderr io.Writer, doc report.Document) (int, error) {
 	body, err := doc.Stdout()
 	if err != nil {
