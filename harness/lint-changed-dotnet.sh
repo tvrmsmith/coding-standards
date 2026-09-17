@@ -54,6 +54,16 @@ repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
 repo_root=$(cd "$repo_root" && pwd -P)
 cd "$repo_root" || exit 2
 
+# A linked worktree is the same adoption as the checkout it was made from, so the registry is
+# keyed on the main checkout rather than on where the commit happens to be taken. The hook is
+# shared anyway — it lives in the common git dir — so keying on $repo_root would install a hook
+# in every worktree that then skipped, which reads exactly like the layer being broken. The
+# common git dir is <main>/.git in both cases, so its parent is the main checkout.
+registry_key=$repo_root
+if common_git_dir=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P); then
+  registry_key=$(cd "$common_git_dir/.." && pwd -P)
+fi
+
 # Whether this repo is adopted is a question the props file already answers: it carries one
 # path-scoped Import per adopted repo, so the scoping condition doubles as the registry. That
 # keeps the pre-commit hook free of per-language state — one template serves both branches, and
@@ -61,9 +71,21 @@ cd "$repo_root" || exit 2
 #
 # Skip, don't fail. A repo bootstrapped for TypeScript only must not have its commits blocked
 # by a .NET branch that was never wired up.
-if [ ! -f "$props" ] || ! grep -qF "StartsWith('$repo_root/')" "$props"; then
+if [ ! -f "$props" ] || ! grep -qF "StartsWith('$registry_key/')" "$props"; then
   [ "$mode" = "--staged" ] \
-    || echo "lint-changed-dotnet: $repo_root is not wired for .NET — run 'bootstrap dotnet $repo_root'" >&2
+    || echo "lint-changed-dotnet: $registry_key is not wired for .NET — run 'bootstrap dotnet $registry_key'" >&2
+  exit 0
+fi
+
+# Adoption is settled above, so the builds below import the analyzer props directly instead of
+# going through the path-scoped wrapper. The wrapper's condition names the main checkout, and
+# a project in a linked worktree sits outside it — routing through it would skip the analyzers
+# in every worktree while the registry check said the repo was wired up. Importing directly
+# also means a new worktree needs no bootstrap of its own.
+hub=$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+analyzer_props=$hub/dotnet/artifacts/local/Tvrmsmith.Analyzers.Local.props
+if [ ! -f "$analyzer_props" ]; then
+  echo "lint-changed-dotnet: $analyzer_props is missing — run 'bootstrap dotnet $registry_key'" >&2
   exit 0
 fi
 
@@ -151,7 +173,7 @@ for proj in $projects; do
   # working tree against HEAD; this hook is keyed on what is *staged*, and the two sets are not
   # the same one. Letting both filter would make the reported set the intersection, silently.
   # This script's own filter, below, stays the single answer to "which files count".
-  out=$(CustomAfterMicrosoftCommonProps="$props" \
+  out=$(CustomAfterMicrosoftCommonProps="$analyzer_props" \
     dotnet build "$proj" -p:TvrmsmithAnalyzersEnabled=true \
       -p:TvrmsmithAnalyzersScopeToChanged=false -v:m --nologo 2>&1)
   build_status=$?
@@ -169,7 +191,7 @@ for proj in $projects; do
   # incremental against eight forced on the same tree. --no-incremental makes csc run again;
   # BuildProjectReferences=false stops that force from cascading through the graph, which is
   # safe here and only here, because pass 1 has already put the referenced assemblies on disk.
-  out=$(CustomAfterMicrosoftCommonProps="$props" \
+  out=$(CustomAfterMicrosoftCommonProps="$analyzer_props" \
     dotnet build "$proj" --no-incremental -p:BuildProjectReferences=false \
       -p:TvrmsmithAnalyzersEnabled=true -p:TvrmsmithAnalyzersScopeToChanged=false -v:m --nologo 2>&1)
   if [ $? -ne 0 ]; then
