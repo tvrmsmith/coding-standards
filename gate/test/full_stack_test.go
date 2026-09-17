@@ -109,7 +109,7 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 // so adding a case here is the one edit that puts it under those rows. ci.yml
 // retypes the same names in the loop that greps the verbose log for each one's
 // PASS line, and it does not read them from here, so a new case is added in
-// both places by hand. TestCIDeclaresThePassCheckStep reads that script's own
+// both places by hand. TestCIDeclaresTheSuiteStep reads that script's own
 // loop list and requires it to hold exactly these names, so a case added here
 // and not there, or left there after a rename, reds rather than running on CI
 // unproven.
@@ -496,7 +496,7 @@ func localFeedConfig(t *testing.T, packDir string) string {
   </packageSources>
 </configuration>
 `
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path

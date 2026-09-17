@@ -102,7 +102,7 @@ func plantUnrunnableExtractor(t *testing.T, dir string) {
 	if os.Geteuid() == 0 {
 		t.Skip("running as root, which some platforms let exec a file with no execute bit")
 	}
-	if err := os.WriteFile(filepath.Join(dir, extractorName), []byte("#!/bin/sh\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, extractorName), []byte("#!/bin/sh\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -345,7 +345,9 @@ func renderCobertura(stamp string, sources []string, classes ...coverageClass) s
 	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>` + "\n")
 	timestampAttr := ""
 	if stamp != "" {
-		timestampAttr = fmt.Sprintf(` timestamp="%s"`, xmlAttribute(stamp))
+		// Concatenated rather than formatted: xmlAttribute has already escaped
+		// the value for XML, and %q would escape it a second time for Go.
+		timestampAttr = ` timestamp="` + xmlAttribute(stamp) + `"`
 	}
 	fmt.Fprintf(&b, `<coverage line-rate="0" version="1.9"%s>`+"\n", timestampAttr)
 	if len(sources) == 0 {
@@ -386,10 +388,10 @@ func xmlAttribute(value string) string {
 // coverage_outside_repo).
 func writeAbsolute(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -424,7 +426,7 @@ func namedOutsideRepoStderr(report, example, root string) string {
 // which is how the resolved reading of a path is told from the as-built one.
 func symlinkedDir(t *testing.T, target, link string) string {
 	t.Helper()
-	if err := os.MkdirAll(target, 0o755); err != nil {
+	if err := os.MkdirAll(target, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(target, link); err != nil {
@@ -439,10 +441,14 @@ func symlinkedDir(t *testing.T, target, link string) string {
 func caseInsensitiveFilesystem(t *testing.T, dir string) bool {
 	t.Helper()
 	probe := filepath.Join(dir, "case-probe")
-	if err := os.WriteFile(probe, nil, 0o644); err != nil {
+	if err := os.WriteFile(probe, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(probe)
+	defer func() {
+		if err := os.Remove(probe); err != nil {
+			t.Errorf("removing the case-probe file: %v", err)
+		}
+	}()
 	_, err := os.Stat(filepath.Join(dir, "CASE-PROBE"))
 	switch {
 	case err == nil:
@@ -468,6 +474,18 @@ func resolvedPath(t *testing.T, path string) string {
 	return filepath.ToSlash(resolved)
 }
 
+// restoreMode schedules the path back to a mode the case can be cleaned up
+// under. A restore that failed is reported rather than dropped: left denied,
+// the directory defeats t.TempDir's own removal and the fault surfaces on some
+// later case instead of this one.
+func (f *fixture) restoreMode(full string, mode fs.FileMode) {
+	f.t.Cleanup(func() {
+		if err := os.Chmod(full, mode); err != nil {
+			f.t.Errorf("restoring the mode of %s: %v", full, err)
+		}
+	})
+}
+
 // denyRead creates a directory at rel that the process cannot read, so the
 // coverage walk hits a permission error on it. Root ignores the mode, so a
 // case relying on this skips there.
@@ -477,13 +495,13 @@ func (f *fixture) denyRead(rel string) {
 		f.t.Skip("running as root, which reads a mode 0 directory anyway")
 	}
 	full := filepath.Join(f.root, filepath.FromSlash(rel))
-	if err := os.MkdirAll(full, 0o755); err != nil {
+	if err := os.MkdirAll(full, 0o750); err != nil {
 		f.t.Fatal(err)
 	}
 	if err := os.Chmod(full, 0o000); err != nil {
 		f.t.Fatal(err)
 	}
-	f.t.Cleanup(func() { os.Chmod(full, 0o755) })
+	f.restoreMode(full, 0o750)
 }
 
 // denyReadKeepingEntry makes the existing directory at rel impossible to list
@@ -501,7 +519,7 @@ func (f *fixture) denyReadKeepingEntry(rel string) {
 	if err := os.Chmod(full, 0o111); err != nil {
 		f.t.Fatal(err)
 	}
-	f.t.Cleanup(func() { os.Chmod(full, 0o755) })
+	f.restoreMode(full, 0o750)
 }
 
 // setExecutable turns the executable bit on for the file at rel, which is the
@@ -531,7 +549,7 @@ func (f *fixture) setExecutable(rel string) {
 func (f *fixture) symlinkTo(target, rel string) {
 	f.t.Helper()
 	full := filepath.Join(f.root, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 		f.t.Fatal(err)
 	}
 	if err := os.Symlink(target, full); err != nil {
@@ -601,13 +619,41 @@ func (f *fixture) assertTypechange(base, rel string, committed, tree fileKind) {
 		f.t.Fatalf("%s holds %q for %s, want %s at mode %s",
 			base, got, rel, committed, strings.TrimSpace(committed.gitMode()))
 	}
+	f.assertWorkingTreeKind(rel, tree)
+}
+
+// assertWorkingTreeKind fails the case unless rel stands in the working tree
+// as want, which is the half of a kind precondition that git's own notation
+// never reports.
+func (f *fixture) assertWorkingTreeKind(rel string, want fileKind) {
+	f.t.Helper()
 	info, err := os.Lstat(filepath.Join(f.root, filepath.FromSlash(rel)))
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	if got := lstatKind(info.Mode()); got != tree {
-		f.t.Fatalf("the working tree holds %s as %s, want %s", rel, got, tree)
+	if got := lstatKind(info.Mode()); got != want {
+		f.t.Fatalf("the working tree holds %s as %s, want %s", rel, got, want)
 	}
+}
+
+// assertAddedAs fails the case unless rel is a live addition against base,
+// arriving as kind in both the index and the working tree.
+//
+// A case naming an added symlink in its title rests on status A, the same way
+// a typechange case rests on status T, so it needs the same precondition:
+// asserting a presence would pass while pinning nothing if the setup stopped
+// producing the status the case names. assertTypechange is that check for a
+// typechange; this is its sibling for a new path.
+func (f *fixture) assertAddedAs(base, rel string, kind fileKind) {
+	f.t.Helper()
+	if got := f.git("diff", "--name-status", base, "--", rel); got != "A\t"+rel {
+		f.t.Fatalf("git reports %q for %s, so this case is not exercising an addition", got, rel)
+	}
+	if got := f.git("ls-files", "-s", "--", rel); !strings.HasPrefix(got, kind.gitMode()) {
+		f.t.Fatalf("the index holds %q for %s, want %s at mode %s",
+			got, rel, kind, strings.TrimSpace(kind.gitMode()))
+	}
+	f.assertWorkingTreeKind(rel, kind)
 }
 
 // assertHandedToExtractor fails the case unless the stub's stdin log at handed
@@ -661,7 +707,7 @@ func (f *fixture) denyReadFile(rel string) {
 	if err := os.Chmod(full, 0o000); err != nil {
 		f.t.Fatal(err)
 	}
-	f.t.Cleanup(func() { os.Chmod(full, 0o644) })
+	f.restoreMode(full, 0o600)
 }
 
 // readCause is the cause the gate renders when it cannot read the file at rel:
@@ -754,7 +800,7 @@ func hideEditFilter(t *testing.T) (attributesFile, cleanCommand string) {
 	t.Helper()
 	dir := t.TempDir()
 	attributesFile = filepath.Join(dir, "attributes")
-	if err := os.WriteFile(attributesFile, []byte("*.cs filter=hide\n"), 0o644); err != nil {
+	if err := os.WriteFile(attributesFile, []byte("*.cs filter=hide\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// A path rather than a command line, because the config value has to survive
@@ -799,7 +845,7 @@ func cleanFilterParameters(t *testing.T) string {
 func unparseableGlobalConfigHome(t *testing.T) []string {
 	t.Helper()
 	home := t.TempDir()
-	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[core\n\tquotePath = false\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[core\n\tquotePath = false\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// XDG_CONFIG_HOME is the other place git looks for a global config, and an
@@ -952,6 +998,41 @@ func (f *fixture) divergenceStderr(rel string) string {
 	return f.gitStderr(gitscope.DivergenceArgs([]srcpath.Path{srcpath.Path(rel)})...)
 }
 
+// deeplyNestedPaths lays out count source paths long enough together that
+// gitscope splits them over more than one divergence invocation, which is the
+// changeset it has to batch rather than hand git whole. The bytes come from
+// depth rather than from file count, because the budget is a byte budget and a
+// fixture of the ten thousand files it would otherwise take costs the suite
+// seconds to write and stage.
+//
+// Depth is what it is because macOS caps a whole path at 1024 bytes, a quarter
+// of Linux's, and the temp directory eats the first hundred and fifty of them.
+// Four components of under NAME_MAX each leave the deepest absolute path
+// comfortably inside that cap, and the count makes up the rest of the bytes.
+func deeplyNestedPaths(t *testing.T, count int) []string {
+	t.Helper()
+	dir := "src"
+	for i := range 3 {
+		dir += "/" + strings.Repeat(string(rune('a'+i)), 190)
+	}
+	paths := make([]string, 0, count)
+	for i := range count {
+		paths = append(paths, fmt.Sprintf("%s/Order%03d.cs", dir, i))
+	}
+	// gitscope is asked whether this layout splits rather than told what the
+	// budget is. A layout that quietly stopped splitting, or a budget raised
+	// past it, would otherwise leave the case green as a single-invocation
+	// duplicate of the one-file case beside it.
+	specs := make([]srcpath.Path, 0, len(paths))
+	for _, path := range paths {
+		specs = append(specs, srcpath.Path(path))
+	}
+	if batches := gitscope.DivergenceBatchCount(specs); batches < 2 {
+		t.Fatalf("%d paths go to git in %d invocations, want the split the case is about", count, batches)
+	}
+	return paths
+}
+
 // toonEscaped renders text the way a TOON string field escapes it, which is
 // what a golden's hole holds when the cause it stands for carries a quote or a
 // newline. git's own complaint about a file it cannot open carries both.
@@ -977,7 +1058,7 @@ func (f *fixture) corruptPackedRefs() {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(body, "not a ref line\n"...), 0o644); err != nil {
+	if err := os.WriteFile(path, append(body, "not a ref line\n"...), 0o600); err != nil {
 		f.t.Fatal(err)
 	}
 }

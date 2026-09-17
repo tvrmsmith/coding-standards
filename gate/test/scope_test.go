@@ -339,23 +339,23 @@ func TestSinceNamingATagThatDoesNotPointAtACommitFailsNamingThatRef(t *testing.T
 		"no diff base: --since treetag does not name a commit\n")
 }
 
+// An annotated tag over a tree, the one shape where the id verify hands
+// over is itself a tag object and what it wraps is still nothing the run
+// can diff. It shares the lightweight case's golden because the document
+// is the same; the input shape is what differs. What this case pins is
+// the answer the developer gets for it, a ref they can fix by naming
+// another rather than an unreadable diff. It says nothing about the `^{}`:
+// `cat-file -t` on the tag object bare answers `tag`, which is not
+// `commit` either, so this stays green with the peel dropped. The peel is
+// what TestSinceNamingAnAnnotatedTagResolvesTheBaseThroughIt and
+// TestSinceNamingAnAnnotatedTagWhoseCommitObjectIsGoneReportsAnUnreadableDiff
+// hold, and neither is redundant with this one.
 func TestSinceNamingAnAnnotatedTagOverATreeFailsNamingThatRef(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.git("tag", "-a", "treetag", "-m", "the tree", f.git("rev-parse", "HEAD^{tree}"))
 
-	// An annotated tag over a tree, the one shape where the id verify hands
-	// over is itself a tag object and what it wraps is still nothing the run
-	// can diff. It shares the lightweight case's golden because the document
-	// is the same; the input shape is what differs. What this case pins is
-	// the answer the developer gets for it, a ref they can fix by naming
-	// another rather than an unreadable diff. It says nothing about the `^{}`:
-	// `cat-file -t` on the tag object bare answers `tag`, which is not
-	// `commit` either, so this stays green with the peel dropped. The peel is
-	// what TestSinceNamingAnAnnotatedTagResolvesTheBaseThroughIt and
-	// TestSinceNamingAnAnnotatedTagWhoseCommitObjectIsGoneReportsAnUnreadableDiff
-	// hold, and neither is redundant with this one.
 	f.runArgs("--since", "treetag").assertMatches(t, "since_tag_not_a_commit", 1, "",
 		"no diff base: --since treetag does not name a commit\n")
 }
@@ -421,6 +421,38 @@ func TestStagedRefusesAFileStagedInOneStateAndDirtyInAnother(t *testing.T) {
 
 	f.runArgs("--staged").assertMatches(t, "staged_file_dirty", 1, f.headLabel(),
 		"refusing to score src/Ordering/OrderService.cs: staged in one state and on disk in another\n")
+}
+
+func TestStagedRefusesADirtyFileAmongMorePathspecsThanOneArgvCarries(t *testing.T) {
+	// Every claimed path used to go on one git command line with no ceiling. A
+	// large enough staged changeset made that argv too long for exec, and the
+	// gate reported E2BIG as diff_unparseable, which names the wrong problem,
+	// since git parsed nothing because it never ran. Batched, the refusal has to
+	// survive the split, so the dirty file is the last path. Wherever the
+	// boundaries fall it sits in the final batch, and a union that dropped a
+	// batch would report a clean tree.
+	paths := deeplyNestedPaths(t, 120)
+	dirty := paths[len(paths)-1]
+
+	f := newFixture(t, "main")
+	for _, path := range paths {
+		f.write(path, csharpFile(80))
+	}
+	f.commitAll("initial")
+	for _, path := range paths {
+		f.touchLine(path, 62)
+	}
+	f.git("add", "-A")
+	f.touchLine(dirty, 45)
+
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(paths...), nil),
+	}
+
+	f.runArgs("--staged").assertMatchesWith(t, "staged_many_pathspecs_dirty", 1, f.headLabel(),
+		"refusing to score "+dirty+": staged in one state and on disk in another\n",
+		map[string]string{"PATH": dirty})
 }
 
 func TestStagedRefusesADirtyFileWhoseNameReadsAsAGlob(t *testing.T) {

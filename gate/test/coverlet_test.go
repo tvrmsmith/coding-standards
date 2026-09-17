@@ -94,6 +94,20 @@ func TestFullStackScoresAReportCoverletWrote(t *testing.T) {
 		"0 of 1 changed methods over CRAP threshold 30, worst score 10.27\n")
 }
 
+// sourcePathPins are the two MSBuild properties both fixture projects state
+// rather than inherit from the environment. Either one on erases the source
+// root, which is ADR 0004's coverage_source_root_erased case and is covered by
+// the hand-built helper instead. Inherited, they would make this case emit a
+// different document on CI than on a laptop, since MSBuild reads an environment
+// variable as a property and a runner exporting either name then decides for a
+// project that does not state it. Both projects carry them, because coverlet
+// reports the test assembly's own sources into the same Cobertura document and
+// the gate refuses the whole report on the first class whose filename lost its
+// root.
+const sourcePathPins = `    <ContinuousIntegrationBuild>false</ContinuousIntegrationBuild>
+    <DeterministicSourcePaths>false</DeterministicSourcePaths>
+`
+
 // writeCoverletFixture lays down a two-project solution `dotnet test` can
 // restore, build and collect coverage over. The projects are generated here
 // rather than checked in because a csproj referencing Microsoft.NET.Test.Sdk
@@ -126,17 +140,7 @@ func (f *fixture) writeCoverletFixture() {
 	// already scores the same method at.
 	f.write("src/Points.cs", readFixture(f.t, pointsFixture))
 
-	// ContinuousIntegrationBuild and DeterministicSourcePaths are pinned off
-	// rather than left to the environment. Either one on erases the source
-	// root, which is ADR 0004's coverage_source_root_erased case, covered by
-	// the hand-built helper. Inheriting them would make this case emit a
-	// different document on CI than on a laptop, and MSBuild reads an
-	// environment variable as a property, so a runner exporting either name
-	// decides for a project that does not state it. Both projects carry the
-	// pins, because coverlet reports the test assembly's own sources into the
-	// same Cobertura document and the gate refuses the whole report on the
-	// first class whose filename lost its root. ImplicitUsings is on because
-	// Points.cs names Exception without a using.
+	// ImplicitUsings is on because Points.cs names Exception without a using.
 	f.write("src/Lib.csproj", `<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>`+coverletFixtureFramework+`</TargetFramework>
@@ -144,9 +148,7 @@ func (f *fixture) writeCoverletFixture() {
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Lib</AssemblyName>
     <RootNamespace>Fixtures</RootNamespace>
-    <ContinuousIntegrationBuild>false</ContinuousIntegrationBuild>
-    <DeterministicSourcePaths>false</DeterministicSourcePaths>
-  </PropertyGroup>
+`+sourcePathPins+`  </PropertyGroup>
 </Project>
 `)
 
@@ -162,9 +164,7 @@ func (f *fixture) writeCoverletFixture() {
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
-    <ContinuousIntegrationBuild>false</ContinuousIntegrationBuild>
-    <DeterministicSourcePaths>false</DeterministicSourcePaths>
-  </PropertyGroup>
+`+sourcePathPins+`  </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="`+testSdkVersion+`" />
     <PackageReference Include="xunit" Version="`+xunitVersion+`" />

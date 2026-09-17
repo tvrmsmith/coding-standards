@@ -165,6 +165,33 @@ func TestAnAddNobodyCanReadLeavesEveryOtherAddMeasured(t *testing.T) {
 		"0 of 1 changed methods over CRAP threshold 30, worst score 4.00\n")
 }
 
+func TestAnAddNobodyCanReadStillLeavesTheMovesTheDeletesExplainDropped(t *testing.T) {
+	const firstOrigin = "src/Ordering/First.cs"
+	const secondOrigin = "src/Ordering/Second.cs"
+	const moved = "src/Ordering/Moved.cs"
+	vanish := span{File: moved, Name: "Moved.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(firstOrigin, csharpFile(20))
+	f.write(secondOrigin, csharpFile(20))
+	f.commitAll("initial")
+	// Two deletes carry the one digest and only one readable add claims it, so
+	// the add stays accounted for even counting the unreadable add as a second
+	// claimant. The unreadable add makes no add unprovable on its own: it is
+	// one more claimant, not a switch that turns move detection off.
+	f.git("mv", firstOrigin, moved)
+	f.git("rm", secondOrigin)
+	f.symlinkTo(filepath.Join(f.root, "gone.md"), "notes.md")
+	f.git("add", "notes.md")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(moved), []span{vanish}),
+	}
+
+	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
+		"no changed methods, nothing to measure\n")
+}
+
 func TestMethodScoringExactlyAtTheThresholdPasses(t *testing.T) {
 	f := newFixture(t, "main")
 	boundaryFixture(t, f, 30)
@@ -771,9 +798,11 @@ func TestMethodMovedWithinOneFileIsMeasuredAtItsNewLocation(t *testing.T) {
 // source file that becomes a symlink genuinely should not be measured, which
 // is why the flag stays pinned whole rather than narrowed to only the letters
 // this suite happens to exercise, the alternative issue 25 considered and
-// rejected. That reaches only the typechange: a `.cs` symlink added outright
+// rejected. That reaches only the typechange. A `.cs` symlink added outright
 // arrives as status A, passes ACM, and is handed to the extractor like any
-// other new file. TestASymlinkReplacedByASourceFileContributesNoChangedMethods
+// other new file, which is the claim
+// TestASymlinkAddedOutrightIsHandedToTheExtractor pins.
+// TestASymlinkReplacedByASourceFileContributesNoChangedMethods
 // pins the opposite direction of the same typechange.
 func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) {
 	f := newFixture(t, "main")
@@ -870,13 +899,19 @@ func TestATypechangeIsWithheldWhileTheRestOfTheDiffIsMeasured(t *testing.T) {
 // claimed under Order.cs, while the case above gets a new side holding the
 // link's own text, the path it points at, as one line under an equally
 // claimed `.cs` path. The second of those is what makes the flag edit wrong.
-// The extractor is handed the link path, follows it, and reports the target
-// file's spans under the link's path. Touched line 1 then falls inside no
+// The extractor is handed the link path, which is the half
+// TestASymlinkAddedOutrightIsHandedToTheExtractor pins on the status A route.
+// An extractor that follows the link then reports the target file's spans
+// under the link's path; that step is the premise both added-symlink cases
+// feed their stub, not behaviour this suite verifies.
+// Touched line 1 then falls inside no
 // span, so the guaranteed effect is touched_lines_outside_spans going 0 to 1
 // and nothing measured, at exit 0. Where the target's spans do cover the
 // link's first line, the worse effect follows. A method is measured under a
 // path that does not hold it, the coverage lookup against that path finds
-// nothing, and the run fails as an unknown changed method. Measuring the
+// nothing, and the run fails as an unknown changed method, the gate response
+// TestASymlinkAddedOutrightMeasuringItsTargetsSpansFailsAsUnknown pins.
+// Measuring the
 // direction this case covers needs a
 // mode-aware pass classifying the new side of a typechange before anything
 // reaches the extractor, not a flag edit. That pass is the work this change
@@ -910,6 +945,109 @@ func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) 
 	// extractor's input from that key set, which the mode-aware pass in issue
 	// 84 would do.
 	assertNotHandedToExtractor(t, handed)
+}
+
+// TestASymlinkAddedOutrightIsHandedToTheExtractor pins the claim the two
+// typechange direction cases above rest on without stating it as a case of
+// its own. A `.cs` symlink added outright arrives as status A, passes
+// --diff-filter=ACM, and is handed to the extractor, which is the
+// arrangement this case runs. The claim does not hold for every added link:
+// issue 110 records that on the working-tree path addedContent reads an
+// added link with os.ReadFile, so a link whose target's content matches a
+// deleted file's is dropped as a pure move, while a staged run keeps it.
+// Both typechange direction cases rest on that claim and neither states it,
+// each putting it to different work.
+// TestASourceFileReplacedByASymlinkContributesNoChangedMethods reads it as
+// the reason the filter stays pinned whole rather than narrowed to the
+// letters this suite exercises, the alternative issue 25 rejected, since a
+// narrowed filter would reach the added symlink too.
+// TestASymlinkReplacedByASourceFileContributesNoChangedMethods reads it as
+// the reason widening the filter to ACMT is the wrong remedy, since ACMT
+// hands a link path to the extractor the way status A already does. One
+// claim carries both arguments, and until now nothing pinned it.
+//
+// The symlink points at OrderService.cs, its sibling in the same directory,
+// so the link is not dangling.
+func TestASymlinkAddedOutrightIsHandedToTheExtractor(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.symlinkTo(filepath.Base(orderService), orderFile)
+	// `git add` is required, not incidental. ADR 0007's tracked-paths-only
+	// rule means an unstaged new file contributes nothing, exactly as
+	// TestANewFileNeverAddedToTheIndexContributesNoChangedMethods records.
+	f.git("add", orderFile)
+	f.assertAddedAs("main", orderFile, symlink)
+	handed := filepath.Join(t.TempDir(), "handed")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderFile), []span{orderTotal}),
+		StdinLog:   handed,
+	}
+
+	// The new side of an added symlink is one line holding the target path
+	// text, line 1, which falls outside Order.Total's 60-64 span, so
+	// touched_lines_outside_spans goes to 1 with nothing measured. That cell
+	// is what discriminates this golden from empty_changed_set: a gate that
+	// started dropping added symlinks from the changed set would emit
+	// empty_changed_set instead, which differs in exactly that field.
+	f.run().assertMatches(t, "added_symlink", 0, f.baseLabel("main"),
+		"no changed methods, nothing to measure\n")
+
+	assertHandedToExtractor(t, handed, orderFile+"\n")
+}
+
+// TestASymlinkAddedOutrightMeasuringItsTargetsSpansFailsAsUnknown pins the
+// harmful half of what the case above establishes. The sibling picks a span
+// the link's one touched line cannot reach, so it lands at exit 0 with
+// nothing measured; this one picks a span covering line 1, which is the
+// arrangement that goes wrong. The stub stands in for an extractor that
+// follows the link and reports OrderService.cs's spans under Order.cs; what
+// this case pins is the gate's response to a span arriving under a path the
+// coverage report does not name. A method is measured under a path that does
+// not hold it, the coverage lookup against that path finds nothing, and the
+// run fails as an unknown changed method.
+//
+// TestASymlinkReplacedByASourceFileContributesNoChangedMethods describes this
+// effect in prose as the reason an ACMT widen is the wrong remedy. On a
+// typechange it stays hypothetical, gated behind a widen nobody made. On the
+// added-symlink path it is live today, since status A passes ACM and reaches
+// the extractor, so this case records it as a document rather than an
+// argument.
+//
+// Issue 109 owns that live false failure: an in-repo added `.cs` symlink
+// whose target's spans cover line 1 exits 1 and no edit clears it. The golden
+// below records what the gate does today, not the wanted answer, so issue
+// 109's fix will rewrite it. Issue 84 is the typechange direction and issue
+// 103 the out-of-root target; 109 is a third, distinct failure.
+func TestASymlinkAddedOutrightMeasuringItsTargetsSpansFailsAsUnknown(t *testing.T) {
+	// The span starts at line 1, the link's only line, so following the link
+	// puts a measured method on a path holding nothing but the target's name.
+	orderHeader := span{File: orderFile, Name: "Order.Header", StartLine: 1, EndLine: 4, Complexity: 3}
+
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.symlinkTo(filepath.Base(orderService), orderFile)
+	f.git("add", orderFile)
+	f.assertAddedAs("main", orderFile, symlink)
+	// The report knows OrderService.cs, the file the link points at, and has
+	// never heard of Order.cs, the path the span arrives under. That mismatch
+	// is the failure, not a gap in the report.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	handed := filepath.Join(t.TempDir(), "handed")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderFile), []span{orderHeader}),
+		StdinLog:   handed,
+	}
+
+	f.run().assertMatches(t, "added_symlink_unknown_method", 1, f.baseLabel("main"),
+		"1 changed method could not be attributed to a coverage report\n"+
+			"0 of 1 changed methods over CRAP threshold 30, worst score 0.00\n")
+
+	assertHandedToExtractor(t, handed, orderFile+"\n")
 }
 
 // TestDeletingAMethodAttributesTheZeroLengthHunkToTheLineBeforeIt pins which
@@ -2202,20 +2340,20 @@ func TestNamedCoverageReportStampedFarAheadIsRefusedToo(t *testing.T) {
 		"coverage report artifacts/coverage.xml carries a timestamp \"1767225600000\" more than 24h ahead of now; it must be epoch seconds, or the clock on this machine is behind the one that wrote it\n")
 }
 
+// timestamp="0" is the units fault the tolerance catches from the other
+// side: a producer with no clock to read, or one writing seconds since boot
+// rather than since the epoch. The int64 floor is the other end of the
+// range guard, a stamp time.Unix holds without underflowing, so nothing
+// upstream refuses it and the plausibility band is the only rule that can.
+// Both are discovered reports, the one Origin issue 32 skips as superseded,
+// so this pins that a stamp the gate cannot trust is refused rather than
+// dropped quietly into skipped_paths. A fresh report sits beside each, the
+// shape of the future-stamped case below, so a gate that skipped the
+// floor-stamped one would still score the run and pass. Without that
+// sibling the skip would run out of reports and refuse anyway, under a
+// different code, and the case would hold whether the floor guard existed
+// or not.
 func TestCoverageReportStampedBeforeTheFloorIsRefusedNotSkipped(t *testing.T) {
-	// timestamp="0" is the units fault the tolerance catches from the other
-	// side: a producer with no clock to read, or one writing seconds since boot
-	// rather than since the epoch. The int64 floor is the other end of the
-	// range guard, a stamp time.Unix holds without underflowing, so nothing
-	// upstream refuses it and the plausibility band is the only rule that can.
-	// Both are discovered reports, the one Origin issue 32 skips as superseded,
-	// so this pins that a stamp the gate cannot trust is refused rather than
-	// dropped quietly into skipped_paths. A fresh report sits beside each, the
-	// shape of the future-stamped case below, so a gate that skipped the
-	// floor-stamped one would still score the run and pass. Without that
-	// sibling the skip would run out of reports and refuse anyway, under a
-	// different code, and the case would hold whether the floor guard existed
-	// or not.
 	for _, stamp := range []string{"0", "-9223372036854775808"} {
 		t.Run(stamp, func(t *testing.T) {
 			f := newFixture(t, "main")
@@ -2414,22 +2552,22 @@ func TestCoverageReportWithNoTimestampIsRefused(t *testing.T) {
 		"coverage report TestResults/coverage.cobertura.xml carries no timestamp, so it cannot be judged against the code it describes\n")
 }
 
+// Producers other than coverlet write the attribute in a different
+// representation, so the developer meeting this has a timestamp in front of
+// them and needs to be told to rewrite it rather than that it is missing.
+// Neither spelling is a base-10 integer, and reading either as one would
+// judge the report against the Unix epoch instead.
+// The int64 ceiling is a base-10 integer ParseInt reads happily, so it
+// reaches the refusal only because the gate range-checks the value before
+// building an instant from it. time.Unix offsets what it stores by the
+// seconds between year 1 and 1970, so this stamp wraps into the distant
+// past, and a report carrying it would otherwise be judged older than the
+// code and skipped as superseded rather than refused as untrustworthy.
+// Only the ceiling wraps. The int64 floor is a stamp time.Unix holds
+// without underflowing, and the plausibility band refuses it afterwards
+// with the wording that fits it, so it belongs to the floor case below
+// rather than here.
 func TestCoverageReportWithAnUnreadableTimestampIsRefused(t *testing.T) {
-	// Producers other than coverlet write the attribute in a different
-	// representation, so the developer meeting this has a timestamp in front of
-	// them and needs to be told to rewrite it rather than that it is missing.
-	// Neither spelling is a base-10 integer, and reading either as one would
-	// judge the report against the Unix epoch instead.
-	// The int64 ceiling is a base-10 integer ParseInt reads happily, so it
-	// reaches the refusal only because the gate range-checks the value before
-	// building an instant from it. time.Unix offsets what it stores by the
-	// seconds between year 1 and 1970, so this stamp wraps into the distant
-	// past, and a report carrying it would otherwise be judged older than the
-	// code and skipped as superseded rather than refused as untrustworthy.
-	// Only the ceiling wraps. The int64 floor is a stamp time.Unix holds
-	// without underflowing, and the plausibility band refuses it afterwards
-	// with the wording that fits it, so it belongs to the floor case below
-	// rather than here.
 	stamps := map[string]string{
 		"ISO-8601 instant":   "2026-01-01T00:00:00Z",
 		"fractional seconds": "1767225600.123",
@@ -2456,23 +2594,23 @@ func TestCoverageReportWithAnUnreadableTimestampIsRefused(t *testing.T) {
 	}
 }
 
+// Discovery consumes reports in Name order, so the stale one here is the
+// second the loader reaches, and the loader still judges it rather than
+// stopping at the first. That much this case pinned before issue 32, when
+// judging a discovered report stale refused the run; issue 32 keeps the
+// judging and changes what it does, because refusing here would fail every
+// edit-and-test iteration on a leftover TestResults directory that a fresh
+// run has already made irrelevant.
+//
+// The stale report carries a fourth instrumentable line the fresh one never
+// lists. An implementation that merges a stale report before dropping it,
+// rather than skipping it outright before the merge, scores Cancel over
+// four lines instead of three: 0.5 and 4.13, not 0.667 and 3.33.
 func TestSupersededDiscoveredReportIsSkippedAndTheFreshOneScores(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// Discovery consumes reports in Name order, so the stale one here is the
-	// second the loader reaches, and the loader still judges it rather than
-	// stopping at the first. That much this case pinned before issue 32, when
-	// judging a discovered report stale refused the run; issue 32 keeps the
-	// judging and changes what it does, because refusing here would fail every
-	// edit-and-test iteration on a leftover TestResults directory that a fresh
-	// run has already made irrelevant.
-	//
-	// The stale report carries a fourth instrumentable line the fresh one never
-	// lists. An implementation that merges a stale report before dropping it,
-	// rather than skipping it outright before the merge, scores Cancel over
-	// four lines instead of three: 0.5 and 4.13, not 0.667 and 3.33.
 	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml",
 		coberturaStamped(freshStamp(), f.root,
 			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
@@ -2612,22 +2750,22 @@ func TestEveryDiscoveredReportStaleRefusesNamingThemAll(t *testing.T) {
 			"src/Ordering/OrderService.cs was last edited; clear stale TestResults directories and re-run the tests\n")
 }
 
+// dotnet test Sln.sln --results-directory ./TestResults writes every
+// project's report under one shared root, the layout that broke the
+// grouping fix tried and reverted on the #15 branch: any rule keeping only
+// the newest report per directory keeps one of these and scores Cancel on a
+// third of its lines rather than the union of both. The two are stamped two
+// seconds apart, both of them fresh, so such a rule has an unambiguous
+// loser to drop; stamped on the same second, as cobertura() would stamp
+// them, a rule that keeps both on a tie would pass this case unnoticed.
+// The document is the union either report alone cannot produce, which
+// two_projects_union already holds for two reports found under separate
+// results directories.
 func TestTwoProjectsSharingOneResultsDirectoryKeepBothReports(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// dotnet test Sln.sln --results-directory ./TestResults writes every
-	// project's report under one shared root, the layout that broke the
-	// grouping fix tried and reverted on the #15 branch: any rule keeping only
-	// the newest report per directory keeps one of these and scores Cancel on a
-	// third of its lines rather than the union of both. The two are stamped two
-	// seconds apart, both of them fresh, so such a rule has an unambiguous
-	// loser to drop; stamped on the same second, as cobertura() would stamp
-	// them, a rule that keeps both on a tie would pass this case unnoticed.
-	// The document is the union either report alone cannot produce, which
-	// two_projects_union already holds for two reports found under separate
-	// results directories.
 	f.write("TestResults/6f1c8a/coverage.cobertura.xml", coberturaStamped(f.editStamp(orderService, 0), f.root,
 		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 1}, {number: 62, hits: 0}, {number: 63, hits: 0}}}))
 	f.write("TestResults/b90d21/coverage.cobertura.xml", coberturaStamped(f.editStamp(orderService, 2*time.Second), f.root,
@@ -2750,9 +2888,9 @@ func TestNamedReportOutsideTheRepoIsNamedPastItsSymlink(t *testing.T) {
 	// --coverage, so the refusal quotes the target rather than the link the
 	// developer walked in through.
 	dir := t.TempDir()
-	real := filepath.Join(dir, "real")
-	link := symlinkedDir(t, real, filepath.Join(dir, "link"))
-	writeAbsolute(t, filepath.Join(real, "coverage.xml"),
+	realDir := filepath.Join(dir, "real")
+	link := symlinkedDir(t, realDir, filepath.Join(dir, "link"))
+	writeAbsolute(t, filepath.Join(realDir, "coverage.xml"),
 		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
 			coverageClass{filename: orderService, lines: spanCoverage(61, 4, 2)}))
 	f.stub = stubConfig{
@@ -2760,7 +2898,7 @@ func TestNamedReportOutsideTheRepoIsNamedPastItsSymlink(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	named := filepath.ToSlash(filepath.Join(resolvedPath(t, real), "coverage.xml"))
+	named := filepath.ToSlash(filepath.Join(resolvedPath(t, realDir), "coverage.xml"))
 	f.runWithArgs("--coverage", filepath.Join(link, "coverage.xml")).assertMatchesWith(
 		t, "named_report_outside_repo_stale", 1, f.baseLabel("main"),
 		"coverage report "+named+" was written before src/Ordering/OrderService.cs was last edited; "+
@@ -2977,6 +3115,31 @@ func TestAbsentNamedReportUnderASymlinkedRootIsStillNamedRepoRelative(t *testing
 	f.runWithArgs("--coverage", filepath.Join(link, "artifacts", "typo.xml")).assertMatches(
 		t, "named_report_absent", 1, f.baseLabel("main"),
 		"could not parse coverage report artifacts/typo.xml; open: no such file or directory\n")
+}
+
+func TestNamedReportThroughAFileComponentIsStillNamedRepoRelative(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.write("artifacts/coverage.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	f.commitAll("initial")
+	f.touchLine(orderService, 62)
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+	}
+
+	// The typo puts a filename where a directory belongs, which the filesystem
+	// answers with ENOTDIR rather than with an absence. The path still reaches
+	// the repo through a symlink, as an absolute path typed on macOS does, so a
+	// resolution that stops at the first component naming no directory leaves
+	// the link unresolved, the document escapes the repo for the indirection
+	// alone and quotes a machine-specific absolute path where ADR 0004 asks for
+	// a repo-relative one.
+	link := symlinkedDir(t, f.root, filepath.Join(t.TempDir(), "link"))
+	f.runWithArgs("--coverage", filepath.Join(link, "artifacts", "coverage.xml", "typo.xml")).assertMatches(
+		t, "named_report_through_a_file", 1, f.baseLabel("main"),
+		"could not parse coverage report artifacts/coverage.xml/typo.xml; open: not a directory\n")
 }
 
 func TestAChangedFileMissingFromTheWorkingTreeCurrentlyStopsTheRunOutsideTheDocument(t *testing.T) {
@@ -3992,7 +4155,11 @@ func TestStdoutRefusingTheWriteExitsOneRatherThanTheDocumentsOwnCode(t *testing.
 	if err != nil {
 		t.Fatalf("opening /dev/full: %v", err)
 	}
-	defer full.Close()
+	defer func() {
+		if err := full.Close(); err != nil {
+			t.Errorf("closing /dev/full: %v", err)
+		}
+	}()
 
 	f := newFixture(t, "main")
 	f.stub = stubConfig{Extensions: []string{".cs"}}

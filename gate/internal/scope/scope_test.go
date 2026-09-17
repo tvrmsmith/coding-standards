@@ -1,6 +1,7 @@
 package scope
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 
@@ -114,13 +115,11 @@ func TestParseMetricUsageErrorsReachableOnlyWithTwoMetricsHosted(t *testing.T) {
 	for name, tt := range cases {
 		t.Run(name, func(t *testing.T) {
 			_, err := parse(tt.argv, fakeCatalogue)
-			var usageErr *UsageError
 			if err == nil {
 				t.Fatalf("parse(%v) = _, nil, want a usage error", tt.argv)
 			}
-			if ue, ok := err.(*UsageError); ok {
-				usageErr = ue
-			} else {
+			var usageErr *UsageError
+			if !errors.As(err, &usageErr) {
 				t.Fatalf("parse(%v) returned %T, want *UsageError", tt.argv, err)
 			}
 			if usageErr.Problem != tt.problem {
