@@ -369,7 +369,8 @@ func (n Name) String() string { return string(n) }
 // ways out both cost more than the fault is worth here: erroring would exit the
 // run with no document at all, which ADR 0005's 2026-09-02 amendment rejects for
 // a coverage-side filesystem failure, and a new code saying the gate could not
-// weigh the path is a change to ADR 0008's list. named is the one door that
+// weigh the path is a contract change, registering it in gate/internal/report
+// and pinning it with a golden. named is the one door that
 // words the fault distinctly, "could not be weighed against the repo root",
 // because it already answers a developer with a reason. Place reads it the same
 // way as here, but it is further from the fault than Name is: Place has resolved

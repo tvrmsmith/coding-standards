@@ -106,9 +106,11 @@ var (
 	// covers.
 	CodeChangedFileUnreadable = register("changed_file_unreadable")
 	// CodeWorkingDirectoryUnreadable is the process working directory failing
-	// to read while resolving a relative --files or --coverage path against it
-	// (issue 31). One read serves both flags; see measure's doc comment for why
-	// it happens before gitscope.Open.
+	// to read (issue 31). The run takes that read once, unconditionally, before
+	// it knows its scope mode, and the message names the read rather than the
+	// relative --files and --coverage paths a later step would have resolved
+	// against it. See measure's doc comment for why it happens before
+	// gitscope.Open.
 	CodeWorkingDirectoryUnreadable = register("working_directory_unreadable")
 )
 
