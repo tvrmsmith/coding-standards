@@ -11,7 +11,7 @@ rest of the file only when you need the reasoning behind the rule or the history
 | [0002](0002-metrics-declare-their-inputs.md) | metrics declare their inputs | The gate demands an input only when a selected metric asked for it. |
 | [0004](0004-source-paths-are-repo-relative-and-resolved-deterministically.md) | source paths | One repo-relative path currency, one deterministic rule per path space. A path that will not resolve refuses the run. |
 | [0007](0007-changed-method-is-a-span-holding-a-touched-line.md) | changed method | A changed method is a working-tree span holding a touched line. A pure move measures nothing. |
-| [0008](0008-the-machine-document-is-the-only-output.md) | machine document | Stdout is one TOON document on every exit path. Seventeen typed exit-1 codes. |
+| [0008](0008-the-machine-document-is-the-only-output.md) | machine document | Stdout is one TOON document on every exit path. Every exit-1 cause carries a typed code, registered in `gate/internal/report`. |
 | [0009](0009-the-csharp-extractor-is-written-in-house.md) | csharp extractor | Roslyn syntax parser only, paths on stdin, spans plus per-file parse status on stdout. |
 
 Superseded, kept for their history and not for their rules: [0003](0003-changed-method-is-a-span-holding-a-touched-line.md)

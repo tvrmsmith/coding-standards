@@ -88,7 +88,7 @@ func TestNamedSaysAPathHasNoReadingRelativeToTheRootRatherThanCallingItOutside(t
 	}
 	root := Root{resolved: filepath.Join("relative", "root")}
 
-	_, err := root.named(file, dirNames{})
+	_, err := root.named(file, "", dirNames{})
 
 	var unresolved *UnresolvedError
 	if !errors.As(err, &unresolved) {

@@ -17,16 +17,23 @@ pipe drops them.
 tool error. A caller distinguishes "the code is bad" from "the gate is broken" on the exit code
 alone, before parsing anything.
 
-Every exit-1 cause carries a typed `error.code`. There are seventeen:
+Every exit-1 cause carries a typed `error.code`. The codes are enumerated in
+`gate/internal/report`, where `register` declares each one, and that registry is the contract.
+`error.message` beside it is prose for a human and no caller branches on it.
 
-`no_diff_base`, `diff_unparseable`, `extractor_failed`, `extractor_path_mismatch`,
-`extractor_capabilities_mismatch`, `extractor_duplicate_span`, `extractor_invalid_span`,
-`parse_failed`, `coverage_missing`, `coverage_unparseable`, `coverage_stale`,
-`coverage_source_root_erased`, `file_ambiguous`, `coverage_outside_repo`, `staged_file_dirty`,
-`file_unresolved`, `unknown_changed_method`.
+Adding a code is a contract change. It means registering the code and writing the golden that pins
+it; `report.TestEveryErrorCodeIsPinnedByAGolden` fails on a code no golden names, and on a golden
+naming a code the registry does not know.
 
-Adding a code is a contract change and edits that list on the same commit. `error.message` beside it
-is prose for a human and no caller branches on it.
+**Amended 2026-09-16.** This removes the seventeen-code list that stood in the paragraph above and
+leaves the rule. The list was a second copy of `gate/internal/report`'s declarations with nothing
+keeping the two honest, which is the same failure the two amendments below record: consolidation
+dropped the `crap: []` encoding and the `action` token enumeration from this file while the code
+kept implementing both. A prose copy of an enumeration drifts. The registry is now the one place a
+code exists, and a test rather than a reviewer enforces that every code is pinned. Two sentences
+told a future author to edit the list, the `action` token paragraph and the first in
+`## Consequences`; both now name the registry. `README.md` counted the codes and no longer does, a
+count being the same drift in small.
 
 `scope` is one of `merge-base`, `staged`, `since`, `files`. `base` is null under `files`, which has
 no base to name.
@@ -58,8 +65,8 @@ the method. An `unknown` row carries `none` whatever its complexity, since the j
 score to act on. ADR 0005 fixed
 this enumeration and this file lost it in consolidation, while `internal/crap` still emits the
 tokens and `gate/test/golden` still pins them. Adding a token is a contract change and edits this
-paragraph on the same commit, the same way adding a cause edits the `error.code` list in
-`## Current rule`.
+paragraph on the same commit, the same way adding a cause registers its `error.code` in
+`gate/internal/report`.
 
 `skipped_paths` lists paths no extractor claimed. Two things produce it: a changed file whose
 extension no extractor in the language table handles, and a `--files` path that resolves to a real
@@ -116,9 +123,9 @@ cheapest possible price.
 
 ## Consequences
 
-Every new failure mode is a contract change. Adding one means picking a typed code, adding it to the
-list above, and writing the golden. That is deliberate friction: it keeps the enumeration honest and
-stops the codes drifting into a bag of strings.
+Every new failure mode is a contract change. Adding one means picking a typed code, registering it
+in `gate/internal/report`, and writing the golden. That is deliberate friction: it keeps the
+enumeration honest and stops the codes drifting into a bag of strings.
 
 The goldens are the test surface. A black-box suite runs the real binary and compares whole
 documents, so a field that changes shape fails loudly rather than being noticed by a consumer later.

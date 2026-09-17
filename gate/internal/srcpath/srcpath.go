@@ -369,7 +369,8 @@ func (n Name) String() string { return string(n) }
 // ways out both cost more than the fault is worth here: erroring would exit the
 // run with no document at all, which ADR 0005's 2026-09-02 amendment rejects for
 // a coverage-side filesystem failure, and a new code saying the gate could not
-// weigh the path is a change to ADR 0008's list. named is the one door that
+// weigh the path is a contract change, registering it in gate/internal/report
+// and pinning it with a golden. named is the one door that
 // words the fault distinctly, "could not be weighed against the repo root",
 // because it already answers a developer with a reason. Place reads it the same
 // way as here, but it is further from the fault than Name is: Place has resolved
@@ -462,9 +463,9 @@ func FromSlash(rel string) Path { return Path(rel) }
 // act on.
 //
 // The type exists so a caller can tell a refusal about the path from a failure
-// that is not about any path, a process whose working directory was deleted for
-// instance. Both come back from NamedFiles, and only the first is ADR 0008's
-// file_unresolved, whose message the reader expects to name a path.
+// that is not about any path. Both come back from NamedFiles, and only the
+// first is ADR 0008's file_unresolved, whose message the reader expects to
+// name a path.
 type UnresolvedError struct {
 	// Name is the path as the developer typed it.
 	Name string
@@ -488,12 +489,17 @@ func (e *UnresolvedError) Error() string { return e.Name + " " + e.Reason }
 // Two tracked paths that are hard links to one inode stay two files, because
 // they are two paths the extractor reads and two paths a coverage report is
 // keyed by.
-func (r Root) NamedFiles(names []string) ([]Path, error) {
+//
+// cwd is what a relative name resolves against. The caller reads it, once,
+// rather than NamedFiles calling os.Getwd itself, the same way coverage.Named
+// already takes a cwd; see measure's doc comment for why the read happens
+// before this is ever called.
+func (r Root) NamedFiles(names []string, cwd string) ([]Path, error) {
 	paths := make([]Path, 0, len(names))
 	seen := make(map[Path]bool, len(names))
 	dirs := dirNames{}
 	for _, name := range names {
-		path, err := r.named(name, dirs)
+		path, err := r.named(name, cwd, dirs)
 		if err != nil {
 			return nil, err
 		}
@@ -567,18 +573,19 @@ func (r Root) NamedFiles(names []string) ([]Path, error) {
 // path above the root has nothing inside the repo to stat.
 //
 // All of them are still UnresolvedError, so every refusal about the path
-// reaches the document under one code. Losing the working directory is not
-// about the path at all, so it travels as a plain error.
-func (r Root) named(name string, dirs dirNames) (Path, error) {
+// reaches the document under one code. The working directory itself is read
+// once by the caller and handed in as cwd, so losing it is caught before named
+// ever runs and never reaches here at all.
+func (r Root) named(name, cwd string, dirs dirNames) (Path, error) {
 	candidate := filepath.FromSlash(name)
-	absolute := filepath.IsAbs(candidate)
-	var cwd string
-	if !absolute {
-		var err error
-		cwd, err = os.Getwd()
-		if err != nil {
-			return "", workingDirFault(name, err)
-		}
+	if filepath.IsAbs(candidate) {
+		// An absolute name says where it is on its own, so the working
+		// directory bears on nothing about it and every component below is the
+		// developer's own. Clearing cwd here is what tells firstTypedComponent
+		// so, and it is the same thing the caller's read not happening used to
+		// say.
+		cwd = ""
+	} else {
 		candidate = filepath.Join(cwd, candidate)
 	}
 	resolved, err := filepath.EvalSymlinks(candidate)
@@ -757,14 +764,6 @@ func unreadable(name string, err error) *UnresolvedError {
 // describing one fault class two ways.
 func unweighable(name string, err error) *UnresolvedError {
 	return &UnresolvedError{Name: name, Reason: "could not be weighed against the repo root, " + errnoText(err)}
-}
-
-// workingDirFault is a failure to read the process working directory. It is not
-// about the path the developer named, so it travels as a plain error rather
-// than as an UnresolvedError, and it is worded here rather than at named's call
-// site so it stays beside the refusals it is not one of.
-func workingDirFault(name string, err error) error {
-	return fmt.Errorf("resolving %s against the working directory: %w", name, err)
 }
 
 // errnoText is what the operating system said, without the fs.PathError around

@@ -12,34 +12,35 @@
 // except on the unknown_changed_method path, which prints the cause above the
 // counts, and the exit code is 0 pass, 1 tool error, 2 threshold exceeded.
 //
-// Any error that is not typed as a report.Failure writes its cause to stderr,
-// leaves stdout empty, and exits 1. ADR 0008 carves out exactly one exit of
-// that shape, a malformed command line, which "exits 1 with empty stdout and
-// no typed code, because argv failed before the run had a shape to report".
-// Every other exit of that shape is a known deviation rather than something
-// 0008 grants. This is the one place that rule is written down; the cases in
-// gate/test that pin such an exit point here rather than restate it.
+// Any error that is not typed as a report.Failure writes its cause to stderr
+// and exits 1 with no typed code. Exactly two exits have that shape, and this
+// command reaches no other. Two more untyped returns exist, in the encoder
+// refusing to render the document and in coverage discovery, but no input
+// reaches them: emit reports the first and nothing the gate builds makes the
+// encoder refuse, and discovery's own walk hands back no error.
 //
-// Four of them are reachable before the document is delivered. Failing to
-// open a git repository lands upstream of the document, before a base is
-// resolved. Failing to read the working directory while resolving a relative
-// --files name lands after that and before any method is counted. Failing to
-// stat a changed file and failing to read the working directory a --coverage
-// path resolves against land after the changed methods are counted, so the
-// gate did examine a repository and still emits nothing. Issue 31 gives the
-// last two typed codes and moves them inside the document. Other untyped
-// returns exist, in the encoder and in coverage discovery, but no input
-// reaches them.
+// ADR 0008 carves out one of the two: a malformed command line, which exits
+// before measure ever runs, empty stdout and all, because argv failed before
+// the run had a shape to report. Every cause measure can reach, by contrast,
+// carries a typed code and a document: failing to run git, failing to find a
+// git repository, a repository git will not answer about, failing to resolve
+// the root git named, failing to read the process working directory, failing
+// to stat a changed file to date it against the coverage report, all land
+// inside the document rather than beside it.
+// Issue 86 and issue 31 moved these in, one at a time; this is the one place
+// that says none are left outside it, so a case in gate/test pinning such an
+// exit points here rather than restate it.
 //
-// One more is reachable after the document is built, and it stays outside
-// issue 31's scope as the one exception to the empty stdout above: stdout
-// refusing the write that carries the document, a full disk or a closed
-// descriptor among the causes. The gate did produce a document, and it still
-// exits 1 with no typed code, because the document is the thing that could not
-// be delivered. A write that came up short leaves a truncated document behind,
-// so on this cause alone stdout may hold part of a document rather than
-// nothing, and the exit code is the only signal a caller can trust. Issue 31
-// has nowhere to move it to.
+// The second is a known deviation rather than something 0008 grants, and it
+// is reachable only after the document is built: stdout refusing the write
+// that carries it, a full disk or a closed descriptor among the causes. The
+// gate did produce a document, and it still exits 1 with no typed code,
+// because the document is the thing that could not be delivered. A write that
+// came up short leaves a truncated document behind, so on this cause alone
+// stdout may hold part of a document rather than nothing, and the exit code is
+// the only signal a caller can trust. There is nowhere to move this one to:
+// the failure is stdout itself, which is where a typed code would have to be
+// printed.
 package main
 
 import (
@@ -70,7 +71,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	doc, err := measure(sc)
+	doc, err := measure(sc, os.Getwd)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -122,17 +123,39 @@ func emit(stdout, stderr io.Writer, doc report.Document) (int, error) {
 // scoped as sc names. A typed exit-1 cause becomes the document's error
 // block; anything not typed as a report.Failure comes back as an error, which
 // the package doc above enumerates.
-func measure(sc scope.Scope) (report.Document, error) {
+//
+// getwd is the one read of the process working directory the whole run
+// performs, taken here rather than deeper down where --files and --coverage
+// resolution used to each call os.Getwd for themselves. It runs before
+// gitscope.Open, for two reasons. It needs nothing, so a test can drive this
+// failure without standing up a fixture repo the way every other case in this
+// package does. And it adds no failure to a run that would otherwise pass:
+// Open shells out to git in this same working directory, so a working
+// directory the gate cannot read had already doomed the run before Open ever
+// got to it.
+func measure(sc scope.Scope, getwd func() (string, error)) (report.Document, error) {
 	var doc report.Document
 	doc.Scope = sc.Mode
+	cwd, err := getwd()
+	if err != nil {
+		doc.Failure = &report.Failure{
+			Code:    report.CodeWorkingDirectoryUnreadable,
+			Message: "could not read the process working directory: " + cause(err).Error(),
+		}
+		return doc, nil
+	}
 	repo, err := gitscope.Open()
 	if err != nil {
+		if failure, ok := asFailure(err); ok {
+			doc.Failure = failure
+			return doc, nil
+		}
 		return doc, err
 	}
 
 	var selected selection
 	if sc.Mode == scope.ModeFiles {
-		selected, err = selectFiles(repo, sc.Files)
+		selected, err = selectFiles(repo, sc.Files, cwd)
 	} else {
 		selected, err = selectDiff(repo, sc)
 	}
@@ -165,7 +188,7 @@ func measure(sc scope.Scope) (report.Document, error) {
 		return doc, nil
 	}
 
-	lines, declared, skipped, err := loadCoverage(repo.Root(), sc.Coverage, changed, sc.Metrics)
+	lines, declared, skipped, err := loadCoverage(repo.Root(), sc.Coverage, changed, sc.Metrics, cwd)
 	// The append is what enforces ADR 0008's skipped_paths order, which
 	// gate/test/golden/files_skip_before_discovery_skip.toon pins.
 	doc.SkippedPaths = append(doc.SkippedPaths, skipped...)
@@ -295,18 +318,19 @@ func dirtyBehindExtraction(repo gitscope.Repo, base gitscope.Base, files []srcpa
 // is the shape ADR 0007 gives --files instead of a diff: every method in a
 // listed file is changed, there is no base to record, and
 // touched_lines_outside_spans has nothing to count.
-func selectFiles(repo gitscope.Repo, names []string) (selection, error) {
+func selectFiles(repo gitscope.Repo, names []string, cwd string) (selection, error) {
 	var selected selection
 	// --files is the first path list a developer writes by hand rather than
 	// one built from sorted map keys, so it is the first that can name one
 	// file twice. srcpath owns both the resolution and that de-duplication,
 	// since both turn on which file a typed name landed on.
-	resolved, err := repo.Root().NamedFiles(names)
+	resolved, err := repo.Root().NamedFiles(names, cwd)
 	if err != nil {
 		// Only a refusal about the path itself carries the typed code, whose
-		// message the reader expects to name a path. Anything else, a lost
-		// working directory for instance, is one of the known deviations the
-		// package doc above catalogues.
+		// message the reader expects to name a path. NamedFiles no longer reads
+		// the working directory itself, measure already has, so nothing else
+		// reaches this branch today; it stays a fallback for a future refusal
+		// srcpath types some other way.
 		var unresolved *srcpath.UnresolvedError
 		if errors.As(err, &unresolved) {
 			return refusing(selected, &report.Failure{Code: report.CodeFileUnresolved, Message: unresolved.Error()})
@@ -419,7 +443,10 @@ var implementedInputs = []metric.Input{metric.InputCoverage}
 // missing-report failure above is the one exception, and it earns it: there
 // the unreadable paths are candidate reports, so they are the likeliest
 // explanation for finding none.
-func loadCoverage(root srcpath.Root, named []string, changed []extract.Span, selected []metric.Selection) (lines coverage.Set, declared bool, skipped []string, err error) {
+//
+// cwd is what a relative --coverage path resolves against, read once by
+// measure rather than here; see measure's doc comment for why.
+func loadCoverage(root srcpath.Root, named []string, changed []extract.Span, selected []metric.Selection, cwd string) (lines coverage.Set, declared bool, skipped []string, err error) {
 	declaring := metric.Declaring(selected, metric.InputCoverage)
 	if len(declaring) == 0 {
 		return nil, false, nil, nil
@@ -430,10 +457,6 @@ func loadCoverage(root srcpath.Root, named []string, changed []extract.Span, sel
 		return nil, true, nil, err
 	}
 	if len(named) > 0 {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return nil, true, nil, fmt.Errorf("resolving --coverage paths against the working directory: %w", err)
-		}
 		set, _, err := coverage.Load(root, coverage.Named(root, cwd, named), newest, now)
 		return set, true, nil, err
 	}
@@ -468,6 +491,14 @@ func loadCoverage(root srcpath.Root, named []string, changed []extract.Span, sel
 // resolves to the lexicographically smallest path, and keeping the first file
 // seen is enough for that because join.Changed returns its spans in ascending
 // file order, which its doc comment promises and its own test holds it to.
+//
+// An unreadable file fails the run rather than being dropped from the set the
+// way coverage.Discover tolerates an unreadable path under skipped_paths. The
+// stat feeds the staleness comparison, so dropping a file would compute the
+// newest edit over a smaller set, which can date a stale report as fresh and
+// report a method as covered against coverage that predates it. Discover's
+// skipped path costs a missing score for that path alone; a skipped stat here
+// costs a wrong verdict across every method the run scores.
 func newestEdit(root srcpath.Root, changed []extract.Span) (coverage.Newest, error) {
 	var newest coverage.Newest
 	seen := map[srcpath.Path]bool{}
@@ -478,7 +509,11 @@ func newestEdit(root srcpath.Root, changed []extract.Span) (coverage.Newest, err
 		seen[span.File] = true
 		info, err := os.Stat(root.Abs(span.File))
 		if err != nil {
-			return coverage.Newest{}, fmt.Errorf("stat %s: %w", span.File, err)
+			return coverage.Newest{}, &report.Failure{
+				Code: report.CodeChangedFileUnreadable,
+				Message: fmt.Sprintf("could not read %s to date it against the coverage report: %s",
+					span.File, cause(err)),
+			}
 		}
 		at := info.ModTime().Truncate(time.Second)
 		if newest.File == "" || at.After(newest.At) {
@@ -497,6 +532,26 @@ func displayNames(selected []metric.Selection) string {
 		names[i] = sel.Display
 	}
 	return strings.Join(names, ", ")
+}
+
+// cause unwraps an *os.PathError to its syscall error, so the message names
+// only what actually went wrong rather than the absolute path os.Stat's own
+// Error() carries. ADR 0004 names the source path already in span.File, and
+// a document naming an absolute path defeats that.
+func cause(err error) error {
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err
+	}
+	// os.Getwd reports its failure as an *os.SyscallError, which prefixes the
+	// syscall's name onto what the operating system said. The sentence the
+	// code carries already names the read that failed, so the name would be
+	// said twice.
+	var syscallErr *os.SyscallError
+	if errors.As(err, &syscallErr) {
+		return syscallErr.Err
+	}
+	return err
 }
 
 // entriesFor opens one document entry per selected metric, carrying the bar

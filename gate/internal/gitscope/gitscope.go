@@ -45,6 +45,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"os/exec"
@@ -66,17 +67,69 @@ type Repo struct {
 	root srcpath.Root
 }
 
-// Open finds the repo containing the process working directory.
+// Open finds the repo containing the process working directory. Every failure
+// point comes back as a report.Failure, so a run started outside a git
+// repository gets a typed code and a document rather than the empty stdout
+// ADR 0008 reserves for a malformed command line (issue 86).
+//
+// A toplevel git named that the gate cannot resolve is repo_root_unresolvable:
+// the repository is there and the filesystem is what failed. openFailure
+// separates the rest.
 func Open() (Repo, error) {
 	out, err := run("", nil, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return Repo{}, err
+		return Repo{}, openFailure(err)
 	}
 	root, err := srcpath.NewRoot(strings.TrimSpace(out))
 	if err != nil {
-		return Repo{}, err
+		return Repo{}, &report.Failure{
+			Code:    report.CodeRepoRootUnresolvable,
+			Message: "could not resolve the repo root git named: " + cause(err),
+		}
 	}
 	return Repo{root: root}, nil
+}
+
+// openFailure types a `rev-parse --show-toplevel` that did not answer. The
+// three codes are apart because a caller branches on the code rather than on
+// the message, and each names a different thing to go and fix.
+//
+// git never running at all is git_unavailable, which covers a runner with no
+// git on PATH and one whose git is not executable, since both come back as
+// *exec.Error and neither is answered by running `git init`. The message is
+// exec's own words rather than cause's, because there is no stderr to quote
+// and the argv would be all that survived.
+//
+// A repository git did find, and then refused to answer about, is
+// git_repo_unreadable: a bare repository, which rev-parse says must be run in
+// a work tree, or a .git the store cannot read. The two are told apart by
+// asking git for the git directory rather than by reading its sentence, since
+// the sentence is English and git ships translations. That probe answers for
+// every repository git can open, work tree or not, so exit 0 means a
+// repository is there and the toplevel is what could not be had.
+//
+// no_git_repo is what is left, git answering that there is no repository here
+// at all, the one a caller fixes by running `git init` or by starting the gate
+// somewhere else. Its message carries git's own complaint rather than the
+// argv, the convention diff_unparseable follows.
+func openFailure(err error) error {
+	var launch *exec.Error
+	if errors.As(err, &launch) {
+		return &report.Failure{
+			Code:    report.CodeGitUnavailable,
+			Message: "could not run git: " + launch.Error(),
+		}
+	}
+	if _, probe := run("", nil, "rev-parse", "--git-dir"); probe == nil {
+		return &report.Failure{
+			Code:    report.CodeGitRepoUnreadable,
+			Message: "could not read the git repository: " + cause(err),
+		}
+	}
+	return &report.Failure{
+		Code:    report.CodeNoGitRepo,
+		Message: "could not find a git repository: " + cause(err),
+	}
 }
 
 // Root is the repo's resolved root, the gate's one path currency.
@@ -1167,10 +1220,19 @@ func (e *gitError) Error() string {
 func (e *gitError) Unwrap() error { return e.err }
 
 // cause is what git said, or the whole error when it was not git that spoke.
+//
+// A filesystem failure carries the operating system's own words without the
+// fs.PathError around them, which quotes an absolute path the document is not
+// allowed to print (ADR 0004) and which reads differently on every machine.
+// The sentence naming what the gate was doing supplies the rest.
 func cause(err error) string {
 	var gitErr *gitError
 	if errors.As(err, &gitErr) && gitErr.stderr != "" {
 		return gitErr.stderr
+	}
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err.Error()
 	}
 	return err.Error()
 }
