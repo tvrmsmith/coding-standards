@@ -69,6 +69,40 @@ func TestDivergenceBatchesOfNoPathsAreNone(t *testing.T) {
 	}
 }
 
+func TestDivergenceBatchCountIsTheNumberOfInvocations(t *testing.T) {
+	// The black-box fixture asks this instead of holding a copy of the budget,
+	// so it has to answer for the layout it is handed rather than for the path
+	// count. A wrapper that returned anything but the number of invocations
+	// would tell that fixture its layout splits when it does not.
+	cases := map[string][]srcpath.Path{
+		"no paths":                       nil,
+		"an ordinary changeset":          ordinaryPaths(200),
+		"a changeset past the budget":    ordinaryPaths(budgetCrossingCount),
+		"a changeset of several batches": ordinaryPaths(budgetCrossingCount * 3),
+	}
+
+	for name, paths := range cases {
+		t.Run(name, func(t *testing.T) {
+			want := len(divergenceBatches(paths))
+
+			if got := DivergenceBatchCount(paths); got != want {
+				t.Errorf("DivergenceBatchCount over %d paths answered %d, want the %d invocations DivergentFromIndex makes", len(paths), got, want)
+			}
+		})
+	}
+}
+
+func TestDivergenceBatchCountSeparatesASplittingLayoutFromAWholeOne(t *testing.T) {
+	// The count is only useful to the fixture if the two layouts answer
+	// differently, so pin the answers themselves and not just the agreement.
+	if got := DivergenceBatchCount(ordinaryPaths(200)); got != 1 {
+		t.Errorf("DivergenceBatchCount over an ordinary changeset answered %d, want one invocation", got)
+	}
+	if got := DivergenceBatchCount(ordinaryPaths(budgetCrossingCount)); got < 2 {
+		t.Errorf("DivergenceBatchCount over %d bytes of pathspec text answered %d, want more than one invocation", pathspecCost(ordinaryPaths(budgetCrossingCount)), got)
+	}
+}
+
 // budgetCrossingCount is how many ordinaryPaths it takes to run just past the
 // budget, which is the smallest fixture that has to split.
 var budgetCrossingCount = divergenceBudget/pathspecCost(ordinaryPaths(1)) + 1
