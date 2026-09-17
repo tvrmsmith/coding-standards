@@ -584,19 +584,25 @@ func pathspec(path srcpath.Path) string {
 }
 
 // divergenceBudget is the pathspec text one DivergentFromIndex invocation is
-// allowed to carry. It is a sixteenth of macOS's 1 MiB ARG_MAX, and an
-// ordinary changeset of a few hundred paths is a few KiB, so it stays one
-// invocation.
+// allowed to carry. An ordinary changeset of a few hundred paths is a few KiB,
+// so it stays one invocation, and the figure is set by the tightest of the
+// three ceilings the gate ships against rather than by the most generous.
 //
-// It is not headroom against every Linux, only against the ones the gate runs
-// on. Linux takes the ceiling as max(min(6 MiB, RLIMIT_STACK/4), 131072), and
-// argv and the environment share it, so a process started under a small
-// `ulimit -s` gets 128 KiB for both together and 64 KiB of pathspecs beside a
-// 63 KiB environment would still be E2BIG. A default 8 MiB stack gives 2 MiB
-// and no caller reaches the floor today, so the budget is left a fixed number
-// rather than made to vary with whatever the caller's shell exported, which
-// would batch differently on two machines for no case that exists.
-const divergenceBudget = 64 << 10
+// Windows is the tightest. build.sh cross-builds windows/amd64, exec there goes
+// through CreateProcessW, and lpCommandLine is capped at 32767 characters for
+// the whole command line rather than at an argv block. 30 KiB of pathspecs
+// leaves over two thousand characters for the diff flags, the resolved path of
+// git.exe and the quoting Go adds around each argument, which is headroom no
+// realistic layout eats. macOS caps argv at a fixed 1 MiB. Linux takes
+// max(min(6 MiB, RLIMIT_STACK/4), 131072) with argv and the environment sharing
+// it, so a process started under a small `ulimit -s` has 128 KiB for both
+// together, and 30 KiB of pathspecs fits beside any environment a shell exports.
+//
+// It is one fixed number on every platform, not a GOOS-conditional one and not
+// one derived from the live rlimit. Two machines batch identically that way, so
+// a divergence answer does not depend on whose shell asked, and no caller comes
+// near enough to any of the three ceilings for the difference to buy anything.
+const divergenceBudget = 30 << 10
 
 // divergenceBatches splits paths into the invocations DivergentFromIndex runs,
 // keeping the order it was given. A path costs its pathspec plus the NUL that

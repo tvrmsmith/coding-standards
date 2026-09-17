@@ -338,10 +338,12 @@ func (n Name) String() string { return string(n) }
 // classes that placed nothing, and the whole point here is to name a path that
 // may be nothing at all.
 //
-// An absolute path is cleaned before anything reads it, so a developer who
-// typed a trailing slash or a `.` component gets the name the same path without
-// them gets. This is the single entry point a human-typed path arrives at, so
-// the normalisation lives here rather than in each caller that builds one.
+// An absolute path has the separators it ends in trimmed before anything reads
+// it, so a developer who typed a trailing slash gets the name the same path
+// without one gets. This is the single entry point a human-typed path arrives
+// at, so the normalisation lives here rather than in each caller that builds
+// one, and it goes no further than the trailing run for the reason
+// trimTrailingSeparators gives.
 //
 // It answers one of three shapes. A path under the repo root is named
 // repo-relative, whether the root prefix is spelled as the root is or in another
@@ -380,12 +382,34 @@ func (r Root) Name(path string) Name {
 	if !filepath.IsAbs(path) {
 		return Name(filepath.ToSlash(path))
 	}
-	resolved := resolveExisting(filepath.Clean(path))
+	resolved := resolveExisting(trimTrailingSeparators(path))
 	rel, place, err := r.relativize(resolved)
 	if err != nil || place == outside {
 		return Name(filepath.ToSlash(resolved))
 	}
 	return Name(rel)
+}
+
+// trimTrailingSeparators drops the separators abs ends in, down to but not
+// through the volume root, so "<root>/README.md/" asks about the same file
+// "<root>/README.md" asks about. Untrimmed, EvalSymlinks answers ENOTDIR for
+// the trailing slash on a regular file, resolveExisting climbs, and rejoining
+// filepath.Base onto filepath.Dir names the report "README.md/README.md".
+//
+// Only the trailing run goes. filepath.Clean would also pop ".." against the
+// component before it, and that is the one normalisation containment cannot
+// afford: with "<root>/link" a symlink out of the repository, the lexical pop
+// turns "<root>/link/../x" into "<root>/x" and a report that sits elsewhere is
+// named repo-relative, where EvalSymlinks pops the same ".." against the
+// resolved link and answers where the file really is. Root.Place resolves
+// without cleaning for the same reason, so the two agree about one string.
+func trimTrailingSeparators(abs string) string {
+	root := len(filepath.VolumeName(abs)) + 1
+	trimmed := abs
+	for len(trimmed) > root && os.IsPathSeparator(trimmed[len(trimmed)-1]) {
+		trimmed = trimmed[:len(trimmed)-1]
+	}
+	return trimmed
 }
 
 // resolveExisting resolves the symlinks of the deepest ancestor of abs that is

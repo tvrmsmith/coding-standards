@@ -329,6 +329,37 @@ func TestNameReadsATrailingSlashAsTheSamePathWithoutIt(t *testing.T) {
 	}
 }
 
+// ".." belongs to the filesystem, not to the string. A symlink in the tree
+// pointing out of the repository, followed by "..", leaves the repository, and
+// EvalSymlinks pops the ".." against the directory the link resolved to, which
+// is how the report is read as outside. Popping it lexically first would pop it
+// against the link's own name instead, put the candidate back under the root,
+// and print an outside report as repo-relative while the parser goes on reading
+// the file where it really sits. The normalisation on entry is therefore the
+// trailing-separator trim alone and never filepath.Clean.
+func TestNameRefusesADotDotThatLeavesTheRepoThroughASymlink(t *testing.T) {
+	root := containmentRoot(t)
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	touch(t, filepath.Join(outside, "x"))
+	if err := os.Symlink(mkdir(t, filepath.Join(outside, "sub")), filepath.Join(root.Dir(), "link")); err != nil {
+		t.Fatal(err)
+	}
+	// Built by hand rather than with filepath.Join, which cleans, and a cleaned
+	// candidate is the very input this case exists to keep out of resolution.
+	sep := string(filepath.Separator)
+	candidate := filepath.Join(root.Dir(), "link") + sep + ".." + sep + "x"
+
+	name := root.Name(candidate)
+
+	want := Name(filepath.ToSlash(filepath.Join(outside, "x")))
+	if name != want {
+		t.Errorf("Name on %q, whose \"..\" leaves the repo through a symlink, = %q, want the resolved %q", candidate, name, want)
+	}
+}
+
 // A symlink cycle is a real fault and not a component that is merely absent or
 // a file where a directory belongs, so the climb guard leaves it where it
 // found it. Treating ELOOP like the other two would rename a report that

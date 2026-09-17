@@ -7,29 +7,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/srcpath"
 )
-
-// e2bigTarget is how much argv one invocation has to build before exec refuses
-// it on the host running the case. macOS stops at a fixed 1 MiB. Linux takes
-// max(min(6 MiB, RLIMIT_STACK/4), 128 KiB), so a container with a large or
-// unlimited stack accepts far more than the 8 MiB stack a developer's shell
-// hands out, and a target written down as a constant would exec fine there and
-// leave the case green against the unbatched code it exists to refuse. It is
-// read from the live rlimit instead, with a budget's slack on top, since argv
-// and the environment share the ceiling. Batched, the same list is
-// target/divergenceBudget invocations, a size no platform refuses.
-func e2bigTarget(t *testing.T) int {
-	t.Helper()
-	var stack syscall.Rlimit
-	if err := syscall.Getrlimit(syscall.RLIMIT_STACK, &stack); err != nil {
-		t.Fatal(err)
-	}
-	return int(max(min(uint64(6<<20), stack.Cur/4), 128<<10)) + divergenceBudget
-}
 
 // The defect issue 50 reports is an exec that never happens. Reproducing it
 // takes more pathspec bytes than any black-box fixture can put on disk, which
