@@ -85,8 +85,8 @@ plugin is compiled into the linter rather than imported by it. Everything else G
 one module, so a package two binaries both need moves to the root `internal/` instead of being
 copied or imported across a module edge.
 
-The plugin loader ignores `packages/`, `dotnet/`, `go/` and `gate/` — it reads only `.claude-plugin/` and
-`skills/`.
+The plugin loader ignores `packages/`, `dotnet/`, `go/`, `internal/` and `gate/`. It reads only
+`.claude-plugin/` and `skills/`.
 
 ## The custom rules
 
