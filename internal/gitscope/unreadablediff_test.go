@@ -14,7 +14,10 @@ func TestUnreadableDiffKeepsACauseThatAlreadyTypedItself(t *testing.T) {
 
 	got := unreadableDiff(fmt.Errorf("reading the pure moves: %w", typed))
 
-	if got != error(typed) {
+	// Compared as any rather than with errors.Is or errors.As, because those
+	// unwrap and so would also pass if unreadableDiff had wrapped the cause a
+	// second time. Identity of the returned value is the whole assertion.
+	if any(got) != any(typed) {
 		t.Fatalf("unreadableDiff returned %v, want the cause's own UnreadableDiffError back", got)
 	}
 }
