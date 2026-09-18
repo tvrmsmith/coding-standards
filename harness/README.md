@@ -103,15 +103,23 @@ the injection delivers is still a warning, because no build that succeeded befor
 start failing, so the build's own exit status is unchanged. The blocking verdict is the hook's:
 the diagnostics pass writes SARIF via `-p:ErrorLog`, `lint-changed` keeps the findings whose
 locations hold a touched line, and its exit status becomes the script's. Exit 2 is a surviving
-finding, 1 is the filter breaking, and the two stay distinct so a hook can tell them apart.
+finding, 1 is anything breaking, in the filter or in the script itself, and the two stay distinct
+so a hook can tell them apart.
+
+A diagnostic the target repo already turned off with a `#pragma` or a `[SuppressMessage]` is
+dropped before scoping. `ErrorLog` reports those where the console never printed them, and that
+repo's decision stands.
 
 Compile errors still block, as on the TypeScript side.
 
-Two consequences worth knowing before you hit them. A staged file whose disk copy differs is now
+Three consequences worth knowing before you hit them. A staged file whose disk copy differs is now
 a hard stop rather than a printed caveat, because MSBuild compiles disk while the commit carries
 the index, and failing a commit over code it does not contain would be worse than refusing to
-guess. And the one route past a false positive is a waiver, one rule on one path, used once,
-with a reason, recorded in a log outside the repo; `lint-changed` prints the exact command.
+guess. A build that writes no SARIF at all is a hard stop for the same reason, since a clean build
+still writes an empty report and a missing one means `-p:ErrorLog` never took effect. And the one
+route past a false positive is a waiver, one rule on one path, used once, with a reason, recorded
+in a log outside the repo; `lint-changed` prints the exact command. A waiver is spent only on a run
+that ends clean, so a waived finding on a commit that blocked on something else costs nothing.
 
 The C# hook now needs Go on `PATH`, even in a repo with no Go in it. The script builds
 `lint-changed` from this hub into `${XDG_CACHE_HOME:-~/.cache}/coding-standards` on every run,
@@ -170,6 +178,15 @@ so the naive path is `not a directory`), and the hook carries a marker line so a
 recognises it instead of shuffling it aside and chaining to itself.
 
 ## Escape hatches
+
+Past a genuine false positive on the .NET side, record a waiver rather than skipping the hook.
+`lint-changed` prints the exact command for each finding that blocked:
+
+```sh
+lint-changed waive --language <lang> --path <path> --rule <rule> --reason <why>
+```
+
+The two skips below defeat every check at once, which is why the hook no longer offers them:
 
 ```sh
 SKIP_TVRMSMITH_LINT=1 git commit …   # skip the personal hook, keep any chained one

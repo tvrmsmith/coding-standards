@@ -153,14 +153,23 @@ finding out of scope is dropped and never reported, so a legacy file you touch o
 no backlog.
 
 A few rule ids ignore scope: the ones meaning the analyzer failed to load, where a clean result
-proves nothing and the diff underneath is beside the point.
+proves nothing and the diff underneath is beside the point. Roslyn reports those at no location at
+all, so such a finding carries no path, and no waiver can name it.
+
+A finding the target repo already suppressed in its own source, with a `#pragma` or a
+`[SuppressMessage]`, never reaches the scope question. That repo made its decision and this tool
+does not reopen it.
 
 ## Waiver
 
 Permission for one rule to be suppressed on one path, once, carrying a mandatory reason. Waivers
-live in an append-only log outside the repo, machine-local, so nothing about them is committed. A
-waiver is **spent** when it suppresses a finding, and a spend records the index tree it was spent
-against, so retrying the same commit reuses the waiver rather than burning a second.
+live in an append-only log outside the repo, machine-local, so nothing about them is committed. One
+waiver covers one finding, so two findings under the same rule on the same path cost two waivers.
+
+A waiver is **spent** only on a run that ends clean, because one use is one commit that actually
+went through. A waiver matched on a run something else blocked is reported as matched and left
+unspent. A spend records the index tree it was spent against, so retrying the same commit reuses
+the waiver rather than burning a second.
 
 Spending is what makes a waiver an escape hatch rather than a permanent exception. Nothing in the
 log is ever rewritten, so the file is the audit.
