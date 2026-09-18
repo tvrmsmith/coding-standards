@@ -230,6 +230,11 @@ the code, or a `//nolint` that names the linter and gives a reason true of that 
 id in `golangci.yml`'s `gosec.excludes`, which would also disarm the rule in every repo this layer
 visits.
 
+`gosec` is narrower than the rest of that job, because the preset turns it off in `_test.go` for
+the reason given above. The root-module run arms it in non-test code only, so the
+`//nolint:gosec` directives in this repository's own tests suppress nothing today and stand ready
+for the day that exclusion lifts.
+
 Two Go cases hold that shut, because every other way of disarming the sweep leaves CI green.
 `TestCIDeclaresTheBlockingLintStep` in `gate/test/ci_workflow_test.go` pins the step's `run:` line
 byte for byte and rejects `continue-on-error` on the step and on the job.
