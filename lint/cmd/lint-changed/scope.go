@@ -137,6 +137,9 @@ func checkDivergence(repo gitscope.Repo, base gitscope.Base) error {
 // names it. No -w and no --diff-filter, since the question here is which files
 // the commit carries at all rather than which lines it wrote.
 func stagedPaths(root srcpath.Root, base gitscope.Base) ([]srcpath.Path, error) {
+	//nolint:gosec // G204: every argument but the last is a constant, and
+	// base.Commit is a full sha gitscope resolved with rev-parse, so no
+	// caller-supplied text reaches the argv.
 	cmd := exec.Command("git", "diff", "--cached", "--name-only", "-z", base.Commit)
 	cmd.Dir = root.Dir()
 	out, err := cmd.Output()
