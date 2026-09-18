@@ -222,12 +222,16 @@ The C# half no longer sits here. Its findings block the commit when they touch a
 still ship at `Warning`, for the reason this config's rules are advisory today, because this
 runs machine-locally over code other people wrote and are not being asked to change.
 
-The hub's own Go code is the exception, because here the code is ours to change. The `gate (go)`
-job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs this same binary and config
-over `gate/` with the default exit code, so any finding reds the build. Clearing one means
-tightening the code, or a `//nolint` that names the linter and gives a reason true of that site.
-Never a new id in `golangci.yml`'s `gosec.excludes`, which would also disarm the rule in every
-repo this layer visits.
+The hub's own root module is the exception, because here the code is ours to change. The
+`gate (go)` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs this same binary
+and config from the repository root over `./...`, with the default exit code, so any finding under
+`gate/`, `internal/gitscope/` or `internal/srcpath/` reds the build. Clearing one means tightening
+the code, or a `//nolint` that names the linter and gives a reason true of that site. Never a new
+id in `golangci.yml`'s `gosec.excludes`, which would also disarm the rule in every repo this layer
+visits.
+
+`go/plugin/` and `go/test/` are separate modules and stay advisory: the `lint plugin (go)` job
+runs `go vet` and `go test` over them, not this preset, so a finding there blocks nothing.
 
 ## Tests
 

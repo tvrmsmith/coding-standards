@@ -55,6 +55,143 @@ const (
 	suiteGuard          = "${{ !cancelled() && " + suiteGuardReference + " == 'success' }}"
 )
 
+// ciStep is one step of a job, decoded from ci.yml. if: and the env values are
+// decoded as raw nodes rather than as Go values. Actions hands the runner the
+// source text, so `01` reaches the step as the string 01, while decoding it as
+// a Go value yields the integer 1 and hides a value this suite rejects.
+// Node.Value is that source text, and it also keeps `if: false` and an integer
+// env value from failing the unmarshal.
+type ciStep struct {
+	Name             string               `yaml:"name"`
+	ID               string               `yaml:"id"`
+	Uses             string               `yaml:"uses"`
+	If               yaml.Node            `yaml:"if"`
+	Run              string               `yaml:"run"`
+	WorkingDirectory string               `yaml:"working-directory"`
+	Env              map[string]yaml.Node `yaml:"env"`
+}
+
+// gateJobSteps is the gate job's steps in declaration order, read out of
+// ci.yml. Order is part of what the cases below assert, because a guard naming
+// a step that has not finished renders empty rather than failing.
+func gateJobSteps(t *testing.T) []ciStep {
+	t.Helper()
+
+	body, err := os.ReadFile(ciWorkflow)
+	if err != nil {
+		t.Fatalf("reading the workflow this case reads as a contract at %s: %v", ciWorkflow, err)
+	}
+
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []ciStep `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(body, &workflow); err != nil {
+		t.Fatalf("parsing the workflow this case reads as a contract at %s: %v", ciWorkflow, err)
+	}
+
+	job, ok := workflow.Jobs[gateJob]
+	if !ok {
+		t.Fatalf("%s declares no %q job, so this case cannot find the steps it pins", ciWorkflow, gateJob)
+	}
+	return job.Steps
+}
+
+// lintStep is the name: of the step that runs the personal preset with a
+// blocking exit code, lintBinary and lintConfig are the binary it runs and the
+// config it reads, both written relative to the repository root, and
+// lintTarget is the package pattern that reaches the whole module. lintGuard
+// is the whole if: it carries, naming both the toolchain step and the step
+// that builds the binary, so a failed build skips the lint rather than reding
+// it with a message pointing at a missing file.
+const (
+	lintStep        = "Lint the root module with the personal preset"
+	lintBuildStepID = "gcl"
+	lintBinary      = "./go/bin/tvrmsmith-gcl"
+	lintConfig      = "./go/golangci.yml"
+	lintTarget      = "./..."
+	lintGuard       = "${{ !cancelled() && " + suiteGuardReference +
+		" == 'success' && steps." + lintBuildStepID + ".outcome == 'success' }}"
+)
+
+// lintExitCodeFlag is the flag that turns the gate off. harness/lint-changed-go.sh
+// passes it with 0 because it runs over other people's repositories, and the
+// same flag on this step would leave every gosec finding in the module
+// reported and CI green.
+const lintExitCodeFlag = "--issues-exit-code"
+
+// TestCIDeclaresTheBlockingLintStep reads ci.yml as the declarative contract it
+// is and asserts the gate job still runs the personal preset over the whole
+// root module with a blocking exit code. The step's argv is split into tokens
+// and each one asserted for what it means, rather than snapshotted, because
+// what matters is the binary, the config, the breadth and the absence of the
+// exit-code flag. Renaming the step, narrowing it to gate/, or appending
+// --issues-exit-code 0 each reds this case instead of quietly disarming the
+// gosec sweep this branch cleared.
+func TestCIDeclaresTheBlockingLintStep(t *testing.T) {
+	job := gateJobSteps(t)
+
+	var found, buildSteps int
+	buildDeclared := false
+	for i, step := range job {
+		if step.ID == lintBuildStepID {
+			buildSteps++
+			buildDeclared = true
+		}
+		if step.Name != lintStep {
+			continue
+		}
+		found++
+
+		if !buildDeclared {
+			t.Errorf("%s: the %q step is declared before any step with id: %s, so its guard reads an outcome that is still empty and the step skips with the job green",
+				ciWorkflow, lintStep, lintBuildStepID)
+		}
+		if guard := step.If.Value; guard != lintGuard {
+			t.Errorf("%s: step %d, the %q step, carries if: %q, want %q. Any other expression is the gate running when it should not or, worse, quietly not running",
+				ciWorkflow, i+1, lintStep, guard, lintGuard)
+		}
+		if step.WorkingDirectory != gateWorkingDir {
+			t.Errorf("%s: the %q step declares working-directory %q, want %q, the repository root. The module covers internal/gitscope and internal/srcpath as well as gate/, and the pattern selects the packages under the directory the step runs in, so declaring `gate` would leave those two unlinted without failing",
+				ciWorkflow, lintStep, step.WorkingDirectory, gateWorkingDir)
+		}
+
+		argv := strings.Fields(step.Run)
+		switch {
+		case len(argv) == 0 || argv[0] != lintBinary:
+			t.Errorf("%s: the %q step runs %q, want the first word to be %s, the binary go/build.sh writes with the personal plugin compiled in. Plain golangci-lint enables none of these rules",
+				ciWorkflow, lintStep, step.Run, lintBinary)
+		case len(argv) < 2 || argv[1] != "run":
+			t.Errorf("%s: the %q step runs %q, want the `run` subcommand, which is the only one that reports findings",
+				ciWorkflow, lintStep, step.Run)
+		}
+		if !slices.Contains(argv, lintTarget) {
+			t.Errorf("%s: the %q step runs %q, want the %s pattern so every package in the root module is linted rather than one directory",
+				ciWorkflow, lintStep, step.Run, lintTarget)
+		}
+		if !slices.Contains(argv, lintConfig) {
+			t.Errorf("%s: the %q step runs %q, want --config %s so it reads the preset this repo maintains rather than golangci-lint's defaults",
+				ciWorkflow, lintStep, step.Run, lintConfig)
+		}
+		for _, arg := range argv {
+			if arg == lintExitCodeFlag || strings.HasPrefix(arg, lintExitCodeFlag+"=") {
+				t.Errorf("%s: the %q step passes %s. The default is 1, and this step exists so a finding reds the build; with the flag every gosec finding in the module is reported and CI stays green",
+					ciWorkflow, lintStep, arg)
+			}
+		}
+	}
+
+	if found != 1 {
+		t.Errorf("%s: the %q job holds %d steps named %q, want exactly one. Without it nothing keeps a new exec.Command or os.ReadFile from reintroducing a G204 or G304 with CI green",
+			ciWorkflow, gateJob, found, lintStep)
+	}
+	if buildSteps != 1 {
+		t.Errorf("%s: the %q job declares %d steps with id: %s, want exactly one. The lint step's guard reads that id's outcome, which is false for a step that does not exist, so the lint would never run",
+			ciWorkflow, gateJob, buildSteps, lintBuildStepID)
+	}
+}
+
 // suiteScript is the step's run: script, held here as an intentional
 // snapshot of a machine-consumed declarative artifact rather than grepped for
 // tokens. Nothing in this suite executes the script, so a snapshot is what
@@ -110,37 +247,7 @@ fi
 // drift without any Go test noticing, because the step runs on the runner
 // rather than here.
 func TestCIDeclaresTheSuiteStep(t *testing.T) {
-	body, err := os.ReadFile(ciWorkflow)
-	if err != nil {
-		t.Fatalf("reading the workflow this case reads as a contract at %s: %v", ciWorkflow, err)
-	}
-
-	// if: and the env values are decoded as raw nodes rather than as Go values.
-	// Actions hands the runner the source text, so `01` reaches the step as the
-	// string 01, while decoding it as a Go value yields the integer 1 and hides
-	// a value this suite rejects. Node.Value is that source text, and it also
-	// keeps `if: false` and an integer env value from failing the unmarshal.
-	var workflow struct {
-		Jobs map[string]struct {
-			Steps []struct {
-				Name             string               `yaml:"name"`
-				ID               string               `yaml:"id"`
-				Uses             string               `yaml:"uses"`
-				If               yaml.Node            `yaml:"if"`
-				Run              string               `yaml:"run"`
-				WorkingDirectory string               `yaml:"working-directory"`
-				Env              map[string]yaml.Node `yaml:"env"`
-			} `yaml:"steps"`
-		} `yaml:"jobs"`
-	}
-	if err := yaml.Unmarshal(body, &workflow); err != nil {
-		t.Fatalf("parsing the workflow this case reads as a contract at %s: %v", ciWorkflow, err)
-	}
-
-	job, ok := workflow.Jobs[gateJob]
-	if !ok {
-		t.Fatalf("%s declares no %q job, so this case cannot find the step that runs the suite", ciWorkflow, gateJob)
-	}
+	job := gateJobSteps(t)
 
 	if len(realExtractorCases) == 0 {
 		t.Fatal("realExtractorCases is empty, so the name check below would pass over a script naming nothing")
@@ -148,7 +255,7 @@ func TestCIDeclaresTheSuiteStep(t *testing.T) {
 
 	var found, vetFound, guardTargets int
 	guardDeclared := false
-	for i, step := range job.Steps {
+	for i, step := range job {
 		declaredBefore := guardDeclared
 		if step.ID == suiteGuardStepID {
 			guardTargets++
