@@ -37,13 +37,42 @@ plugins `base.js` imports.
 | File | Job |
 | --- | --- |
 | `eslint-layer.js` | Loads the package's own ESLint config, spreads the personal preset after it. The layering, and the typed-layer gate. |
-| `lint-changed.sh` | Lints changed `.ts`/`.tsx` only, each through its own package's ESLint binary. |
-| `lint-changed-dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then hands every report to one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
-| `errorlog.props` | Sets `ErrorLog` for that build, imported through `CustomAfterMicrosoftCommonTargets`. MSBuild owns the report name because it has to expand `$(TargetFramework)` per inner build and escape the comma before the version suffix; the script passes only the prefix. |
-| `lint-changed-go.sh` | The Go counterpart: runs the personal golangci-lint binary over the packages owning the changed `.go`, filters down to those files. |
+| `lint-changed.sh` | The one entrypoint. Resolves the repo, computes the changed set, runs every language branch that applies. `--only` runs a single one. |
+| `linters/common.sh` | What every branch shares: argument parsing, repo resolution, the changed set, the scratch directory, the reporting helpers. |
+| `linters/ts.sh` | Lints changed `.ts`/`.tsx` only, each through its own package's ESLint binary. |
+| `linters/dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then hands every report to one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
+| `errorlog.props` | Sets `ErrorLog` for that build, imported through `CustomAfterMicrosoftCommonTargets`. MSBuild owns the report name because it has to expand `$(TargetFramework)` per inner build and escape the comma before the version suffix; the branch passes only the prefix. |
+| `linters/go.sh` | The Go counterpart: runs the personal golangci-lint binary over the packages owning the changed `.go`, filters down to those files. |
 | `hooks/pre-commit` | Template for the installed hook. The enforcement gate. One template, three branches, each self-gating. |
 | `write-vscode-settings.mjs` | The editor half — points the extension at `eslint-layer.js`, so typing sees what committing sees. TypeScript only. |
 | `bootstrap` | Installs all of the above into one repo, per language: `ts`, `dotnet` or `go`. |
+
+## `--only`: one branch at a time
+
+`lint-changed.sh` runs every branch that applies, which is what the hook wants. `--only ts`,
+`--only go` or `--only dotnet` narrows it to one, for a caller that wants a single language's
+findings and a single language's exit code. An unknown name is rejected rather than quietly
+linting nothing. The flag must come before `--files`, which swallows everything after it.
+
+Each branch keeps its linter's native output: ESLint's `stylish`, golangci-lint's text, MSBuild's.
+Those shapes make paths clickable in a terminal, and the hook is the reader that matters. A tool
+wanting one machine-readable shape across all three should read the SARIF the C# branch already
+produces rather than re-parse three text formats, which is where the `lint-changed` binary is
+going.
+
+### Linting a checkout that cannot say which repository it is
+
+`TVRMSMITH_REGISTRY_KEY` names the checkout directly. The Go and .NET branches decide whether a
+repository is adopted by looking its path up, in the Go registry file and in the props file's
+scoping condition, and they derive that path from `git rev-parse --git-common-dir`. A caller
+linting in a detached worktree of some other bare repository gets the wrong derivation, so the
+lookup misses and the branch skips. A skip is silent and looks exactly like a clean result, which
+is the worst way for this to fail.
+
+The variable overrides which path is looked up, not whether the lookup happens: an override
+naming a repository in neither registry still skips. The TypeScript branch needs no such thing,
+it keys on nothing. It does need `node_modules` to exist, because it runs the target repo's own
+ESLint and installs nothing.
 
 ## Two layers, different jobs
 
@@ -83,9 +112,9 @@ Four things about it that are not obvious:
   generates a per-file global `AnalyzerConfig` before every `CoreCompile` and only the files git
   reports as changed report anything — the same changed-files-only rule the TypeScript half has,
   in builds and in the IDE. `-p:TvrmsmithAnalyzersScopeToChanged=false` shows the whole backlog;
-  `dotnet/README.md` covers the mechanism. `lint-changed-dotnet.sh` turns it off and applies its
+  `dotnet/README.md` covers the mechanism. `linters/dotnet.sh` turns it off and applies its
   own filter, because that one is keyed on what is staged rather than on the working tree.
-- **The scoping condition doubles as the registry.** `lint-changed-dotnet.sh` decides whether
+- **The scoping condition doubles as the registry.** `linters/dotnet.sh` decides whether
   a repo is adopted by looking for its own `StartsWith('<repo>/')` in the props file, which is
   why the hook template needs no per-language state and skips rather than fails in a repo that
   was only bootstrapped for TypeScript.
@@ -152,7 +181,7 @@ ADR 0010 carries the rule and the reasoning.
 ## The Go half
 
 One binary and one config file, both outside the target. `go/build.sh` compiles the custom
-analyzers into a golangci-lint binary, `bootstrap go` builds it and `lint-changed-go.sh` runs it
+analyzers into a golangci-lint binary, `bootstrap go` builds it and `linters/go.sh` runs it
 with `--config` pointed at the hub's `go/golangci.yml`, so a repo with its own `.golangci.yml`
 keeps it untouched — the personal layer is a separate run, not a merge.
 
@@ -164,7 +193,7 @@ Three things about it differ from the other two:
   but the Go side installs nothing in the target and its binary is machine-wide, so without the
   registry, bootstrapping one repo would silently start linting every other repo the hook
   guards. The line is the **main checkout**, even when `bootstrap go` is pointed at a linked
-  worktree, and `lint-changed-go.sh` resolves the same way before it looks itself up. Both use
+  worktree, and `linters/go.sh` resolves the same way before it looks itself up. Both use
   `git rev-parse --git-common-dir`, whose parent is the main checkout in either case.
   `test/lint-changed-go.test.js` pins all four combinations of registered/not and
   worktree/not, because a skip that should have been a run is silent and looks exactly like a
