@@ -230,6 +230,14 @@ the code, or a `//nolint` that names the linter and gives a reason true of that 
 id in `golangci.yml`'s `gosec.excludes`, which would also disarm the rule in every repo this layer
 visits.
 
+Two Go cases hold that shut, because every other way of disarming the sweep leaves CI green.
+`TestCIDeclaresTheBlockingLintStep` in `gate/test/ci_workflow_test.go` pins the step's `run:` line
+byte for byte and rejects `continue-on-error` on the step and on the job.
+`TestThePresetStillReportsTheRulesThisRepoJustified` in `gate/test/preset_test.go` reds if `gosec`
+leaves `linters.enable`, if `gosec.excludes` gains an id this repository answered with a `//nolint`
+(`G204`, `G301`, `G302`, `G304`, `G306`, `G702`, `G703`), or if `run.issues-exit-code` appears,
+which overrides the exit code from inside the config rather than on the command line.
+
 `go/plugin/` and `go/test/` are separate modules, so the root-module run never reaches them. The
 `lint plugin (go)` job runs `go vet` and `go test` over `go/plugin`, and it does run this preset
 over `go/test/smoke` and `go/test/fixtures`, but only as fixtures holding deliberate violations.
