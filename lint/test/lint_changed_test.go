@@ -236,9 +236,14 @@ func TestUsageErrorsExitOne(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"missing format", []string{"--language", "csharp", "--staged"}, "--format"},
-		{"missing language", []string{"--format", "sarif", "--staged"}, "--language"},
-		{"two scopes", []string{"--format", "sarif", "--language", "csharp", "--staged", "--since", "main"}, "one of"},
+		// The whole problem sentence, not the flag name. Every one of these
+		// spellings also appears in the usage banner the error prints under
+		// itself, so asserting on the flag alone passes against a binary that
+		// diagnosed nothing and printed the banner.
+		{"missing format", []string{"--language", "csharp", "--staged"}, "lint-changed: --format is required"},
+		{"missing language", []string{"--format", "sarif", "--staged"}, "lint-changed: --language is required"},
+		{"two scopes", []string{"--format", "sarif", "--language", "csharp", "--staged", "--since", "main"},
+			"lint-changed: only one of --staged, --since, --files may be given"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -320,7 +325,10 @@ func TestOneWaiverCoversOneFinding(t *testing.T) {
 	f.write("Foo.cs", "line1\nCHANGED\nCHANGED\nline4\nline5\n")
 	f.stage("Foo.cs")
 
-	f.run("", "waive", "--language", "csharp", "--path", "Foo.cs", "--rule", "TVRM0001", "--reason", "one of the two")
+	recorded := f.run("", "waive", "--language", "csharp", "--path", "Foo.cs", "--rule", "TVRM0001", "--reason", "one of the two")
+	if recorded.exitCode != 0 {
+		t.Fatalf("recording the waiver: exit code = %d\nstderr: %s", recorded.exitCode, recorded.stderr)
+	}
 	doc := sarifDoc(
 		sarifResult("TVRM0001", "msg", sarifLoc("Foo.cs", 2, 2)),
 		sarifResult("TVRM0001", "msg", sarifLoc("Foo.cs", 3, 3)),
@@ -329,7 +337,17 @@ func TestOneWaiverCoversOneFinding(t *testing.T) {
 	res := f.run(doc, filterArgs("--staged")...)
 
 	if res.exitCode != 2 {
-		t.Fatalf("exit code = %d, want 2: one waiver must not cover both findings\nstdout: %s", res.exitCode, res.stdout)
+		t.Fatalf("exit code = %d, want 2: one waiver must not cover both findings\nstdout: %s\nstderr: %s",
+			res.exitCode, res.stdout, res.stderr)
+	}
+	// Which finding survived, not just that one did. Exit 2 alone also comes
+	// back from a run where the waiver never matched anything and both findings
+	// blocked, which is the opposite of the behaviour under test.
+	if !strings.Contains(res.stdout, "Foo.cs:3") {
+		t.Fatalf("stdout does not report the unwaived finding at line 3: %s", res.stdout)
+	}
+	if strings.Contains(res.stdout, "Foo.cs:2") {
+		t.Fatalf("stdout reports the waived finding at line 2, so the waiver covered neither: %s", res.stdout)
 	}
 }
 
@@ -434,5 +452,103 @@ func TestSinceScopesAgainstNamedRef(t *testing.T) {
 
 	if res.exitCode != 2 {
 		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+}
+
+// A staged deletion whose file is still on disk is a hard stop. git reads a
+// path the index no longer holds as untracked, so no index-to-worktree diff
+// names it, and the build just compiled a file the commit removes.
+func TestStagedDeletionStillOnDiskIsDivergent(t *testing.T) {
+	f := newFixture(t)
+	f.write("Foo.cs", baseFile)
+	f.commitAll("base")
+	f.git("rm", "--cached", "--quiet", "Foo.cs")
+
+	res := f.run(sarifDoc(), filterArgs("--staged")...)
+
+	if res.exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if !strings.Contains(res.stderr, "Foo.cs") {
+		t.Fatalf("stderr does not name the staged deletion: %s", res.stderr)
+	}
+}
+
+// A report whose every result fell outside the repo checked nothing, so it
+// fails rather than passing the commit on a report it never read.
+func TestEveryResultUnplaceableExitsOne(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "Foo.cs")
+
+	doc := sarifDoc(sarifResult("TVRM0001", "msg", sarifLoc("/elsewhere/Other.cs", 3, 3)))
+	res := f.run(doc, filterArgs("--staged")...)
+
+	if res.exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if !strings.Contains(res.stderr, "TVRM0001") || !strings.Contains(res.stderr, "Other.cs") {
+		t.Fatalf("stderr does not name the dropped rule and its URI: %s", res.stderr)
+	}
+}
+
+// An analyzer load failure has a route out. It is reported at no location at
+// all, so the printed command carries no --path and the waiver keys on the
+// language and the rule alone.
+func TestAnalyzerLoadFailureCanBeWaived(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "Foo.cs")
+	doc := sarifDoc(sarifResultNoLocation("AD0001", "analyzer threw"))
+
+	blocked := f.run(doc, filterArgs("--staged")...)
+	if blocked.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", blocked.exitCode, blocked.stdout, blocked.stderr)
+	}
+	if strings.Contains(blocked.stdout, "--path") {
+		t.Fatalf("the printed command names a path the finding does not have: %s", blocked.stdout)
+	}
+
+	recorded := f.run("", "waive", "--language", "csharp", "--rule", "AD0001", "--reason", "broken upstream")
+	if recorded.exitCode != 0 {
+		t.Fatalf("recording the waiver: exit code = %d\nstderr: %s", recorded.exitCode, recorded.stderr)
+	}
+
+	res := f.run(doc, filterArgs("--staged")...)
+	if res.exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0: the pathless waiver did not cover the load failure\nstdout: %s\nstderr: %s",
+			res.exitCode, res.stdout, res.stderr)
+	}
+}
+
+// Two reports, one process, one waiver. A process per report spends whatever
+// matches its own report without seeing that another report still blocks the
+// commit, which burns the waiver on a commit that never went through.
+func TestReportsAreFilteredInOneRun(t *testing.T) {
+	f := newFixture(t)
+	f.write("Foo.cs", baseFile)
+	f.commitAll("base")
+	f.write("Foo.cs", "line1\nCHANGED\nCHANGED\nline4\nline5\n")
+	f.stage("Foo.cs")
+
+	recorded := f.run("", "waive", "--language", "csharp", "--path", "Foo.cs", "--rule", "TVRM0001", "--reason", "a false positive")
+	if recorded.exitCode != 0 {
+		t.Fatalf("recording the waiver: exit code = %d\nstderr: %s", recorded.exitCode, recorded.stderr)
+	}
+
+	waived := filepath.Join(t.TempDir(), "waived.sarif")
+	blocking := filepath.Join(t.TempDir(), "blocking.sarif")
+	if err := os.WriteFile(waived, []byte(sarifDoc(sarifResult("TVRM0001", "the waived one", sarifLoc("Foo.cs", 2, 2)))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(blocking, []byte(sarifDoc(sarifResult("TVRM0002", "the real one", sarifLoc("Foo.cs", 3, 3)))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res := f.run("", filterArgs("--staged", "--report", waived, "--report", blocking)...)
+
+	if res.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if lines := f.waiverLogLines(); len(lines) != 1 {
+		t.Fatalf("waiver log has %d line(s), want 1: the waiver was spent on a run that blocked", len(lines))
 	}
 }

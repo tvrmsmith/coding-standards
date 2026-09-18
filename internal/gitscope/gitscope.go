@@ -664,6 +664,47 @@ func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
 	return divergent, nil
 }
 
+// StagedChange is one path the index changes against a base, with whether the
+// index drops it. The deletion flag is what DivergentFromIndex cannot answer on
+// its own: a path the index no longer holds is untracked as far as git is
+// concerned, so no diff names it however the working tree looks.
+type StagedChange struct {
+	Path    srcpath.Path
+	Deleted bool
+}
+
+// StagedPaths is every path the index changes against base, named the way git
+// names it. No -w and no --diff-filter, since the question here is which files
+// the commit carries at all rather than which lines it wrote.
+func (r Repo) StagedPaths(base Base) ([]StagedChange, error) {
+	out, err := r.git("diff", "--cached", "--name-status", "-z", "--no-renames", base.Commit)
+	if err != nil {
+		return nil, unreadableDiff(err)
+	}
+	// --no-renames keeps every record two NUL-terminated fields, a status and a
+	// path, so the pairs can be read off without a per-status shape.
+	fields := strings.Split(out, "\x00")
+	var changes []StagedChange
+	for i := 0; i+1 < len(fields); i += 2 {
+		status, name := fields[i], fields[i+1]
+		if status == "" || name == "" {
+			continue
+		}
+		changes = append(changes, StagedChange{Path: srcpath.FromSlash(name), Deleted: status == "D"})
+	}
+	return changes, nil
+}
+
+// WriteTree writes the index out as a tree object and returns its sha, the
+// identity a lint waiver is matched and spent against.
+func (r Repo) WriteTree() (string, error) {
+	out, err := r.git("write-tree")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // DivergenceArgs is the whole argv DivergentFromIndex hands git for one batch
 // of paths. It is exported so the black-box suite can put the same question to
 // git that the gate puts, rather than restating the flags in a second place

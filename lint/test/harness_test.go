@@ -51,6 +51,24 @@ var gitEnv = []string{
 	"GIT_CONFIG_SYSTEM=/dev/null",
 }
 
+// scrubbedEnv is the process environment with git's own namespace taken out.
+// gitEnv pins the few GIT_ variables a fixture wants and nothing pins the rest,
+// so without this a run under `git rebase --exec` or any hook inherits
+// GIT_DIR, GIT_INDEX_FILE and GIT_WORK_TREE and every fixture reads the wrong
+// repository. That is a failure the developer's own shell decides, which is the
+// one thing a fixture must never depend on.
+func scrubbedEnv() []string {
+	env := os.Environ()
+	kept := make([]string, 0, len(env))
+	for _, entry := range env {
+		if name, _, _ := strings.Cut(entry, "="); strings.HasPrefix(name, "GIT_") {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return kept
+}
+
 // fixture is a throwaway git repo one case runs lint-changed against.
 type fixture struct {
 	t          *testing.T
@@ -72,7 +90,7 @@ func (f *fixture) git(args ...string) string {
 	f.t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = f.root
-	cmd.Env = append(os.Environ(), gitEnv...)
+	cmd.Env = append(scrubbedEnv(), gitEnv...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		f.t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
@@ -133,7 +151,7 @@ func (f *fixture) runInDir(dir, sarif string, args ...string) runResult {
 	f.t.Helper()
 	cmd := exec.Command(filepath.Join(binDir, "lint-changed"), args...)
 	cmd.Dir = dir
-	cmd.Env = append(append(os.Environ(), gitEnv...), "TVRMSMITH_WAIVERS="+f.waiverFile)
+	cmd.Env = append(append(scrubbedEnv(), gitEnv...), "TVRMSMITH_WAIVERS="+f.waiverFile)
 	cmd.Stdin = strings.NewReader(sarif)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout

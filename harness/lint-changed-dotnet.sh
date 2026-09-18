@@ -96,14 +96,20 @@ if [ ! -f "$analyzer_props" ]; then
   exit 0
 fi
 
-case "$mode" in
-  --staged) changed=$(git diff --cached --name-only --diff-filter=ACM) ;;
-  --since) changed=$(git diff --name-only --diff-filter=ACM "$ref") ;;
-  --files) changed=$(printf '%s\n' "${explicit_files[@]}") ;;
-esac
+# NUL-delimited throughout. git quotes a path holding a space or a non-ASCII byte in its
+# newline-delimited output, and read -r splits the quoted form on whitespace, so a newline list
+# drops exactly the filenames a developer is most likely to get wrong. The list goes through a
+# process substitution rather than a command substitution because `$(...)` strips NUL bytes.
+list_changed() {
+  case "$mode" in
+    --staged) git diff --cached --name-only -z --diff-filter=ACM ;;
+    --since)  git diff --name-only -z --diff-filter=ACM "$ref" ;;
+    --files)  [ ${#explicit_files[@]} -gt 0 ] && printf '%s\0' "${explicit_files[@]}" ;;
+  esac
+}
 
 files=()
-while IFS= read -r file; do
+while IFS= read -r -d '' file; do
   [ -n "$file" ] || continue
   case "$file" in
     *.cs) ;;
@@ -114,7 +120,7 @@ while IFS= read -r file; do
     */obj/*|obj/*|*/bin/*|bin/*) continue ;;
   esac
   [ -e "$file" ] && files+=("$file")
-done <<<"$changed"
+done < <(list_changed)
 
 [ ${#files[@]} -gt 0 ] || exit 0
 
@@ -187,7 +193,10 @@ sarif_dir=$(mktemp -d)
 trap 'rm -rf "$sarif_dir"' EXIT
 sarifs=()
 
-for proj in $projects; do
+# Read rather than word-split: an unquoted expansion splits a project path on every space it
+# holds and then globs each piece.
+while IFS= read -r proj; do
+  [ -n "$proj" ] || continue
   # Two passes, and both are needed for different reasons.
   #
   # Pass 1 is an ordinary incremental build, project references included. Its only job is to
@@ -204,12 +213,16 @@ for proj in $projects; do
   # This script's own filter, below, stays the single answer to "which files count".
   out=$(CustomAfterMicrosoftCommonProps="$analyzer_props" \
     dotnet build "$proj" -p:TvrmsmithAnalyzersEnabled=true \
-      -p:TvrmsmithAnalyzersScopeToChanged=false -v:m --nologo 2>&1)
+      -p:TvrmsmithAnalyzersScopeToChanged=false -v:m --nologo 2>&1 </dev/null)
   build_status=$?
 
   # A compile error is the build's verdict and it stands — that is the whole gate here.
+  #
+  # Reported as 1, never as the build's own status. The exit codes here mean one thing each: 2 is
+  # "a finding survived the changed-line filter", and MSBuild exiting 2 for its own reasons must
+  # not be read as that.
   if [ $build_status -ne 0 ]; then
-    status=$build_status
+    status=1
     echo "=== $proj — build failed ==="
     grep -E ': (error|warning) [A-Z]+[0-9]+' <<<"$out" | sort -u
     continue
@@ -234,7 +247,7 @@ for proj in $projects; do
   out=$(CustomAfterMicrosoftCommonProps="$analyzer_props" \
     dotnet build "$proj" --no-incremental -p:BuildProjectReferences=false \
       -p:TvrmsmithAnalyzersEnabled=true -p:TvrmsmithAnalyzersScopeToChanged=false \
-      -p:ErrorLog="$prefix.\$(TargetFramework).sarif,version=2.1" -v:m --nologo 2>&1)
+      -p:ErrorLog="$prefix.\$(TargetFramework).sarif,version=2.1" -v:m --nologo 2>&1 </dev/null)
   if [ $? -ne 0 ]; then
     status=1
     echo "=== $proj — the diagnostics pass failed after a clean build ==="
@@ -258,24 +271,31 @@ for proj in $projects; do
     echo "  Expected $prefix.<framework>.sarif from -p:ErrorLog. Check that the project does not" >&2
     echo "  set its own ErrorLog." >&2
   fi
-done
+done <<<"$projects"
 
-# Every project's report goes through lint-changed separately. Merging them first would mean
-# this script understanding SARIF, which is the one thing handing the job to lint-changed buys.
+# Every report goes into one lint-changed run, named with --report. A process per report was the
+# first shape and it was wrong: a waiver is one commit's worth of permission, and each process
+# spent whatever matched its own report without knowing another report still blocked the commit,
+# so the waiver was burnt on a commit that never went through. One process sees the whole
+# commit's findings and makes one spend decision. Merging the SARIF here instead would mean this
+# script understanding SARIF, which is the one thing handing the job to lint-changed buys.
+#
 # A broken run is reported as 1 whatever else happened, because a filter that did not run proves
 # nothing; 2 only survives when nothing broke.
 #
 # The ${#sarifs[@]} guard is for bash 3.2, where expanding an empty array under `set -u` is an
 # unbound-variable error rather than an empty expansion.
 if [ ${#sarifs[@]} -gt 0 ]; then
+  report_args=()
   for sarif in "${sarifs[@]}"; do
-    "$lint_changed" --format sarif --language csharp "${scope_args[@]}" <"$sarif"
-    case $? in
-      0) ;;
-      2) [ $status -eq 0 ] && status=2 ;;
-      *) status=1 ;;
-    esac
+    report_args+=(--report "$sarif")
   done
+  "$lint_changed" --format sarif --language csharp "${scope_args[@]}" "${report_args[@]}" </dev/null
+  case $? in
+    0) ;;
+    2) [ $status -eq 0 ] && status=2 ;;
+    *) status=1 ;;
+  esac
 fi
 
 exit $status

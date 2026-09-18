@@ -54,6 +54,35 @@ func TestRecord_thenMatch_findsIt(t *testing.T) {
 	}
 }
 
+// A waiver with no path is how an analyzer load failure is waived: Roslyn
+// reports AD0001 at Location.None, so there is no path to name and the empty
+// one is the value Match keys on rather than a field the record is missing.
+func TestRecordAndMatch_pathlessWaiver(t *testing.T) {
+	store, err := waiver.Open(filepath.Join(t.TempDir(), "waivers.jsonl"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	w, err := store.Record(waiver.Waiver{
+		Language: "csharp",
+		Rule:     "AD0001",
+		Reason:   "the analyzer is broken upstream",
+	})
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	got, ok := store.Match("csharp", "", "AD0001", "abc123", nil)
+	if !ok {
+		t.Fatalf("Match found no waiver for a pathless finding")
+	}
+	if got.ID != w.ID {
+		t.Fatalf("Match returned %s, want %s", got.ID, w.ID)
+	}
+	if _, ok := store.Match("csharp", srcpath.FromSlash("src/Order.cs"), "AD0001", "abc123", nil); ok {
+		t.Fatalf("a pathless waiver matched a finding that named a path")
+	}
+}
+
 func TestMatch_requiresLanguagePathAndRule(t *testing.T) {
 	store, err := waiver.Open(filepath.Join(t.TempDir(), "waivers.jsonl"))
 	if err != nil {
@@ -93,7 +122,6 @@ func TestRecord_rejectsEmptyFields(t *testing.T) {
 	}{
 		{"empty reason", func() waiver.Waiver { w := valid; w.Reason = ""; return w }()},
 		{"empty language", func() waiver.Waiver { w := valid; w.Language = ""; return w }()},
-		{"empty path", func() waiver.Waiver { w := valid; w.Path = ""; return w }()},
 		{"empty rule", func() waiver.Waiver { w := valid; w.Rule = ""; return w }()},
 	}
 
@@ -272,19 +300,35 @@ func TestMatch_skipsClaimedWaivers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	w, err := store.Record(waiver.Waiver{
+	// Two waivers for the same rule on the same path, so the claim has to skip
+	// past the first and land on the second. With only one recorded, a Match
+	// that refused every lookup whenever anything was claimed would pass too.
+	first, err := store.Record(waiver.Waiver{
 		Language: "csharp",
 		Path:     srcpath.FromSlash("src/OrderService.cs"),
 		Rule:     "TVRM0001",
-		Reason:   "the only waiver",
+		Reason:   "the claimed one",
+	})
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	second, err := store.Record(waiver.Waiver{
+		Language: "csharp",
+		Path:     srcpath.FromSlash("src/OrderService.cs"),
+		Rule:     "TVRM0001",
+		Reason:   "the one left",
 	})
 	if err != nil {
 		t.Fatalf("Record: %v", err)
 	}
 
-	claimed := map[string]bool{w.ID: true}
-	if _, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123", claimed); ok {
-		t.Fatalf("Match returned a waiver the run had already claimed")
+	claimed := map[string]bool{first.ID: true}
+	got, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123", claimed)
+	if !ok {
+		t.Fatalf("Match returned nothing, so a claimed waiver blocked the unclaimed one behind it")
+	}
+	if got.ID != second.ID {
+		t.Fatalf("Match returned %s, want %s: the claimed waiver was handed back again", got.ID, second.ID)
 	}
 }
 

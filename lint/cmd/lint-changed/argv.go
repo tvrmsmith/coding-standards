@@ -52,6 +52,11 @@ type FilterArgs struct {
 	// Files is --files' comma-separated list, split. Set only when Mode is
 	// ScopeFiles.
 	Files []string
+	// Reports is every --report the caller gave. Empty means the report comes
+	// in on stdin instead. One run reads them all, because a waiver is one
+	// commit's worth of permission and a process per report would spend it on
+	// whichever report happened to come first.
+	Reports []string
 }
 
 // WaiveArgs is argv for the waive form.
@@ -71,8 +76,8 @@ func (e *UsageError) Error() string {
 	return "lint-changed: " + e.Problem + "\n\n" + usage
 }
 
-const usage = `usage: lint-changed --format <fmt> --language <lang> [--staged | --since <ref> | --files <a,b,...>]
-       lint-changed waive --language <lang> --path <p> --rule <r> --reason <why>
+const usage = `usage: lint-changed --format <fmt> --language <lang> [--staged | --since <ref> | --files <a,b,...>] [--report <file> ...]
+       lint-changed waive --language <lang> [--path <p>] --rule <r> --reason <why>
        lint-changed waivers`
 
 // Parse reads argv without the program name. "waive" and "waivers" as the
@@ -140,6 +145,12 @@ func parseFilter(args []string) (FilterArgs, error) {
 				return FilterArgs{}, &UsageError{Problem: "only one of --staged, --since, --files may be given"}
 			}
 			modeSet, fa.Mode, fa.Files, i = true, ScopeFiles, strings.Split(v, ","), next
+		case "--report":
+			v, next, err := flagValue(args, i, "--report")
+			if err != nil {
+				return FilterArgs{}, err
+			}
+			fa.Reports, i = append(fa.Reports, v), next
 		default:
 			return FilterArgs{}, &UsageError{Problem: "unknown argument '" + args[i] + "'"}
 		}
@@ -192,9 +203,9 @@ func parseWaive(args []string) (WaiveArgs, error) {
 	if wa.Language == "" {
 		return WaiveArgs{}, &UsageError{Problem: "waive: --language is required"}
 	}
-	if wa.Path == "" {
-		return WaiveArgs{}, &UsageError{Problem: "waive: --path is required"}
-	}
+	// --path is optional, and omitting it is the only route out of a finding
+	// that has no location to name: Roslyn reports an analyzer that failed to
+	// load at Location.None, so a waiver for it keys on language and rule alone.
 	if wa.Rule == "" {
 		return WaiveArgs{}, &UsageError{Problem: "waive: --rule is required"}
 	}

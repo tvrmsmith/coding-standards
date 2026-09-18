@@ -65,7 +65,6 @@ func TestParseFilterFilesSplitsOnComma(t *testing.T) {
 func TestParseWaiveRequiresEveryField(t *testing.T) {
 	cases := [][]string{
 		{"waive", "--path", "p", "--rule", "r", "--reason", "why"},
-		{"waive", "--language", "csharp", "--rule", "r", "--reason", "why"},
 		{"waive", "--language", "csharp", "--path", "p", "--reason", "why"},
 		{"waive", "--language", "csharp", "--path", "p", "--rule", "r"},
 	}
@@ -73,6 +72,36 @@ func TestParseWaiveRequiresEveryField(t *testing.T) {
 		if _, err := Parse(args); err == nil {
 			t.Errorf("Parse(%v): got nil error, want a usage error", args)
 		}
+	}
+}
+
+// --path is the one waive flag that may be left out. A diagnostic reported at
+// Location.None has no path to name, so requiring one would leave an analyzer
+// load failure with no route out at all.
+func TestParseWaiveWithoutAPath(t *testing.T) {
+	cmd, err := Parse([]string{"waive", "--language", "csharp", "--rule", "AD0001", "--reason", "the analyzer is broken upstream"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cmd.Waive.Path != "" {
+		t.Fatalf("got path %q, want empty", cmd.Waive.Path)
+	}
+	if cmd.Waive.Rule != "AD0001" {
+		t.Fatalf("got rule %q, want AD0001", cmd.Waive.Rule)
+	}
+}
+
+// --report is repeatable, so one process reads every report a build wrote and
+// makes one waiver-spend decision across all of them.
+func TestParseFilterCollectsEveryReport(t *testing.T) {
+	cmd, err := Parse([]string{"--format", "sarif", "--language", "csharp", "--staged",
+		"--report", "one.sarif", "--report", "two.sarif"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	want := []string{"one.sarif", "two.sarif"}
+	if len(cmd.Filter.Reports) != len(want) || cmd.Filter.Reports[0] != want[0] || cmd.Filter.Reports[1] != want[1] {
+		t.Fatalf("got %v, want %v", cmd.Filter.Reports, want)
 	}
 }
 

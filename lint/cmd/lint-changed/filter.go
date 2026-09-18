@@ -3,8 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
-	"os/exec"
-	"strings"
+	"os"
 
 	"github.com/tvrmsmith/coding-standards/internal/gitscope"
 	"github.com/tvrmsmith/coding-standards/internal/srcpath"
@@ -55,9 +54,20 @@ func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	findings, dropped, err := lintfind.ParseSARIF(stdin, repo.Root())
+	findings, dropped, err := readReports(fa, stdin, repo.Root())
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
+		return 1
+	}
+
+	// A report whose every result fell outside the repo checked nothing, and
+	// passing the commit on that would be the gate reporting clean on a report
+	// it never read. A report with no results at all is a genuine clean pass.
+	if len(findings) == 0 && len(dropped) > 0 {
+		_, _ = fmt.Fprintf(stderr, "every result in the report fell outside the repo, so nothing was checked\n")
+		for _, d := range dropped {
+			_, _ = fmt.Fprintf(stderr, "  %s at %s\n", d.Rule, d.URI)
+		}
 		return 1
 	}
 
@@ -73,13 +83,15 @@ func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
-	trees := &indexTree{root: repo.Root()}
+	trees := &indexTree{repo: repo}
 
 	kept := make([]survivor, 0, len(survivors))
 	var matched []matchedWaiver
 	claimed := map[string]bool{}
+	// An empty log can match nothing, so the index tree is never computed on the
+	// overwhelmingly common run that has no waiver recorded at all.
+	waivable := len(store.List()) > 0
 	for _, s := range survivors {
-		path, waivable := s.waivablePath()
 		if !waivable {
 			kept = append(kept, s)
 			continue
@@ -89,6 +101,7 @@ func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
 			_, _ = fmt.Fprintln(stderr, err)
 			return 1
 		}
+		path := s.waivePath()
 		w, ok := store.Match(fa.Language, path, s.finding.Rule, tree, claimed)
 		if !ok {
 			kept = append(kept, s)
@@ -98,8 +111,8 @@ func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
 		matched = append(matched, matchedWaiver{waiver: w, rule: s.finding.Rule, path: path})
 	}
 
-	if dropped > 0 {
-		_, _ = fmt.Fprintf(stderr, "%d result(s) could not be placed inside the repo and were dropped\n", dropped)
+	if len(dropped) > 0 {
+		_, _ = fmt.Fprintf(stderr, "%d result(s) could not be placed inside the repo and were dropped\n", len(dropped))
 	}
 
 	if len(kept) > 0 {
@@ -107,7 +120,7 @@ func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
 			_, _ = fmt.Fprintf(stderr, "waiver %s matched %s on %s but was not spent: the run blocked on another finding\n",
 				m.waiver.ID, m.rule, m.path)
 		}
-		reportKept(stdout, fa.Language, kept)
+		reportKept(stdout, waiveBinary(), fa.Language, kept)
 		return 2
 	}
 
@@ -138,33 +151,49 @@ type matchedWaiver struct {
 	path   srcpath.Path
 }
 
-// waivablePath is the path a waiver for this survivor names. A finding that
-// ignores scope can carry no locations at all, since Roslyn reports an
-// analyzer that failed to load at Location.None: there is no path to waive it
-// on, and the load failure is breakage to fix rather than a false positive.
-func (s survivor) waivablePath() (srcpath.Path, bool) {
+// waivePath is the path a waiver for this survivor names, empty when the
+// finding has no location. Roslyn reports an analyzer that failed to load at
+// Location.None, and a waiver keyed on language and rule alone is the route out
+// of one, so an empty path is a value the store matches rather than a refusal.
+func (s survivor) waivePath() srcpath.Path {
 	if len(s.locations) == 0 {
-		return "", false
+		return ""
 	}
-	return s.locations[0].Path, true
+	return s.locations[0].Path
 }
 
 // reportKept prints every finding that blocked the commit, with the command
-// that would waive it where one exists.
-func reportKept(stdout io.Writer, language string, kept []survivor) {
+// that would waive it.
+func reportKept(stdout io.Writer, bin, language string, kept []survivor) {
 	for _, s := range kept {
 		_, _ = fmt.Fprintf(stdout, "%s: %s\n", s.finding.Rule, s.finding.Message)
 		for _, loc := range s.locations {
 			_, _ = fmt.Fprintf(stdout, "  %s:%d\n", loc.Path, loc.StartLine)
 		}
-		path, waivable := s.waivablePath()
-		if !waivable {
-			_, _ = fmt.Fprintf(stdout, "  no location, so no waiver can name it: fix the analyzer load failure\n\n")
-			continue
-		}
-		_, _ = fmt.Fprintf(stdout, "  lint-changed waive --language %s --path %s --rule %s --reason \"<why>\"\n\n",
-			language, path, s.finding.Rule)
+		_, _ = fmt.Fprintf(stdout, "  %s waive --language %s%s --rule %s --reason \"<why>\"\n\n",
+			bin, language, pathFlag(s.waivePath()), s.finding.Rule)
 	}
+}
+
+// pathFlag is the --path the printed command carries, or nothing at all for a
+// finding with no location to name.
+func pathFlag(path srcpath.Path) string {
+	if path == "" {
+		return ""
+	}
+	return " --path " + string(path)
+}
+
+// waiveBinary is the absolute path of the running binary, so the command the
+// report prints runs as printed. lint-changed is built into a cache directory
+// and invoked by full path from the harness, never from PATH, so the bare name
+// would name nothing.
+func waiveBinary() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "lint-changed"
+	}
+	return exe
 }
 
 // indexTree is the index tree sha every waiver is matched and spent against,
@@ -173,7 +202,7 @@ func reportKept(stdout io.Writer, language string, kept []survivor) {
 // to look up, including any --files run in a tree whose index git refuses to
 // write, never needs it.
 type indexTree struct {
-	root srcpath.Root
+	repo gitscope.Repo
 	sum  string
 }
 
@@ -181,12 +210,39 @@ func (t *indexTree) sha() (string, error) {
 	if t.sum != "" {
 		return t.sum, nil
 	}
-	cmd := exec.Command("git", "write-tree")
-	cmd.Dir = t.root.Dir()
-	out, err := cmd.Output()
+	sum, err := t.repo.WriteTree()
 	if err != nil {
 		return "", fmt.Errorf("computing the index tree: %w", err)
 	}
-	t.sum = strings.TrimSpace(string(out))
+	t.sum = sum
 	return t.sum, nil
+}
+
+// readReports parses every --report the caller named, or stdin when it named
+// none. One process reads them all so the whole commit's findings meet the
+// waiver log once: a process per report would spend a waiver against findings
+// the next process had not seen yet.
+func readReports(fa FilterArgs, stdin io.Reader, root srcpath.Root) ([]lintfind.Finding, []lintfind.Dropped, error) {
+	if len(fa.Reports) == 0 {
+		return lintfind.ParseSARIF(stdin, root)
+	}
+	var findings []lintfind.Finding
+	var dropped []lintfind.Dropped
+	for _, name := range fa.Reports {
+		//nolint:gosec // G304: the report path is the caller's whole point. The
+		// harness names the files its own build just wrote, in a directory it
+		// created, so there is no trust line for a variable path to cross.
+		f, err := os.Open(name)
+		if err != nil {
+			return nil, nil, fmt.Errorf("opening report %s: %w", name, err)
+		}
+		got, gotDropped, err := lintfind.ParseSARIF(f, root)
+		_ = f.Close()
+		if err != nil {
+			return nil, nil, err
+		}
+		findings = append(findings, got...)
+		dropped = append(dropped, gotDropped...)
+	}
+	return findings, dropped, nil
 }

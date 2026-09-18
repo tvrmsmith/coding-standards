@@ -3,9 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/tvrmsmith/coding-standards/internal/gitscope"
 	"github.com/tvrmsmith/coding-standards/internal/srcpath"
@@ -116,16 +115,41 @@ func resolveBase(repo gitscope.Repo, fa FilterArgs) (gitscope.Base, error) {
 // because it diffs with -w and --diff-filter=ACM and then drops pure moves, so
 // a staged deletion, a pure rename and a whitespace-only edit all have no key
 // in it and would go unchecked.
+//
+// A staged deletion is asked separately, because git cannot answer it: the
+// index no longer holds the path, so git reads the file still sitting on disk
+// as untracked and no index-to-worktree diff names it. The commit would drop a
+// file the build just compiled, which is exactly the mismatch this refuses.
 func checkDivergence(repo gitscope.Repo, base gitscope.Base) error {
-	paths, err := stagedPaths(repo.Root(), base)
+	changes, err := repo.StagedPaths(base)
 	if err != nil {
 		return err
 	}
+	paths := make([]srcpath.Path, 0, len(changes))
+	for _, c := range changes {
+		paths = append(paths, c.Path)
+	}
 	sort.Slice(paths, func(i, j int) bool { return paths[i] < paths[j] })
 
-	divergent, err := repo.DivergentFromIndex(paths)
+	fromIndex, err := repo.DivergentFromIndex(paths)
 	if err != nil {
 		return err
+	}
+	named := make(map[srcpath.Path]bool, len(fromIndex))
+	for _, p := range fromIndex {
+		named[p] = true
+	}
+	for _, c := range changes {
+		if c.Deleted && onDisk(repo.Root(), c.Path) {
+			named[c.Path] = true
+		}
+	}
+
+	var divergent []srcpath.Path
+	for _, p := range paths {
+		if named[p] {
+			divergent = append(divergent, p)
+		}
 	}
 	if len(divergent) > 0 {
 		return &divergentError{paths: divergent}
@@ -133,25 +157,10 @@ func checkDivergence(repo gitscope.Repo, base gitscope.Base) error {
 	return nil
 }
 
-// stagedPaths is every path the index changes against base, named the way git
-// names it. No -w and no --diff-filter, since the question here is which files
-// the commit carries at all rather than which lines it wrote.
-func stagedPaths(root srcpath.Root, base gitscope.Base) ([]srcpath.Path, error) {
-	//nolint:gosec // G204: every argument but the last is a constant, and
-	// base.Commit is a full sha gitscope resolved with rev-parse, so no
-	// caller-supplied text reaches the argv.
-	cmd := exec.Command("git", "diff", "--cached", "--name-only", "-z", base.Commit)
-	cmd.Dir = root.Dir()
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("listing the staged paths: %w", err)
-	}
-	var paths []srcpath.Path
-	for _, name := range strings.Split(string(out), "\x00") {
-		if name == "" {
-			continue
-		}
-		paths = append(paths, srcpath.FromSlash(name))
-	}
-	return paths, nil
+// onDisk reports whether the working tree still holds path. A stat error other
+// than absence reads as present: the file is there and unreadable, which is no
+// reason to let a staged deletion through unchecked.
+func onDisk(root srcpath.Root, path srcpath.Path) bool {
+	_, err := os.Stat(filepath.Join(root.Dir(), filepath.FromSlash(string(path))))
+	return !os.IsNotExist(err)
 }

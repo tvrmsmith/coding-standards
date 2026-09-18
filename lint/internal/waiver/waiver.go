@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/tvrmsmith/coding-standards/internal/srcpath"
@@ -175,9 +176,9 @@ func (s *Store) Record(w Waiver) (Waiver, error) {
 	if w.Language == "" {
 		return Waiver{}, fmt.Errorf("waiver: language is required")
 	}
-	if w.Path == "" {
-		return Waiver{}, fmt.Errorf("waiver: path is required")
-	}
+	// No path requirement. An empty path is the analyzer-load case, where the
+	// diagnostic is reported at no location at all, and Match treats it as the
+	// value it is rather than as a missing field.
 	if w.Rule == "" {
 		return Waiver{}, fmt.Errorf("waiver: rule is required")
 	}
@@ -300,6 +301,13 @@ func (s *Store) append(l line) error {
 		return fmt.Errorf("encoding waiver log record: %w", err)
 	}
 	data = append(data, '\n')
+
+	// O_CREATE makes the file, not the directory above it, and the default log
+	// path names one no installer creates. Without this the first waiver anyone
+	// records fails on a machine that has never recorded one.
+	if err := os.MkdirAll(filepath.Dir(s.logPath), 0o700); err != nil {
+		return fmt.Errorf("creating the waiver log directory: %w", err)
+	}
 
 	f, err := os.OpenFile(s.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {

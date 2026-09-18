@@ -154,7 +154,8 @@ no backlog.
 
 A few rule ids ignore scope: the ones meaning the analyzer failed to load, where a clean result
 proves nothing and the diff underneath is beside the point. Roslyn reports those at no location at
-all, so such a finding carries no path, and no waiver can name it.
+all, so such a finding carries no path, and the waiver for one carries no path either: it keys on
+the language and the rule alone.
 
 A finding the target repo already suppressed in its own source, with a `#pragma` or a
 `[SuppressMessage]`, never reaches the scope question. That repo made its decision and this tool
@@ -163,7 +164,8 @@ does not reopen it.
 ## Waiver
 
 Permission for one rule to be suppressed on one path, once, carrying a mandatory reason. Waivers
-live in an append-only log outside the repo, machine-local, so nothing about them is committed. One
+live in an append-only log at `${XDG_STATE_HOME:-~/.local/state}/coding-standards/waivers.jsonl`,
+machine-local and outside every repo, so nothing about them is committed. One
 waiver covers one finding, so two findings under the same rule on the same path cost two waivers.
 
 A waiver is **spent** only on a run that ends clean, because one use is one commit that actually

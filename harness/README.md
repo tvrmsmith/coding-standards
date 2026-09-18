@@ -180,11 +180,20 @@ recognises it instead of shuffling it aside and chaining to itself.
 ## Escape hatches
 
 Past a genuine false positive on the .NET side, record a waiver rather than skipping the hook.
-`lint-changed` prints the exact command for each finding that blocked:
+`lint-changed` prints the exact command for each finding that blocked, and it prints the binary by
+full path, since the hook builds it into the cache directory and never puts it on `PATH`:
 
 ```sh
-lint-changed waive --language <lang> --path <path> --rule <rule> --reason <why>
+/path/to/lint-changed waive --language <lang> --path <path> --rule <rule> --reason <why>
 ```
+
+`--path` is the one flag the printed command may leave out. An analyzer load failure is reported at
+no location at all, so its waiver keys on the language and the rule alone.
+
+The log is `${XDG_STATE_HOME:-~/.local/state}/coding-standards/waivers.jsonl`, and
+`TVRMSMITH_WAIVERS` overrides it. State rather than config, because `~/.config/coding-standards` is
+the symlink to this hub, and an audit log must not land inside a repo the gate guards.
+`lint-changed waivers` lists every record with its spend state.
 
 The two skips below defeat every check at once, which is why the hook no longer offers them:
 

@@ -74,8 +74,8 @@ func TestParseSARIFEmptyRunsIsValid(t *testing.T) {
 	if len(findings) != 0 {
 		t.Errorf("findings = %v, want none", findings)
 	}
-	if dropped != 0 {
-		t.Errorf("dropped = %d, want 0", dropped)
+	if len(dropped) != 0 {
+		t.Errorf("dropped = %d, want 0", len(dropped))
 	}
 }
 
@@ -92,8 +92,8 @@ func TestParseSARIFEmptyResultsIsValid(t *testing.T) {
 	if len(findings) != 0 {
 		t.Errorf("findings = %v, want none", findings)
 	}
-	if dropped != 0 {
-		t.Errorf("dropped = %d, want 0", dropped)
+	if len(dropped) != 0 {
+		t.Errorf("dropped = %d, want 0", len(dropped))
 	}
 }
 
@@ -126,8 +126,8 @@ func TestParseSARIFRelativeURI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseSARIF() err = %v, want nil", err)
 	}
-	if dropped != 0 {
-		t.Errorf("dropped = %d, want 0", dropped)
+	if len(dropped) != 0 {
+		t.Errorf("dropped = %d, want 0", len(dropped))
 	}
 	want := []Finding{{
 		Rule:     "TVRM0001",
@@ -158,8 +158,8 @@ func TestParseSARIFAbsoluteFileURIWithPercentEncoding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseSARIF() err = %v, want nil", err)
 	}
-	if dropped != 0 {
-		t.Errorf("dropped = %d, want 0", dropped)
+	if len(dropped) != 0 {
+		t.Errorf("dropped = %d, want 0", len(dropped))
 	}
 	if len(findings) != 1 {
 		t.Fatalf("len(findings) = %d, want 1", len(findings))
@@ -222,8 +222,8 @@ func TestParseSARIFDropsResultWithNoPlaceableLocation(t *testing.T) {
 	if len(findings) != 0 {
 		t.Errorf("findings = %v, want none", findings)
 	}
-	if dropped != 2 {
-		t.Errorf("dropped = %d, want 2", dropped)
+	if len(dropped) != 2 {
+		t.Errorf("dropped = %d, want 2", len(dropped))
 	}
 }
 
@@ -268,8 +268,8 @@ func TestParseSARIFSkeletonExample(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseSARIF() err = %v, want nil", err)
 	}
-	if dropped != 0 {
-		t.Errorf("dropped = %d, want 0", dropped)
+	if len(dropped) != 0 {
+		t.Errorf("dropped = %d, want 0", len(dropped))
 	}
 	want := []Finding{{
 		Rule:     "TVRM0001",
@@ -361,8 +361,8 @@ func TestParseSARIFKeepsScopeIgnoringRuleWithNoLocations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("rule %s: ParseSARIF() err = %v, want nil", rule, err)
 		}
-		if dropped != 0 {
-			t.Errorf("rule %s: dropped = %d, want 0", rule, dropped)
+		if len(dropped) != 0 {
+			t.Errorf("rule %s: dropped = %d, want 0", rule, len(dropped))
 		}
 		if len(findings) != 1 {
 			t.Fatalf("rule %s: len(findings) = %d, want 1", rule, len(findings))
@@ -384,8 +384,8 @@ func TestParseSARIFKeepsScopeIgnoringRuleWithNoLocations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseSARIF() err = %v, want nil", err)
 	}
-	if len(findings) != 0 || dropped != 1 {
-		t.Errorf("findings = %v, dropped = %d, want none and 1", findings, dropped)
+	if len(findings) != 0 || len(dropped) != 1 {
+		t.Errorf("findings = %v, dropped = %d, want none and 1", findings, len(dropped))
 	}
 }
 
@@ -419,8 +419,8 @@ func TestParseSARIFDropsInSourceSuppressedResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseSARIF() err = %v, want nil", err)
 	}
-	if dropped != 0 {
-		t.Errorf("dropped = %d, want 0: a suppressed result is not an unplaceable one", dropped)
+	if len(dropped) != 0 {
+		t.Errorf("dropped = %d, want 0: a suppressed result is not an unplaceable one", len(dropped))
 	}
 	if len(findings) != 1 || findings[0].Rule != "TVRM0001" {
 		t.Fatalf("findings = %#v, want only TVRM0001", findings)
@@ -475,8 +475,8 @@ func TestParseSARIFConcatenatesEveryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseSARIF() err = %v, want nil", err)
 	}
-	if dropped != 0 {
-		t.Errorf("dropped = %d, want 0", dropped)
+	if len(dropped) != 0 {
+		t.Errorf("dropped = %d, want 0", len(dropped))
 	}
 	if len(findings) != 2 {
 		t.Fatalf("len(findings) = %d, want 2", len(findings))

@@ -43,16 +43,17 @@ status=0
 # exit 2 is "a finding survived"; 1 is the gate itself breaking. See lint-changed-dotnet.sh.
 "$harness/lint-changed-dotnet.sh" --staged || status=$?
 
-# Go: the personal golangci-lint binary over the packages owning the staged .go. Findings are
-# advisory like the C# ones and never block; a non-zero status here means the run itself broke.
+# Go: the personal golangci-lint binary over the packages owning the staged .go. Findings report
+# and never block; the C# half no longer does, and Go joins it in slice 3 of issue 108. A
+# non-zero status here means the run itself broke.
 "$harness/lint-changed-go.sh" --staged || status=$?
 
 if [ $status -ne 0 ]; then
   echo >&2
   echo "pre-commit: personal coding standards found errors in the staged changes." >&2
-  echo "  Fix them. Past a genuine false positive, record a waiver with the command the" >&2
-  echo "  finding printed: lint-changed waive --language <lang> --path <p> --rule <r> --reason <why>." >&2
-  echo "  One rule, one path, one use, logged outside the repo so it can be audited." >&2
+  echo "  Fix them. Past a genuine false positive, run the waive command the finding printed," >&2
+  echo "  exactly as printed: it names the binary by full path because lint-changed is not on PATH." >&2
+  echo "  One rule, one path, one use, logged under XDG_STATE_HOME so it can be audited." >&2
   echo "  SKIP_TVRMSMITH_LINT=1 / --no-verify skip every hook and are not the route to take." >&2
 fi
 

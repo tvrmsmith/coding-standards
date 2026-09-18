@@ -54,19 +54,27 @@ type sarifLocation struct {
 	} `json:"physicalLocation"`
 }
 
+// Dropped is one result ParseSARIF could not place inside root. The rule and
+// the URI it named are kept rather than counted, because a caller that drops
+// every result in a report has to say which ones went unchecked.
+type Dropped struct {
+	Rule string
+	URI  string
+}
+
 // ParseSARIF reads a SARIF 2.1 log and returns every result it can place
-// inside root. The int is the count of results dropped as unplaceable.
-func ParseSARIF(r io.Reader, root srcpath.Root) ([]Finding, int, error) {
+// inside root, alongside the results it dropped as unplaceable.
+func ParseSARIF(r io.Reader, root srcpath.Root) ([]Finding, []Dropped, error) {
 	var log sarifLog
 	if err := json.NewDecoder(r).Decode(&log); err != nil {
-		return nil, 0, UnreadableReportError{Format: "sarif", Message: "malformed JSON: " + err.Error()}
+		return nil, nil, UnreadableReportError{Format: "sarif", Message: "malformed JSON: " + err.Error()}
 	}
 	if log.Version != sarifVersion {
-		return nil, 0, UnreadableReportError{Format: "sarif", Message: "unsupported version " + quoteVersion(log.Version) + ", want " + sarifVersion}
+		return nil, nil, UnreadableReportError{Format: "sarif", Message: "unsupported version " + quoteVersion(log.Version) + ", want " + sarifVersion}
 	}
 
 	var findings []Finding
-	dropped := 0
+	var dropped []Dropped
 	for _, run := range log.Runs {
 		for _, result := range run.Results {
 			if suppressedInSource(result) {
@@ -74,16 +82,27 @@ func ParseSARIF(r io.Reader, root srcpath.Root) ([]Finding, int, error) {
 			}
 			finding, err := placeResult(result, root)
 			if err != nil {
-				return nil, 0, err
+				return nil, nil, err
 			}
 			if finding == nil {
-				dropped++
+				dropped = append(dropped, Dropped{Rule: result.RuleID, URI: firstURI(result)})
 				continue
 			}
 			findings = append(findings, *finding)
 		}
 	}
 	return findings, dropped, nil
+}
+
+// firstURI is the artifact a dropped result named, for the message that lists
+// it. A result reported at Location.None names none at all.
+func firstURI(result sarifResult) string {
+	for _, loc := range append(append([]sarifLocation{}, result.Locations...), result.RelatedLocations...) {
+		if uri := loc.PhysicalLocation.ArtifactLocation.URI; uri != "" {
+			return uri
+		}
+	}
+	return "(no location)"
 }
 
 // suppressedInSource reports whether the target repo already turned this
