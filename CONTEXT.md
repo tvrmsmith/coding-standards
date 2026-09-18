@@ -145,6 +145,12 @@ it, and one or more **locations**. A location is a span in one source file, incl
 Primary and related locations are the same kind of thing here, because the in-scope rule treats them
 alike.
 
+The rule, the message and the locations are the whole identity. Two reports carrying all three the
+same are one finding, not two, so a project built for several target frameworks and a file linked
+into two projects each report their warning once. Neither the framework nor the owning project is
+part of what the tool judges, and a duplicate would print twice and demand a second **waiver** for
+one line of code.
+
 ## In scope
 
 A finding is in scope when any of its locations holds a **touched line**. The touched-line

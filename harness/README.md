@@ -110,7 +110,9 @@ through, since MSBuild exiting 2 for its own reasons must not read as a survivin
 Every project's report goes into a single `lint-changed` run, named with a repeatable `--report`.
 A process per report spent whatever waiver matched its own report without knowing another report
 still blocked the commit, so one process now sees the whole commit's findings and makes one spend
-decision.
+decision. The script writes one report per target framework, so a multi-targeted project reports
+the same source-level warning several times; `lint-changed` collapses those to one finding, on the
+identity `CONTEXT.md` gives under Finding.
 
 A diagnostic the target repo already turned off with a `#pragma` or a `[SuppressMessage]` is
 dropped before scoping. `ErrorLog` reports those where the console never printed them, and that
@@ -124,7 +126,8 @@ the index, and failing a commit over code it does not contain would be worse tha
 guess. A build that writes no SARIF at all is a hard stop for the same reason, since a clean build
 still writes an empty report and a missing one means `-p:ErrorLog` never took effect. A report
 whose results all fail to place inside the repo is the third, and `lint-changed` names each dropped
-rule and URI; a report carrying no results at all is still a clean pass. And the one
+rule and URI; each report answers that question alone, so one project placing nothing still stops
+the commit when another placed results. A report carrying no results at all is still a clean pass. And the one
 route past a false positive is a waiver, one rule on one path, used once, with a reason, recorded
 in a log outside the repo; `lint-changed` prints the exact command. A waiver is spent only on a run
 that ends clean, so a waived finding on a commit that blocked on something else costs nothing.
