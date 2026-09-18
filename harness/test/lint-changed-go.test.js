@@ -53,12 +53,25 @@ function fixture() {
   return { root, repo, worktree, registry, stub, cleanup: () => rmSync(root, { recursive: true, force: true }) }
 }
 
+/**
+ * `TVRMSMITH_REGISTRY_KEY` is honoured whenever it is set, so an ambient value on the developer's
+ * machine would decide which path every case below looks up, and the cases asserting a skip would
+ * pass for the wrong reason. `undefined` removes it from the child's environment.
+ */
+const neutralised = { TVRMSMITH_REGISTRY_KEY: undefined, TVRMSMITH_GOLANGCI_CONFIG: undefined }
+
 /** @returns {{ status: number, output: string }} */
 function lint(cwd, { registry, stub }, env = {}) {
   const result = execFileSync(script, ['--only', 'go', '--since', 'HEAD'], {
     cwd,
     encoding: 'utf8',
-    env: { ...process.env, TVRMSMITH_GO_REPOS: registry, TVRMSMITH_GCL: stub, ...env },
+    env: {
+      ...process.env,
+      ...neutralised,
+      TVRMSMITH_GO_REPOS: registry,
+      TVRMSMITH_GCL: stub,
+      ...env,
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   return result

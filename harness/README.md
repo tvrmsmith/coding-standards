@@ -25,6 +25,13 @@ and none undoes the others.
 
 Rerun it any time — it is idempotent, and re-running is how you pick up new rules.
 
+**Rerun it in every adopted repo after pulling this hub.** The installed hook is a copy of
+`hooks/pre-commit` taken at install time, not a pointer to it, so a change to the template reaches
+nothing already installed. A hook installed before the single-entrypoint consolidation calls
+`lint-changed-dotnet.sh` and `lint-changed-go.sh`, which no longer exist, and every commit in that
+repo fails with `No such file or directory` until `bootstrap` is run again. Reinstalling is the
+fix; there are no forwarding shims.
+
 On a clone that has never been bootstrapped, `bootstrap ts` installs the hub's own dependencies
 first: `harness/`, and then each `packages/*/` that has no `node_modules` yet. The second half is
 not redundant — `harness` reaches the preset through pnpm's `link:` protocol, which symlinks the
@@ -38,7 +45,7 @@ plugins `base.js` imports.
 | --- | --- |
 | `eslint-layer.js` | Loads the package's own ESLint config, spreads the personal preset after it. The layering, and the typed-layer gate. |
 | `lint-changed.sh` | The one entrypoint. Resolves the repo, computes the changed set, runs every language branch that applies. `--only` runs a single one. |
-| `linters/common.sh` | What every branch shares: argument parsing, repo resolution, the changed set, the scratch directory, the reporting helpers. |
+| `linters/common.sh` | What every branch shares: argument parsing, repo resolution, the changed set, the scratch directory, the ancestor walk each language owns a predicate for. |
 | `linters/ts.sh` | Lints changed `.ts`/`.tsx` only, each through its own package's ESLint binary. |
 | `linters/dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then hands every report to one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
 | `errorlog.props` | Sets `ErrorLog` for that build, imported through `CustomAfterMicrosoftCommonTargets`. MSBuild owns the report name because it has to expand `$(TargetFramework)` per inner build and escape the comma before the version suffix; the branch passes only the prefix. |
@@ -53,6 +60,12 @@ plugins `base.js` imports.
 `--only go` or `--only dotnet` narrows it to one, for a caller that wants a single language's
 findings and a single language's exit code. An unknown name is rejected rather than quietly
 linting nothing. The flag must come before `--files`, which swallows everything after it.
+
+Exit codes are one convention across the three, ADR 0010's. **2 is a surviving finding** — an
+ESLint error, a C# analyzer warning on a line the change wrote — and **1 is the gate breaking**: a
+failed build, a golangci-lint run that blew up, a missing layering wrapper, a bad argument. A 1
+from any branch dominates a 2 from another, because a branch that never ran says nothing about the
+code it never read. Advisory Go findings exit 0.
 
 Each branch keeps its linter's native output: ESLint's `stylish`, golangci-lint's text, MSBuild's.
 Those shapes make paths clickable in a terminal, and the hook is the reader that matters. A tool
@@ -70,7 +83,9 @@ lookup misses and the branch skips. A skip is silent and looks exactly like a cl
 is the worst way for this to fail.
 
 The variable overrides which path is looked up, not whether the lookup happens: an override
-naming a repository in neither registry still skips. The TypeScript branch needs no such thing,
+naming a repository in neither registry still skips. A value naming no directory at all is a
+different thing and fails the run, since it could only ever produce a lookup that misses, and a
+typo would otherwise turn the whole gate into a silent no-op. The TypeScript branch needs no such thing,
 it keys on nothing. It does need `node_modules` to exist, because it runs the target repo's own
 ESLint and installs nothing.
 

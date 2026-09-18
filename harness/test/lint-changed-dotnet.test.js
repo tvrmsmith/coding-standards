@@ -82,6 +82,9 @@ function lint(f) {
     encoding: 'utf8',
     env: {
       ...process.env,
+      // Honoured whenever it is set, so an ambient value would decide which path the adoption
+      // lookup uses and the fixture's own registry would never match. `undefined` unsets it.
+      TVRMSMITH_REGISTRY_KEY: undefined,
       TVRMSMITH_ANALYZER_PROPS: f.registry,
       TVRMSMITH_ANALYZER_LOCAL_PROPS: f.localProps,
       TVRMSMITH_WAIVERS: join(f.root, 'waivers.jsonl'),

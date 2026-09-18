@@ -17,11 +17,15 @@
 # mature repo surfaces a flood of pre-existing violations if whole packages are linted, and a
 # flood is indistinguishable from noise.
 #
-# Exit status is the worst of the branches that ran, and they do not share a convention. ESLint
-# errors fail and warnings do not. The C# branch blocks on any analyzer warning touching a line
-# the change wrote, 2 for a finding that survived and 1 for the gate itself breaking. Personal Go
-# findings are advisory, so a non-zero there means the run broke rather than that it found
-# something.
+# One exit convention, everywhere, the one ADR 0010 sets: **2 is "the gate says stop", 1 is "the
+# gate broke"**. A surviving finding returns 2 — an ESLint error, a C# analyzer warning on a line
+# the change wrote. Anything that stopped the gate from answering returns 1 — a failed build, a
+# golangci-lint run that blew up, a missing layering wrapper, a bad argument. Personal Go findings
+# are advisory and return 0.
+#
+# So the aggregate is not plain highest-wins: a 1 from any branch dominates a 2 from another. A
+# filter that did not run proves nothing, and a surviving finding reported next to a broken branch
+# would say the gate answered when half of it never did.
 #
 # --only runs a single branch. That is for no-mistakes `lint.extra_linters`, which wants one entry
 # per language so each gets its own identity, finding ids, budget and exit-code isolation.
@@ -29,38 +33,50 @@
 # Written for bash 3.2 (the macOS system bash).
 set -uo pipefail
 
-# Every branch this script knows, in the order they report. TypeScript first because it is the one
-# that can block a commit, so its findings should be the last thing scrolled past.
+# Every branch this script knows, in the order they report. The order is fixed rather than
+# meaningful: all three run whatever the earlier ones found, so a mixed commit reports every
+# language, and pinning the sequence is what keeps two runs over the same change byte-identical.
 LANGUAGES="ts dotnet go"
 
+# The header down to the first line that is not a comment. A hardcoded last line drifts on the
+# next edit, and printed source as help is worse than no help.
 usage() {
-  sed -n '3,36p' "${BASH_SOURCE[0]}" | sed 's/^#\{1,2\} \{0,1\}//'
+  sed -n '3,${/^#/!q;p;}' "${BASH_SOURCE[0]}" | sed 's/^#\{1,2\} \{0,1\}//'
 }
 
 # -P: invoked through the ~/.config/coding-standards symlink, an unresolved path would look for
 # the branches in ~/.config.
 linters=$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/linters
 
-. "$linters/common.sh"
-for lang in $LANGUAGES; do . "$linters/$lang.sh"; done
+# A branch that failed to source would leave `<lang>_owns` undefined, which returns 127 for every
+# file, drops the language, and exits 0 — a partial install reading as a clean gate.
+. "$linters/common.sh" || exit 1
+for lang in $LANGUAGES; do . "$linters/$lang.sh" || exit 1; done
 
 parse_args "$@"
 
 if [ -n "$only" ]; then
-  case " $LANGUAGES " in
-    *" $only "*) ;;
-    *) echo "lint-changed: --only takes one of: $LANGUAGES" >&2; exit 2 ;;
-  esac
+  # Compared token by token. A substring match over " $LANGUAGES " accepts `--only "ts dotnet"`,
+  # which then equals no single language in the loop below and lints nothing at all.
+  match=0
+  for lang in $LANGUAGES; do [ "$only" = "$lang" ] && match=1; done
+  [ $match -eq 1 ] || { echo "lint-changed: --only takes one of: $LANGUAGES" >&2; exit 1; }
 fi
 
 resolve_repo
 
-# Read once into an array, through a process substitution rather than `$(...)`, which strips the
-# NUL bytes that keep a filename holding a space in one piece.
+# Written to a file rather than read straight off a process substitution, whose exit status bash
+# discards and `pipefail` does not reach. A bad --since ref would otherwise yield an empty changed
+# set and exit 0, so a caller reading 0 as clean sees a broken invocation as a pass.
+changed_list=$scratch/changed
+changed_paths >"$changed_list" || exit 1
+
+# NUL-delimited, since `$(...)` strips the NUL bytes that keep a filename holding a space in one
+# piece.
 changed=()
 while IFS= read -r -d '' file; do
   [ -n "$file" ] && changed+=("$file")
-done < <(changed_paths)
+done <"$changed_list"
 
 status=0
 for lang in $LANGUAGES; do
@@ -76,12 +92,17 @@ for lang in $LANGUAGES; do
 
   [ ${#owned[@]} -gt 0 ] || continue
 
-  # Highest wins, rather than whichever branch happened to run last. The codes are ranked, not
-  # merely zero and non-zero, so a `status=$?` that overwrites would report the wrong cause for a
-  # commit touching two languages: a later branch returning 1 would mask an earlier 2.
+  # Ranked, not merely zero and non-zero, and not whichever branch happened to run last. 1 is
+  # sticky and beats 2: one broken branch means the gate did not answer, whatever another branch
+  # found. Anything that is neither 0 nor 2 is a branch breaking, including a 127 from a function
+  # that was never defined, so it reports as 1 rather than as some richer code the hook cannot read.
   "${lang}_lint" "${owned[@]}"
   branch_status=$?
-  [ $branch_status -gt $status ] && status=$branch_status
+  case $branch_status in
+    0) ;;
+    2) [ $status -eq 0 ] && status=2 ;;
+    *) status=1 ;;
+  esac
 done
 
 exit $status
