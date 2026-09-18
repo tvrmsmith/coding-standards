@@ -353,6 +353,7 @@ func (e extractor) invoke(files []srcpath.Path) ([]byte, error) {
 
 // exec runs the located binary in the repo root and returns its stdout.
 func (e extractor) exec(stdin *bytes.Buffer, args ...string) ([]byte, error) {
+	//nolint:gosec // e.binary is a fixed name from the built-in languages table joined onto the gate's own executable directory, never a value a repo under test can set
 	cmd := exec.Command(e.binary, args...)
 	cmd.Dir = e.root.Dir()
 	cmd.Env = os.Environ()

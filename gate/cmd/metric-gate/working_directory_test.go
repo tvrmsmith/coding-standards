@@ -57,6 +57,7 @@ func assertDocumentMatches(t *testing.T, doc report.Document, golden, stderr str
 // each carrying a private copy.
 func readGolden(t *testing.T, name string) string {
 	t.Helper()
+	//nolint:gosec // reads test/golden/<name>.toon, a checked-in file named by the calling case
 	body, err := os.ReadFile("../../test/golden/" + name + ".toon")
 	if err != nil {
 		t.Fatal(err)

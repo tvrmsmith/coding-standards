@@ -1047,6 +1047,7 @@ func TestFilesNamingAFileInADirectoryItCannotReadFailsInTheDocument(t *testing.T
 // back out.
 func readFile(t *testing.T, path string) string {
 	t.Helper()
+	//nolint:gosec // path is a file the case asked the stub extractor to write inside t.TempDir, and reading it back is the assertion
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -1109,7 +1110,8 @@ func TestStagedRefusesAFileACleanFilterMakesLookUnmodified(t *testing.T) {
 func (f *fixture) hideMarkedEdit() {
 	f.t.Helper()
 	clean := filepath.Join(f.t.TempDir(), "hide-marked")
-	if err := os.WriteFile(clean, []byte("#!/bin/sh\nexec sed 's/, hidden//'\n"), 0o755); err != nil {
+	//nolint:gosec // git spawns this sed script as filter.hide.clean to strip the marker, so it must be executable, and G306 tests the mode as a bitwise subset of 0600, which no execute bit can satisfy
+	if err := os.WriteFile(clean, []byte("#!/bin/sh\nexec sed 's/, hidden//'\n"), 0o700); err != nil {
 		f.t.Fatal(err)
 	}
 	f.write(".gitattributes", "*.cs filter=hide\n")

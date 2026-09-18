@@ -211,16 +211,46 @@ meaningless.
 
 ## Severity, and what blocks
 
-Every rule here is advisory. `harness/lint-changed-go.sh` passes `--issues-exit-code=0` and
-reports the findings without failing, so a finding never blocks a commit. A non-zero exit after
-that flag means the *run* broke, a tree that does not typecheck or an unreadable config, and
-that does fail.
+In an adopted repo every rule here is advisory. `harness/lint-changed-go.sh` passes
+`--issues-exit-code=0` and reports the findings without failing, so a finding never blocks a
+commit. A non-zero exit after that flag means the *run* broke, a tree that does not typecheck or
+an unreadable config, and that does fail.
 
 The C# half no longer sits here. Its findings block the commit when they touch a changed line
 (ADR 0010), and Go joins it in the third slice of
 [issue 108](https://github.com/tvrmsmith/coding-standards/issues/108). The injected Roslyn ids
 still ship at `Warning`, for the reason this config's rules are advisory today, because this
 runs machine-locally over code other people wrote and are not being asked to change.
+
+The hub's own root module is the exception, because here the code is ours to change. The
+`gate (go)` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs this same binary
+and config from the repository root over `./...`, with the default exit code, so any finding under
+`gate/`, `internal/gitscope/` or `internal/srcpath/` reds the build. Clearing one means tightening
+the code, or a `//nolint` that names the linter and gives a reason true of that site. Never a new
+id in `golangci.yml`'s `gosec.excludes`, which would also disarm the rule in every repo this layer
+visits.
+
+`gosec` is narrower than the rest of that job, because the preset turns it off in `_test.go` for
+the reason given above. The root-module run arms it in non-test code only, so the
+`//nolint:gosec` directives in this repository's own tests suppress nothing today and stand ready
+for the day that exclusion lifts.
+
+Two Go cases hold that shut, because every other way of disarming the sweep leaves CI green.
+`TestCIDeclaresTheBlockingLintStep` in `gate/test/ci_workflow_test.go` pins the step's `run:` line
+byte for byte and rejects `continue-on-error` on the step and on the job.
+`TestThePresetStillReportsTheRulesThisRepoJustified` in `gate/test/preset_test.go` reds if `gosec`
+leaves `linters.enable`, if `gosec.excludes` gains an id this repository answered with a `//nolint`
+(`G204`, `G301`, `G302`, `G304`, `G306`, `G702`, `G703`), or if `run.issues-exit-code` appears,
+which overrides the exit code from inside the config rather than on the command line.
+
+`go/plugin/` and `go/test/` are separate modules, so the root-module run never reaches them. The
+`lint plugin (go)` job runs `go vet` and `go test` over `go/plugin`, and it does run this preset
+over `go/test/smoke` and `go/test/fixtures`, but only as fixtures holding deliberate violations.
+`build.sh` runs the preset over `smoke` with `--issues-exit-code 0` and fails only when the output
+carries no `tvrmsmith-comment-block-length` finding, which proves the plugin is linked in and
+says nothing about any other rule. `go/test/cases_test.go` runs it over `fixtures` and fails when
+an enabled linter reports nothing. Either way a finding in these two modules never blocks on its
+own, because what is checked is that a rule *fired*, not that the code is clean.
 
 ## Tests
 

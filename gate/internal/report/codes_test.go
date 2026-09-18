@@ -60,6 +60,7 @@ func goldenCodes(t *testing.T) map[string]bool {
 	}
 	found := map[string]bool{}
 	for _, path := range matches {
+		//nolint:gosec // path came from the Glob of test/golden/*.toon above, so it is a checked-in golden and nothing else
 		body, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)

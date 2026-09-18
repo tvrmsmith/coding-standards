@@ -254,6 +254,7 @@ const scoredClassSuffix = "/src/Points.cs"
 func (f *fixture) assertCoverletReportShape(path, dotnetOut string) {
 	f.t.Helper()
 
+	//nolint:gosec // path is the report the case just watched coverlet write into its own t.TempDir, and reading it back is the assertion
 	body, err := os.ReadFile(path)
 	if err != nil {
 		f.t.Fatalf("reading the cobertura report coverlet wrote at %s: %v", path, err)

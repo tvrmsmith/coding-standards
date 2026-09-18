@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// pointsFixture is the path, relative to the gate module root, to the C#
+// pointsFixture is the path, relative to gate/test/, to the C#
 // method the dotnet extractor's own suite already scores at complexity 9.
 // Copying it verbatim keeps this case's golden numbers tied to the real
 // tool's fixture rather than to a value retyped by hand.
@@ -61,6 +61,18 @@ func requireDotnet(raw string, set bool) (bool, error) {
 	return false, fmt.Errorf("%s=%q is not a value this suite accepts, and \"1\" is the only value that enables enforcement", envRequireDotnet, raw)
 }
 
+// caseLabel renders a raw environment value for a subtest name. It exists
+// because %q would put real double quotes in the name, and go test writes the
+// name verbatim into the junit report, where a quote closes the name attribute
+// early and the whole report stops parsing. The empty string gets a word of its
+// own so its row still reads as itself.
+func caseLabel(raw string) string {
+	if raw == "" {
+		return "empty"
+	}
+	return raw
+}
+
 // TestRequireDotnetAcceptsOnlyTheDocumentedValues pins the two states
 // requireDotnet accepts and the near misses it has to reject.
 func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
@@ -82,7 +94,7 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		t.Run(fmt.Sprintf("%s=%q set=%v", envRequireDotnet, c.raw, c.set), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s=%s set=%v", envRequireDotnet, caseLabel(c.raw), c.set), func(t *testing.T) {
 			require, err := requireDotnet(c.raw, c.set)
 			if require != c.require {
 				t.Errorf("require = %v, want %v", require, c.require)
@@ -154,6 +166,7 @@ func requireRealDotnet(t *testing.T) {
 func dotnetCmd(t *testing.T, dir string, args ...string) *exec.Cmd {
 	t.Helper()
 	requireRealDotnet(t)
+	//nolint:gosec // the literal "dotnet" on PATH with argv this package writes; requireRealDotnet above is the only gate that matters here
 	cmd := exec.Command("dotnet", args...)
 	cmd.Dir = dir
 	return cmd
@@ -210,6 +223,7 @@ const childTimeout = "-test.timeout=2m"
 // It returns the child's combined output and its exit error.
 func runChild(t *testing.T, require string, args ...string) (string, error) {
 	t.Helper()
+	//nolint:gosec // re-execs os.Args[0], this very test binary, with -test.run flags this file builds; running a child copy of itself is what the helper is for
 	cmd := exec.Command(os.Args[0], append([]string{childTimeout}, args...)...)
 	cmd.Env = childEnv(require)
 	out, err := cmd.CombinedOutput()
@@ -379,10 +393,11 @@ func TestFullStackDrivesTheRealDotnetExtractor(t *testing.T) {
 		"1 of 1 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
 
-// readFixture reads a file relative to the gate module root, failing the
-// test rather than returning an error a caller might ignore.
+// readFixture reads a file relative to gate/test/, failing the test rather
+// than returning an error a caller might ignore.
 func readFixture(t *testing.T, rel string) string {
 	t.Helper()
+	//nolint:gosec // rel is a checked-in fixture path spelled by the calling case, resolved relative to gate/test/ and reaching the dotnet fixtures at the repo root
 	body, err := os.ReadFile(rel)
 	if err != nil {
 		t.Fatal(err)

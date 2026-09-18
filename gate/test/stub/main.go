@@ -81,7 +81,7 @@ func loadConfig() (config, error) {
 	if path == "" {
 		return config{}, fmt.Errorf("stub extractor: METRIC_GATE_STUB is unset")
 	}
-	body, err := os.ReadFile(path)
+	body, err := os.ReadFile(path) //nolint:gosec // opening whatever METRIC_GATE_STUB names is the stub's contract; the test that set the variable is the only caller, and this binary ships nowhere but the suite
 	if err != nil {
 		return config{}, fmt.Errorf("stub extractor: %w", err)
 	}

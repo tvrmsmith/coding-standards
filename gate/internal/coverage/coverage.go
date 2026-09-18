@@ -460,6 +460,7 @@ type coberturaLine struct {
 // left between the tags is blank to every reader of the document, the join and
 // the erased-root check alike.
 func parseReport(path string) (coberturaReport, error) {
+	//nolint:gosec // path is either a report walked under the repo root or one the developer typed on --coverage, so it is the operator's own argument rather than remote input, and reading the report they named is what this function exists to do
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return coberturaReport{}, err
