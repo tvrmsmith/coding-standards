@@ -17,7 +17,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import test from 'node:test'
+import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 
 const harness = realpathSync(join(dirname(fileURLToPath(import.meta.url)), '..'))
@@ -91,70 +91,92 @@ function lint(f) {
   return { status: result.status, stdout: result.stdout, stderr: result.stderr }
 }
 
-test('a warning on a staged line blocks the commit', { skip: missing && `no ${missing} on PATH` }, () => {
-  const f = fixture()
-  try {
-    writeFileSync(join(f.repo, 'src', 'Foo.cs'), 'public class Foo { public void M() { int x = 1; } }\n')
-    git(f.repo, 'add', 'src/Foo.cs')
+describe('lint-changed-dotnet.sh', () => {
+  test('a warning on a staged line blocks the commit', { skip: missing && `no ${missing} on PATH` }, () => {
+    const f = fixture()
+    try {
+      writeFileSync(join(f.repo, 'src', 'Foo.cs'), 'public class Foo { public void M() { int x = 1; } }\n')
+      git(f.repo, 'add', 'src/Foo.cs')
 
-    const { status, stdout, stderr } = lint(f)
-    assert.equal(status, 2, `expected the blocking exit code\nstdout:\n${stdout}\nstderr:\n${stderr}`)
-    assert.match(stdout, /CS0219/)
-    assert.match(stdout, /src\/Foo\.cs/)
-    // Decision 4: the printed waive command is the only route past a false positive.
-    assert.match(stdout, /waive/)
-  } finally {
-    f.cleanup()
-  }
-})
+      const { status, stdout, stderr } = lint(f)
+      assert.equal(status, 2, `expected the blocking exit code\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+      assert.match(stdout, /CS0219/)
+      assert.match(stdout, /src\/Foo\.cs/)
+      // Decision 4: the printed waive command is the only route past a false positive.
+      assert.match(stdout, /waive/)
+    } finally {
+      f.cleanup()
+    }
+  })
 
-// The commit carries Foo.cs, MSBuild has nothing on disk to compile, and the build set is empty.
-// Exiting there passed the commit with nothing examined, which is the staged-versus-disk hard
-// stop of intent decision 3 going unasked.
-test('a staged file deleted from the working tree stops the commit', { skip: missing && `no ${missing} on PATH` }, () => {
-  const f = fixture()
-  try {
-    writeFileSync(join(f.repo, 'src', 'Foo.cs'), 'public class Foo { public void M() { int x = 1; } }\n')
-    git(f.repo, 'add', 'src/Foo.cs')
-    rmSync(join(f.repo, 'src', 'Foo.cs'))
+  // The commit carries Foo.cs, MSBuild has nothing on disk to compile, and the build set is empty.
+  // Exiting there passed the commit with nothing examined, which is the staged-versus-disk hard
+  // stop of intent decision 3 going unasked.
+  test('a staged file deleted from the working tree stops the commit', { skip: missing && `no ${missing} on PATH` }, () => {
+    const f = fixture()
+    try {
+      writeFileSync(join(f.repo, 'src', 'Foo.cs'), 'public class Foo { public void M() { int x = 1; } }\n')
+      git(f.repo, 'add', 'src/Foo.cs')
+      rmSync(join(f.repo, 'src', 'Foo.cs'))
 
-    const { status, stdout, stderr } = lint(f)
-    assert.notEqual(status, 0, `expected the commit to be refused\nstdout:\n${stdout}\nstderr:\n${stderr}`)
-    assert.match(stderr, /src\/Foo\.cs/)
-  } finally {
-    f.cleanup()
-  }
-})
+      const { status, stdout, stderr } = lint(f)
+      assert.notEqual(status, 0, `expected the commit to be refused\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+      assert.match(stderr, /src\/Foo\.cs/)
+    } finally {
+      f.cleanup()
+    }
+  })
 
-// Reaching here means the registry already said the repo is wired for .NET, so absent props are a
-// broken install. Building without the analyzers reports clean on a compilation nothing inspected.
-test('missing analyzer props refuse the commit', { skip: missing && `no ${missing} on PATH` }, () => {
-  const f = fixture()
-  try {
-    writeFileSync(join(f.repo, 'src', 'Foo.cs'), 'public class Foo { public void M() { int x = 1; } }\n')
-    git(f.repo, 'add', 'src/Foo.cs')
-    f.localProps = join(f.root, 'never-bootstrapped.props')
+  // The staged content and the working-tree content of the same file disagree. MSBuild compiles
+  // disk and the commit carries the index, so intent decision 3 refuses the commit rather than
+  // reporting on code it does not contain. The file is on disk here, so the build set is not
+  // empty and the check is lint-changed's own, not the absent-from-disk branch above.
+  test('a staged file whose working tree copy differs stops the commit', { skip: missing && `no ${missing} on PATH` }, () => {
+    const f = fixture()
+    try {
+      writeFileSync(join(f.repo, 'src', 'Foo.cs'), 'public class Foo { public void M() { int x = 1; } }\n')
+      git(f.repo, 'add', 'src/Foo.cs')
+      writeFileSync(join(f.repo, 'src', 'Foo.cs'), 'public class Foo { public void M() { int y = 2; } }\n')
 
-    const { status, stdout, stderr } = lint(f)
-    assert.equal(status, 1, `expected the broken-install exit\nstdout:\n${stdout}\nstderr:\n${stderr}`)
-    assert.match(stderr, /bootstrap dotnet/)
-  } finally {
-    f.cleanup()
-  }
-})
+      const { status, stdout, stderr } = lint(f)
+      assert.equal(status, 1, `expected the divergence hard stop\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+      assert.match(stdout + stderr, /re-stage/)
+      assert.match(stdout + stderr, /src\/Foo\.cs/)
+    } finally {
+      f.cleanup()
+    }
+  })
 
-test('an unwarned staged line lets the commit through', { skip: missing && `no ${missing} on PATH` }, () => {
-  const f = fixture()
-  try {
-    writeFileSync(
-      join(f.repo, 'src', 'Foo.cs'),
-      'namespace Fixture;\n\npublic static class Foo\n{\n    public static int M() => 1;\n}\n',
-    )
-    git(f.repo, 'add', 'src/Foo.cs')
+  // Reaching here means the registry already said the repo is wired for .NET, so absent props are a
+  // broken install. Building without the analyzers reports clean on a compilation nothing inspected.
+  test('missing analyzer props refuse the commit', { skip: missing && `no ${missing} on PATH` }, () => {
+    const f = fixture()
+    try {
+      writeFileSync(join(f.repo, 'src', 'Foo.cs'), 'public class Foo { public void M() { int x = 1; } }\n')
+      git(f.repo, 'add', 'src/Foo.cs')
+      f.localProps = join(f.root, 'never-bootstrapped.props')
 
-    const { status, stdout, stderr } = lint(f)
-    assert.equal(status, 0, `expected a clean pass\nstdout:\n${stdout}\nstderr:\n${stderr}`)
-  } finally {
-    f.cleanup()
-  }
+      const { status, stdout, stderr } = lint(f)
+      assert.equal(status, 1, `expected the broken-install exit\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+      assert.match(stderr, /bootstrap dotnet/)
+    } finally {
+      f.cleanup()
+    }
+  })
+
+  test('an unwarned staged line lets the commit through', { skip: missing && `no ${missing} on PATH` }, () => {
+    const f = fixture()
+    try {
+      writeFileSync(
+        join(f.repo, 'src', 'Foo.cs'),
+        'namespace Fixture;\n\npublic static class Foo\n{\n    public static int M() => 1;\n}\n',
+      )
+      git(f.repo, 'add', 'src/Foo.cs')
+
+      const { status, stdout, stderr } = lint(f)
+      assert.equal(status, 0, `expected a clean pass\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+    } finally {
+      f.cleanup()
+    }
+  })
 })

@@ -15,7 +15,7 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import test from 'node:test'
+import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 
 const harness = realpathSync(join(dirname(fileURLToPath(import.meta.url)), '..'))
@@ -52,17 +52,19 @@ function build(frameworks) {
   }
 }
 
-test('each target framework gets its own report', { skip: noDotnet && 'no dotnet on PATH' }, () => {
-  const reports = build(['net8.0', 'netstandard2.0'])
-  assert.deepEqual(Object.keys(reports).sort(), ['out.net8.0.sarif', 'out.netstandard2.0.sarif'])
-})
+describe('errorlog.props', () => {
+  test('each target framework gets its own report', { skip: noDotnet && 'no dotnet on PATH' }, () => {
+    const reports = build(['net8.0', 'netstandard2.0'])
+    assert.deepEqual(Object.keys(reports).sort(), ['out.net8.0.sarif', 'out.netstandard2.0.sarif'])
+  })
 
-test('the report is SARIF 2.1, the only version the filter reads', { skip: noDotnet && 'no dotnet on PATH' }, () => {
-  const reports = build(['net8.0'])
-  const report = reports['out.net8.0.sarif']
-  assert.equal(report.version, '2.1.0')
-  // The 2.1 message shape, which is what 1.0.0 fails on: a string there is the malformed-JSON
-  // error the filter reported against every real build.
-  const result = report.runs[0].results.find((r) => r.ruleId === 'CS0219')
-  assert.equal(typeof result.message.text, 'string')
+  test('the report is SARIF 2.1, the only version the filter reads', { skip: noDotnet && 'no dotnet on PATH' }, () => {
+    const reports = build(['net8.0'])
+    const report = reports['out.net8.0.sarif']
+    assert.equal(report.version, '2.1.0')
+    // The 2.1 message shape, which is what 1.0.0 fails on: a string there is the malformed-JSON
+    // error the filter reported against every real build.
+    const result = report.runs[0].results.find((r) => r.ruleId === 'CS0219')
+    assert.equal(typeof result.message.text, 'string')
+  })
 })
