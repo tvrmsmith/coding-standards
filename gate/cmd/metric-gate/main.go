@@ -12,12 +12,12 @@
 // except on the unknown_changed_method path, which prints the cause above the
 // counts, and the exit code is 0 pass, 1 tool error, 2 threshold exceeded.
 //
-// Any error that is not typed as a report.Failure writes its cause to stderr
-// and exits 1 with no typed code. Exactly two exits have that shape, and this
-// command reaches no other. Two more untyped returns exist, in the encoder
-// refusing to render the document and in coverage discovery, but no input
-// reaches them: emit reports the first and nothing the gate builds makes the
-// encoder refuse, and discovery's own walk hands back no error.
+// Any error asFailure cannot type writes its cause to stderr and exits 1 with
+// no typed code. Exactly two exits have that shape, and this command reaches
+// no other. Two more untyped returns exist, in the encoder refusing to render
+// the document and in coverage discovery, but no input reaches them: emit
+// reports the first and nothing the gate builds makes the encoder refuse, and
+// discovery's own walk hands back no error.
 //
 // ADR 0008 carves out both. The first is a malformed command line, which exits
 // before measure ever runs, empty stdout and all, because argv failed before
@@ -121,8 +121,8 @@ func emit(stdout, stderr io.Writer, doc report.Document) (int, error) {
 
 // measure runs the gate over the repo containing the working directory,
 // scoped as sc names. A typed exit-1 cause becomes the document's error
-// block; anything not typed as a report.Failure comes back as an error, which
-// the package doc above enumerates.
+// block; anything asFailure cannot type comes back as an error, which the
+// package doc above enumerates.
 //
 // getwd is the one read of the process working directory the whole run
 // performs, taken here rather than deeper down where --files and --coverage
