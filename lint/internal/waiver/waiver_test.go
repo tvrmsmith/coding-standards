@@ -2,6 +2,7 @@ package waiver_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -462,4 +463,66 @@ func fileLineCount(t *testing.T, path string) int {
 		t.Fatalf("reading %s: %v", path, err)
 	}
 	return len(bytes.Split(bytes.TrimRight(data, "\n"), []byte("\n")))
+}
+
+// TestLogOmitsTimesARecordDoesNotHave reads the log as the audit artifact it
+// is. A time.Time is a struct, so encoding/json's omitempty never fires on
+// one, and a value field would write "0001-01-01T00:00:00Z" as the spend time
+// of every unspent waiver and the recorded time of every spend. A reader
+// cannot tell that from a real timestamp, and the file is append-only, so a
+// record written in the wrong shape stays in the wrong shape.
+func TestLogOmitsTimesARecordDoesNotHave(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "waivers.jsonl")
+	store, err := waiver.Open(logPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	w, err := store.Record(waiver.Waiver{
+		Language: "csharp",
+		Path:     srcpath.FromSlash("src/OrderService.cs"),
+		Rule:     "TVRM0001",
+		Reason:   "analyzer misreads the builder chain",
+	})
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	if err := store.Spend(w, "tree-sha"); err != nil {
+		t.Fatalf("Spend: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("reading %s: %v", logPath, err)
+	}
+	lines := bytes.Split(bytes.TrimRight(data, "\n"), []byte("\n"))
+	if len(lines) != 2 {
+		t.Fatalf("log holds %d lines, want 2", len(lines))
+	}
+
+	for i, want := range []struct {
+		kind    string
+		present []string
+		absent  []string
+	}{
+		{kind: "waiver", present: []string{"recorded"}, absent: []string{"spent", "tree"}},
+		{kind: "spend", present: []string{"spent", "tree"}, absent: []string{"recorded"}},
+	} {
+		var record map[string]any
+		if err := json.Unmarshal(lines[i], &record); err != nil {
+			t.Fatalf("line %d is not JSON: %v", i+1, err)
+		}
+		if record["kind"] != want.kind {
+			t.Fatalf("line %d kind = %v, want %s", i+1, record["kind"], want.kind)
+		}
+		for _, field := range want.present {
+			if _, ok := record[field]; !ok {
+				t.Errorf("line %d (%s) omits %q, which it is the record of", i+1, want.kind, field)
+			}
+		}
+		for _, field := range want.absent {
+			if got, ok := record[field]; ok {
+				t.Errorf("line %d (%s) carries %q = %v, want the field absent. A zero time here reads as a real timestamp from the year one", i+1, want.kind, field, got)
+			}
+		}
+	}
 }

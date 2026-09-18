@@ -114,7 +114,7 @@ func (s *Store) readLine(text string) error {
 			Path:     l.Path,
 			Rule:     l.Rule,
 			Reason:   l.Reason,
-			Recorded: l.Recorded,
+			Recorded: at(l.Recorded),
 		}})
 	case kindSpend:
 		idx, ok := s.index(l.ID)
@@ -122,7 +122,7 @@ func (s *Store) readLine(text string) error {
 			return fmt.Errorf("spend record names unknown waiver id %s", l.ID)
 		}
 		s.entries[idx].SpentTree = l.Tree
-		s.entries[idx].SpentAt = l.Spent
+		s.entries[idx].SpentAt = at(l.Spent)
 	default:
 		return fmt.Errorf("waiver log record has unknown kind %q", l.Kind)
 	}
@@ -137,6 +137,12 @@ func (s *Store) List() []Entry {
 // line is one JSONL record, either a waiver or a spend, discriminated by
 // Kind. One shape covers both so a reader need not guess which fields a
 // line carries before it has decoded it.
+//
+// The two times are pointers, which is the only way to leave them out. A
+// time.Time is a struct, and encoding/json's omitempty has no notion of an
+// empty struct, so a value field writes "0001-01-01T00:00:00Z" into every
+// record that has no such time. That reads as a real timestamp from the year
+// one. This file is the audit, so a field that is absent has to look absent.
 type line struct {
 	Kind     string       `json:"kind"`
 	ID       string       `json:"id"`
@@ -144,9 +150,19 @@ type line struct {
 	Path     srcpath.Path `json:"path,omitempty"`
 	Rule     string       `json:"rule,omitempty"`
 	Reason   string       `json:"reason,omitempty"`
-	Recorded time.Time    `json:"recorded,omitempty"`
+	Recorded *time.Time   `json:"recorded,omitempty"`
 	Tree     string       `json:"tree,omitempty"`
-	Spent    time.Time    `json:"spent,omitempty"`
+	Spent    *time.Time   `json:"spent,omitempty"`
+}
+
+// at is the value a time field carries, or the zero time when the record left
+// it out. A waiver written before this field existed reads as zero rather
+// than failing, which is what append-only costs and buys.
+func at(t *time.Time) time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return *t
 }
 
 const (
@@ -185,7 +201,7 @@ func (s *Store) Record(w Waiver) (Waiver, error) {
 		Path:     w.Path,
 		Rule:     w.Rule,
 		Reason:   w.Reason,
-		Recorded: w.Recorded,
+		Recorded: &w.Recorded,
 	}); err != nil {
 		return Waiver{}, err
 	}
@@ -234,7 +250,7 @@ func (s *Store) Spend(w Waiver, tree string) error {
 		Kind:  kindSpend,
 		ID:    w.ID,
 		Tree:  tree,
-		Spent: spent,
+		Spent: &spent,
 	}); err != nil {
 		return err
 	}
