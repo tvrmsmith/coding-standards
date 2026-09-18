@@ -149,6 +149,21 @@ jobs:
       # green. The bootstrap is the same two lines the golint job uses, because
       # `golangci-lint custom` builds the version .custom-gcl.yml pins rather
       # than its own.
+      #
+      # That bootstrap needs the Go version the plugin module declares, which
+      # is ahead of the root module's. Without this second install the `go
+      # install` below sees a toolchain older than golangci-lint's own go
+      # directive and fetches a ~90MB toolchain zip from the module proxy on
+      # every run, which is what failed the job with a TLS handshake timeout.
+      # The version is read from go/plugin/go.mod, the same file the golint job
+      # installs from, so the two jobs cannot build the binary on different Go.
+      # It carries no id, because the suite's guard reads the root install
+      # above and must keep meaning that one.
+      - uses: actions/setup-go@v5
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        with:
+          go-version-file: go/plugin/go.mod
+          cache-dependency-path: go/plugin/go.sum
       - name: Build the personal binary
         id: gcl
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
