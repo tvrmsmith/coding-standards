@@ -54,11 +54,11 @@ function fixture() {
 }
 
 /** @returns {{ status: number, output: string }} */
-function lint(cwd, { registry, stub }) {
+function lint(cwd, { registry, stub }, env = {}) {
   const result = execFileSync(script, ['--since', 'HEAD'], {
     cwd,
     encoding: 'utf8',
-    env: { ...process.env, TVRMSMITH_GO_REPOS: registry, TVRMSMITH_GCL: stub },
+    env: { ...process.env, TVRMSMITH_GO_REPOS: registry, TVRMSMITH_GCL: stub, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   return result
@@ -103,6 +103,38 @@ test('a worktree of an unregistered repository is still skipped', () => {
   try {
     writeFileSync(join(f.worktree, 'main.go'), 'package main\n\nfunc main() { _ = 3 }\n')
     assert.doesNotMatch(lint(f.worktree, f), /stub finding/)
+  } finally {
+    f.cleanup()
+  }
+})
+
+test('TVRMSMITH_REGISTRY_KEY names the adopted checkout the lookup cannot reach', () => {
+  const f = fixture()
+  try {
+    // The no-mistakes shape. Its pipeline lints in a worktree of a bare repository it keeps
+    // under ~/.no-mistakes, so the common git dir resolves to that bare repo rather than to the
+    // checkout the user adopted, and the derived key is never in the registry. The clone here
+    // stands in for it: its own path is unregistered and it shares no git dir with f.repo.
+    const elsewhere = join(f.root, 'elsewhere')
+    git(f.root, 'clone', '--quiet', f.repo, elsewhere)
+    writeFileSync(f.registry, `${f.repo}\n`)
+    writeFileSync(join(elsewhere, 'main.go'), 'package main\n\nfunc main() { _ = 4 }\n')
+
+    assert.doesNotMatch(lint(elsewhere, f), /stub finding/)
+    assert.match(lint(elsewhere, f, { TVRMSMITH_REGISTRY_KEY: f.repo }), /stub finding/)
+  } finally {
+    f.cleanup()
+  }
+})
+
+test('TVRMSMITH_REGISTRY_KEY answers the adoption question, it does not bypass it', () => {
+  const f = fixture()
+  try {
+    // An override naming a path nobody registered still skips. The variable moves which path is
+    // looked up; it is not a way to lint a repository that was never adopted.
+    writeFileSync(f.registry, `${f.repo}\n`)
+    writeFileSync(join(f.repo, 'main.go'), 'package main\n\nfunc main() { _ = 5 }\n')
+    assert.doesNotMatch(lint(f.repo, f, { TVRMSMITH_REGISTRY_KEY: join(f.root, 'never-adopted') }), /stub finding/)
   } finally {
     f.cleanup()
   }

@@ -224,8 +224,25 @@ git commit --no-verify               # skip all hooks
 TVRMSMITH_ESLINT_DEBUG=1 …           # print which branch of the wrapper ran, and the typed decision
 TVRMSMITH_TYPED_LINT=0 …             # force the type-aware layer off for this run
 TVRMSMITH_TYPED_LINT=1 …             # force it on
+TVRMSMITH_REGISTRY_KEY=/path/to/repo # answer the adoption question for a caller the lookup gets wrong
 ~/.config/coding-standards/lint-changed.sh --since main
 ```
+
+`TVRMSMITH_REGISTRY_KEY` is read by the `go` and `dotnet` scripts, and only a caller that already
+knows the answer should set it. Both derive adoption from the parent of `git rev-parse
+--git-common-dir`, which is the main checkout for an ordinary worktree and the wrong directory
+entirely for a checkout git does not think is related to the adopted one. The no-mistakes pipeline
+is that caller: it lints in a worktree of a bare repository it keeps under `~/.no-mistakes`, so the
+derived key named that bare repo, missed the registry and skipped every run in silence. It passes
+the registered checkout instead, in `NO_MISTAKES_REPO_PATH`.
+
+It moves which path is looked up. It does not bypass the lookup, so an override naming a path
+nobody adopted still skips, and findings still come from the tree the script is run in.
+
+Nothing here is a wiring guide, and the no-mistakes side of it is not released. Configuring that
+integration needs a build supporting `lint.extra_linters`; on one without it, a `lint:` block in
+`~/.no-mistakes/config.yaml` does not get ignored, it fails the daemon on every command, because
+global config rejects unknown keys.
 
 ## The typed layer is decided per package
 
