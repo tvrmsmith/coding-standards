@@ -43,7 +43,7 @@ plugins `base.js` imports.
 | `linters/dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then hands every report to one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
 | `errorlog.props` | Sets `ErrorLog` for that build, imported through `CustomAfterMicrosoftCommonTargets`. MSBuild owns the report name because it has to expand `$(TargetFramework)` per inner build and escape the comma before the version suffix; the branch passes only the prefix. |
 | `linters/go.sh` | The Go counterpart: runs the personal golangci-lint binary over the packages owning the changed `.go`, filters down to those files. |
-| `hooks/pre-commit` | Template for the installed hook. The enforcement gate. One template, three branches, each self-gating. |
+| `hooks/pre-commit` | Template for the installed hook. The enforcement gate. One template, one `lint-changed.sh --staged` call, whatever the repo is adopted for. |
 | `write-vscode-settings.mjs` | The editor half — points the extension at `eslint-layer.js`, so typing sees what committing sees. TypeScript only. |
 | `bootstrap` | Installs all of the above into one repo, per language: `ts`, `dotnet` or `go`. |
 
