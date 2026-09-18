@@ -61,6 +61,20 @@ func requireDotnet(raw string, set bool) (bool, error) {
 	return false, fmt.Errorf("%s=%q is not a value this suite accepts, and \"1\" is the only value that enables enforcement", envRequireDotnet, raw)
 }
 
+// caseLabel renders a raw environment value for a subtest name. It exists
+// because %q would put real double quotes in the name, and go test writes the
+// name verbatim into the junit report, where a quote closes the name attribute
+// early and the whole report stops parsing. The rendering still has to keep the
+// rows apart, so the empty string gets a word of its own and a space becomes a
+// visible \s, which go test would otherwise rewrite to an underscore and make
+// " 1" read the same as "_1".
+func caseLabel(raw string) string {
+	if raw == "" {
+		return "empty"
+	}
+	return strings.ReplaceAll(raw, " ", `\s`)
+}
+
 // TestRequireDotnetAcceptsOnlyTheDocumentedValues pins the two states
 // requireDotnet accepts and the near misses it has to reject.
 func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
@@ -82,7 +96,7 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		t.Run(fmt.Sprintf("%s=%q set=%v", envRequireDotnet, c.raw, c.set), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s=%s set=%v", envRequireDotnet, caseLabel(c.raw), c.set), func(t *testing.T) {
 			require, err := requireDotnet(c.raw, c.set)
 			if require != c.require {
 				t.Errorf("require = %v, want %v", require, c.require)
