@@ -157,19 +157,30 @@ covers security, and the code this runs over is healthcare software. Two rules a
 is `errcheck` with a different id, and `G115` flags every int conversion that could in principle
 overflow, which on real code is hundreds of sites bounded by something the linter cannot see.
 
-`gosec` is also the one linter this config turns off in `_test.go`, and it is the only exclusion
-rule here. golangci-lint's own exclusion presets are all rejected, because a guideline holds in a
-test as much as in production code. This is not that exclusion. `gosec` models an attacker
-reaching the input, and a test supplies every input itself, so its loudest rules cannot mean in a
-test what they mean elsewhere: `G204` flags a subprocess built from a variable, which is every
-test that runs a binary it just compiled; `G304` flags a read from a variable path, which is every
-test reading its own `t.TempDir` fixture; `G306` and `G301` want `0600` on a file the test writes
-and deletes in the same function.
+`gosec` runs in `_test.go` too, and this config carries no exclusion rules at all.
+golangci-lint's own exclusion presets are rejected because a guideline holds in a test as much as
+in production code, and an exclusion written here would hold for every repository this preset
+visits, not just this one. A rule worth keeping is worth answering at the site.
 
-It was measured before it was decided. 42 of the 45 `gosec` findings across this repo sat in
-`_test.go` and none named a real weakness. Forty-two `//nolint` directives carrying the same
-sentence is a directive nobody reads. Every other linter still runs in tests, `errcheck`
-included.
+That is a reversal, and the argument it reverses was a good one. `gosec` models an attacker
+reaching the input, a test supplies every input itself, and the loudest rules fire hardest on
+ordinary test shapes: `G204` on a subprocess built from a variable, which is every test running a
+binary it just compiled; `G304` on a read from a variable path, which is every test reading its
+own `t.TempDir` fixture; `G306` and `G301` on a file the test writes and deletes in one function.
+42 of the 45 findings then in the repo sat in `_test.go` and none named a real weakness.
+
+What settled it was where the exclusion lands. This preset is the product, and it runs over other
+people's repositories, so `path: _test\.go` disarms `gosec` in all of them to spare this one some
+typing. The per-site answer costs more and says more: each directive names why that call is safe,
+and a site whose mode was merely convenient gets tightened instead, which the sweep found for
+eleven of them. Where the rule is answered rather than fixed, the reason has to be specific
+enough that it could not be pasted onto another site.
+
+`allow-unused: true` is set on `nolintlint`, so a directive that stops suppressing anything is not
+reported. That is deliberate, because a target repository's own live directives all read as dead
+under this preset, but it means a `gosec` exclusion added later would silently hollow out every
+directive rather than red the build. `TestThePresetStillReportsTheRulesThisRepoJustified` exists
+to catch that.
 
 ### Deliberately not enabled
 

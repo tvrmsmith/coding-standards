@@ -24,6 +24,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	binDir = dir
+	//nolint:gosec // the literal "go" building this module's own ./cmd/lint-changed; the only non-constant argv element is the MkdirTemp path three lines up
 	cmd := exec.Command("go", "build", "-o", filepath.Join(dir, "lint-changed"), "./cmd/lint-changed")
 	cmd.Dir = ".."
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -88,6 +89,7 @@ func newFixture(t *testing.T) *fixture {
 // git runs one git command in the fixture and returns its trimmed stdout.
 func (f *fixture) git(args ...string) string {
 	f.t.Helper()
+	//nolint:gosec // the literal "git" with argv the calling case wrote, run in the fixture repo under t.TempDir and with the machine's own git config scrubbed out by gitEnv
 	cmd := exec.Command("git", args...)
 	cmd.Dir = f.root
 	cmd.Env = append(scrubbedEnv(), gitEnv...)
@@ -103,6 +105,7 @@ func (f *fixture) git(args ...string) string {
 // pre-commit hook may refuse.
 func (f *fixture) gitTry(args ...string) (int, string) {
 	f.t.Helper()
+	//nolint:gosec // same literal "git" and same scrubbed fixture repo as git above; this variant exists only to return the exit code instead of failing the test, which is how a case drives a commit the pre-commit hook refuses
 	cmd := exec.Command("git", args...)
 	cmd.Dir = f.root
 	cmd.Env = append(scrubbedEnv(), gitEnv...)
@@ -192,6 +195,7 @@ func (f *fixture) run(sarif string, args ...string) runResult {
 // a case drives lint-changed outside any git repository at all.
 func (f *fixture) runInDir(dir, sarif string, args ...string) runResult {
 	f.t.Helper()
+	//nolint:gosec // binDir holds the lint-changed TestMain built from this module's own source, so the executable is this package's build output rather than anything a case can name
 	cmd := exec.Command(filepath.Join(binDir, "lint-changed"), args...)
 	cmd.Dir = dir
 	cmd.Env = append(append(scrubbedEnv(), gitEnv...), "TVRMSMITH_WAIVERS="+f.waiverFile)

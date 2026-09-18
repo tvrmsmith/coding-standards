@@ -137,25 +137,6 @@ linters:
     presets: []
     generated: lax
 
-    rules:
-      # gosec off in tests, and this is the one place the sentence above bends. It is not the
-      # "tests matter less" exclusion those presets encode. gosec models an attacker reaching the
-      # input, and a test supplies every input itself, so the rules that fire hardest cannot mean
-      # in a test what they mean in production. G204 flags a subprocess built from a variable,
-      # which is every test that runs a binary it just compiled. G304 flags a file read from a
-      # variable path, which is every test reading its own t.TempDir fixture. G306 and G301 want
-      # 0600 on a file the test writes and deletes in the same function.
-      #
-      # Measured before deciding: 42 of the 45 gosec findings across this repo sat in _test.go,
-      # and none named a real weakness. Suppressing them one at a time would put the same
-      # sentence in 42 places, and a directive that always appears is one nobody reads.
-      #
-      # Every other linter still runs in tests, errcheck included, which is where the sentence
-      # above holds unchanged.
-      - path: _test\.go
-        linters:
-          - gosec
-
 issues:
   # Report every finding on a line, not the first one.
   #

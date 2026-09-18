@@ -462,7 +462,7 @@ func TestOpen_malformedLine_namesLineNumber(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "waivers.jsonl")
 	content := "{\"kind\":\"waiver\",\"id\":\"a\",\"language\":\"go\",\"path\":\"x.go\",\"rule\":\"R\",\"reason\":\"r\"}\n" +
 		"not json\n"
-	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(logPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -482,7 +482,7 @@ func TestOpen_malformedLine_namesLineNumber(t *testing.T) {
 func TestOpen_spendForUnknownID_isError(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "waivers.jsonl")
 	content := "{\"kind\":\"spend\",\"id\":\"does-not-exist\",\"tree\":\"abc123\",\"spent\":\"2020-01-01T00:00:00Z\"}\n"
-	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(logPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -525,6 +525,7 @@ func TestRecord_createsLogPrivate(t *testing.T) {
 
 func fileLineCount(t *testing.T, path string) int {
 	t.Helper()
+	//nolint:gosec // path is the waiver log the calling case created under its own t.TempDir, and counting that file's lines is the whole of this helper
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading %s: %v", path, err)
@@ -557,6 +558,7 @@ func TestLogOmitsTimesARecordDoesNotHave(t *testing.T) {
 		t.Fatalf("Spend: %v", err)
 	}
 
+	//nolint:gosec // logPath is this case's own t.TempDir waivers.jsonl, read back as the append-only audit artifact whose on-disk shape is what the case asserts
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("reading %s: %v", logPath, err)
