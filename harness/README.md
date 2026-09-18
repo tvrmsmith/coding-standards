@@ -39,6 +39,7 @@ plugins `base.js` imports.
 | `eslint-layer.js` | Loads the package's own ESLint config, spreads the personal preset after it. The layering, and the typed-layer gate. |
 | `lint-changed.sh` | Lints changed `.ts`/`.tsx` only, each through its own package's ESLint binary. |
 | `lint-changed-dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then hands every report to one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
+| `errorlog.props` | Sets `ErrorLog` for that build, imported through `CustomAfterMicrosoftCommonTargets`. MSBuild owns the report name because it has to expand `$(TargetFramework)` per inner build and escape the comma before the version suffix; the script passes only the prefix. |
 | `lint-changed-go.sh` | The Go counterpart: runs the personal golangci-lint binary over the packages owning the changed `.go`, filters down to those files. |
 | `hooks/pre-commit` | Template for the installed hook. The enforcement gate. One template, three branches, each self-gating. |
 | `write-vscode-settings.mjs` | The editor half — points the extension at `eslint-layer.js`, so typing sees what committing sees. TypeScript only. |
@@ -101,11 +102,12 @@ Four things about it that are not obvious:
 Findings on the .NET side **block the commit when they touch a line the change wrote**. Every id
 the injection delivers is still a warning, because no build that succeeded before adoption may
 start failing, so the build's own exit status is unchanged. The blocking verdict is the hook's:
-the diagnostics pass writes SARIF via the `ErrorLog` set in `errorlog.props`, `lint-changed` keeps the findings whose
-locations hold a touched line, and its exit status becomes the script's. Exit 2 is a surviving
-finding, 1 is anything breaking, in the filter or in the script itself, and the two stay distinct
-so a hook can tell them apart. A failed build reports 1 rather than passing MSBuild's own status
-through, since MSBuild exiting 2 for its own reasons must not read as a surviving finding.
+the diagnostics pass writes SARIF via the `ErrorLog` set in `errorlog.props`, `lint-changed` keeps
+the findings whose locations hold a touched line, and its exit status becomes the script's. Exit 2
+is a surviving finding, 1 is anything breaking, in the filter or in the script itself, and the two
+stay distinct so a hook can tell them apart. A failed build reports 1 rather than passing MSBuild's
+own status through, since MSBuild exiting 2 for its own reasons must not read as a surviving
+finding.
 
 Every project's report goes into a single `lint-changed` run, named with a repeatable `--report`.
 A process per report spent whatever waiver matched its own report without knowing another report
@@ -131,10 +133,10 @@ the commit when another placed results. Only a URI outside the repo counts, beca
 the report describes another tree. Roslyn writes CS1701, CS8021 and the command-line CS2xxx
 warnings at no location at all, reports a whole-document diagnostic with no region, and names
 generated documents that were never written to disk; those results are dropped and the commit goes
-on. A report carrying no results at all is still a clean pass. And the one
-route past a false positive is a waiver, one rule on one path, used once, with a reason, recorded
-in a log outside the repo; `lint-changed` prints the exact command. A waiver is spent only on a run
-that ends clean, so a waived finding on a commit that blocked on something else costs nothing.
+on. A report carrying no results at all is still a clean pass. And the one route past a false
+positive is a waiver, one rule on one path, used once, with a reason, recorded in a log outside the
+repo; `lint-changed` prints the exact command. A waiver is spent only on a run that ends clean, so a
+waived finding on a commit that blocked on something else costs nothing.
 
 The C# hook now needs Go on `PATH`, even in a repo with no Go in it. The script builds
 `lint-changed` from this hub into `${XDG_CACHE_HOME:-~/.cache}/coding-standards` on every run,
