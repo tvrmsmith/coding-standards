@@ -552,3 +552,75 @@ func TestReportsAreFilteredInOneRun(t *testing.T) {
 		t.Fatalf("waiver log has %d line(s), want 1: the waiver was spent on a run that blocked", len(lines))
 	}
 }
+
+// writeReport puts a SARIF document in its own file and returns the path, for
+// the cases that drive --report rather than stdin.
+func writeReport(t *testing.T, name, doc string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// One source-level warning is one finding however many reports carry it. A
+// net8.0;net48 project compiles once per framework and writes one report per
+// framework, and a .cs linked into two projects is compiled by both, so the
+// same warning arrives twice by either route. Reported twice it would print two
+// identical waive commands and cost two waivers for one line of code, which
+// leaves --no-verify as the only way past a false positive.
+func TestDuplicateFindingAcrossReportsIsReportedOnce(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "Foo.cs")
+	doc := sarifDoc(sarifResult("TVRM0001", "no getter", sarifLoc("Foo.cs", 3, 3)))
+	args := filterArgs("--staged",
+		"--report", writeReport(t, "net8.0.sarif", doc),
+		"--report", writeReport(t, "net48.sarif", doc))
+
+	blocked := f.run("", args...)
+
+	if blocked.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", blocked.exitCode, blocked.stdout, blocked.stderr)
+	}
+	if got := strings.Count(blocked.stdout, "TVRM0001:"); got != 1 {
+		t.Fatalf("the finding is reported %d times, want 1: %s", got, blocked.stdout)
+	}
+	if got := strings.Count(blocked.stdout, "waive --language"); got != 1 {
+		t.Fatalf("%d waive commands printed, want 1: %s", got, blocked.stdout)
+	}
+
+	recorded := f.run("", "waive", "--language", "csharp", "--path", "Foo.cs", "--rule", "TVRM0001", "--reason", "a false positive")
+	if recorded.exitCode != 0 {
+		t.Fatalf("recording the waiver: exit code = %d\nstderr: %s", recorded.exitCode, recorded.stderr)
+	}
+
+	res := f.run("", args...)
+	if res.exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0: the single printed waiver did not clear the run\nstdout: %s\nstderr: %s",
+			res.exitCode, res.stdout, res.stderr)
+	}
+}
+
+// The unplaceable-report hard stop is asked of each report on its own. A
+// project whose SARIF URIs all resolve outside the repo checked no code at all,
+// and merging its counts with another report's lets it ride on results it did
+// not produce.
+func TestUnplaceableReportBesideAPlaceableOneExitsOne(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "Foo.cs")
+	outside := writeReport(t, "outside.sarif",
+		sarifDoc(sarifResult("TVRM0001", "msg", sarifLoc("/elsewhere/Other.cs", 3, 3))))
+	// Placeable but out of scope, so the run would otherwise end clean at 0.
+	inside := writeReport(t, "inside.sarif",
+		sarifDoc(sarifResult("TVRM0002", "msg", sarifLoc("Foo.cs", 5, 5))))
+
+	res := f.run("", filterArgs("--staged", "--report", outside, "--report", inside)...)
+
+	if res.exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if !strings.Contains(res.stderr, "outside.sarif") {
+		t.Fatalf("stderr does not name the report that placed nothing: %s", res.stderr)
+	}
+}

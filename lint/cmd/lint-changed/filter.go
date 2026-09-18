@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -57,17 +58,6 @@ func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
 	findings, dropped, err := readReports(fa, stdin, repo.Root())
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
-		return 1
-	}
-
-	// A report whose every result fell outside the repo checked nothing, and
-	// passing the commit on that would be the gate reporting clean on a report
-	// it never read. A report with no results at all is a genuine clean pass.
-	if len(findings) == 0 && len(dropped) > 0 {
-		_, _ = fmt.Fprintf(stderr, "every result in the report fell outside the repo, so nothing was checked\n")
-		for _, d := range dropped {
-			_, _ = fmt.Fprintf(stderr, "  %s at %s\n", d.Rule, d.URI)
-		}
 		return 1
 	}
 
@@ -224,7 +214,14 @@ func (t *indexTree) sha() (string, error) {
 // the next process had not seen yet.
 func readReports(fa FilterArgs, stdin io.Reader, root srcpath.Root) ([]lintfind.Finding, []lintfind.Dropped, error) {
 	if len(fa.Reports) == 0 {
-		return lintfind.ParseSARIF(stdin, root)
+		findings, dropped, err := lintfind.ParseSARIF(stdin, root)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := checkPlaced("the report on stdin", findings, dropped); err != nil {
+			return nil, nil, err
+		}
+		return dedup(findings), dropped, nil
 	}
 	var findings []lintfind.Finding
 	var dropped []lintfind.Dropped
@@ -241,8 +238,51 @@ func readReports(fa FilterArgs, stdin io.Reader, root srcpath.Root) ([]lintfind.
 		if err != nil {
 			return nil, nil, err
 		}
+		if err := checkPlaced(name, got, gotDropped); err != nil {
+			return nil, nil, err
+		}
 		findings = append(findings, got...)
 		dropped = append(dropped, gotDropped...)
 	}
-	return findings, dropped, nil
+	return dedup(findings), dropped, nil
+}
+
+// checkPlaced refuses a report that placed nothing while dropping something.
+// That report checked no code at all, and passing the commit on it would be the
+// gate reporting clean on a report it never read. The question is asked of each
+// report on its own, because a commit spanning two projects where only one
+// resolves its URIs inside the repo would otherwise ride on the other's results.
+// A report with no results at all is a genuine clean pass.
+func checkPlaced(source string, findings []lintfind.Finding, dropped []lintfind.Dropped) error {
+	if len(findings) > 0 || len(dropped) == 0 {
+		return nil
+	}
+	msg := "every result in " + source + " fell outside the repo, so nothing was checked"
+	for _, d := range dropped {
+		msg += fmt.Sprintf("\n  %s at %s", d.Rule, d.URI)
+	}
+	return errors.New(msg)
+}
+
+// dedup keeps one copy of each distinct finding. A multi-targeted project
+// compiles once per framework and writes one report per framework, and a .cs
+// linked into two projects is compiled by both, so the same source-level warning
+// arrives two or more times. The framework and the owning project are not part
+// of the identity the gate judges, and a duplicate would print twice and demand
+// a second waiver for a single line of code.
+func dedup(findings []lintfind.Finding) []lintfind.Finding {
+	seen := make(map[string]bool, len(findings))
+	unique := make([]lintfind.Finding, 0, len(findings))
+	for _, f := range findings {
+		key := f.Rule + "\x00" + f.Message
+		for _, loc := range f.Locations {
+			key += fmt.Sprintf("\x00%s:%d-%d", loc.Path, loc.StartLine, loc.EndLine)
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		unique = append(unique, f)
+	}
+	return unique
 }
