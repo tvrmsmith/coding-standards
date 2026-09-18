@@ -12,8 +12,23 @@ The warning set is everything the tool reports. C# takes every
 compiler and analyzer warning in the SARIF, CS and CA alongside TVRM and FAA. Go takes every
 golangci-lint issue. TypeScript takes ESLint severity 1 and 2 alike.
 
+**Amended 2026-09-18.** One exclusion: a SARIF result carrying an `inSource` suppression is dropped.
+The section below rejects in-source suppression as this tool's own escape hatch, never as a veto
+over what a target repo already decided with `#pragma warning disable` or `[SuppressMessage]`. The
+console path this replaced never saw a suppressed diagnostic, so honouring them keeps adoption
+invisible rather than making the C# half louder than the repo's own build.
+
+**Amended 2026-09-18.** A finding is identified by its rule, its message and its locations together.
+Two reports carrying all three the same are one finding, so a project built for several target
+frameworks and a file linked into two projects each report their warning once. Without that, one
+line of code would print twice and cost two waivers.
+
 Four C# ids ignore scope and block whatever the diff says: `AD0001`, `CS8032`, `CS8034`, `CS9057`.
 Each means an analyzer failed to load, so a clean result under it proves nothing.
+
+**Amended 2026-09-18.** Roslyn reports all four at `Location.None`, so they carry no path. A waiver
+is keyed on a path, so a waiver for one of these carries no path either and keys on the language and
+the rule alone. That is the only route past them.
 
 Under `--staged`, a staged path whose disk copy differs from the index stops the run before any
 finding is judged. The linter reads disk and the commit carries the index, so a divergent file makes
@@ -24,6 +39,15 @@ The one way past a finding is a waiver: one rule, one path, one use, a mandatory
 an append-only JSONL log outside the repo. `lint-changed` prints the exact command to record one.
 A spend is keyed on the index tree sha, so retrying a commit against the same tree reuses the waiver
 rather than burning a second.
+
+**Amended 2026-09-18.** The log is `${XDG_STATE_HOME:-~/.local/state}/coding-standards/waivers.jsonl`.
+State, not config, because `bootstrap` symlinks `$XDG_CONFIG_HOME/coding-standards` at the hub
+checkout, so a config-directory default would write the audit log into a repository the gate guards.
+One waiver covers exactly one finding, so two findings under the same rule and path cost two
+waivers. A waiver is spent only on a run that ends clean, because one use is one commit that
+actually went through; a match on a run that still blocks is reported and left unspent, so an agent
+that waives a false positive and then fixes a real finding does not lose the waiver to the changed
+index tree.
 
 Exit 0 means nothing survived, 1 means the tool broke, 2 means a finding survived.
 
