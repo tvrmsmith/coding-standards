@@ -42,7 +42,9 @@ func scopeFinding(f lintfind.Finding, scope scopeSet) (survivor, bool) {
 // the diff, lets a waiver suppress a survivor, and reports the rest. Exit 0
 // is nothing survived, 1 is the tool breaking, 2 is a finding surviving.
 func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
-	repo, err := gitscope.Open()
+	// OpenHook rather than Open, because git runs this filter from a pre-commit
+	// hook and the index it names there is the index the commit will write.
+	repo, err := gitscope.OpenHook()
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
 		return 1

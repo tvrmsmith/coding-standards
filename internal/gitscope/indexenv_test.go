@@ -15,8 +15,8 @@ import (
 // commit never writes: the developer spends a waiver and the next attempt at
 // the same commit asks for another.
 func TestWriteTreeHashesTheIndexTheEnvironmentNames(t *testing.T) {
-	repo, _ := dirtyRepo(t, 1)
-	dir := repo.root.Dir()
+	opened, _ := dirtyRepo(t, 1)
+	dir := opened.root.Dir()
 	alternate := filepath.Join(t.TempDir(), "next-index")
 
 	indexGit(t, dir, alternate, "read-tree", "HEAD")
@@ -27,6 +27,11 @@ func TestWriteTreeHashesTheIndexTheEnvironmentNames(t *testing.T) {
 	}
 
 	t.Setenv("GIT_INDEX_FILE", alternate)
+	t.Chdir(dir)
+	repo, err := OpenHook()
+	if err != nil {
+		t.Fatalf("OpenHook() err = %v", err)
+	}
 	got, err := repo.WriteTree()
 
 	if err != nil {
@@ -34,6 +39,39 @@ func TestWriteTreeHashesTheIndexTheEnvironmentNames(t *testing.T) {
 	}
 	if got != want {
 		t.Errorf("WriteTree() = %s, want %s, the tree the named index holds", got, want)
+	}
+}
+
+// A run nothing handed an index reads the repository's own, whatever the shell
+// that started it left in GIT_INDEX_FILE. The gate is that run: it measures the
+// repository it was started in, and an inherited variable naming another
+// repository's index would answer every question there instead and report no
+// changed methods.
+func TestOpenReadsTheRepositorysOwnIndexWhateverTheEnvironmentNames(t *testing.T) {
+	opened, _ := dirtyRepo(t, 1)
+	dir := opened.root.Dir()
+	alternate := filepath.Join(t.TempDir(), "next-index")
+
+	indexGit(t, dir, alternate, "read-tree", "HEAD")
+	indexGit(t, dir, alternate, "add", "--all")
+	want := indexGit(t, dir, "", "write-tree")
+	if other := indexGit(t, dir, alternate, "write-tree"); other == want {
+		t.Fatalf("the alternate index hashes to the same tree as .git/index (%s), so the case proves nothing", want)
+	}
+
+	t.Setenv("GIT_INDEX_FILE", alternate)
+	t.Chdir(dir)
+	repo, err := Open()
+	if err != nil {
+		t.Fatalf("Open() err = %v", err)
+	}
+	got, err := repo.WriteTree()
+
+	if err != nil {
+		t.Fatalf("WriteTree() err = %v", err)
+	}
+	if got != want {
+		t.Errorf("WriteTree() = %s, want %s, the tree .git/index holds", got, want)
 	}
 }
 

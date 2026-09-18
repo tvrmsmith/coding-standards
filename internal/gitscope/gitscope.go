@@ -64,6 +64,9 @@ var BaseCandidates = []string{"origin/HEAD", "origin/main", "origin/master", "ma
 // Repo is a git working tree the gate measures.
 type Repo struct {
 	root srcpath.Root
+	// index is the index file every git command this Repo runs reads, empty
+	// for the repository's own .git/index. Only OpenHook sets it.
+	index string
 }
 
 // Open finds the repo containing the process working directory. Every failure
@@ -87,6 +90,28 @@ func Open() (Repo, error) {
 		}
 	}
 	return Repo{root: root}, nil
+}
+
+// OpenHook is Open for a run git started as a pre-commit hook, where the index
+// named in GIT_INDEX_FILE is the index the commit will write. Every git command
+// the returned Repo runs reads that index.
+//
+// run scrubs GIT_INDEX_FILE with the rest of git's namespace, and for a run
+// nothing handed an index that is right: the variable is then ambient input
+// from whatever shell started the process, naming another repository's index.
+// Under a hook it is the question being asked. `git commit -a` and
+// `git commit -- <pathspec>` build a temporary index out of the working tree
+// and point the hook at it, so a scrubbed run reads .git/index, which for `-a`
+// still matches HEAD: every finding passes and the divergence hard stop sees no
+// staged path at all. Naming the index here rather than keeping the variable in
+// the scrub keeps the carve-out on the one caller git actually handed one.
+func OpenHook() (Repo, error) {
+	repo, err := Open()
+	if err != nil {
+		return Repo{}, err
+	}
+	repo.index = os.Getenv("GIT_INDEX_FILE")
+	return repo, nil
 }
 
 // OpenKind names which of Open's failure points a caller is looking at. It is
@@ -1230,21 +1255,10 @@ var rawFlags = []string{"diff", "--no-color", "--no-ext-diff", "--raw"}
 // this gate is built to be.
 //
 // Nothing else in the namespace is needed to run git. The repo comes from
-// cmd.Dir and the settings the parsers depend on come from configOverrides.
+// cmd.Dir and the settings the parsers depend on come from configOverrides,
+// and the one caller that needs the index git handed a hook asks for it by
+// name through OpenHook.
 const gitNamespace = "GIT_"
-
-// keptFromNamespace is the one variable the scrub lets through.
-//
-// The argument above is about ambient input: GIT_DIR and GIT_WORK_TREE arrive
-// from whatever shell happened to run the gate and answer every question about
-// a different repository. GIT_INDEX_FILE under a pre-commit hook is the
-// opposite, it is the question being asked. `git commit -a` and
-// `git commit -- <pathspec>` build a temporary index and point the hook at it,
-// so a scrub sends the gate to .git/index, which for `-a` still matches HEAD:
-// every finding passes and the divergence hard stop sees no staged path at all.
-// The index the commit will write is the only index this gate has any business
-// reading.
-var keptFromNamespace = map[string]bool{"GIT_INDEX_FILE": true}
 
 // pinnedConfigFiles is what run puts back after the scrub, alongside whatever
 // blankingEnv contributes for the invocation.
@@ -1268,14 +1282,23 @@ var pinnedConfigFiles = []string{
 
 // git runs one git command in the repo root.
 func (r Repo) git(args ...string) (string, error) {
-	return run(r.root.Dir(), nil, args...)
+	return run(r.root.Dir(), r.indexEnv(), args...)
+}
+
+// indexEnv puts the hook index back after the scrub, and contributes nothing
+// for a Repo that was not opened for a hook.
+func (r Repo) indexEnv() []string {
+	if r.index == "" {
+		return nil
+	}
+	return []string{"GIT_INDEX_FILE=" + r.index}
 }
 
 // gitBlanking is git with every named config key forced empty for the length of
 // the one invocation, which is how the repository's filter drivers are taken out
 // of the commands that read content.
 func (r Repo) gitBlanking(keys []string, args ...string) (string, error) {
-	return run(r.root.Dir(), blankingEnv(keys), args...)
+	return run(r.root.Dir(), append(r.indexEnv(), blankingEnv(keys)...), args...)
 }
 
 // run executes git in dir, or the process working directory when dir is
@@ -1335,8 +1358,8 @@ func cause(err error) string {
 	return err.Error()
 }
 
-// sanitizedEnv is the process environment with git's own namespace removed
-// bar keptFromNamespace, and the two config-file variables pinned. It is built
+// sanitizedEnv is the process environment with git's own namespace removed and
+// the two config-file variables pinned. It is built
 // rather than inherited, so neither what the parser reads, nor which repository
 // it reads it from, nor whose config it reads it under depends on how the
 // caller's shell was set up.
@@ -1344,7 +1367,7 @@ func sanitizedEnv() []string {
 	env := os.Environ()
 	kept := make([]string, 0, len(env)+len(pinnedConfigFiles))
 	for _, entry := range env {
-		if name, _, _ := strings.Cut(entry, "="); strings.HasPrefix(name, gitNamespace) && !keptFromNamespace[name] {
+		if name, _, _ := strings.Cut(entry, "="); strings.HasPrefix(name, gitNamespace) {
 			continue
 		}
 		kept = append(kept, entry)
