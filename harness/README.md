@@ -122,12 +122,15 @@ repo's decision stands.
 
 Compile errors still block, as on the TypeScript side.
 
-Four consequences worth knowing before you hit them. A staged file whose disk copy differs is now
+Five consequences worth knowing before you hit them. A staged file whose disk copy differs is now
 a hard stop rather than a printed caveat, because MSBuild compiles disk while the commit carries
 the index, and failing a commit over code it does not contain would be worse than refusing to
-guess. A build that writes no SARIF at all is a hard stop for the same reason, since a clean build
+guess. That covers a staged `.cs` deleted from the working tree, so a change naming C# reaches
+`lint-changed` even when there was nothing left to build. Analyzer props the registry says should
+be there and are not is the second, since a build with no analyzers loaded reports clean on a
+compilation nothing inspected; run `harness/bootstrap dotnet <repo>` again. A build that writes no SARIF at all is a hard stop for the same reason, since a clean build
 still writes an empty report and a missing one means `ErrorLog` never took effect. A report
-whose results all name files outside the repo is the third, and `lint-changed` names each dropped
+whose results all name files outside the repo is the fourth, and `lint-changed` names each dropped
 rule and URI; each report answers that question alone, so one project placing nothing still stops
 the commit when another placed results. Only a URI outside the repo counts, because only that says
 the report describes another tree. Roslyn writes CS1701, CS8021 and the command-line CS2xxx

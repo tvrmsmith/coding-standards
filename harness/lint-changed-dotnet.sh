@@ -27,6 +27,11 @@
 # Past a genuine false positive there is one route, and `lint-changed` prints the exact command
 # for it. Waivers are one-shot, carry a reason, and live in a log outside the repo.
 #
+# Two environment overrides, both for tests that must not touch the real checkout:
+# TVRMSMITH_ANALYZER_PROPS is the registry of adopted repos, normally
+# $XDG_CONFIG_HOME/coding-standards.props, and TVRMSMITH_ANALYZER_LOCAL_PROPS is the analyzer
+# props bootstrap writes, normally $hub/dotnet/artifacts/local/Tvrmsmith.Analyzers.Local.props.
+#
 # Written for bash 3.2 (the macOS system bash).
 set -uo pipefail
 
@@ -90,10 +95,15 @@ fi
 # in every worktree while the registry check said the repo was wired up. Importing directly
 # also means a new worktree needs no bootstrap of its own.
 hub=$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-analyzer_props=$hub/dotnet/artifacts/local/Tvrmsmith.Analyzers.Local.props
+analyzer_props=${TVRMSMITH_ANALYZER_LOCAL_PROPS:-$hub/dotnet/artifacts/local/Tvrmsmith.Analyzers.Local.props}
+# The registry above already said this repo is wired for .NET, so missing props means the
+# bootstrap output was deleted or never materialised. Building without the analyzers would report
+# clean on a compilation nothing inspected, which is the same unexamined pass the missing-go
+# branch below refuses.
 if [ ! -f "$analyzer_props" ]; then
-  echo "lint-changed-dotnet: $analyzer_props is missing — run 'bootstrap dotnet $registry_key'" >&2
-  exit 0
+  echo "lint-changed-dotnet: $analyzer_props is missing, so the analyzers cannot load" >&2
+  echo "  Run 'bootstrap dotnet $registry_key', or unstage the C# changes." >&2
+  exit 1
 fi
 
 # NUL-delimited throughout. git quotes a path holding a space or a non-ASCII byte in its
@@ -109,6 +119,7 @@ list_changed() {
 }
 
 files=()
+changed_cs=0
 while IFS= read -r -d '' file; do
   [ -n "$file" ] || continue
   case "$file" in
@@ -119,17 +130,31 @@ while IFS= read -r -d '' file; do
   case "$file" in
     */obj/*|obj/*|*/bin/*|bin/*) continue ;;
   esac
-  [ -e "$file" ] && files+=("$file")
+  changed_cs=1
+  # A file the change carries but the working tree does not is named rather than dropped in
+  # silence. MSBuild has nothing to compile for it, so the run below is the divergence check
+  # alone, and a reader who is not told that reads the pass as the code being clean.
+  if [ ! -e "$file" ]; then
+    echo "lint-changed-dotnet: $file is in the change but absent from the working tree, so nothing compiled it" >&2
+    continue
+  fi
+  files+=("$file")
 done < <(list_changed)
 
-[ ${#files[@]} -gt 0 ] || exit 0
+# No C# in the change is this script's genuine nothing-to-do. A change that does name C# goes on
+# even with an empty build set, because the hard stop below still has to be asked.
+[ $changed_cs -eq 1 ] || exit 0
+# Only --staged has a hard stop to ask about, so the other two modes stop here on an empty set.
+[ ${#files[@]} -gt 0 ] || [ "$mode" = "--staged" ] || exit 0
 
 # A staged file whose worktree copy differs still cannot be honoured here the way
 # lint-changed.sh honours it: ESLint takes content on stdin, MSBuild compiles what is on disk.
 # At warning severity that was a caveat worth printing. Now that a finding blocks, it would fail
 # a commit over code the commit does not contain, so lint-changed makes it a hard stop instead.
 # The check lives there rather than here because it has to cover every staged path, not only the
-# ones this script chose to build.
+# ones this script chose to build. Every staged .cs being absent from disk is the case that makes
+# that matter: the commit carries them, the build set is empty, and exiting here would pass the
+# commit unexamined.
 
 # The project that owns a file: nearest ancestor holding a .csproj. That is also the directory
 # MSBuild treats as the project root, so every .cs below it is in the compilation by default.
@@ -145,19 +170,22 @@ project_of() {
 }
 
 pairs=()
-for file in "${files[@]}"; do
-  if proj=$(project_of "$file"); then
-    pairs+=("$proj	$repo_root/$file")
-  else
-    echo "lint-changed-dotnet: no .csproj above $file — skipped" >&2
-  fi
-done
+if [ ${#files[@]} -gt 0 ]; then
+  for file in "${files[@]}"; do
+    if proj=$(project_of "$file"); then
+      pairs+=("$proj	$repo_root/$file")
+    else
+      echo "lint-changed-dotnet: no .csproj above $file — skipped" >&2
+    fi
+  done
+fi
 
-[ ${#pairs[@]} -gt 0 ] || exit 0
-
-projects=$(printf '%s\n' "${pairs[@]}" | cut -f1 | sort -u)
-project_count=$(printf '%s\n' "$projects" | grep -c .)
-[ "$project_count" -gt 4 ] && echo "lint-changed-dotnet: $project_count projects to build; this will take a moment" >&2
+projects=
+if [ ${#pairs[@]} -gt 0 ]; then
+  projects=$(printf '%s\n' "${pairs[@]}" | cut -f1 | sort -u)
+  project_count=$(printf '%s\n' "$projects" | grep -c .)
+  [ "$project_count" -gt 4 ] && echo "lint-changed-dotnet: $project_count projects to build; this will take a moment" >&2
+fi
 
 # lint-changed is the blocking half, and it is language-neutral: it reads the SARIF below,
 # keeps only the findings touching a changed line, applies any waiver, and sets the exit status.
@@ -289,13 +317,29 @@ done <<<"$projects"
 #
 # The ${#sarifs[@]} guard is for bash 3.2, where expanding an empty array under `set -u` is an
 # unbound-variable error rather than an empty expansion.
+#
+# With no report at all, a --staged run still goes through, on a SARIF carrying no results. The
+# staged-versus-disk hard stop covers every staged path and lives in lint-changed, so skipping the
+# run when nothing was built is how a commit whose every staged .cs was deleted from the working
+# tree went through unexamined.
+filter_ran=0
 if [ ${#sarifs[@]} -gt 0 ]; then
   report_args=()
   for sarif in "${sarifs[@]}"; do
     report_args+=(--report "$sarif")
   done
   "$lint_changed" --format sarif --language csharp "${scope_args[@]}" "${report_args[@]}" </dev/null
-  case $? in
+  filter_status=$?
+  filter_ran=1
+elif [ "$mode" = "--staged" ]; then
+  printf '%s' '{"version":"2.1.0","runs":[{"results":[]}]}' \
+    | "$lint_changed" --format sarif --language csharp --staged
+  filter_status=$?
+  filter_ran=1
+fi
+
+if [ $filter_ran -eq 1 ]; then
+  case $filter_status in
     0) ;;
     2) [ $status -eq 0 ] && status=2 ;;
     *) status=1 ;;

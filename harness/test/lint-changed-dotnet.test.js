@@ -34,14 +34,16 @@ function git(cwd, ...args) {
 
 /**
  * A repository holding one project, wired for .NET through the registry the script reads, with
- * an unwarned version of Foo.cs committed. Also materialises the analyzer props the script
- * insists on, which bootstrap would otherwise have written; the cleanup removes it only when
- * this fixture created it.
+ * an unwarned version of Foo.cs committed. Everything it writes lives under its own temp root,
+ * the analyzer props included: a stub left behind in the checkout by an interrupted run would
+ * satisfy the script's own check on every later commit there and build with no analyzers loaded,
+ * which is the silent pass this slice exists to close.
  */
 function fixture() {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'tvrmsmith-dotnet-'))
   const repo = join(root, 'repo')
   const registry = join(root, 'coding-standards.props')
+  const localProps = join(root, 'Tvrmsmith.Analyzers.Local.props')
 
   git(root, 'init', '--quiet', '--initial-branch=main', repo)
   git(repo, 'config', 'user.email', 'test@example.com')
@@ -59,23 +61,17 @@ function fixture() {
   // The script's registry is the path-scoped Import in the props file, matched by its condition.
   writeFileSync(registry, `<Project>\n  <!-- StartsWith('${realpathSync(repo)}/') -->\n</Project>\n`)
 
-  const borrowedAnalyzerProps = existsSync(analyzerProps)
-  const artifacts = join(hub, 'dotnet', 'artifacts')
-  const borrowedArtifacts = existsSync(artifacts)
-  if (!borrowedAnalyzerProps) {
-    mkdirSync(dirname(analyzerProps), { recursive: true })
-    writeFileSync(analyzerProps, '<Project />\n')
-  }
+  // The real props are read where bootstrap has written them, so a machine that has them runs
+  // against the analyzers the hook really loads. Where it has not, an empty import is enough:
+  // CS0219 is the compiler's own warning and needs no analyzer package.
+  if (!existsSync(analyzerProps)) writeFileSync(localProps, '<Project />\n')
 
   return {
     root,
     repo,
     registry,
-    cleanup: () => {
-      rmSync(root, { recursive: true, force: true })
-      if (!borrowedAnalyzerProps) rmSync(analyzerProps, { force: true })
-      if (!borrowedArtifacts) rmSync(artifacts, { recursive: true, force: true })
-    },
+    localProps: existsSync(analyzerProps) ? analyzerProps : localProps,
+    cleanup: () => rmSync(root, { recursive: true, force: true }),
   }
 }
 
@@ -87,6 +83,7 @@ function lint(f) {
     env: {
       ...process.env,
       TVRMSMITH_ANALYZER_PROPS: f.registry,
+      TVRMSMITH_ANALYZER_LOCAL_PROPS: f.localProps,
       TVRMSMITH_WAIVERS: join(f.root, 'waivers.jsonl'),
       XDG_CACHE_HOME: join(f.root, 'cache'),
     },
@@ -106,6 +103,41 @@ test('a warning on a staged line blocks the commit', { skip: missing && `no ${mi
     assert.match(stdout, /src\/Foo\.cs/)
     // Decision 4: the printed waive command is the only route past a false positive.
     assert.match(stdout, /waive/)
+  } finally {
+    f.cleanup()
+  }
+})
+
+// The commit carries Foo.cs, MSBuild has nothing on disk to compile, and the build set is empty.
+// Exiting there passed the commit with nothing examined, which is the staged-versus-disk hard
+// stop of intent decision 3 going unasked.
+test('a staged file deleted from the working tree stops the commit', { skip: missing && `no ${missing} on PATH` }, () => {
+  const f = fixture()
+  try {
+    writeFileSync(join(f.repo, 'src', 'Foo.cs'), 'public class Foo { public void M() { int x = 1; } }\n')
+    git(f.repo, 'add', 'src/Foo.cs')
+    rmSync(join(f.repo, 'src', 'Foo.cs'))
+
+    const { status, stdout, stderr } = lint(f)
+    assert.notEqual(status, 0, `expected the commit to be refused\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+    assert.match(stderr, /src\/Foo\.cs/)
+  } finally {
+    f.cleanup()
+  }
+})
+
+// Reaching here means the registry already said the repo is wired for .NET, so absent props are a
+// broken install. Building without the analyzers reports clean on a compilation nothing inspected.
+test('missing analyzer props refuse the commit', { skip: missing && `no ${missing} on PATH` }, () => {
+  const f = fixture()
+  try {
+    writeFileSync(join(f.repo, 'src', 'Foo.cs'), 'public class Foo { public void M() { int x = 1; } }\n')
+    git(f.repo, 'add', 'src/Foo.cs')
+    f.localProps = join(f.root, 'never-bootstrapped.props')
+
+    const { status, stdout, stderr } = lint(f)
+    assert.equal(status, 1, `expected the broken-install exit\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+    assert.match(stderr, /bootstrap dotnet/)
   } finally {
     f.cleanup()
   }
