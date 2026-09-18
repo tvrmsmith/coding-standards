@@ -14,7 +14,9 @@
 // (GIT_DIR), so git's namespace is dropped from the command's environment
 // entirely and the two config-file variables are then pinned at the null device,
 // which is what keeps the scrub from handing the run back to an ambient
-// ~/.gitconfig.
+// ~/.gitconfig. The scrub has one exception, and it is per-Repo rather than
+// global: a Repo from OpenHook puts GIT_INDEX_FILE back into its own commands,
+// for the reason OpenHook gives.
 //
 // A content filter is the third, and neither of the first two answers reach it.
 // A filter driver is named by the repository's own .git/config, which the pins
@@ -64,6 +66,9 @@ var BaseCandidates = []string{"origin/HEAD", "origin/main", "origin/master", "ma
 // Repo is a git working tree the gate measures.
 type Repo struct {
 	root srcpath.Root
+	// index is the index file every git command this Repo runs reads, empty
+	// for the repository's own .git/index. Only OpenHook sets it.
+	index string
 }
 
 // Open finds the repo containing the process working directory. Every failure
@@ -87,6 +92,28 @@ func Open() (Repo, error) {
 		}
 	}
 	return Repo{root: root}, nil
+}
+
+// OpenHook is Open for a run git started as a pre-commit hook, where the index
+// named in GIT_INDEX_FILE is the index the commit will write. Every git command
+// the returned Repo runs reads that index.
+//
+// run scrubs GIT_INDEX_FILE with the rest of git's namespace, and for a run
+// nothing handed an index that is right: the variable is then ambient input
+// from whatever shell started the process, naming another repository's index.
+// Under a hook it is the question being asked. `git commit -a` and
+// `git commit -- <pathspec>` build a temporary index out of the working tree
+// and point the hook at it, so a scrubbed run reads .git/index, which for `-a`
+// still matches HEAD: every finding passes and the divergence hard stop sees no
+// staged path at all. Naming the index here rather than keeping the variable in
+// the scrub keeps the carve-out on the one caller git actually handed one.
+func OpenHook() (Repo, error) {
+	repo, err := Open()
+	if err != nil {
+		return Repo{}, err
+	}
+	repo.index = os.Getenv("GIT_INDEX_FILE")
+	return repo, nil
 }
 
 // OpenKind names which of Open's failure points a caller is looking at. It is
@@ -664,6 +691,47 @@ func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
 	return divergent, nil
 }
 
+// StagedChange is one path the index changes against a base, with whether the
+// index drops it. The deletion flag is what DivergentFromIndex cannot answer on
+// its own: a path the index no longer holds is untracked as far as git is
+// concerned, so no diff names it however the working tree looks.
+type StagedChange struct {
+	Path    srcpath.Path
+	Deleted bool
+}
+
+// StagedPaths is every path the index changes against base, named the way git
+// names it. No -w and no --diff-filter, since the question here is which files
+// the commit carries at all rather than which lines it wrote.
+func (r Repo) StagedPaths(base Base) ([]StagedChange, error) {
+	out, err := r.git("diff", "--cached", "--name-status", "-z", "--no-renames", base.Commit)
+	if err != nil {
+		return nil, unreadableDiff(err)
+	}
+	// --no-renames keeps every record two NUL-terminated fields, a status and a
+	// path, so the pairs can be read off without a per-status shape.
+	fields := strings.Split(out, "\x00")
+	var changes []StagedChange
+	for i := 0; i+1 < len(fields); i += 2 {
+		status, name := fields[i], fields[i+1]
+		if status == "" || name == "" {
+			continue
+		}
+		changes = append(changes, StagedChange{Path: srcpath.FromSlash(name), Deleted: status == "D"})
+	}
+	return changes, nil
+}
+
+// WriteTree writes the index out as a tree object and returns its sha, the
+// identity a lint waiver is matched and spent against.
+func (r Repo) WriteTree() (string, error) {
+	out, err := r.git("write-tree")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // DivergenceArgs is the whole argv DivergentFromIndex hands git for one batch
 // of paths. It is exported so the black-box suite can put the same question to
 // git that the gate puts, rather than restating the flags in a second place
@@ -1188,8 +1256,10 @@ var rawFlags = []string{"diff", "--no-color", "--no-ext-diff", "--raw"}
 // exotic: git exports it into every hook it runs, and a pre-commit hook is what
 // this gate is built to be.
 //
-// Nothing in the namespace is needed to run git. The repo comes from cmd.Dir
-// and the settings the parsers depend on come from configOverrides.
+// Nothing else in the namespace is needed to run git. The repo comes from
+// cmd.Dir and the settings the parsers depend on come from configOverrides,
+// and the one caller that needs the index git handed a hook asks for it by
+// name through OpenHook.
 const gitNamespace = "GIT_"
 
 // pinnedConfigFiles is what run puts back after the scrub, alongside whatever
@@ -1214,14 +1284,23 @@ var pinnedConfigFiles = []string{
 
 // git runs one git command in the repo root.
 func (r Repo) git(args ...string) (string, error) {
-	return run(r.root.Dir(), nil, args...)
+	return run(r.root.Dir(), r.indexEnv(), args...)
+}
+
+// indexEnv puts the hook index back after the scrub, and contributes nothing
+// for a Repo that was not opened for a hook.
+func (r Repo) indexEnv() []string {
+	if r.index == "" {
+		return nil
+	}
+	return []string{"GIT_INDEX_FILE=" + r.index}
 }
 
 // gitBlanking is git with every named config key forced empty for the length of
 // the one invocation, which is how the repository's filter drivers are taken out
 // of the commands that read content.
 func (r Repo) gitBlanking(keys []string, args ...string) (string, error) {
-	return run(r.root.Dir(), blankingEnv(keys), args...)
+	return run(r.root.Dir(), append(r.indexEnv(), blankingEnv(keys)...), args...)
 }
 
 // run executes git in dir, or the process working directory when dir is
@@ -1282,9 +1361,10 @@ func cause(err error) string {
 }
 
 // sanitizedEnv is the process environment with git's own namespace removed and
-// the two config-file variables pinned. It is built rather than inherited, so
-// neither what the parser reads, nor which repository it reads it from, nor
-// whose config it reads it under depends on how the caller's shell was set up.
+// the two config-file variables pinned. It is built
+// rather than inherited, so neither what the parser reads, nor which repository
+// it reads it from, nor whose config it reads it under depends on how the
+// caller's shell was set up.
 func sanitizedEnv() []string {
 	env := os.Environ()
 	kept := make([]string, 0, len(env)+len(pinnedConfigFiles))

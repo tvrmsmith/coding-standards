@@ -38,19 +38,23 @@ status=0
 # them with the analyzers injected. Every branch runs even if an earlier one found something —
 # a commit spanning two languages should report both, not stop at whichever came first.
 #
-# The exit convention is identical (the build's own verdict: compile errors fail, analyzer
-# warnings do not), but it bites differently: every id the .NET side injects is a warning by
-# design, so that branch reports and never blocks on a finding. See lint-changed-dotnet.sh.
+# That branch blocks. A compile error fails as it always did, and so now does any warning
+# touching a line the change wrote, scoped per changed line rather than per changed file. Its
+# exit 2 is "a finding survived"; 1 is the gate itself breaking. See lint-changed-dotnet.sh.
 "$harness/lint-changed-dotnet.sh" --staged || status=$?
 
-# Go: the personal golangci-lint binary over the packages owning the staged .go. Findings are
-# advisory like the C# ones and never block; a non-zero status here means the run itself broke.
+# Go: the personal golangci-lint binary over the packages owning the staged .go. Findings report
+# and never block; the C# half no longer does, and Go joins it in slice 3 of issue 108. A
+# non-zero status here means the run itself broke.
 "$harness/lint-changed-go.sh" --staged || status=$?
 
 if [ $status -ne 0 ]; then
   echo >&2
   echo "pre-commit: personal coding standards found errors in the staged changes." >&2
-  echo "  fix them, or commit with SKIP_TVRMSMITH_LINT=1 / --no-verify to bypass." >&2
+  echo "  Fix them. Past a genuine false positive, run the waive command the finding printed," >&2
+  echo "  exactly as printed: it names the binary by full path because lint-changed is not on PATH." >&2
+  echo "  One rule, one path, one use, logged under XDG_STATE_HOME so it can be audited." >&2
+  echo "  SKIP_TVRMSMITH_LINT=1 / --no-verify skip every hook and are not the route to take." >&2
 fi
 
 exit $status

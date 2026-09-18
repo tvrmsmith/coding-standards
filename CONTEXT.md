@@ -128,6 +128,62 @@ A single measured quantity the gate computes per method and compares against a t
 the first. A metric declares the inputs it needs, and the gate demands an input only when a selected
 metric declared it.
 
+## lint-changed
+
+The language-neutral half of the **lint** mode, and the counterpart to the gate. Reads a linter's
+own report, keeps the findings the change is answerable for, and decides whether the commit stops.
+It is shared across every language; the language-specific half is the linter itself plus a parser
+that reads its report format.
+
+Do not call it a gate. A gate compares a measured quantity against a threshold, and this has no
+threshold. It has a rule.
+
+## Finding
+
+One diagnostic, as the linter reported it: a rule id, a message, a severity left as the tool said
+it, and one or more **locations**. A location is a span in one source file, inclusive of both lines.
+Primary and related locations are the same kind of thing here, because the in-scope rule treats them
+alike.
+
+The rule, the message and the locations are the whole identity. Two reports carrying all three the
+same are one finding, not two, so a project built for several target frameworks and a file linked
+into two projects each report their warning once. Neither the framework nor the owning project is
+part of what the tool judges, and a duplicate would print twice and demand a second **waiver** for
+one line of code.
+
+## In scope
+
+A finding is in scope when any of its locations holds a **touched line**. The touched-line
+definition is the one above, shared with the gate, and a finding in scope blocks the commit. A
+finding out of scope is dropped and never reported, so a legacy file you touch one line in hands you
+no backlog.
+
+A few rule ids ignore scope: the ones meaning the analyzer failed to load, where a clean result
+proves nothing and the diff underneath is beside the point. Roslyn reports those at no location at
+all, so such a finding carries no path, and the waiver for one carries no path either: it keys on
+the language and the rule alone.
+
+A finding the target repo already suppressed in its own source, with a `#pragma` or a
+`[SuppressMessage]`, never reaches the scope question. That repo made its decision and this tool
+does not reopen it.
+
+## Waiver
+
+Permission for one rule to be suppressed on one path, once, carrying a mandatory reason. Waivers
+live in an append-only log at `${XDG_STATE_HOME:-~/.local/state}/coding-standards/waivers.jsonl`,
+machine-local and outside every repo, so nothing about them is committed. One waiver covers one
+finding, so two findings under the same rule on the same path cost two waivers. A waiver that names
+no path keys on the language and the rule alone, which is the only route out of an analyzer-load
+finding, since that arrives with no location to name.
+
+A waiver is **spent** only on a run that ends clean, because one use is one commit that actually
+went through. A waiver matched on a run something else blocked is reported as matched and left
+unspent. A spend records the index tree it was spent against, so retrying the same commit reuses
+the waiver rather than burning a second.
+
+Spending is what makes a waiver an escape hatch rather than a permanent exception. Nothing in the
+log is ever rewritten, so the file is the audit.
+
 ## Coverage report
 
 An input the gate consumes and never produces. Someone else runs the tests. A report carries the

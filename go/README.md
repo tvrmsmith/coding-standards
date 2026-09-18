@@ -157,6 +157,20 @@ covers security, and the code this runs over is healthcare software. Two rules a
 is `errcheck` with a different id, and `G115` flags every int conversion that could in principle
 overflow, which on real code is hundreds of sites bounded by something the linter cannot see.
 
+`gosec` is also the one linter this config turns off in `_test.go`, and it is the only exclusion
+rule here. golangci-lint's own exclusion presets are all rejected, because a guideline holds in a
+test as much as in production code. This is not that exclusion. `gosec` models an attacker
+reaching the input, and a test supplies every input itself, so its loudest rules cannot mean in a
+test what they mean elsewhere: `G204` flags a subprocess built from a variable, which is every
+test that runs a binary it just compiled; `G304` flags a read from a variable path, which is every
+test reading its own `t.TempDir` fixture; `G306` and `G301` want `0600` on a file the test writes
+and deletes in the same function.
+
+It was measured before it was decided. 42 of the 45 `gosec` findings across this repo sat in
+`_test.go` and none named a real weakness. Forty-two `//nolint` directives carrying the same
+sentence is a directive nobody reads. Every other linter still runs in tests, `errcheck`
+included.
+
 ### Deliberately not enabled
 
 Written down because "we looked and said no" and "we never looked" are otherwise the same file.
@@ -197,11 +211,16 @@ meaningless.
 
 ## Severity, and what blocks
 
-Every rule here is advisory, the same position the injected Roslyn ids are in and for the same
-reason — this runs machine-locally over code other people wrote and are not being asked to
-change. `harness/lint-changed-go.sh` passes `--issues-exit-code=0` and reports the findings
-without failing, so a finding never blocks a commit. A non-zero exit after that flag means the
-*run* broke — a tree that does not typecheck, an unreadable config — and that does fail.
+Every rule here is advisory. `harness/lint-changed-go.sh` passes `--issues-exit-code=0` and
+reports the findings without failing, so a finding never blocks a commit. A non-zero exit after
+that flag means the *run* broke, a tree that does not typecheck or an unreadable config, and
+that does fail.
+
+The C# half no longer sits here. Its findings block the commit when they touch a changed line
+(ADR 0010), and Go joins it in the third slice of
+[issue 108](https://github.com/tvrmsmith/coding-standards/issues/108). The injected Roslyn ids
+still ship at `Warning`, for the reason this config's rules are advisory today, because this
+runs machine-locally over code other people wrote and are not being asked to change.
 
 ## Tests
 

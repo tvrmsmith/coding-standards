@@ -38,7 +38,8 @@ plugins `base.js` imports.
 | --- | --- |
 | `eslint-layer.js` | Loads the package's own ESLint config, spreads the personal preset after it. The layering, and the typed-layer gate. |
 | `lint-changed.sh` | Lints changed `.ts`/`.tsx` only, each through its own package's ESLint binary. |
-| `lint-changed-dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs`, filters the diagnostics down to those files. |
+| `lint-changed-dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then hands every report to one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
+| `errorlog.props` | Sets `ErrorLog` for that build, imported through `CustomAfterMicrosoftCommonTargets`. MSBuild owns the report name because it has to expand `$(TargetFramework)` per inner build and escape the comma before the version suffix; the script passes only the prefix. |
 | `lint-changed-go.sh` | The Go counterpart: runs the personal golangci-lint binary over the packages owning the changed `.go`, filters down to those files. |
 | `hooks/pre-commit` | Template for the installed hook. The enforcement gate. One template, three branches, each self-gating. |
 | `write-vscode-settings.mjs` | The editor half — points the extension at `eslint-layer.js`, so typing sees what committing sees. TypeScript only. |
@@ -98,9 +99,55 @@ Four things about it that are not obvious:
   (phantom `CS0246`/`CS0234`). So an ordinary incremental build runs first to make the
   dependencies real, and the forced pass second.
 
-Findings on the .NET side **report and never block**: every id the injection delivers is a
-warning by design, because no build that succeeded before adoption may start failing. Compile
-errors still block, as on the TypeScript side.
+Findings on the .NET side **block the commit when they touch a line the change wrote**. Every id
+the injection delivers is still a warning, because no build that succeeded before adoption may
+start failing, so the build's own exit status is unchanged. The blocking verdict is the hook's:
+the diagnostics pass writes SARIF via the `ErrorLog` set in `errorlog.props`, `lint-changed` keeps
+the findings whose locations hold a touched line, and its exit status becomes the script's. Exit 2
+is a surviving finding, 1 is anything breaking, in the filter or in the script itself, and the two
+stay distinct so a hook can tell them apart. A failed build reports 1 rather than passing MSBuild's
+own status through, since MSBuild exiting 2 for its own reasons must not read as a surviving
+finding.
+
+Every project's report goes into a single `lint-changed` run, named with a repeatable `--report`.
+A process per report spent whatever waiver matched its own report without knowing another report
+still blocked the commit, so one process now sees the whole commit's findings and makes one spend
+decision. The script writes one report per target framework, so a multi-targeted project reports
+the same source-level warning several times; `lint-changed` collapses those to one finding, on the
+identity `CONTEXT.md` gives under Finding.
+
+A diagnostic the target repo already turned off with a `#pragma` or a `[SuppressMessage]` is
+dropped before scoping. `ErrorLog` reports those where the console never printed them, and that
+repo's decision stands.
+
+Compile errors still block, as on the TypeScript side.
+
+Five consequences worth knowing before you hit them. A staged file whose disk copy differs is now
+a hard stop rather than a printed caveat, because MSBuild compiles disk while the commit carries
+the index, and failing a commit over code it does not contain would be worse than refusing to
+guess. That covers a staged `.cs` deleted from the working tree, so a change naming C# reaches
+`lint-changed` even when there was nothing left to build. Analyzer props the registry says should
+be there and are not is the second, since a build with no analyzers loaded reports clean on a
+compilation nothing inspected; run `harness/bootstrap dotnet <repo>` again. A build that writes no
+SARIF at all is the third, for the same reason, since a clean build still writes an empty report
+and a missing one means `ErrorLog` never took effect. A report
+whose results all name files outside the repo is the fourth, and `lint-changed` names each dropped
+rule and URI; each report answers that question alone, so one project placing nothing still stops
+the commit when another placed results. Only a URI outside the repo counts, because only that says
+the report describes another tree. Roslyn writes CS1701, CS8021 and the command-line CS2xxx
+warnings at no location at all, reports a whole-document diagnostic with no region, and names
+generated documents that were never written to disk; those results are dropped and the commit goes
+on. A report carrying no results at all is still a clean pass. And the one route past a false
+positive is a waiver, one rule on one path, used once, with a reason, recorded in a log outside the
+repo; `lint-changed` prints the exact command. A waiver is spent only on a run that ends clean, so a
+waived finding on a commit that blocked on something else costs nothing.
+
+The C# hook now needs Go on `PATH`, even in a repo with no Go in it. The script builds
+`lint-changed` from this hub into `${XDG_CACHE_HOME:-~/.cache}/coding-standards` on every run,
+which Go's build cache makes free after the first. No Go means the filter cannot run, and an
+unrun filter proves nothing, so the script fails the commit rather than skipping.
+
+ADR 0010 carries the rule and the reasoning.
 
 ## The Go half
 
@@ -122,9 +169,12 @@ Three things about it differ from the other two:
   `test/lint-changed-go.test.js` pins all four combinations of registered/not and
   worktree/not, because a skip that should have been a run is silent and looks exactly like a
   repo with no findings.
-- **Findings report and never block**, the same position the .NET half is in and for the same
-  reason. `--issues-exit-code=0` makes that explicit, which also means a non-zero exit is
-  unambiguous: the run itself broke.
+- **Findings report and never block**, which the .NET half no longer does.
+  `--issues-exit-code=0` makes it explicit, and it also means a non-zero exit is unambiguous:
+  the run itself broke. This is the last half in that position, not a settled convention. Go
+  moves to the .NET arrangement in the third slice of
+  [issue 108](https://github.com/tvrmsmith/coding-standards/issues/108), which drops that flag
+  and pipes golangci-lint's JSON through `lint-changed`.
 - **There is no editor half yet.** The hook is the whole gate.
 
 `bootstrap go` is also the one mode that accepts the hub itself as its target. The other two
@@ -149,6 +199,24 @@ so the naive path is `not a directory`), and the hook carries a marker line so a
 recognises it instead of shuffling it aside and chaining to itself.
 
 ## Escape hatches
+
+Past a genuine false positive on the .NET side, record a waiver rather than skipping the hook.
+`lint-changed` prints the exact command for each finding that blocked, and it prints the binary by
+full path, since the hook builds it into the cache directory and never puts it on `PATH`:
+
+```sh
+/path/to/lint-changed waive --language <lang> --path <path> --rule <rule> --reason <why>
+```
+
+`--path` is the one flag the printed command may leave out. An analyzer load failure is reported at
+no location at all, so its waiver keys on the language and the rule alone.
+
+The log is `${XDG_STATE_HOME:-~/.local/state}/coding-standards/waivers.jsonl`, and
+`TVRMSMITH_WAIVERS` overrides it. State rather than config, because `~/.config/coding-standards` is
+the symlink to this hub, and an audit log must not land inside a repo the gate guards.
+`lint-changed waivers` lists every record with its spend state.
+
+The two skips below defeat every check at once, which is why the hook no longer offers them:
 
 ```sh
 SKIP_TVRMSMITH_LINT=1 git commit …   # skip the personal hook, keep any chained one

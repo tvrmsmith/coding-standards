@@ -13,6 +13,7 @@ rest of the file only when you need the reasoning behind the rule or the history
 | [0007](0007-changed-method-is-a-span-holding-a-touched-line.md) | changed method | A changed method is a working-tree span holding a touched line. A pure move measures nothing. |
 | [0008](0008-the-machine-document-is-the-only-output.md) | machine document | Stdout is one TOON document on every exit path but two, a malformed command line and a failed stdout write. Every other exit-1 cause carries a typed code, registered in `gate/internal/report`. |
 | [0009](0009-the-csharp-extractor-is-written-in-house.md) | csharp extractor | Roslyn syntax parser only, paths on stdin, spans plus per-file parse status on stdout. |
+| [0010](0010-lint-blocks-on-any-warning-touching-a-changed-line.md) | lint blocks | Every warning the tool reports blocks the commit when any of its locations holds a touched line. One-shot waivers in an append-only log outside the repo are the only way past. |
 
 Superseded, kept for their history and not for their rules: [0003](0003-changed-method-is-a-span-holding-a-touched-line.md)
 by 0007, [0005](0005-the-machine-document-is-the-only-output.md) by 0008,
