@@ -32,7 +32,7 @@ func waiverLogPath() string {
 func runWaive(wa WaiveArgs, stdout, stderr io.Writer) int {
 	store, err := waiver.Open(waiverLogPath())
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
 	w, err := store.Record(waiver.Waiver{
@@ -42,10 +42,10 @@ func runWaive(wa WaiveArgs, stdout, stderr io.Writer) int {
 		Reason:   wa.Reason,
 	})
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "recorded waiver %s: %s %s on %s\n", w.ID, wa.Language, wa.Rule, wa.Path)
+	_, _ = fmt.Fprintf(stdout, "recorded waiver %s: %s %s on %s\n", w.ID, wa.Language, wa.Rule, wa.Path)
 	return 0
 }
 
@@ -53,7 +53,7 @@ func runWaive(wa WaiveArgs, stdout, stderr io.Writer) int {
 func runWaivers(stdout, stderr io.Writer) int {
 	store, err := waiver.Open(waiverLogPath())
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
 	for _, e := range store.List() {
@@ -61,7 +61,7 @@ func runWaivers(stdout, stderr io.Writer) int {
 		if e.SpentTree != "" {
 			state = "spent against " + e.SpentTree
 		}
-		fmt.Fprintf(stdout, "%s %s %s %s %s\n", e.ID, e.Language, e.Rule, e.Path, state)
+		_, _ = fmt.Fprintf(stdout, "%s %s %s %s %s\n", e.ID, e.Language, e.Rule, e.Path, state)
 	}
 	return 0
 }

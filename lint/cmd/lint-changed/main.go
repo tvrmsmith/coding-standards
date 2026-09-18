@@ -11,7 +11,7 @@ import (
 func main() {
 	cmd, err := Parse(os.Args[1:])
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	os.Exit(run(cmd, os.Stdin, os.Stdout, os.Stderr))
@@ -26,7 +26,7 @@ func run(cmd Command, stdin io.Reader, stdout, stderr io.Writer) int {
 	case KindWaivers:
 		return runWaivers(stdout, stderr)
 	default:
-		fmt.Fprintln(stderr, "lint-changed: internal error: unknown command kind")
+		_, _ = fmt.Fprintln(stderr, "lint-changed: internal error: unknown command kind")
 		return 1
 	}
 }

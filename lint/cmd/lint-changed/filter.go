@@ -45,19 +45,19 @@ func scopeFinding(f lintfind.Finding, scope scopeSet) (survivor, bool) {
 func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
 	repo, err := gitscope.Open()
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
 
 	scope, err := resolveScope(repo, fa)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
 
 	findings, dropped, err := lintfind.ParseSARIF(stdin, repo.Root())
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
 
@@ -70,12 +70,12 @@ func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	store, err := waiver.Open(waiverLogPath())
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
 	tree, err := writeTree(repo.Root())
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
 
@@ -88,14 +88,14 @@ func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
 			continue
 		}
 		if err := store.Spend(w, tree); err != nil {
-			fmt.Fprintln(stderr, err)
+			_, _ = fmt.Fprintln(stderr, err)
 			return 1
 		}
-		fmt.Fprintf(stderr, "waiver %s suppressed %s on %s\n", w.ID, s.finding.Rule, path)
+		_, _ = fmt.Fprintf(stderr, "waiver %s suppressed %s on %s\n", w.ID, s.finding.Rule, path)
 	}
 
 	if dropped > 0 {
-		fmt.Fprintf(stderr, "%d result(s) could not be placed inside the repo and were dropped\n", dropped)
+		_, _ = fmt.Fprintf(stderr, "%d result(s) could not be placed inside the repo and were dropped\n", dropped)
 	}
 
 	if len(kept) == 0 {
@@ -103,11 +103,11 @@ func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	for _, s := range kept {
-		fmt.Fprintf(stdout, "%s: %s\n", s.finding.Rule, s.finding.Message)
+		_, _ = fmt.Fprintf(stdout, "%s: %s\n", s.finding.Rule, s.finding.Message)
 		for _, loc := range s.locations {
-			fmt.Fprintf(stdout, "  %s:%d\n", loc.Path, loc.StartLine)
+			_, _ = fmt.Fprintf(stdout, "  %s:%d\n", loc.Path, loc.StartLine)
 		}
-		fmt.Fprintf(stdout, "  lint-changed waive --language %s --path %s --rule %s --reason \"<why>\"\n\n",
+		_, _ = fmt.Fprintf(stdout, "  lint-changed waive --language %s --path %s --rule %s --reason \"<why>\"\n\n",
 			fa.Language, s.locations[0].Path, s.finding.Rule)
 	}
 	return 2

@@ -157,6 +157,20 @@ covers security, and the code this runs over is healthcare software. Two rules a
 is `errcheck` with a different id, and `G115` flags every int conversion that could in principle
 overflow, which on real code is hundreds of sites bounded by something the linter cannot see.
 
+`gosec` is also the one linter this config turns off in `_test.go`, and it is the only exclusion
+rule here. golangci-lint's own exclusion presets are all rejected, because a guideline holds in a
+test as much as in production code. This is not that exclusion. `gosec` models an attacker
+reaching the input, and a test supplies every input itself, so its loudest rules cannot mean in a
+test what they mean elsewhere: `G204` flags a subprocess built from a variable, which is every
+test that runs a binary it just compiled; `G304` flags a read from a variable path, which is every
+test reading its own `t.TempDir` fixture; `G306` and `G301` want `0600` on a file the test writes
+and deletes in the same function.
+
+It was measured before it was decided. 42 of the 45 `gosec` findings across this repo sat in
+`_test.go` and none named a real weakness. Forty-two `//nolint` directives carrying the same
+sentence is a directive nobody reads. Every other linter still runs in tests, `errcheck`
+included.
+
 ### Deliberately not enabled
 
 Written down because "we looked and said no" and "we never looked" are otherwise the same file.

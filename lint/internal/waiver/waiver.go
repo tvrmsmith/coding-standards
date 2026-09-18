@@ -49,6 +49,10 @@ type Store struct {
 func Open(logPath string) (*Store, error) {
 	s := &Store{logPath: logPath}
 
+	//nolint:gosec // G304: the path is the caller's whole point. A waiver log
+	// is machine-local and named by the person running the tool, through
+	// TVRMSMITH_WAIVERS or the XDG default, so there is no trust line for a
+	// variable path to cross here.
 	f, err := os.Open(logPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
@@ -56,7 +60,9 @@ func Open(logPath string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening waiver log %s: %w", logPath, err)
 	}
-	defer f.Close()
+	// Discarded deliberately: this handle only ever read, so a close failure
+	// tells a caller nothing it can act on and nothing about the log's content.
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	lineNum := 0
@@ -272,10 +278,16 @@ func (s *Store) append(l line) error {
 	if err != nil {
 		return fmt.Errorf("opening waiver log %s: %w", s.logPath, err)
 	}
-	defer f.Close()
-
 	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
 		return fmt.Errorf("writing waiver log %s: %w", s.logPath, err)
+	}
+	// Checked rather than deferred and discarded. This handle wrote, and a
+	// close that fails after a write that succeeded is how a record goes
+	// missing. Reporting it is what stops a waiver being spent in memory and
+	// absent from the log the next process reads.
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("closing waiver log %s: %w", s.logPath, err)
 	}
 	return nil
 }
