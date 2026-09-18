@@ -43,7 +43,7 @@ while [ $# -gt 0 ]; do
     --since) mode=--since; ref=${2:?--since needs a ref}; shift 2 ;;
     --files) mode=--files; shift; while [ $# -gt 0 ]; do explicit_files+=("$1"); shift; done ;;
     -h|--help) sed -n '2,30p' "${BASH_SOURCE[0]}"; exit 0 ;;
-    *) echo "lint-changed-dotnet: unknown argument '$1'" >&2; exit 2 ;;
+    *) echo "lint-changed-dotnet: unknown argument '$1'" >&2; exit 1 ;;
   esac
 done
 
@@ -54,12 +54,12 @@ command -v dotnet >/dev/null 2>&1 || {
 
 repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
   echo "lint-changed-dotnet: not inside a git repository" >&2
-  exit 2
+  exit 1
 }
 # The analyzers are scoped by a StartsWith condition on the *resolved* project directory, so
 # every path this script derives has to be resolved too or nothing matches (research caveat 2).
 repo_root=$(cd "$repo_root" && pwd -P)
-cd "$repo_root" || exit 2
+cd "$repo_root" || exit 1
 
 # A linked worktree is the same adoption as the checkout it was made from, so the registry is
 # keyed on the main checkout rather than on where the commit happens to be taken. The hook is
@@ -164,16 +164,16 @@ command -v go >/dev/null 2>&1 || {
   echo "lint-changed-dotnet: no go on PATH, so the changed-line filter cannot run" >&2
   echo "  Findings would go unchecked and the commit would pass unexamined, so this is a failure" >&2
   echo "  rather than a skip. Install Go, or unstage the C# changes." >&2
-  exit 2
+  exit 1
 }
 
 cache_home=${XDG_CACHE_HOME:-$HOME/.cache}
 lint_changed=$cache_home/coding-standards/lint-changed
-mkdir -p "$(dirname "$lint_changed")" || exit 2
+mkdir -p "$(dirname "$lint_changed")" || exit 1
 if ! build_out=$(cd "$hub" && go build -o "$lint_changed" ./lint/cmd/lint-changed 2>&1); then
   echo "lint-changed-dotnet: could not build lint-changed, so the changed-line filter cannot run" >&2
   printf '%s\n' "$build_out" >&2
-  exit 2
+  exit 1
 fi
 
 case "$mode" in
@@ -225,19 +225,38 @@ for proj in $projects; do
   # one across its passes and again in the summary, and its console format carries no line span
   # and no related locations. SARIF carries all three, so the scoping below works off structure
   # instead of a regex over English.
-  sarif=$sarif_dir/$(echo "$proj" | tr '/' '_').sarif
+  #
+  # $(TargetFramework) is MSBuild's own, left unexpanded by the shell on purpose. csc runs once
+  # per framework and a multi-targeted project builds those in parallel, so one filename per
+  # project means the last writer wins at best and two writers interleave into malformed JSON at
+  # worst. One report per framework, all of them collected below.
+  prefix=$sarif_dir/$(echo "$proj" | tr '/' '_')
   out=$(CustomAfterMicrosoftCommonProps="$analyzer_props" \
     dotnet build "$proj" --no-incremental -p:BuildProjectReferences=false \
       -p:TvrmsmithAnalyzersEnabled=true -p:TvrmsmithAnalyzersScopeToChanged=false \
-      -p:ErrorLog="$sarif,version=2.1" -v:m --nologo 2>&1)
+      -p:ErrorLog="$prefix.\$(TargetFramework).sarif,version=2.1" -v:m --nologo 2>&1)
   if [ $? -ne 0 ]; then
     status=1
     echo "=== $proj — the diagnostics pass failed after a clean build ==="
     grep -E ': error [A-Z]+[0-9]+' <<<"$out" | sort -u
     continue
   fi
-  if [ -s "$sarif" ]; then
+
+  # A clean build still writes a SARIF log with an empty results array, so no report at all means
+  # ErrorLog never took effect — the SDK ignoring the property, the project overriding it, a write
+  # that failed. Findings would go unchecked and the commit would pass unexamined, which is the
+  # same failure the missing-go branch above refuses to pass off as a skip.
+  found=0
+  for sarif in "$prefix".*.sarif; do
+    [ -s "$sarif" ] || continue
     sarifs+=("$sarif")
+    found=1
+  done
+  if [ $found -eq 0 ]; then
+    status=1
+    echo "=== $proj — the build wrote no SARIF report, so nothing could be checked ===" >&2
+    echo "  Expected $prefix.<framework>.sarif from -p:ErrorLog. Check that the project does not" >&2
+    echo "  set its own ErrorLog." >&2
   fi
 done
 

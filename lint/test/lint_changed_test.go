@@ -1,6 +1,8 @@
 package lintchanged_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -96,17 +98,21 @@ func TestRelatedLocationTouchedSurvives(t *testing.T) {
 	}
 }
 
-// 6. IgnoresScope true survives an empty touched map.
+// 6. IgnoresScope true survives an empty touched map, and it does so in the
+// shape Roslyn really emits: Location.None, so no locations array at all.
 func TestIgnoresScopeSurvivesEmptyDiff(t *testing.T) {
 	f := newFixture(t)
 	f.write("Foo.cs", baseFile)
 	f.commitAll("base")
 	// No staged change: the touched map is empty.
 
-	res := f.run(sarifDoc(sarifResult("AD0001", "analyzer crashed", sarifLoc("Foo.cs", 1, 1))), filterArgs("--staged")...)
+	res := f.run(sarifDoc(sarifResultNoLocation("AD0001", "analyzer crashed")), filterArgs("--staged")...)
 
 	if res.exitCode != 2 {
 		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if !strings.Contains(res.stdout, "AD0001") {
+		t.Fatalf("stdout does not name the analyzer load failure: %s", res.stdout)
 	}
 }
 
@@ -302,6 +308,116 @@ func TestOutsideGitRepoExitsOne(t *testing.T) {
 	}
 	if strings.TrimSpace(res.stderr) == "" {
 		t.Fatal("stderr is empty, want gitscope's own message")
+	}
+}
+
+// One waiver covers one finding. Two findings under the same rule on the same
+// file, on two different changed lines, cost two waivers: the second blocks.
+func TestOneWaiverCoversOneFinding(t *testing.T) {
+	f := newFixture(t)
+	f.write("Foo.cs", baseFile)
+	f.commitAll("base")
+	f.write("Foo.cs", "line1\nCHANGED\nCHANGED\nline4\nline5\n")
+	f.stage("Foo.cs")
+
+	f.run("", "waive", "--language", "csharp", "--path", "Foo.cs", "--rule", "TVRM0001", "--reason", "one of the two")
+	doc := sarifDoc(
+		sarifResult("TVRM0001", "msg", sarifLoc("Foo.cs", 2, 2)),
+		sarifResult("TVRM0001", "msg", sarifLoc("Foo.cs", 3, 3)),
+	)
+
+	res := f.run(doc, filterArgs("--staged")...)
+
+	if res.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2: one waiver must not cover both findings\nstdout: %s", res.exitCode, res.stdout)
+	}
+}
+
+// A waiver is spent only on a run that ends clean. A run the waiver could not
+// rescue leaves it unspent, so the agent that fixes the blocking finding still
+// has it.
+func TestWaiverIsNotSpentOnABlockingRun(t *testing.T) {
+	f := newFixture(t)
+	f.write("Foo.cs", baseFile)
+	f.commitAll("base")
+	f.write("Foo.cs", "line1\nCHANGED\nCHANGED\nline4\nline5\n")
+	f.stage("Foo.cs")
+
+	f.run("", "waive", "--language", "csharp", "--path", "Foo.cs", "--rule", "TVRM0001", "--reason", "a false positive")
+	doc := sarifDoc(
+		sarifResult("TVRM0001", "the waived one", sarifLoc("Foo.cs", 2, 2)),
+		sarifResult("TVRM0002", "the real one", sarifLoc("Foo.cs", 3, 3)),
+	)
+
+	blocked := f.run(doc, filterArgs("--staged")...)
+	if blocked.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstdout: %s", blocked.exitCode, blocked.stdout)
+	}
+	if lines := f.waiverLogLines(); len(lines) != 1 {
+		t.Fatalf("waiver log has %d lines, want 1 (the record alone, no spend)", len(lines))
+	}
+
+	// The real finding is gone now, and the waiver is still there to spend.
+	clean := f.run(sarifDoc(sarifResult("TVRM0001", "the waived one", sarifLoc("Foo.cs", 2, 2))), filterArgs("--staged")...)
+	if clean.exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", clean.exitCode, clean.stdout, clean.stderr)
+	}
+	if lines := f.waiverLogLines(); len(lines) != 2 {
+		t.Fatalf("waiver log has %d lines, want 2 (record + spend)", len(lines))
+	}
+}
+
+// A --files entry that is not already repo-relative still scopes the findings
+// in it, rather than matching nothing and dropping them all.
+func TestFilesAcceptsOtherSpellingsOfThePath(t *testing.T) {
+	f := newFixture(t)
+	f.write("src/Foo.cs", baseFile)
+	f.commitAll("base")
+
+	for _, spelling := range []string{"./src/Foo.cs", filepath.Join(f.root, "src", "Foo.cs")} {
+		res := f.run(sarifDoc(sarifResult("TVRM0001", "msg", sarifLoc("src/Foo.cs", 2, 2))), filterArgs("--files", spelling)...)
+		if res.exitCode != 2 {
+			t.Errorf("--files %s: exit code = %d, want 2\nstdout: %s\nstderr: %s", spelling, res.exitCode, res.stdout, res.stderr)
+		}
+	}
+}
+
+// A --files entry naming a path outside the repo fails the run rather than
+// scoping to nothing and exiting 0.
+func TestFilesOutsideTheRepoExitsOne(t *testing.T) {
+	f := newFixture(t)
+	f.write("Foo.cs", baseFile)
+	f.commitAll("base")
+	outside := filepath.Join(t.TempDir(), "Elsewhere.cs")
+	if err := os.WriteFile(outside, []byte(baseFile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res := f.run(sarifDoc(), filterArgs("--files", outside)...)
+
+	if res.exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1\nstderr: %s", res.exitCode, res.stderr)
+	}
+}
+
+// A staged whitespace-only edit that is then dirtied on disk is still a hard
+// stop. The touched-lines diff ignores whitespace, so the file has no touched
+// lines at all, and keying the divergence check on that map would miss it.
+func TestWhitespaceOnlyStagedEditStillChecksDivergence(t *testing.T) {
+	f := newFixture(t)
+	f.write("Foo.cs", baseFile)
+	f.commitAll("base")
+	f.write("Foo.cs", "line1\nline2   \nline3\nline4\nline5\n")
+	f.stage("Foo.cs")
+	f.write("Foo.cs", "line1\nline2   \nline3\nline4\nDIRTY\n")
+
+	res := f.run(sarifDoc(), filterArgs("--staged")...)
+
+	if res.exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if !strings.Contains(res.stderr, "Foo.cs") {
+		t.Fatalf("stderr does not name the divergent file: %s", res.stderr)
 	}
 }
 

@@ -177,6 +177,15 @@ func TestParseSARIFAbsoluteFileURIWithPercentEncoding(t *testing.T) {
 // no Locations.
 func TestParseSARIFDropsResultWithNoPlaceableLocation(t *testing.T) {
 	root := testRoot(t)
+	// Both files exist on disk, so neither result is rejected merely for
+	// naming a path that is not there: containment alone rejects the first and
+	// the absent region alone rejects the second.
+	writeSource(t, root, "src/Foo.cs")
+	outside := t.TempDir()
+	outsideFile := filepath.Join(outside, "Foo.cs")
+	if err := os.WriteFile(outsideFile, []byte("// outside the root\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() err = %v", err)
+	}
 
 	doc := `{
 		"version": "2.1.0",
@@ -187,7 +196,7 @@ func TestParseSARIFDropsResultWithNoPlaceableLocation(t *testing.T) {
 					"message": {"text": "outside the root"},
 					"locations": [{
 						"physicalLocation": {
-							"artifactLocation": {"uri": "file:///somewhere/else/Foo.cs"},
+							"artifactLocation": {"uri": "file://` + filepath.ToSlash(outsideFile) + `"},
 							"region": {"startLine": 1}
 						}
 					}]
@@ -331,6 +340,116 @@ func TestParseSARIFIgnoresScopeForAnalyzerLoadFailures(t *testing.T) {
 	}
 	if findings[0].IgnoresScope {
 		t.Errorf("IgnoresScope = true for TVRM0001, want false")
+	}
+}
+
+// TestParseSARIFKeepsScopeIgnoringRuleWithNoLocations pins the Location.None
+// case behaviour 7 actually arrives in: Roslyn reports all four analyzer-load
+// failures with no location at all, so the result carries no locations array.
+// Dropping it as unplaceable would mean an analyzer that failed to load never
+// blocked anything.
+func TestParseSARIFKeepsScopeIgnoringRuleWithNoLocations(t *testing.T) {
+	root := testRoot(t)
+
+	for _, rule := range []string{"AD0001", "CS8032", "CS8034", "CS9057"} {
+		doc := `{"version": "2.1.0", "runs": [{"results": [{
+			"ruleId": "` + rule + `",
+			"message": {"text": "analyzer failed to load"}
+		}]}]}`
+
+		findings, dropped, err := ParseSARIF(strings.NewReader(doc), root)
+		if err != nil {
+			t.Fatalf("rule %s: ParseSARIF() err = %v, want nil", rule, err)
+		}
+		if dropped != 0 {
+			t.Errorf("rule %s: dropped = %d, want 0", rule, dropped)
+		}
+		if len(findings) != 1 {
+			t.Fatalf("rule %s: len(findings) = %d, want 1", rule, len(findings))
+		}
+		if !findings[0].IgnoresScope {
+			t.Errorf("rule %s: IgnoresScope = false, want true", rule)
+		}
+		if len(findings[0].Locations) != 0 {
+			t.Errorf("rule %s: Locations = %v, want none", rule, findings[0].Locations)
+		}
+	}
+
+	// An ordinary rule with no location is still dropped: nothing places it and
+	// nothing exempts it.
+	doc := `{"version": "2.1.0", "runs": [{"results": [{
+		"ruleId": "TVRM0001", "message": {"text": "a finding"}
+	}]}]}`
+	findings, dropped, err := ParseSARIF(strings.NewReader(doc), root)
+	if err != nil {
+		t.Fatalf("ParseSARIF() err = %v, want nil", err)
+	}
+	if len(findings) != 0 || dropped != 1 {
+		t.Errorf("findings = %v, dropped = %d, want none and 1", findings, dropped)
+	}
+}
+
+// TestParseSARIFDropsInSourceSuppressedResult pins that a diagnostic the
+// target repo already turned off with a #pragma or a [SuppressMessage] never
+// reaches a Finding. ErrorLog reports those; the console never printed them.
+func TestParseSARIFDropsInSourceSuppressedResult(t *testing.T) {
+	root := testRoot(t)
+	writeSource(t, root, "src/Foo.cs")
+
+	doc := `{"version": "2.1.0", "runs": [{"results": [
+		{
+			"ruleId": "CA1822",
+			"message": {"text": "suppressed in source"},
+			"suppressions": [{"kind": "inSource"}],
+			"locations": [{"physicalLocation": {
+				"artifactLocation": {"uri": "src/Foo.cs"},
+				"region": {"startLine": 1}}}]
+		},
+		{
+			"ruleId": "TVRM0001",
+			"message": {"text": "not suppressed"},
+			"locations": [{"physicalLocation": {
+				"artifactLocation": {"uri": "src/Foo.cs"},
+				"region": {"startLine": 2}}}]
+		}
+	]}]}`
+
+	findings, dropped, err := ParseSARIF(strings.NewReader(doc), root)
+
+	if err != nil {
+		t.Fatalf("ParseSARIF() err = %v, want nil", err)
+	}
+	if dropped != 0 {
+		t.Errorf("dropped = %d, want 0: a suppressed result is not an unplaceable one", dropped)
+	}
+	if len(findings) != 1 || findings[0].Rule != "TVRM0001" {
+		t.Fatalf("findings = %#v, want only TVRM0001", findings)
+	}
+}
+
+// TestParseSARIFKeepsExternallySuppressedResult pins the other half: only an
+// inSource suppression is the repo's own decision. A suppression of any other
+// kind leaves the diagnostic in play.
+func TestParseSARIFKeepsExternallySuppressedResult(t *testing.T) {
+	root := testRoot(t)
+	writeSource(t, root, "src/Foo.cs")
+
+	doc := `{"version": "2.1.0", "runs": [{"results": [{
+		"ruleId": "CA1822",
+		"message": {"text": "suppressed elsewhere"},
+		"suppressions": [{"kind": "external"}],
+		"locations": [{"physicalLocation": {
+			"artifactLocation": {"uri": "src/Foo.cs"},
+			"region": {"startLine": 1}}}]
+	}]}]}`
+
+	findings, _, err := ParseSARIF(strings.NewReader(doc), root)
+
+	if err != nil {
+		t.Fatalf("ParseSARIF() err = %v, want nil", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("len(findings) = %d, want 1", len(findings))
 	}
 }
 

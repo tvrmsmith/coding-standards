@@ -45,7 +45,7 @@ func TestRecord_thenMatch_findsIt(t *testing.T) {
 		t.Fatalf("Record did not assign an ID")
 	}
 
-	got, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123")
+	got, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123", nil)
 	if !ok {
 		t.Fatalf("Match: not found")
 	}
@@ -68,13 +68,13 @@ func TestMatch_requiresLanguagePathAndRule(t *testing.T) {
 		t.Fatalf("Record: %v", err)
 	}
 
-	if _, ok := store.Match("csharp", srcpath.FromSlash("src/Other.cs"), "TVRM0001", "abc123"); ok {
+	if _, ok := store.Match("csharp", srcpath.FromSlash("src/Other.cs"), "TVRM0001", "abc123", nil); ok {
 		t.Fatalf("Match matched on a different path")
 	}
-	if _, ok := store.Match("go", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123"); ok {
+	if _, ok := store.Match("go", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123", nil); ok {
 		t.Fatalf("Match matched on a different language")
 	}
-	if _, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0002", "abc123"); ok {
+	if _, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0002", "abc123", nil); ok {
 		t.Fatalf("Match matched on a different rule")
 	}
 }
@@ -190,12 +190,12 @@ func TestSpend_wornExampleFromAssignment(t *testing.T) {
 
 	// Same tree: the waiver is still usable, since a retried commit against
 	// the same tree must not burn a second waiver.
-	if _, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123"); !ok {
+	if _, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123", nil); !ok {
 		t.Fatalf("Match after same-tree spend: not found")
 	}
 
 	// A different tree: the waiver is used up.
-	if _, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "def456"); ok {
+	if _, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "def456", nil); ok {
 		t.Fatalf("Match after spend matched a different tree")
 	}
 }
@@ -265,6 +265,29 @@ func TestSpend_sameTreeAgain_addsNoLine(t *testing.T) {
 	}
 }
 
+// A waiver the caller already took for another finding in the same run is not
+// handed back for a second one: one waiver, one finding.
+func TestMatch_skipsClaimedWaivers(t *testing.T) {
+	store, err := waiver.Open(filepath.Join(t.TempDir(), "waivers.jsonl"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	w, err := store.Record(waiver.Waiver{
+		Language: "csharp",
+		Path:     srcpath.FromSlash("src/OrderService.cs"),
+		Rule:     "TVRM0001",
+		Reason:   "the only waiver",
+	})
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	claimed := map[string]bool{w.ID: true}
+	if _, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123", claimed); ok {
+		t.Fatalf("Match returned a waiver the run had already claimed")
+	}
+}
+
 func TestMatch_returnsOldestUsable(t *testing.T) {
 	store, err := waiver.Open(filepath.Join(t.TempDir(), "waivers.jsonl"))
 	if err != nil {
@@ -290,7 +313,7 @@ func TestMatch_returnsOldestUsable(t *testing.T) {
 		t.Fatalf("Record: %v", err)
 	}
 
-	got, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123")
+	got, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123", nil)
 	if !ok {
 		t.Fatalf("Match: not found")
 	}
@@ -303,7 +326,7 @@ func TestMatch_returnsOldestUsable(t *testing.T) {
 	if err := store.Spend(first, "def456"); err != nil {
 		t.Fatalf("Spend: %v", err)
 	}
-	got, ok = store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123")
+	got, ok = store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123", nil)
 	if !ok {
 		t.Fatalf("Match: not found")
 	}
@@ -386,7 +409,7 @@ func TestOpen_readsExistingLog(t *testing.T) {
 		t.Fatalf("Entry.SpentAt is zero, want non-zero")
 	}
 
-	if _, ok := reopened.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "def456"); ok {
+	if _, ok := reopened.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "def456", nil); ok {
 		t.Fatalf("Match after reopen matched a different tree, the waiver should be used up")
 	}
 }

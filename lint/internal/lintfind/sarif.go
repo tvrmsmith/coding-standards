@@ -30,8 +30,16 @@ type sarifResult struct {
 	Message struct {
 		Text string `json:"text"`
 	} `json:"message"`
-	Locations        []sarifLocation `json:"locations"`
-	RelatedLocations []sarifLocation `json:"relatedLocations"`
+	Locations        []sarifLocation    `json:"locations"`
+	RelatedLocations []sarifLocation    `json:"relatedLocations"`
+	Suppressions     []sarifSuppression `json:"suppressions"`
+}
+
+// sarifSuppression is one entry of a result's suppressions array. Roslyn
+// writes one with kind "inSource" for a diagnostic a #pragma warning disable
+// or a [SuppressMessage] turned off in the repo being built.
+type sarifSuppression struct {
+	Kind string `json:"kind"`
 }
 
 type sarifLocation struct {
@@ -61,6 +69,9 @@ func ParseSARIF(r io.Reader, root srcpath.Root) ([]Finding, int, error) {
 	dropped := 0
 	for _, run := range log.Runs {
 		for _, result := range run.Results {
+			if suppressedInSource(result) {
+				continue
+			}
 			finding, err := placeResult(result, root)
 			if err != nil {
 				return nil, 0, err
@@ -75,6 +86,20 @@ func ParseSARIF(r io.Reader, root srcpath.Root) ([]Finding, int, error) {
 	return findings, dropped, nil
 }
 
+// suppressedInSource reports whether the target repo already turned this
+// diagnostic off with a #pragma or a [SuppressMessage]. ErrorLog reports
+// suppressed diagnostics the console never prints, and another repo's
+// suppression is its own decision to make, so the result is dropped before
+// it can block a commit.
+func suppressedInSource(result sarifResult) bool {
+	for _, s := range result.Suppressions {
+		if s.Kind == "inSource" {
+			return true
+		}
+	}
+	return false
+}
+
 // placeResult turns one SARIF result into a Finding, or nil when every one
 // of its locations falls outside root (behaviour 4, 6). An error means the
 // result itself is malformed rather than merely unplaceable.
@@ -85,7 +110,11 @@ func placeResult(result sarifResult, root srcpath.Root) (*Finding, error) {
 
 	locations := placeLocations(result.Locations, root)
 	locations = append(locations, placeLocations(result.RelatedLocations, root)...)
-	if len(locations) == 0 {
+	// A rule that ignores scope is kept whatever its locations say. Roslyn
+	// reports all four of them at Location.None, so the result carries no
+	// locations array at all and dropping it here would mean an analyzer that
+	// failed to load never blocked anything.
+	if len(locations) == 0 && !ignoresScope(result.RuleID) {
 		return nil, nil
 	}
 

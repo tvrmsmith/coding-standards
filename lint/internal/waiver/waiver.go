@@ -214,9 +214,18 @@ func (s *Store) Record(w Waiver) (Waiver, error) {
 // usable: either never spent, or already spent against this same tree. It
 // returns the oldest usable waiver when several match, so the store drains
 // in recording order.
-func (s *Store) Match(language string, path srcpath.Path, rule, tree string) (Waiver, bool) {
+//
+// claimed holds the ids the caller has already taken for other findings in
+// this run, and none of them match again: one waiver covers one finding, so
+// two findings under the same rule on the same path cost two waivers. A
+// retried commit against the same tree claims the same waivers in the same
+// order, which is what keeps the retry from burning a second one.
+func (s *Store) Match(language string, path srcpath.Path, rule, tree string, claimed map[string]bool) (Waiver, bool) {
 	for _, entry := range s.entries {
 		if entry.Language != language || entry.Path != path || entry.Rule != rule {
+			continue
+		}
+		if claimed[entry.ID] {
 			continue
 		}
 		if entry.SpentTree == "" || entry.SpentTree == tree {
@@ -280,9 +289,11 @@ func newID() (string, error) {
 }
 
 // append writes one record as a single []byte ending in "\n", opened with
-// os.O_APPEND|os.O_CREATE|os.O_WRONLY. This relies on O_APPEND atomicity for
-// writes under PIPE_BUF, which is what a single JSONL record is, so two
-// processes appending at once cannot interleave a partial line.
+// os.O_APPEND|os.O_CREATE|os.O_WRONLY. On Linux and most POSIX filesystems a
+// single write(2) to an O_APPEND descriptor seeks and writes as one operation,
+// so two processes appending at once cannot interleave a partial line. NFS is
+// the caveat: it has no server-side append, so the guarantee does not hold
+// there. A waiver log is machine-local, so it is not on NFS.
 func (s *Store) append(l line) error {
 	data, err := json.Marshal(l)
 	if err != nil {

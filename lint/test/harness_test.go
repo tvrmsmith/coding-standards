@@ -188,6 +188,12 @@ func sarifResult(rule, message string, locs ...string) string {
 		rule, message, strings.Join(locs, ","))
 }
 
+// sarifResultNoLocation is a SARIF result with no locations array, which is
+// what Roslyn writes for a diagnostic reported at Location.None.
+func sarifResultNoLocation(rule, message string) string {
+	return fmt.Sprintf(`{"ruleId":%q,"level":"warning","message":{"text":%q}}`, rule, message)
+}
+
 // sarifResultRelated is a SARIF result whose primary location is separate
 // from its related location, for pinning behaviour 5.
 func sarifResultRelated(rule, message string, primary, related string) string {

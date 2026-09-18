@@ -1,7 +1,11 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
 	"sort"
+	"strings"
 
 	"github.com/tvrmsmith/coding-standards/internal/gitscope"
 	"github.com/tvrmsmith/coding-standards/internal/srcpath"
@@ -62,9 +66,22 @@ func (e *divergentError) Error() string {
 // a caller with no git base can still run.
 func resolveScope(repo gitscope.Repo, fa FilterArgs) (scopeSet, error) {
 	if fa.Mode == ScopeFiles {
-		files := make(map[srcpath.Path]bool, len(fa.Files))
-		for _, name := range fa.Files {
-			files[srcpath.FromSlash(name)] = true
+		// Placed through the root rather than cast, because a location's path
+		// is always the canonical repo-relative one and an absolute or
+		// dot-prefixed --files entry would otherwise match nothing and drop
+		// every finding silently. NamedFiles refuses a name it cannot place,
+		// which is how an unresolvable path fails the run instead.
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("reading the working directory: %w", err)
+		}
+		named, err := repo.Root().NamedFiles(fa.Files, cwd)
+		if err != nil {
+			return nil, err
+		}
+		files := make(map[srcpath.Path]bool, len(named))
+		for _, path := range named {
+			files[path] = true
 		}
 		return fileScope{files: files}, nil
 	}
@@ -78,7 +95,7 @@ func resolveScope(repo gitscope.Repo, fa FilterArgs) (scopeSet, error) {
 		return nil, err
 	}
 	if fa.Mode == ScopeStaged {
-		if err := checkDivergence(repo, touched); err != nil {
+		if err := checkDivergence(repo, base); err != nil {
 			return nil, err
 		}
 	}
@@ -92,13 +109,17 @@ func resolveBase(repo gitscope.Repo, fa FilterArgs) (gitscope.Base, error) {
 	return repo.ResolveStaged()
 }
 
-// checkDivergence asks about every path TouchedLines named, not only the
-// paths the report mentions: a staged-and-dirty file with no findings still
-// got compiled from disk, so its divergence invalidates the whole run.
-func checkDivergence(repo gitscope.Repo, touched map[srcpath.Path][]int) error {
-	paths := make([]srcpath.Path, 0, len(touched))
-	for p := range touched {
-		paths = append(paths, p)
+// checkDivergence asks about every staged path, not only the paths the report
+// mentions and not only the ones TouchedLines returned: a staged-and-dirty
+// file with no findings still got compiled from disk, so its divergence
+// invalidates the whole run. TouchedLines is the wrong source for the list
+// because it diffs with -w and --diff-filter=ACM and then drops pure moves, so
+// a staged deletion, a pure rename and a whitespace-only edit all have no key
+// in it and would go unchecked.
+func checkDivergence(repo gitscope.Repo, base gitscope.Base) error {
+	paths, err := stagedPaths(repo.Root(), base)
+	if err != nil {
+		return err
 	}
 	sort.Slice(paths, func(i, j int) bool { return paths[i] < paths[j] })
 
@@ -110,4 +131,24 @@ func checkDivergence(repo gitscope.Repo, touched map[srcpath.Path][]int) error {
 		return &divergentError{paths: divergent}
 	}
 	return nil
+}
+
+// stagedPaths is every path the index changes against base, named the way git
+// names it. No -w and no --diff-filter, since the question here is which files
+// the commit carries at all rather than which lines it wrote.
+func stagedPaths(root srcpath.Root, base gitscope.Base) ([]srcpath.Path, error) {
+	cmd := exec.Command("git", "diff", "--cached", "--name-only", "-z", base.Commit)
+	cmd.Dir = root.Dir()
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("listing the staged paths: %w", err)
+	}
+	var paths []srcpath.Path
+	for _, name := range strings.Split(string(out), "\x00") {
+		if name == "" {
+			continue
+		}
+		paths = append(paths, srcpath.FromSlash(name))
+	}
+	return paths, nil
 }
