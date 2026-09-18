@@ -101,7 +101,7 @@ Four things about it that are not obvious:
 Findings on the .NET side **block the commit when they touch a line the change wrote**. Every id
 the injection delivers is still a warning, because no build that succeeded before adoption may
 start failing, so the build's own exit status is unchanged. The blocking verdict is the hook's:
-the diagnostics pass writes SARIF via `-p:ErrorLog`, `lint-changed` keeps the findings whose
+the diagnostics pass writes SARIF via the `ErrorLog` set in `errorlog.props`, `lint-changed` keeps the findings whose
 locations hold a touched line, and its exit status becomes the script's. Exit 2 is a surviving
 finding, 1 is anything breaking, in the filter or in the script itself, and the two stay distinct
 so a hook can tell them apart. A failed build reports 1 rather than passing MSBuild's own status
@@ -124,7 +124,7 @@ Four consequences worth knowing before you hit them. A staged file whose disk co
 a hard stop rather than a printed caveat, because MSBuild compiles disk while the commit carries
 the index, and failing a commit over code it does not contain would be worse than refusing to
 guess. A build that writes no SARIF at all is a hard stop for the same reason, since a clean build
-still writes an empty report and a missing one means `-p:ErrorLog` never took effect. A report
+still writes an empty report and a missing one means `ErrorLog` never took effect. A report
 whose results all name files outside the repo is the third, and `lint-changed` names each dropped
 rule and URI; each report answers that question alone, so one project placing nothing still stops
 the commit when another placed results. Only a URI outside the repo counts, because only that says

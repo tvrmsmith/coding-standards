@@ -193,6 +193,11 @@ sarif_dir=$(mktemp -d)
 trap 'rm -rf "$sarif_dir"' EXIT
 sarifs=()
 
+# The SARIF report name is MSBuild's to build, not this script's: it has to expand
+# $(TargetFramework) once per inner build, and it has to escape the comma before the version
+# suffix. errorlog.props carries both and says why; all pass 2 passes in is the prefix.
+errorlog_props=$hub/harness/errorlog.props
+
 # Read rather than word-split: an unquoted expansion splits a project path on every space it
 # holds and then globs each piece.
 while IFS= read -r proj; do
@@ -239,15 +244,14 @@ while IFS= read -r proj; do
   # and no related locations. SARIF carries all three, so the scoping below works off structure
   # instead of a regex over English.
   #
-  # $(TargetFramework) is MSBuild's own, left unexpanded by the shell on purpose. csc runs once
-  # per framework and a multi-targeted project builds those in parallel, so one filename per
-  # project means the last writer wins at best and two writers interleave into malformed JSON at
-  # worst. One report per framework, all of them collected below.
+  # The report name is built by errorlog.props above, one per framework, all of them collected
+  # below. All this pass hands over is the prefix.
   prefix=$sarif_dir/$(echo "$proj" | tr '/' '_')
   out=$(CustomAfterMicrosoftCommonProps="$analyzer_props" \
+    CustomAfterMicrosoftCommonTargets="$errorlog_props" \
     dotnet build "$proj" --no-incremental -p:BuildProjectReferences=false \
       -p:TvrmsmithAnalyzersEnabled=true -p:TvrmsmithAnalyzersScopeToChanged=false \
-      -p:ErrorLog="$prefix.\$(TargetFramework).sarif,version=2.1" -v:m --nologo 2>&1 </dev/null)
+      -p:TvrmsmithSarifPrefix="$prefix" -v:m --nologo 2>&1 </dev/null)
   if [ $? -ne 0 ]; then
     status=1
     echo "=== $proj — the diagnostics pass failed after a clean build ==="
@@ -268,7 +272,7 @@ while IFS= read -r proj; do
   if [ $found -eq 0 ]; then
     status=1
     echo "=== $proj — the build wrote no SARIF report, so nothing could be checked ===" >&2
-    echo "  Expected $prefix.<framework>.sarif from -p:ErrorLog. Check that the project does not" >&2
+    echo "  Expected $prefix.<framework>.sarif from ErrorLog. Check that the project does not" >&2
     echo "  set its own ErrorLog." >&2
   fi
 done <<<"$projects"

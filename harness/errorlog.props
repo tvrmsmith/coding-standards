@@ -1,0 +1,25 @@
+<!--
+  Points the compiler's SARIF log at one file per target framework, for lint-changed-dotnet.sh.
+
+  Imported through CustomAfterMicrosoftCommonTargets, which is evaluated after the project body.
+  The Props hook the analyzers use is too early: a single-targeted project sets TargetFramework
+  in its own body, so at Props time the name below would expand to nothing.
+
+  Two details carry the whole file.
+
+  $(TargetFramework) has to be expanded by MSBuild, once per inner build, which is why the name
+  is written here instead of on the command line. MSBuild never re-evaluates a property value
+  given with -p:, so on the command line the literal text `$(TargetFramework)` reaches csc and
+  every framework of a multi-targeted project writes to the same file: the last writer wins at
+  best, two parallel writers interleave into malformed JSON at worst.
+
+  The comma before `version` is written %2c because MSBuild splits the Csc task's ErrorLog item
+  spec on an unescaped comma and drops everything after it. Roslyn then falls back to SARIF
+  1.0.0, whose result.message is a plain string, and lint/internal/lintfind reads 2.1 only, so
+  an unescaped comma turned every report into "malformed JSON" and failed every C# commit.
+-->
+<Project>
+  <PropertyGroup Condition="'$(TvrmsmithSarifPrefix)' != '' and '$(TargetFramework)' != ''">
+    <ErrorLog>$(TvrmsmithSarifPrefix).$(TargetFramework).sarif%2cversion=2.1</ErrorLog>
+  </PropertyGroup>
+</Project>
