@@ -1,5 +1,5 @@
 /**
- * The registry lookup in lint-changed-go.sh, which is the one piece of the Go half with no
+ * The registry lookup in the Go branch of lint-changed.sh, the one piece of the Go half with no
  * other consumer: the hook calls it, the hook is silent when it skips, and a skip that should
  * have been a run looks exactly like a repo with no findings.
  *
@@ -16,7 +16,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 const harness = realpathSync(join(dirname(fileURLToPath(import.meta.url)), '..'))
-const script = join(harness, 'lint-changed-go.sh')
+const script = join(harness, 'lint-changed.sh')
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' })
@@ -55,13 +55,32 @@ function fixture() {
 
 /** @returns {{ status: number, output: string }} */
 function lint(cwd, { registry, stub }, env = {}) {
-  const result = execFileSync(script, ['--since', 'HEAD'], {
+  const result = execFileSync(script, ['--only', 'go', '--since', 'HEAD'], {
     cwd,
     encoding: 'utf8',
     env: { ...process.env, TVRMSMITH_GO_REPOS: registry, TVRMSMITH_GCL: stub, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   return result
+}
+
+/**
+ * A checkout that resolves to no registered repository on its own: its own git dir, so
+ * `--git-common-dir` names it rather than anything in the registry. Stands in for the detached
+ * worktree of the daemon's bare gate repo that a no-mistakes run lints in.
+ */
+function detachedCheckout(f) {
+  const elsewhere = join(f.root, 'gate-worktree')
+  git(f.root, 'init', '--quiet', '--initial-branch=main', elsewhere)
+  git(elsewhere, 'config', 'user.email', 'test@example.com')
+  git(elsewhere, 'config', 'user.name', 'Test')
+  git(elsewhere, 'config', 'commit.gpgsign', 'false')
+  writeFileSync(join(elsewhere, 'go.mod'), 'module example.test\n\ngo 1.26.0\n')
+  writeFileSync(join(elsewhere, 'main.go'), 'package main\n\nfunc main() {}\n')
+  git(elsewhere, 'add', '.')
+  git(elsewhere, 'commit', '--quiet', '-m', 'initial')
+  writeFileSync(join(elsewhere, 'main.go'), 'package main\n\nfunc main() { _ = 4 }\n')
+  return elsewhere
 }
 
 test('an unregistered repository is skipped rather than linted', () => {
@@ -108,33 +127,27 @@ test('a worktree of an unregistered repository is still skipped', () => {
   }
 })
 
-test('TVRMSMITH_REGISTRY_KEY names the adopted checkout the lookup cannot reach', () => {
+test('TVRMSMITH_REGISTRY_KEY names the checkout a detached worktree cannot resolve to', () => {
   const f = fixture()
   try {
-    // The no-mistakes shape. Its pipeline lints in a worktree of a bare repository it keeps
-    // under ~/.no-mistakes, so the common git dir resolves to that bare repo rather than to the
-    // checkout the user adopted, and the derived key is never in the registry. The clone here
-    // stands in for it: its own path is unregistered and it shares no git dir with f.repo.
-    const elsewhere = join(f.root, 'elsewhere')
-    git(f.root, 'clone', '--quiet', f.repo, elsewhere)
     writeFileSync(f.registry, `${f.repo}\n`)
-    writeFileSync(join(elsewhere, 'main.go'), 'package main\n\nfunc main() { _ = 4 }\n')
-
-    assert.doesNotMatch(lint(elsewhere, f), /stub finding/)
-    assert.match(lint(elsewhere, f, { TVRMSMITH_REGISTRY_KEY: f.repo }), /stub finding/)
+    const gate = detachedCheckout(f)
+    // Resolving for itself, this checkout is in no registry, and the skip reads as clean.
+    assert.doesNotMatch(lint(gate, f), /stub finding/)
+    assert.match(lint(gate, f, { TVRMSMITH_REGISTRY_KEY: f.repo }), /stub finding/)
   } finally {
     f.cleanup()
   }
 })
 
-test('TVRMSMITH_REGISTRY_KEY answers the adoption question, it does not bypass it', () => {
+test('an override naming an unregistered path still skips', () => {
   const f = fixture()
   try {
-    // An override naming a path nobody registered still skips. The variable moves which path is
-    // looked up; it is not a way to lint a repository that was never adopted.
+    // The override moves which path is looked up. It does not bypass the lookup. Without this
+    // pinned, the variable is a door into linting any repo and nothing would notice the drift.
     writeFileSync(f.registry, `${f.repo}\n`)
-    writeFileSync(join(f.repo, 'main.go'), 'package main\n\nfunc main() { _ = 5 }\n')
-    assert.doesNotMatch(lint(f.repo, f, { TVRMSMITH_REGISTRY_KEY: join(f.root, 'never-adopted') }), /stub finding/)
+    const gate = detachedCheckout(f)
+    assert.doesNotMatch(lint(gate, f, { TVRMSMITH_REGISTRY_KEY: gate }), /stub finding/)
   } finally {
     f.cleanup()
   }

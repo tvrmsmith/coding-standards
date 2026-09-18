@@ -1,7 +1,7 @@
 /**
  * errorlog.props, driven through its only consumer: a real `dotnet build`.
  *
- * The file is the contract between lint-changed-dotnet.sh and the compiler — it names the SARIF
+ * The file is the contract between lint-changed.sh's C# branch and the compiler — it names the SARIF
  * report the changed-line filter then reads. Both halves of that name were wrong when written
  * on the command line instead, and neither failure is visible without building: MSBuild left
  * `$(TargetFramework)` literal, so a multi-targeted project's frameworks all wrote to one file,

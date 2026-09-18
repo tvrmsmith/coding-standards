@@ -6,9 +6,9 @@
 # This hook is the enforcement gate for TypeScript: the editor layer
 # reaches roughly 12% of the rule x package matrix, this reaches all of it.
 #
-# Three branches, one per language, each a no-op when the commit contains nothing it handles and
-# when the repo was never bootstrapped for it — so this one template serves a repo adopted for
-# any of them, and `bootstrap ts`, `bootstrap dotnet` and `bootstrap go` install it identically.
+# One call, whatever the repo is adopted for. lint-changed.sh runs every language branch that
+# applies and is a no-op for the rest, so this one template serves a repo adopted for any of them,
+# and `bootstrap ts`, `bootstrap dotnet` and `bootstrap go` install it identically.
 #
 # The harness path and any pre-existing hook to chain are substituted in below at install
 # time; `bootstrap` re-reads the `chained=` line on reinstall, so keep its shape.
@@ -31,22 +31,16 @@ fi
 
 status=0
 
-# TypeScript: ESLint over the staged .ts/.tsx, layered. Errors fail, warnings do not.
-"$harness/lint-changed.sh" --staged || status=$?
-
-# C#: the same question asked of the staged .cs, answered by building the projects that own
-# them with the analyzers injected. Every branch runs even if an earlier one found something —
-# a commit spanning two languages should report both, not stop at whichever came first.
+# Every language the staged changes touch and this repo is wired for, in one call. Each branch
+# runs even if an earlier one found something — a commit spanning two languages should report
+# both, not stop at whichever came first — and the status is the highest of them, so a later
+# branch's 1 cannot mask an earlier 2.
 #
-# That branch blocks. A compile error fails as it always did, and so now does any warning
-# touching a line the change wrote, scoped per changed line rather than per changed file. Its
-# exit 2 is "a finding survived"; 1 is the gate itself breaking. See lint-changed-dotnet.sh.
-"$harness/lint-changed-dotnet.sh" --staged || status=$?
-
-# Go: the personal golangci-lint binary over the packages owning the staged .go. Findings report
-# and never block; the C# half no longer does, and Go joins it in slice 3 of issue 108. A
-# non-zero status here means the run itself broke.
-"$harness/lint-changed-go.sh" --staged || status=$?
+# The branches do not share an exit convention. ESLint errors fail. The C# branch blocks on any
+# analyzer warning touching a line the change wrote, exit 2 for a finding that survived and 1 for
+# the gate itself breaking. Personal Go findings are still advisory and join the blocking half in
+# slice 3 of issue 108.
+"$harness/lint-changed.sh" --staged || status=$?
 
 if [ $status -ne 0 ]; then
   echo >&2

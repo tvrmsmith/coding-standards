@@ -1,5 +1,5 @@
 /**
- * lint-changed-dotnet.sh end to end: a staged C# warning on a changed line blocks the commit.
+ * The C# branch end to end: a staged C# warning on a changed line blocks the commit.
  *
  * errorlog-props.test.js drives errorlog.props by setting CustomAfterMicrosoftCommonTargets and
  * TvrmsmithSarifPrefix by hand, so it says nothing about whether the script passes those. That
@@ -22,7 +22,7 @@ import assert from 'node:assert/strict'
 
 const harness = realpathSync(join(dirname(fileURLToPath(import.meta.url)), '..'))
 const hub = dirname(harness)
-const script = join(harness, 'lint-changed-dotnet.sh')
+const script = join(harness, 'lint-changed.sh')
 const analyzerProps = join(hub, 'dotnet', 'artifacts', 'local', 'Tvrmsmith.Analyzers.Local.props')
 const missing = [['dotnet', '--version'], ['go', 'version']].find(
   ([cmd, ...args]) => spawnSync(cmd, args, { stdio: 'ignore' }).status !== 0,
@@ -77,7 +77,7 @@ function fixture() {
 
 /** Runs the script over the staged change. @returns {{ status: number, stdout: string, stderr: string }} */
 function lint(f) {
-  const result = spawnSync(script, ['--staged'], {
+  const result = spawnSync(script, ['--only', 'dotnet', '--staged'], {
     cwd: f.repo,
     encoding: 'utf8',
     env: {
@@ -91,7 +91,7 @@ function lint(f) {
   return { status: result.status, stdout: result.stdout, stderr: result.stderr }
 }
 
-describe('lint-changed-dotnet.sh', () => {
+describe('lint-changed.sh --only dotnet', () => {
   test('a warning on a staged line blocks the commit', { skip: missing && `no ${missing} on PATH` }, () => {
     const f = fixture()
     try {
