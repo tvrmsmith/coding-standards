@@ -165,8 +165,10 @@ does not reopen it.
 
 Permission for one rule to be suppressed on one path, once, carrying a mandatory reason. Waivers
 live in an append-only log at `${XDG_STATE_HOME:-~/.local/state}/coding-standards/waivers.jsonl`,
-machine-local and outside every repo, so nothing about them is committed. One
-waiver covers one finding, so two findings under the same rule on the same path cost two waivers.
+machine-local and outside every repo, so nothing about them is committed. One waiver covers one
+finding, so two findings under the same rule on the same path cost two waivers. A waiver that names
+no path keys on the language and the rule alone, which is the only route out of an analyzer-load
+finding, since that arrives with no location to name.
 
 A waiver is **spent** only on a run that ends clean, because one use is one commit that actually
 went through. A waiver matched on a run something else blocked is reported as matched and left

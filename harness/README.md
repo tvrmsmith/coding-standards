@@ -38,7 +38,7 @@ plugins `base.js` imports.
 | --- | --- |
 | `eslint-layer.js` | Loads the package's own ESLint config, spreads the personal preset after it. The layering, and the typed-layer gate. |
 | `lint-changed.sh` | Lints changed `.ts`/`.tsx` only, each through its own package's ESLint binary. |
-| `lint-changed-dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then pipes it through `lint-changed`, which blocks the commit on any finding touching a changed line. |
+| `lint-changed-dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then hands every report to one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
 | `lint-changed-go.sh` | The Go counterpart: runs the personal golangci-lint binary over the packages owning the changed `.go`, filters down to those files. |
 | `hooks/pre-commit` | Template for the installed hook. The enforcement gate. One template, three branches, each self-gating. |
 | `write-vscode-settings.mjs` | The editor half — points the extension at `eslint-layer.js`, so typing sees what committing sees. TypeScript only. |
@@ -104,7 +104,13 @@ start failing, so the build's own exit status is unchanged. The blocking verdict
 the diagnostics pass writes SARIF via `-p:ErrorLog`, `lint-changed` keeps the findings whose
 locations hold a touched line, and its exit status becomes the script's. Exit 2 is a surviving
 finding, 1 is anything breaking, in the filter or in the script itself, and the two stay distinct
-so a hook can tell them apart.
+so a hook can tell them apart. A failed build reports 1 rather than passing MSBuild's own status
+through, since MSBuild exiting 2 for its own reasons must not read as a surviving finding.
+
+Every project's report goes into a single `lint-changed` run, named with a repeatable `--report`.
+A process per report spent whatever waiver matched its own report without knowing another report
+still blocked the commit, so one process now sees the whole commit's findings and makes one spend
+decision.
 
 A diagnostic the target repo already turned off with a `#pragma` or a `[SuppressMessage]` is
 dropped before scoping. `ErrorLog` reports those where the console never printed them, and that
@@ -112,11 +118,13 @@ repo's decision stands.
 
 Compile errors still block, as on the TypeScript side.
 
-Three consequences worth knowing before you hit them. A staged file whose disk copy differs is now
+Four consequences worth knowing before you hit them. A staged file whose disk copy differs is now
 a hard stop rather than a printed caveat, because MSBuild compiles disk while the commit carries
 the index, and failing a commit over code it does not contain would be worse than refusing to
 guess. A build that writes no SARIF at all is a hard stop for the same reason, since a clean build
-still writes an empty report and a missing one means `-p:ErrorLog` never took effect. And the one
+still writes an empty report and a missing one means `-p:ErrorLog` never took effect. A report
+whose results all fail to place inside the repo is the third, and `lint-changed` names each dropped
+rule and URI; a report carrying no results at all is still a clean pass. And the one
 route past a false positive is a waiver, one rule on one path, used once, with a reason, recorded
 in a log outside the repo; `lint-changed` prints the exact command. A waiver is spent only on a run
 that ends clean, so a waived finding on a commit that blocked on something else costs nothing.
