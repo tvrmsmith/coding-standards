@@ -15,6 +15,9 @@
 # share this process now, so an `exit 0` meaning "nothing here for me" would cancel the languages
 # that had not run yet.
 #
+# What it returns is the one convention all three share, ADR 0010's: 2 when a finding survived and
+# the gate says stop, 1 when the branch itself could not answer, 0 otherwise.
+#
 # Written for bash 3.2 (the macOS system bash).
 
 # -P: invoked through the ~/.config/coding-standards symlink, an unresolved path would send every
@@ -43,7 +46,8 @@ parse_args() {
       --files) mode=--files; shift; while [ $# -gt 0 ]; do explicit_files+=("$1"); shift; done ;;
       --only) only=${2:?--only needs a language}; shift 2 ;;
       -h|--help) usage; exit 0 ;;
-      *) echo "lint-changed: unknown argument '$1'" >&2; exit 2 ;;
+      # 1, not 2: nothing was linted, so this is the gate breaking rather than a finding.
+      *) echo "lint-changed: unknown argument '$1'" >&2; exit 1 ;;
     esac
   done
 }
@@ -51,12 +55,12 @@ parse_args() {
 resolve_repo() {
   repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
     echo "lint-changed: not inside a git repository" >&2
-    exit 2
+    exit 1
   }
   # The .NET analyzers are scoped by a StartsWith condition on the *resolved* project directory,
   # so every path derived here has to be resolved too or nothing matches.
   repo_root=$(cd "$repo_root" && pwd -P)
-  cd "$repo_root" || exit 2
+  cd "$repo_root" || exit 1
 
   # A linked worktree is the same adoption as the checkout it was made from, so adoption is keyed
   # on the main checkout rather than on where the commit happens to be taken. The hook is shared
@@ -70,8 +74,13 @@ resolve_repo() {
   # no registry, and the skip is indistinguishable from a clean result.
   registry_key=$repo_root
   if [ -n "${TVRMSMITH_REGISTRY_KEY:-}" ]; then
-    registry_key=$(cd "$TVRMSMITH_REGISTRY_KEY" 2>/dev/null && pwd -P) \
-      || registry_key=$TVRMSMITH_REGISTRY_KEY
+    # No fallback to the unresolved value. It would match neither the props condition nor a Go
+    # registry line, so both branches would take not_wired and a typo in the variable would turn
+    # the gate into a silent no-op. A caller that names a checkout is asserting one exists.
+    registry_key=$(cd "$TVRMSMITH_REGISTRY_KEY" 2>/dev/null && pwd -P) || {
+      echo "lint-changed: TVRMSMITH_REGISTRY_KEY names '$TVRMSMITH_REGISTRY_KEY', which is not a directory" >&2
+      exit 1
+    }
   elif common_git_dir=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P); then
     registry_key=$(cd "$common_git_dir/.." && pwd -P)
   fi
@@ -85,7 +94,9 @@ changed_paths() {
   case "$mode" in
     --staged) git diff --cached --name-only -z --diff-filter=ACM ;;
     --since) git diff --name-only -z --diff-filter=ACM "$ref" ;;
-    --files) [ ${#explicit_files[@]} -gt 0 ] && printf '%s\0' "${explicit_files[@]}" ;;
+    # The guard is bash 3.2's: expanding an empty array under `set -u` is an error. It must not
+    # become the function's status, which the caller checks.
+    --files) [ ${#explicit_files[@]} -eq 0 ] || printf '%s\0' "${explicit_files[@]}" ;;
   esac
 }
 
@@ -107,32 +118,4 @@ ancestor_with() {
 not_wired() {
   [ "$mode" = "--staged" ] \
     || echo "lint-changed: $registry_key is not wired for $1 — run 'bootstrap $2 $registry_key'" >&2
-}
-
-# Linters that read the disk cannot honour a file staged in one state and left in another the way
-# ESLint can, because ESLint takes content on stdin and a compiler does not. Say so rather than
-# let it pass silently.
-warn_divergent() {
-  local what=$1 file divergent=()
-  shift
-  [ "$mode" = "--staged" ] || return 0
-  for file in "$@"; do
-    git diff --quiet -- "$file" || divergent+=("$file")
-  done
-  [ ${#divergent[@]} -gt 0 ] || return 0
-  echo "lint-changed: these are staged in one state and on disk in another; the $what sees the disk copy:" >&2
-  printf '    %s\n' "${divergent[@]}" >&2
-}
-
-# The human half of a branch's output. The caller has already deduped and sorted, because the sort
-# key belongs to whatever format its linter emits; everything downstream of that is the same
-# report. Paths go relative so the reader sees the repo, not the machine.
-report_findings() {
-  local file=$1 label=$2 note=$3 count
-  count=$(wc -l <"$file" | tr -d ' ')
-  echo
-  echo "personal coding standards — $count finding(s) in the changed $label:"
-  sed 's|^'"$repo_root"'/||; s/^/  /' "$file"
-  echo
-  echo "  $note"
 }

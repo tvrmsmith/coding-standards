@@ -47,12 +47,28 @@ function commitAll(repo) {
   git(repo, 'commit', '--quiet', '-m', 'initial')
 }
 
+/**
+ * The harness variables every case has to start from a known state: each is honoured whenever it
+ * is set, so an ambient value on the developer's machine would decide adoption or which binary
+ * runs for any case that does not override it, and a negative case would pass for the wrong
+ * reason. `undefined` removes the variable from the child's environment.
+ */
+const neutralised = {
+  TVRMSMITH_REGISTRY_KEY: undefined,
+  TVRMSMITH_ESLINT_LAYER: undefined,
+  TVRMSMITH_GCL: undefined,
+  TVRMSMITH_GO_REPOS: undefined,
+  TVRMSMITH_GOLANGCI_CONFIG: undefined,
+  TVRMSMITH_ANALYZER_PROPS: undefined,
+  TVRMSMITH_ANALYZER_LOCAL_PROPS: undefined,
+}
+
 /** @returns {string} stdout only, so a case can assert on what the flag promises to emit. */
 function run(cwd, args, env) {
   return execFileSync(join(harness, 'lint-changed.sh'), args, {
     cwd,
     encoding: 'utf8',
-    env: { ...process.env, ...env },
+    env: { ...process.env, ...neutralised, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
 }
@@ -81,6 +97,27 @@ describe('the TypeScript branch', () => {
     try {
       const out = run(f.repo, ['--only', 'ts', '--since', 'HEAD'])
       assert.equal(out, `=== . ===\n${f.repo}/main.ts\n  1:7  warning  Unexpected thing.  tvrmsmith/no-thing\n`)
+    } finally {
+      f.cleanup()
+    }
+  })
+
+  test('a changed path holding a space reaches the linter as one argument', () => {
+    const f = fixture()
+    try {
+      // Split on the space, ESLint is handed two paths that do not exist and fails, so the commit
+      // is blocked over a file nobody wrote. The stub prints its argv so the case can see which
+      // it got.
+      executable(
+        join(f.repo, 'node_modules/.bin/eslint'),
+        '#!/usr/bin/env node\nfor (const a of process.argv.slice(2)) console.log(`arg: ${a}`)\n',
+      )
+      writeFileSync(join(f.repo, 'my file.ts'), 'export const b = 1\n')
+      // Staged, because `git diff HEAD` reports a new file only once the index carries it.
+      git(f.repo, 'add', 'my file.ts')
+      const out = run(f.repo, ['--only', 'ts', '--since', 'HEAD'])
+      assert.match(out, /^arg: my file\.ts$/m)
+      assert.doesNotMatch(out, /^arg: my$/m)
     } finally {
       f.cleanup()
     }
@@ -135,7 +172,7 @@ describe('one invocation, every language the repo is wired for', () => {
    * TypeScript stub's exit code is the fixture's to choose, because the aggregated status is the
    * one thing the branches do not decide for themselves.
    */
-  function fixture({ tsExit = 0 } = {}) {
+  function fixture({ tsExit = 0, gclExit = 0 } = {}) {
     const f = repository('tvrmsmith-dispatch-')
     f.registry = join(f.root, 'registry')
     f.gcl = join(f.root, 'stub-gcl')
@@ -152,7 +189,12 @@ describe('one invocation, every language the repo is wired for', () => {
         `process.exit(${tsExit})`,
       ].join('\n') + '\n',
     )
-    executable(f.gcl, '#!/bin/sh\necho "$PWD/main.go:3:1: go finding (gorule)"\nexit 0\n')
+    executable(
+      f.gcl,
+      gclExit === 0
+        ? '#!/bin/sh\necho "$PWD/main.go:3:1: go finding (gorule)"\nexit 0\n'
+        : `#!/bin/sh\necho "the config is unreadable" >&2\nexit ${gclExit}\n`,
+    )
     commitAll(f.repo)
     writeFileSync(join(f.repo, 'main.ts'), 'export const a = 2\n')
     writeFileSync(join(f.repo, 'main.go'), 'package main\n\nfunc main() { _ = 1 }\n')
@@ -186,12 +228,18 @@ describe('one invocation, every language the repo is wired for', () => {
     const f = fixture()
     try {
       // No props file, so the C# branch skips. It must not take the other two down with it, and
-      // the .cs in the commit must not produce output of any kind.
+      // it must contribute no output at all. Asserted as the whole of stdout rather than as the
+      // absence of a string: a skipping branch has nothing it is *supposed* to print, so only the
+      // exact report proves it stayed silent.
       writeFileSync(join(f.repo, 'Program.cs'), 'class Program {}\n')
       const out = run(f.repo, ['--since', 'HEAD'], env(f))
-      assert.match(out, /stylish ts finding/)
-      assert.match(out, /gorule/)
-      assert.doesNotMatch(out, /Program\.cs/)
+      assert.equal(
+        out,
+        '=== . ===\nstylish ts finding\n' +
+          '\npersonal coding standards — 1 finding(s) in the changed Go files:\n' +
+          '  main.go:3:1: go finding (gorule)\n' +
+          '\n  reported, not blocking. Every personal Go rule is advisory, so the commit proceeds.\n',
+      )
     } finally {
       f.cleanup()
     }
@@ -208,11 +256,12 @@ describe('one invocation, every language the repo is wired for', () => {
     }
   })
 
-  test('the exit status is the worst branch, and the advisory ones still report', () => {
+  test('a surviving finding exits 2, and the advisory branches still report', () => {
     const f = fixture({ tsExit: 1 })
     try {
       const { status, stdout } = attempt(f.repo, ['--since', 'HEAD'], env(f))
-      assert.equal(status, 1)
+      // ESLint's 1 is a lint error, which is this gate's 2: the gate says stop.
+      assert.equal(status, 2)
       // Go runs after TypeScript and its findings are advisory. A failing earlier branch must not
       // swallow them, or a mixed commit reports only whichever language failed first.
       assert.match(stdout, /gorule/)
@@ -221,11 +270,65 @@ describe('one invocation, every language the repo is wired for', () => {
     }
   })
 
+  test('a broken branch exits 1 even alongside another branch reporting a finding', () => {
+    // TypeScript reports a surviving finding (2) and the Go run then breaks (1). 1 has to win:
+    // one branch never read the code it was given, so the gate did not answer, and a hook told 2
+    // would report a fixable finding when half the change went unexamined.
+    const f = fixture({ tsExit: 1, gclExit: 3 })
+    try {
+      const { status, stdout } = attempt(f.repo, ['--since', 'HEAD'], env(f))
+      assert.equal(status, 1)
+      // The module and the linter's own words both survive. Piping the header and the output
+      // into an undefined function discarded exactly this, leaving a blocked commit with no
+      // stated cause.
+      assert.match(stdout, /^=== \. — the lint run failed ===$/m)
+      assert.match(stdout, /^the config is unreadable$/m)
+    } finally {
+      f.cleanup()
+    }
+  })
+
   test('an unknown --only is rejected rather than silently linting nothing', () => {
     const f = fixture()
     try {
+      // 1, not 2: nothing was linted, so this is the gate breaking rather than a finding.
       const { status } = attempt(f.repo, ['--only', 'rust', '--since', 'HEAD'], env(f))
-      assert.equal(status, 2)
+      assert.equal(status, 1)
+    } finally {
+      f.cleanup()
+    }
+  })
+
+  test('a multi-word --only is rejected rather than matching as a substring', () => {
+    const f = fixture()
+    try {
+      const { status, stdout } = attempt(f.repo, ['--only', 'ts go', '--since', 'HEAD'], env(f))
+      assert.equal(status, 1)
+      assert.equal(stdout, '')
+    } finally {
+      f.cleanup()
+    }
+  })
+
+  test('a --since ref git cannot resolve fails rather than reporting a clean run', () => {
+    const f = fixture()
+    try {
+      const { status, stdout } = attempt(f.repo, ['--since', 'no-such-ref-xyz'], env(f))
+      assert.equal(status, 1)
+      assert.equal(stdout, '')
+    } finally {
+      f.cleanup()
+    }
+  })
+
+  test('TVRMSMITH_REGISTRY_KEY naming no directory fails rather than skipping every branch', () => {
+    const f = fixture()
+    try {
+      const { status } = attempt(f.repo, ['--only', 'go', '--since', 'HEAD'], {
+        ...env(f),
+        TVRMSMITH_REGISTRY_KEY: join(f.root, 'typo'),
+      })
+      assert.equal(status, 1)
     } finally {
       f.cleanup()
     }
