@@ -117,6 +117,39 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 	}
 }
 
+// TestCaseLabelStaysQuoteFreeAndUnambiguous pins the two properties the
+// subtest name above depends on. A double quote in the name closes the junit
+// report's name attribute early and the whole report stops parsing, which is
+// how the suite once passed while reporting no test count at all. Distinct
+// labels are the reason the rendering is not simply a strip of the quotes: an
+// empty value, a leading-space value and their near misses each have to stay
+// readable as themselves in the report.
+func TestCaseLabelStaysQuoteFreeAndUnambiguous(t *testing.T) {
+	raws := []string{"1", "", "0", "true", "TRUE", "yes", " 1", "nope"}
+
+	seen := map[string]string{}
+	for _, raw := range raws {
+		label := caseLabel(raw)
+		if strings.ContainsAny(label, "\"<>&") {
+			t.Errorf("caseLabel(%q) = %q, want no character that an XML attribute cannot carry raw", raw, label)
+		}
+		if strings.Contains(label, " ") {
+			t.Errorf("caseLabel(%q) = %q, want no space, which go test rewrites to an underscore", raw, label)
+		}
+		if prior, clash := seen[label]; clash {
+			t.Errorf("caseLabel(%q) and caseLabel(%q) both render %q, want one name per value", prior, raw, label)
+		}
+		seen[label] = raw
+	}
+
+	if got := caseLabel(""); got != "empty" {
+		t.Errorf("caseLabel(%q) = %q, want %q", "", got, "empty")
+	}
+	if got := caseLabel(" 1"); got != `\s1` {
+		t.Errorf("caseLabel(%q) = %q, want %q", " 1", got, `\s1`)
+	}
+}
+
 // realExtractorCases names every case that drives the real dotnet toolchain
 // and so decides on METRIC_GATE_REQUIRE_DOTNET. The child selection and the
 // per-case outcome lines the enforcement rows assert are both derived from it,
