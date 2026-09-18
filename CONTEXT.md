@@ -128,6 +128,43 @@ A single measured quantity the gate computes per method and compares against a t
 the first. A metric declares the inputs it needs, and the gate demands an input only when a selected
 metric declared it.
 
+## lint-changed
+
+The language-neutral half of the **lint** mode, and the counterpart to the gate. Reads a linter's
+own report, keeps the findings the change is answerable for, and decides whether the commit stops.
+It is shared across every language; the language-specific half is the linter itself plus a parser
+that reads its report format.
+
+Do not call it a gate. A gate compares a measured quantity against a threshold, and this has no
+threshold. It has a rule.
+
+## Finding
+
+One diagnostic, as the linter reported it: a rule id, a message, a severity left as the tool said
+it, and one or more **locations**. A location is a span in one source file, inclusive of both lines.
+Primary and related locations are the same kind of thing here, because the in-scope rule treats them
+alike.
+
+## In scope
+
+A finding is in scope when any of its locations holds a **touched line**. The touched-line
+definition is the one above, shared with the gate, and a finding in scope blocks the commit. A
+finding out of scope is dropped and never reported, so a legacy file you touch one line in hands you
+no backlog.
+
+A few rule ids ignore scope: the ones meaning the analyzer failed to load, where a clean result
+proves nothing and the diff underneath is beside the point.
+
+## Waiver
+
+Permission for one rule to be suppressed on one path, once, carrying a mandatory reason. Waivers
+live in an append-only log outside the repo, machine-local, so nothing about them is committed. A
+waiver is **spent** when it suppresses a finding, and a spend records the index tree it was spent
+against, so retrying the same commit reuses the waiver rather than burning a second.
+
+Spending is what makes a waiver an escape hatch rather than a permanent exception. Nothing in the
+log is ever rewritten, so the file is the audit.
+
 ## Coverage report
 
 An input the gate consumes and never produces. Someone else runs the tests. A report carries the

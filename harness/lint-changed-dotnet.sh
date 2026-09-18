@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Report personal analyzer diagnostics on changed C# files only.
+# Block the commit on analyzer diagnostics touching changed C# lines.
 #
 #   lint-changed-dotnet.sh --staged            # what a commit would contain (the pre-commit hook)
 #   lint-changed-dotnet.sh --since main        # everything changed against a ref
@@ -13,12 +13,19 @@
 # a single project build on a mature codebase reports dozens of warnings, nearly all of them in
 # code nobody is being asked to touch.
 #
-# Exit status is dotnet build's: **compile errors fail, analyzer warnings do not**. The same
-# convention lint-changed.sh uses, and here it is not merely consistent but forced — every id
-# this harness injects is a warning by design — no previously-succeeding build may start
-# failing — so blocking on them would mean overriding the build's own verdict. Doing that fairly
-# would need per-changed-*line* scoping; without it, a legacy file you touch one line in carries
-# findings on lines you never wrote. So: report loudly, do not block.
+# This blocks. A compile error is the build's own verdict and fails as it always did. A warning
+# now fails too, but only when it touches a line the change actually wrote, which is the
+# per-changed-line scoping an earlier version of this header named as the missing precondition.
+# `lint-changed` does that scoping: the build writes SARIF, this script pipes it in, and its
+# exit status becomes the script's. Exit 2 is "a finding survived", so a hook can tell that from
+# the gate breaking. ADR 0010 carries the rule and the reasoning.
+#
+# Severity in `Descriptors` stays at Warning, since adoption is machine-local against code other
+# people wrote and no previously-succeeding build may start failing. The build's verdict is
+# still the build's; the blocking verdict is this script's.
+#
+# Past a genuine false positive there is one route, and `lint-changed` prints the exact command
+# for it. Waivers are one-shot, carry a reason, and live in a log outside the repo.
 #
 # Written for bash 3.2 (the macOS system bash).
 set -uo pipefail
@@ -35,7 +42,7 @@ while [ $# -gt 0 ]; do
     --staged) mode=--staged; shift ;;
     --since) mode=--since; ref=${2:?--since needs a ref}; shift 2 ;;
     --files) mode=--files; shift; while [ $# -gt 0 ]; do explicit_files+=("$1"); shift; done ;;
-    -h|--help) sed -n '2,24p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,30p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "lint-changed-dotnet: unknown argument '$1'" >&2; exit 2 ;;
   esac
 done
@@ -111,20 +118,12 @@ done <<<"$changed"
 
 [ ${#files[@]} -gt 0 ] || exit 0
 
-# A staged file whose worktree copy differs cannot be honoured here the way lint-changed.sh
-# honours it: ESLint takes content on stdin, MSBuild compiles what is on disk. Building a
-# rewritten copy of the tree to fix that would cost more than it buys at warning severity.
-# Say so rather than let it pass silently.
-if [ "$mode" = "--staged" ]; then
-  divergent=()
-  for file in "${files[@]}"; do
-    git diff --quiet -- "$file" || divergent+=("$file")
-  done
-  if [ ${#divergent[@]} -gt 0 ]; then
-    echo "lint-changed-dotnet: these are staged in one state and on disk in another; the compiler sees the disk copy:" >&2
-    printf '    %s\n' "${divergent[@]}" >&2
-  fi
-fi
+# A staged file whose worktree copy differs still cannot be honoured here the way
+# lint-changed.sh honours it: ESLint takes content on stdin, MSBuild compiles what is on disk.
+# At warning severity that was a caveat worth printing. Now that a finding blocks, it would fail
+# a commit over code the commit does not contain, so lint-changed makes it a hard stop instead.
+# The check lives there rather than here because it has to cover every staged path, not only the
+# ones this script chose to build.
 
 # The project that owns a file: nearest ancestor holding a .csproj. That is also the directory
 # MSBuild treats as the project root, so every .cs below it is in the compilation by default.
@@ -154,9 +153,39 @@ projects=$(printf '%s\n' "${pairs[@]}" | cut -f1 | sort -u)
 project_count=$(printf '%s\n' "$projects" | grep -c .)
 [ "$project_count" -gt 4 ] && echo "lint-changed-dotnet: $project_count projects to build; this will take a moment" >&2
 
+# lint-changed is the blocking half, and it is language-neutral: it reads the SARIF below,
+# keeps only the findings touching a changed line, applies any waiver, and sets the exit status.
+#
+# Built here rather than bootstrapped, because Go's build cache makes a rebuild of an unchanged
+# tree cost milliseconds against a dotnet build's seconds, and building every time is one less
+# thing that can go stale. It has to be a built binary rather than `go run`: lint-changed reads
+# the git repo it is *run in*, and `go run` would have to run in the hub's module directory.
+command -v go >/dev/null 2>&1 || {
+  echo "lint-changed-dotnet: no go on PATH, so the changed-line filter cannot run" >&2
+  echo "  Findings would go unchecked and the commit would pass unexamined, so this is a failure" >&2
+  echo "  rather than a skip. Install Go, or unstage the C# changes." >&2
+  exit 2
+}
+
+cache_home=${XDG_CACHE_HOME:-$HOME/.cache}
+lint_changed=$cache_home/coding-standards/lint-changed
+mkdir -p "$(dirname "$lint_changed")" || exit 2
+if ! build_out=$(cd "$hub" && go build -o "$lint_changed" ./lint/cmd/lint-changed 2>&1); then
+  echo "lint-changed-dotnet: could not build lint-changed, so the changed-line filter cannot run" >&2
+  printf '%s\n' "$build_out" >&2
+  exit 2
+fi
+
+case "$mode" in
+  --staged) scope_args=(--staged) ;;
+  --since)  scope_args=(--since "$ref") ;;
+  --files)  scope_args=(--files "$(IFS=,; echo "${files[*]}")") ;;
+esac
+
 status=0
-findings=$(mktemp)
-trap 'rm -f "$findings"' EXIT
+sarif_dir=$(mktemp -d)
+trap 'rm -rf "$sarif_dir"' EXIT
+sarifs=()
 
 for proj in $projects; do
   # Two passes, and both are needed for different reasons.
@@ -191,34 +220,43 @@ for proj in $projects; do
   # incremental against eight forced on the same tree. --no-incremental makes csc run again;
   # BuildProjectReferences=false stops that force from cascading through the graph, which is
   # safe here and only here, because pass 1 has already put the referenced assemblies on disk.
+  #
+  # ErrorLog is what makes the diagnostics readable rather than greppable. MSBuild repeats each
+  # one across its passes and again in the summary, and its console format carries no line span
+  # and no related locations. SARIF carries all three, so the scoping below works off structure
+  # instead of a regex over English.
+  sarif=$sarif_dir/$(echo "$proj" | tr '/' '_').sarif
   out=$(CustomAfterMicrosoftCommonProps="$analyzer_props" \
     dotnet build "$proj" --no-incremental -p:BuildProjectReferences=false \
-      -p:TvrmsmithAnalyzersEnabled=true -p:TvrmsmithAnalyzersScopeToChanged=false -v:m --nologo 2>&1)
+      -p:TvrmsmithAnalyzersEnabled=true -p:TvrmsmithAnalyzersScopeToChanged=false \
+      -p:ErrorLog="$sarif,version=2.1" -v:m --nologo 2>&1)
   if [ $? -ne 0 ]; then
     status=1
     echo "=== $proj — the diagnostics pass failed after a clean build ==="
     grep -E ': error [A-Z]+[0-9]+' <<<"$out" | sort -u
     continue
   fi
-
-  # MSBuild repeats each diagnostic across its passes, and the summary at the end repeats it
-  # again, so the same finding arrives several times. Cut to the message and dedupe.
-  for file in $(printf '%s\n' "${pairs[@]}" | awk -F'\t' -v p="$proj" '$1 == p { print $2 }' | sort -u); do
-    grep -F "$file(" <<<"$out" \
-      | grep -E ': warning (TVRM|FAA)[0-9]+' \
-      | sed -e 's/^ *[0-9]*>//' -e 's/ \[[^]]*\.csproj\]$//' \
-      | sort -u >>"$findings"
-  done
+  if [ -s "$sarif" ]; then
+    sarifs+=("$sarif")
+  fi
 done
 
-if [ -s "$findings" ]; then
-  count=$(sort -u "$findings" | tee "$findings.u" | wc -l | tr -d ' ')
-  mv "$findings.u" "$findings"
-  echo
-  echo "personal coding standards — $count finding(s) in the changed C# files:"
-  sed 's|^'"$repo_root"'/||; s/^/  /' "$findings"
-  echo
-  echo "  reported, not blocking. Every id here is a warning by design, so the commit proceeds."
+# Every project's report goes through lint-changed separately. Merging them first would mean
+# this script understanding SARIF, which is the one thing handing the job to lint-changed buys.
+# A broken run is reported as 1 whatever else happened, because a filter that did not run proves
+# nothing; 2 only survives when nothing broke.
+#
+# The ${#sarifs[@]} guard is for bash 3.2, where expanding an empty array under `set -u` is an
+# unbound-variable error rather than an empty expansion.
+if [ ${#sarifs[@]} -gt 0 ]; then
+  for sarif in "${sarifs[@]}"; do
+    "$lint_changed" --format sarif --language csharp "${scope_args[@]}" <"$sarif"
+    case $? in
+      0) ;;
+      2) [ $status -eq 0 ] && status=2 ;;
+      *) status=1 ;;
+    esac
+  done
 fi
 
 exit $status

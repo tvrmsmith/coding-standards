@@ -98,9 +98,22 @@ Four things about it that are not obvious:
   (phantom `CS0246`/`CS0234`). So an ordinary incremental build runs first to make the
   dependencies real, and the forced pass second.
 
-Findings on the .NET side **report and never block**: every id the injection delivers is a
-warning by design, because no build that succeeded before adoption may start failing. Compile
-errors still block, as on the TypeScript side.
+Findings on the .NET side **block the commit when they touch a line the change wrote**. Every id
+the injection delivers is still a warning, because no build that succeeded before adoption may
+start failing, so the build's own exit status is unchanged. The blocking verdict is the hook's:
+the diagnostics pass writes SARIF via `-p:ErrorLog`, `lint-changed` keeps the findings whose
+locations hold a touched line, and its exit status becomes the script's. Exit 2 is a surviving
+finding, 1 is the filter breaking, and the two stay distinct so a hook can tell them apart.
+
+Compile errors still block, as on the TypeScript side.
+
+Two consequences worth knowing before you hit them. A staged file whose disk copy differs is now
+a hard stop rather than a printed caveat, because MSBuild compiles disk while the commit carries
+the index, and failing a commit over code it does not contain would be worse than refusing to
+guess. And the one route past a false positive is a waiver, one rule on one path, used once,
+with a reason, recorded in a log outside the repo; `lint-changed` prints the exact command.
+
+ADR 0010 carries the rule and the reasoning.
 
 ## The Go half
 
@@ -122,9 +135,12 @@ Three things about it differ from the other two:
   `test/lint-changed-go.test.js` pins all four combinations of registered/not and
   worktree/not, because a skip that should have been a run is silent and looks exactly like a
   repo with no findings.
-- **Findings report and never block**, the same position the .NET half is in and for the same
-  reason. `--issues-exit-code=0` makes that explicit, which also means a non-zero exit is
-  unambiguous: the run itself broke.
+- **Findings report and never block**, which the .NET half no longer does.
+  `--issues-exit-code=0` makes it explicit, and it also means a non-zero exit is unambiguous:
+  the run itself broke. This is the last half in that position, not a settled convention. Go
+  moves to the .NET arrangement in the third slice of
+  [issue 108](https://github.com/tvrmsmith/coding-standards/issues/108), which drops that flag
+  and pipes golangci-lint's JSON through `lint-changed`.
 - **There is no editor half yet.** The hook is the whole gate.
 
 `bootstrap go` is also the one mode that accepts the hub itself as its target. The other two

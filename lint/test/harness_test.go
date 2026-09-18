@@ -1,0 +1,196 @@
+// Package lintchanged_test is lint-changed's black-box suite. Every case
+// builds the real binary once, drives it against a throwaway git repo built
+// in t.TempDir(), feeds it a hand-written SARIF document on stdin, and
+// asserts stdout and the exit code. Nothing here reaches inside the binary.
+package lintchanged_test
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// binDir holds the lint-changed binary for the whole run.
+var binDir string
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "lint-changed-bin")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	binDir = dir
+	cmd := exec.Command("go", "build", "-o", filepath.Join(dir, "lint-changed"), "./cmd/lint-changed")
+	cmd.Dir = ".."
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "building lint-changed: %v\n%s", err, out)
+		os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+// gitEnv pins the identity and dates git commits with, and cuts the
+// machine's own config out, so a fixture repo behaves the same everywhere.
+var gitEnv = []string{
+	"LC_ALL=C",
+	"LANGUAGE=",
+	"GIT_AUTHOR_NAME=Fixture Author",
+	"GIT_AUTHOR_EMAIL=author@fixture.invalid",
+	"GIT_COMMITTER_NAME=Fixture Committer",
+	"GIT_COMMITTER_EMAIL=committer@fixture.invalid",
+	"GIT_AUTHOR_DATE=2026-01-01T00:00:00+00:00",
+	"GIT_COMMITTER_DATE=2026-01-01T00:00:00+00:00",
+	"GIT_CONFIG_GLOBAL=/dev/null",
+	"GIT_CONFIG_SYSTEM=/dev/null",
+}
+
+// fixture is a throwaway git repo one case runs lint-changed against.
+type fixture struct {
+	t          *testing.T
+	root       string
+	waiverFile string
+}
+
+// newFixture creates an empty git repo on branch "main", with its own
+// waiver log path so no case's waivers reach another's.
+func newFixture(t *testing.T) *fixture {
+	t.Helper()
+	f := &fixture{t: t, root: t.TempDir(), waiverFile: filepath.Join(t.TempDir(), "waivers.jsonl")}
+	f.git("-c", "init.defaultBranch=main", "init", "--quiet")
+	return f
+}
+
+// git runs one git command in the fixture and returns its trimmed stdout.
+func (f *fixture) git(args ...string) string {
+	f.t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = f.root
+	cmd.Env = append(os.Environ(), gitEnv...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		f.t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// write puts content at the repo-relative path rel, creating parents.
+func (f *fixture) write(rel, content string) {
+	f.t.Helper()
+	full := filepath.Join(f.root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// commitAll stages everything in the tree and commits it.
+func (f *fixture) commitAll(message string) {
+	f.t.Helper()
+	f.git("add", "-A")
+	f.git("commit", "--quiet", "-m", message)
+}
+
+// stage stages a single path without committing it, which is how a case
+// builds the state a --staged run reads.
+func (f *fixture) stage(rel string) {
+	f.t.Helper()
+	f.git("add", rel)
+}
+
+// writeTree is the index tree sha a case expects a waiver to be matched and
+// spent against, read back out of the fixture rather than out of the
+// binary's own output.
+func (f *fixture) writeTree() string {
+	f.t.Helper()
+	return f.git("write-tree")
+}
+
+// runResult is one lint-changed invocation.
+type runResult struct {
+	exitCode int
+	stdout   string
+	stderr   string
+}
+
+// run executes lint-changed in the fixture repo with sarif on stdin.
+func (f *fixture) run(sarif string, args ...string) runResult {
+	f.t.Helper()
+	return f.runInDir(f.root, sarif, args...)
+}
+
+// runInDir is run started in dir rather than the fixture root, which is how
+// a case drives lint-changed outside any git repository at all.
+func (f *fixture) runInDir(dir, sarif string, args ...string) runResult {
+	f.t.Helper()
+	cmd := exec.Command(filepath.Join(binDir, "lint-changed"), args...)
+	cmd.Dir = dir
+	cmd.Env = append(append(os.Environ(), gitEnv...), "TVRMSMITH_WAIVERS="+f.waiverFile)
+	cmd.Stdin = strings.NewReader(sarif)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	exitCode := 0
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+	case errors.As(err, &exit):
+		exitCode = exit.ExitCode()
+	default:
+		f.t.Fatalf("running lint-changed: %v", err)
+	}
+	return runResult{exitCode: exitCode, stdout: stdout.String(), stderr: stderr.String()}
+}
+
+// waiverLogLines is the raw lines of the fixture's waiver log, used to pin
+// how many records a run appended.
+func (f *fixture) waiverLogLines() []string {
+	f.t.Helper()
+	body, err := os.ReadFile(f.waiverFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		f.t.Fatal(err)
+	}
+	var lines []string
+	for _, line := range strings.Split(strings.TrimRight(string(body), "\n"), "\n") {
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+// sarifDoc wraps one or more sarifResult strings into a minimal SARIF 2.1
+// log, the shape lintfind.ParseSARIF reads.
+func sarifDoc(results ...string) string {
+	return `{"version":"2.1.0","runs":[{"results":[` + strings.Join(results, ",") + `]}]}`
+}
+
+// sarifLoc is one SARIF physicalLocation, a span inclusive of both ends.
+func sarifLoc(path string, start, end int) string {
+	return fmt.Sprintf(`{"physicalLocation":{"artifactLocation":{"uri":%q},"region":{"startLine":%d,"endLine":%d}}}`, path, start, end)
+}
+
+// sarifResult is one SARIF result with its primary locations.
+func sarifResult(rule, message string, locs ...string) string {
+	return fmt.Sprintf(`{"ruleId":%q,"level":"warning","message":{"text":%q},"locations":[%s]}`,
+		rule, message, strings.Join(locs, ","))
+}
+
+// sarifResultRelated is a SARIF result whose primary location is separate
+// from its related location, for pinning behaviour 5.
+func sarifResultRelated(rule, message string, primary, related string) string {
+	return fmt.Sprintf(`{"ruleId":%q,"level":"warning","message":{"text":%q},"locations":[%s],"relatedLocations":[%s]}`,
+		rule, message, primary, related)
+}
