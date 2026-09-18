@@ -4140,7 +4140,7 @@ func TestRunWhereTheRootGitNamesDoesNotResolveFailsInsideTheDocument(t *testing.
 	f := newFixture(t, "main")
 	bin := t.TempDir()
 	script := "#!/bin/sh\necho " + filepath.Join(t.TempDir(), "gone") + "\n"
-	//nolint:gosec // the case puts this stand-in git on PATH for the gate to spawn, so the owner execute bit is required; 0o700 in a per-case TempDir is as tight as an executable gets
+	//nolint:gosec // the case puts this stand-in git on PATH for the gate to spawn as a subprocess, so it must be executable, and G306 tests the mode as a bitwise subset of 0600, which no execute bit can satisfy
 	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}

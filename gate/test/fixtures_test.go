@@ -516,7 +516,7 @@ func (f *fixture) denyReadKeepingEntry(rel string) {
 		f.t.Skip("running as root, which lists a directory with no read bit anyway")
 	}
 	full := filepath.Join(f.root, filepath.FromSlash(rel))
-	//nolint:gosec // 0o111 is the condition under test, a directory the gate can traverse but not list; any tighter mode removes the case
+	//nolint:gosec // 0o111 is the condition under test, a directory the gate can traverse but not list, and G302 tests the mode as a bitwise subset of 0600, which the execute bit traversal needs can never satisfy
 	if err := os.Chmod(full, 0o111); err != nil {
 		f.t.Fatal(err)
 	}
@@ -808,7 +808,7 @@ func hideEditFilter(t *testing.T) (attributesFile, cleanCommand string) {
 	// A path rather than a command line, because the config value has to survive
 	// GIT_CONFIG_PARAMETERS' own single-quote packing intact.
 	cleanCommand = filepath.Join(dir, "hide-edit")
-	//nolint:gosec // git spawns this as filter.hide.clean, so the owner execute bit is required; 0o700 in a per-case TempDir is as tight as an executable gets
+	//nolint:gosec // git spawns this sed script as the *.cs clean driver named by the attributes file beside it, so it must be executable, and G306 tests the mode as a bitwise subset of 0600, which no execute bit can satisfy
 	if err := os.WriteFile(cleanCommand, []byte("#!/bin/sh\nexec sed 's/, edited//'\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -877,7 +877,7 @@ func (f *fixture) configureCleanFilter() {
 func (f *fixture) configureProcessFilter() {
 	f.t.Helper()
 	script := filepath.Join(f.t.TempDir(), "mute-process")
-	//nolint:gosec // git spawns this as filter.hide.process, so the owner execute bit is required; 0o700 in a per-case TempDir is as tight as an executable gets
+	//nolint:gosec // git launches this as the long-running filter.hide.process driver, so it must be executable, and G306 tests the mode as a bitwise subset of 0600, which no execute bit can satisfy
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		f.t.Fatal(err)
 	}
@@ -942,7 +942,7 @@ func (f *fixture) configureFsmonitorHook() string {
 	marker := filepath.Join(dir, "ran")
 	script := filepath.Join(dir, "fsmonitor")
 	body := fmt.Sprintf("#!/bin/sh\necho ran >> %s\nexit 1\n", marker)
-	//nolint:gosec // git spawns this as core.fsmonitor, so the owner execute bit is required; 0o700 in a per-case TempDir is as tight as an executable gets
+	//nolint:gosec // git runs this as the core.fsmonitor hook on every index refresh, so it must be executable, and G306 tests the mode as a bitwise subset of 0600, which no execute bit can satisfy
 	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
 		f.t.Fatal(err)
 	}
@@ -956,7 +956,7 @@ func (f *fixture) configureFsmonitorHook() string {
 func constantTextconvScript(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "constant-textconv")
-	//nolint:gosec // git spawns this as a textconv driver, so the owner execute bit is required; 0o700 in a per-case TempDir is as tight as an executable gets
+	//nolint:gosec // git execs this as a textconv driver once per blob it diffs, so it must be executable, and G306 tests the mode as a bitwise subset of 0600, which no execute bit can satisfy
 	if err := os.WriteFile(path, []byte("#!/bin/sh\necho constant\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -1066,7 +1066,7 @@ func (f *fixture) corruptPackedRefs() {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	//nolint:gosec // same fixture-owned .git/packed-refs the read above came from
+	//nolint:gosec // G703 follows the taint from the read above, and this writes that same .git/packed-refs back under the fixture's own t.TempDir root, damaged on purpose
 	if err := os.WriteFile(path, append(body, "not a ref line\n"...), 0o600); err != nil {
 		f.t.Fatal(err)
 	}
@@ -1077,7 +1077,7 @@ func (f *fixture) corruptPackedRefs() {
 func externalDiffScript(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "silent-diff")
-	//nolint:gosec // git spawns this as an external diff driver, so the owner execute bit is required; 0o700 in a per-case TempDir is as tight as an executable gets
+	//nolint:gosec // git execs this in place of its own diff engine as the external diff driver, so it must be executable, and G306 tests the mode as a bitwise subset of 0600, which no execute bit can satisfy
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}

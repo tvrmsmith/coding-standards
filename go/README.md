@@ -232,9 +232,12 @@ visits.
 
 `go/plugin/` and `go/test/` are separate modules, so the root-module run never reaches them. The
 `lint plugin (go)` job runs `go vet` and `go test` over `go/plugin`, and it does run this preset
-over `go/test/smoke` and `go/test/fixtures`, but only as fixtures. Those files hold deliberate
-violations, and the job fails when an enabled linter reports *nothing*, so no finding in either
-module blocks on its own.
+over `go/test/smoke` and `go/test/fixtures`, but only as fixtures holding deliberate violations.
+`build.sh` runs the preset over `smoke` with `--issues-exit-code 0` and fails only when the output
+carries no `tvrmsmith-comment-block-length` finding, which proves the plugin is linked in and
+says nothing about any other rule. `go/test/cases_test.go` runs it over `fixtures` and fails when
+an enabled linter reports nothing. Either way a finding in these two modules never blocks on its
+own, because what is checked is that a rule *fired*, not that the code is clean.
 
 ## Tests
 

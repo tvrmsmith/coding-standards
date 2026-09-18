@@ -1110,7 +1110,7 @@ func TestStagedRefusesAFileACleanFilterMakesLookUnmodified(t *testing.T) {
 func (f *fixture) hideMarkedEdit() {
 	f.t.Helper()
 	clean := filepath.Join(f.t.TempDir(), "hide-marked")
-	//nolint:gosec // git spawns this as filter.hide.clean, so the owner execute bit is required; 0o700 in a per-case TempDir is as tight as an executable gets
+	//nolint:gosec // git spawns this sed script as filter.hide.clean to strip the marker, so it must be executable, and G306 tests the mode as a bitwise subset of 0600, which no execute bit can satisfy
 	if err := os.WriteFile(clean, []byte("#!/bin/sh\nexec sed 's/, hidden//'\n"), 0o700); err != nil {
 		f.t.Fatal(err)
 	}

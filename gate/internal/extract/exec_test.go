@@ -1,9 +1,11 @@
 package extract
 
 import (
+	"errors"
 	"os/exec"
 	"testing"
 
+	"github.com/tvrmsmith/coding-standards/gate/internal/report"
 	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
@@ -56,7 +58,14 @@ func TestExecReportsANonZeroExitAsAnExtractorFailure(t *testing.T) {
 	if err == nil {
 		t.Fatalf("exec returned %q and no error, want an extractor failure", out)
 	}
-	if want := "stub extractor exited 1"; err.Error() != want {
-		t.Errorf("error = %q, want %q", err, want)
+	var failure *report.Failure
+	if !errors.As(err, &failure) {
+		t.Fatalf("error = %v (%T), want a *report.Failure, which is what carries a refusal code to the caller and into the rendered document", err, err)
+	}
+	if failure.Code != report.CodeExtractorFailed {
+		t.Errorf("refusal code = %q, want %q", failure.Code, report.CodeExtractorFailed)
+	}
+	if want := "stub extractor exited 1"; failure.Message != want {
+		t.Errorf("message = %q, want %q", failure.Message, want)
 	}
 }

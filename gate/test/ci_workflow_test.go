@@ -61,6 +61,9 @@ const (
 // a Go value yields the integer 1 and hides a value this suite rejects.
 // Node.Value is that source text, and it also keeps `if: false` and an integer
 // env value from failing the unmarshal.
+// continue-on-error is decoded here because it turns a red step green with
+// nothing else in the file changing, on the step or on the whole job, which is
+// the cheapest way to disarm the lint step below.
 type ciStep struct {
 	Name             string               `yaml:"name"`
 	ID               string               `yaml:"id"`
@@ -68,13 +71,20 @@ type ciStep struct {
 	If               yaml.Node            `yaml:"if"`
 	Run              string               `yaml:"run"`
 	WorkingDirectory string               `yaml:"working-directory"`
+	ContinueOnError  yaml.Node            `yaml:"continue-on-error"`
 	Env              map[string]yaml.Node `yaml:"env"`
 }
 
-// gateJobSteps is the gate job's steps in declaration order, read out of
-// ci.yml. Order is part of what the cases below assert, because a guard naming
-// a step that has not finished renders empty rather than failing.
-func gateJobSteps(t *testing.T) []ciStep {
+// ciJob is one job of the workflow. Steps are in declaration order, which is
+// part of what the cases below assert, because a guard naming a step that has
+// not finished renders empty rather than failing.
+type ciJob struct {
+	ContinueOnError yaml.Node `yaml:"continue-on-error"`
+	Steps           []ciStep  `yaml:"steps"`
+}
+
+// gateJobSpec is the gate job, read out of ci.yml.
+func gateJobSpec(t *testing.T) ciJob {
 	t.Helper()
 
 	body, err := os.ReadFile(ciWorkflow)
@@ -83,9 +93,7 @@ func gateJobSteps(t *testing.T) []ciStep {
 	}
 
 	var workflow struct {
-		Jobs map[string]struct {
-			Steps []ciStep `yaml:"steps"`
-		} `yaml:"jobs"`
+		Jobs map[string]ciJob `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal(body, &workflow); err != nil {
 		t.Fatalf("parsing the workflow this case reads as a contract at %s: %v", ciWorkflow, err)
@@ -95,49 +103,47 @@ func gateJobSteps(t *testing.T) []ciStep {
 	if !ok {
 		t.Fatalf("%s declares no %q job, so this case cannot find the steps it pins", ciWorkflow, gateJob)
 	}
-	return job.Steps
+	return job
 }
 
 // lintStep is the name: of the step that runs the personal preset with a
-// blocking exit code, lintBinary and lintConfig are the binary it runs and the
-// config it reads, both written relative to the repository root, and
-// lintTarget is the package pattern that reaches the whole module. lintGuard
-// is the whole if: it carries, naming both the toolchain step and the step
-// that builds the binary, so a failed build skips the lint rather than reding
-// it with a message pointing at a missing file.
+// blocking exit code. lintGuard is the whole if: it carries, naming both the
+// toolchain step and the step that builds the binary, so a failed build skips
+// the lint rather than reding it with a message pointing at a missing file.
+//
+// lintScript is the step's run: line, held byte for byte rather than picked
+// apart into flags. Every way of disarming this step is an edit to that line:
+// a `|| true` or `; exit 0` suffix swallows the exit status, a dropped
+// `--config` runs golangci-lint's own plugin-free default set, `--disable=gosec`
+// or `--default=none` empties it, `--new-from-rev` hides everything already on
+// disk, `--issues-exit-code 0` is the flag harness/lint-changed-go.sh passes
+// because it runs over other people's repositories, and narrowing `./...` to
+// one directory leaves the rest of the module unlinted. A predicate per hole
+// closes the holes someone thought of; the snapshot closes the rest.
 const (
 	lintStep        = "Lint the root module with the personal preset"
 	lintBuildStepID = "gcl"
-	lintBinary      = "./go/bin/tvrmsmith-gcl"
-	lintConfig      = "./go/golangci.yml"
-	lintTarget      = "./..."
 	lintGuard       = "${{ !cancelled() && " + suiteGuardReference +
 		" == 'success' && steps." + lintBuildStepID + ".outcome == 'success' }}"
+	lintScript = "./go/bin/tvrmsmith-gcl run --config ./go/golangci.yml --output.text.print-issued-lines=false ./..."
 )
-
-// lintExitCodeFlag is the flag that turns the gate off. harness/lint-changed-go.sh
-// passes it with 0 because it runs over other people's repositories, and the
-// same flag on this step would leave every gosec finding in the module
-// reported and CI green.
-const lintExitCodeFlag = "--issues-exit-code"
 
 // TestCIDeclaresTheBlockingLintStep reads ci.yml as the declarative contract it
 // is and asserts the gate job still runs the personal preset over the whole
-// root module with a blocking exit code. The step's argv is split into tokens
-// and each one asserted for what it means, rather than snapshotted, because
-// what matters is the binary, the config, the breadth and the absence of the
-// exit-code flag. Renaming the step, narrowing it to gate/, or appending
-// --issues-exit-code 0 each reds this case instead of quietly disarming the
-// gosec sweep this branch cleared.
+// root module with a blocking exit code. Renaming the step, narrowing it to
+// gate/, marking it continue-on-error or editing its command in any way reds
+// this case instead of quietly disarming the gosec sweep this branch cleared.
 func TestCIDeclaresTheBlockingLintStep(t *testing.T) {
-	job := gateJobSteps(t)
+	job := gateJobSpec(t)
+	assertFailureIsFatal(t, job.ContinueOnError, fmt.Sprintf("the %q job", gateJob))
 
 	var found, buildSteps int
 	buildDeclared := false
-	for i, step := range job {
+	for i, step := range job.Steps {
 		if step.ID == lintBuildStepID {
 			buildSteps++
 			buildDeclared = true
+			assertFailureIsFatal(t, step.ContinueOnError, fmt.Sprintf("the step with id: %s", lintBuildStepID))
 		}
 		if step.Name != lintStep {
 			continue
@@ -156,29 +162,10 @@ func TestCIDeclaresTheBlockingLintStep(t *testing.T) {
 			t.Errorf("%s: the %q step declares working-directory %q, want %q, the repository root. The module covers internal/gitscope and internal/srcpath as well as gate/, and the pattern selects the packages under the directory the step runs in, so declaring `gate` would leave those two unlinted without failing",
 				ciWorkflow, lintStep, step.WorkingDirectory, gateWorkingDir)
 		}
-
-		argv := strings.Fields(step.Run)
-		switch {
-		case len(argv) == 0 || argv[0] != lintBinary:
-			t.Errorf("%s: the %q step runs %q, want the first word to be %s, the binary go/build.sh writes with the personal plugin compiled in. Plain golangci-lint enables none of these rules",
-				ciWorkflow, lintStep, step.Run, lintBinary)
-		case len(argv) < 2 || argv[1] != "run":
-			t.Errorf("%s: the %q step runs %q, want the `run` subcommand, which is the only one that reports findings",
-				ciWorkflow, lintStep, step.Run)
-		}
-		if !slices.Contains(argv, lintTarget) {
-			t.Errorf("%s: the %q step runs %q, want the %s pattern so every package in the root module is linted rather than one directory",
-				ciWorkflow, lintStep, step.Run, lintTarget)
-		}
-		if !slices.Contains(argv, lintConfig) {
-			t.Errorf("%s: the %q step runs %q, want --config %s so it reads the preset this repo maintains rather than golangci-lint's defaults",
-				ciWorkflow, lintStep, step.Run, lintConfig)
-		}
-		for _, arg := range argv {
-			if arg == lintExitCodeFlag || strings.HasPrefix(arg, lintExitCodeFlag+"=") {
-				t.Errorf("%s: the %q step passes %s. The default is 1, and this step exists so a finding reds the build; with the flag every gosec finding in the module is reported and CI stays green",
-					ciWorkflow, lintStep, arg)
-			}
+		assertFailureIsFatal(t, step.ContinueOnError, fmt.Sprintf("the %q step", lintStep))
+		if step.Run != lintScript {
+			t.Errorf("%s: the %q step's run: line is not the reviewed one. Update lintScript once the new command is what this repo wants to run, and check it still blocks on a finding. got:\n%s\nwant:\n%s",
+				ciWorkflow, lintStep, step.Run, lintScript)
 		}
 	}
 
@@ -189,6 +176,18 @@ func TestCIDeclaresTheBlockingLintStep(t *testing.T) {
 	if buildSteps != 1 {
 		t.Errorf("%s: the %q job declares %d steps with id: %s, want exactly one. The lint step's guard reads that id's outcome, which is false for a step that does not exist, so the lint would never run",
 			ciWorkflow, gateJob, buildSteps, lintBuildStepID)
+	}
+}
+
+// assertFailureIsFatal requires that continue-on-error is absent from what the
+// node was decoded off. Actions defaults it to false, and any value at all is
+// worth reding here: `true` turns a finding green outright, and an expression
+// renders on the runner where this suite cannot see what it came to.
+func assertFailureIsFatal(t *testing.T, continueOnError yaml.Node, what string) {
+	t.Helper()
+	if continueOnError.Value != "" {
+		t.Errorf("%s: %s declares continue-on-error: %s. The lint step exists so a gosec finding reds the build, and this key leaves the job green whatever it reports",
+			ciWorkflow, what, continueOnError.Value)
 	}
 }
 
@@ -247,7 +246,7 @@ fi
 // drift without any Go test noticing, because the step runs on the runner
 // rather than here.
 func TestCIDeclaresTheSuiteStep(t *testing.T) {
-	job := gateJobSteps(t)
+	job := gateJobSpec(t).Steps
 
 	if len(realExtractorCases) == 0 {
 		t.Fatal("realExtractorCases is empty, so the name check below would pass over a script naming nothing")
