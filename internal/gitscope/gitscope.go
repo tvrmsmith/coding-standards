@@ -14,7 +14,9 @@
 // (GIT_DIR), so git's namespace is dropped from the command's environment
 // entirely and the two config-file variables are then pinned at the null device,
 // which is what keeps the scrub from handing the run back to an ambient
-// ~/.gitconfig.
+// ~/.gitconfig. The scrub has one exception, and it is per-Repo rather than
+// global: a Repo from OpenHook puts GIT_INDEX_FILE back into its own commands,
+// for the reason OpenHook gives.
 //
 // A content filter is the third, and neither of the first two answers reach it.
 // A filter driver is named by the repository's own .git/config, which the pins
