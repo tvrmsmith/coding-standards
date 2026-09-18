@@ -73,6 +73,14 @@ type ciStep struct {
 	WorkingDirectory string               `yaml:"working-directory"`
 	ContinueOnError  yaml.Node            `yaml:"continue-on-error"`
 	Env              map[string]yaml.Node `yaml:"env"`
+	With             map[string]yaml.Node `yaml:"with"`
+}
+
+// with is the source text of one of the step's with: inputs, empty when the
+// step declares no such input. Actions hands the runner the source text, so
+// the raw node is read for the same reason If and Env are.
+func (s ciStep) with(key string) string {
+	return s.With[key].Value
 }
 
 // ciJob is one job of the workflow. Steps are in declaration order, which is
@@ -128,18 +136,50 @@ const (
 	lintScript = "./go/bin/tvrmsmith-gcl run --config ./go/golangci.yml --output.text.print-issued-lines=false ./..."
 )
 
+// The build step installs the golangci-lint the plugin pins, and that version's
+// own go directive is ahead of the root module's. Without a setup-go declaring
+// the plugin module's Go first, `go install` switches toolchains and pulls a
+// ~90MB zip from the module proxy on every run, which is the TLS handshake
+// timeout that failed this job. So the plugin toolchain step is pinned here by
+// the file it reads its version from, and the step must run before the build
+// and carry no id:, because the suite's guard reads steps.setup and must keep
+// meaning the root install rather than this one.
+const (
+	pluginGoVersionKey  = "go-version-file"
+	pluginGoVersionFile = "go/plugin/go.mod"
+	pluginGoCacheKey    = "cache-dependency-path"
+	pluginGoCacheFile   = "go/plugin/go.sum"
+)
+
 // TestCIDeclaresTheBlockingLintStep reads ci.yml as the declarative contract it
 // is and asserts the gate job still runs the personal preset over the whole
-// root module with a blocking exit code. Renaming the step, narrowing it to
-// gate/, marking it continue-on-error or editing its command in any way reds
-// this case instead of quietly disarming the gosec sweep this branch cleared.
+// root module with a blocking exit code, off a binary built on the Go the
+// plugin module declares. Renaming the step, narrowing it to gate/, marking it
+// continue-on-error, editing its command in any way or dropping the plugin
+// toolchain install ahead of the build reds this case instead of quietly
+// disarming the gosec sweep this branch cleared.
 func TestCIDeclaresTheBlockingLintStep(t *testing.T) {
 	job := gateJobSpec(t)
 	assertFailureIsFatal(t, job.ContinueOnError, fmt.Sprintf("the %q job", gateJob))
 
-	var found, buildSteps int
+	var found, buildSteps, pluginToolchains int
 	buildDeclared := false
 	for i, step := range job.Steps {
+		if strings.HasPrefix(step.Uses, suiteGuardStepUses) && step.with(pluginGoVersionKey) == pluginGoVersionFile {
+			pluginToolchains++
+			if buildDeclared {
+				t.Errorf("%s: step %d of the %q job installs the %s toolchain after the step with id: %s, which is the step that needs it. The build runs on whatever Go came before it and downloads a toolchain from the module proxy",
+					ciWorkflow, i+1, gateJob, pluginGoVersionFile, lintBuildStepID)
+			}
+			if step.ID != "" {
+				t.Errorf("%s: step %d of the %q job installs the %s toolchain and declares id: %s. It must carry no id, because %s is read by the suite step's guard and has to keep meaning the root Go install",
+					ciWorkflow, i+1, gateJob, pluginGoVersionFile, step.ID, suiteGuardReference)
+			}
+			if cache := step.with(pluginGoCacheKey); cache != pluginGoCacheFile {
+				t.Errorf("%s: step %d of the %q job installs the %s toolchain with %s: %q, want %q, the sum file beside the go.mod it reads",
+					ciWorkflow, i+1, gateJob, pluginGoVersionFile, pluginGoCacheKey, cache, pluginGoCacheFile)
+			}
+		}
 		if step.ID == lintBuildStepID {
 			buildSteps++
 			buildDeclared = true
@@ -172,6 +212,10 @@ func TestCIDeclaresTheBlockingLintStep(t *testing.T) {
 	if found != 1 {
 		t.Errorf("%s: the %q job holds %d steps named %q, want exactly one. Without it nothing keeps a new exec.Command or os.ReadFile from reintroducing a G204 or G304 with CI green",
 			ciWorkflow, gateJob, found, lintStep)
+	}
+	if pluginToolchains != 1 {
+		t.Errorf("%s: the %q job holds %d steps installing the Go %s declares, want exactly one ahead of the step with id: %s. Without it that step's `go install` of the pinned golangci-lint sees an older toolchain and fetches a ~90MB zip from the module proxy on every run",
+			ciWorkflow, gateJob, pluginToolchains, pluginGoVersionFile, lintBuildStepID)
 	}
 	if buildSteps != 1 {
 		t.Errorf("%s: the %q job declares %d steps with id: %s, want exactly one. The lint step's guard reads that id's outcome, which is false for a step that does not exist, so the lint would never run",
