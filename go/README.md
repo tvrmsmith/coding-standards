@@ -211,16 +211,23 @@ meaningless.
 
 ## Severity, and what blocks
 
-Every rule here is advisory. `harness/lint-changed-go.sh` passes `--issues-exit-code=0` and
-reports the findings without failing, so a finding never blocks a commit. A non-zero exit after
-that flag means the *run* broke, a tree that does not typecheck or an unreadable config, and
-that does fail.
+In an adopted repo every rule here is advisory. `harness/lint-changed-go.sh` passes
+`--issues-exit-code=0` and reports the findings without failing, so a finding never blocks a
+commit. A non-zero exit after that flag means the *run* broke, a tree that does not typecheck or
+an unreadable config, and that does fail.
 
 The C# half no longer sits here. Its findings block the commit when they touch a changed line
 (ADR 0010), and Go joins it in the third slice of
 [issue 108](https://github.com/tvrmsmith/coding-standards/issues/108). The injected Roslyn ids
 still ship at `Warning`, for the reason this config's rules are advisory today, because this
 runs machine-locally over code other people wrote and are not being asked to change.
+
+The hub's own Go code is the exception, because here the code is ours to change. The `gate (go)`
+job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs this same binary and config
+over `gate/` with the default exit code, so any finding reds the build. Clearing one means
+tightening the code, or a `//nolint` that names the linter and gives a reason true of that site.
+Never a new id in `golangci.yml`'s `gosec.excludes`, which would also disarm the rule in every
+repo this layer visits.
 
 ## Tests
 
