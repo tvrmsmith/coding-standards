@@ -230,8 +230,11 @@ the code, or a `//nolint` that names the linter and gives a reason true of that 
 id in `golangci.yml`'s `gosec.excludes`, which would also disarm the rule in every repo this layer
 visits.
 
-`go/plugin/` and `go/test/` are separate modules and stay advisory: the `lint plugin (go)` job
-runs `go vet` and `go test` over them, not this preset, so a finding there blocks nothing.
+`go/plugin/` and `go/test/` are separate modules, so the root-module run never reaches them. The
+`lint plugin (go)` job runs `go vet` and `go test` over `go/plugin`, and it does run this preset
+over `go/test/smoke` and `go/test/fixtures`, but only as fixtures. Those files hold deliberate
+violations, and the job fails when an enabled linter reports *nothing*, so no finding in either
+module blocks on its own.
 
 ## Tests
 
