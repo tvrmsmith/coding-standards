@@ -211,11 +211,16 @@ meaningless.
 
 ## Severity, and what blocks
 
-Every rule here is advisory, the same position the injected Roslyn ids are in and for the same
-reason — this runs machine-locally over code other people wrote and are not being asked to
-change. `harness/lint-changed-go.sh` passes `--issues-exit-code=0` and reports the findings
-without failing, so a finding never blocks a commit. A non-zero exit after that flag means the
-*run* broke — a tree that does not typecheck, an unreadable config — and that does fail.
+Every rule here is advisory. `harness/lint-changed-go.sh` passes `--issues-exit-code=0` and
+reports the findings without failing, so a finding never blocks a commit. A non-zero exit after
+that flag means the *run* broke, a tree that does not typecheck or an unreadable config, and
+that does fail.
+
+The C# half no longer sits here. Its findings block the commit when they touch a changed line
+(ADR 0010), and Go joins it in the third slice of
+[issue 108](https://github.com/tvrmsmith/coding-standards/issues/108). The injected Roslyn ids
+still ship at `Warning`, for the reason this config's rules are advisory today, because this
+runs machine-locally over code other people wrote and are not being asked to change.
 
 ## Tests
 

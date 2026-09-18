@@ -69,7 +69,7 @@ go/                                  # the Go lint layer: one golangci-lint bina
   plugin/                            #   custom analyzers compiled into it
   golangci.yml                       #   the curated config, passed to the target with --config
   test/                              #   a fixture per enabled linter, and the proof each fires
-go.mod                               # one Go module, rooted here, covering internal/ and gate/
+go.mod                               # one Go module, rooted here, covering internal/, gate/ and lint/
 internal/                            # laid out to be shared by the Go binaries in this module
   gitscope/                          #   which commit a run diffs against, and which lines it touched
   srcpath/                           #   the one path currency: repo-relative, resolved
@@ -77,6 +77,10 @@ gate/                                # the metric gate: a Go binary, one TOON do
   cmd/metric-gate/
   internal/                          # scope selection, coverage, join, CRAP, TOON encoder
   test/                              # black-box tests against the built binary, with goldens
+lint/                                # lint-changed: the language-neutral half of the pre-commit lint
+  cmd/lint-changed/                  #   keeps the findings touching a changed line, sets the exit status
+  internal/                          #   the SARIF reader and the append-only waiver log
+  test/                              # black-box tests against the built binary
 harness/                             # machine-local adoption harness: editor layer + pre-commit
 ```
 
@@ -85,7 +89,7 @@ plugin is compiled into the linter rather than imported by it. Everything else G
 one module, so a package two binaries both need moves to the root `internal/` instead of being
 copied or imported across a module edge.
 
-The plugin loader ignores `packages/`, `dotnet/`, `go/`, `internal/` and `gate/`. It reads only
+The plugin loader ignores `packages/`, `dotnet/`, `go/`, `internal/`, `gate/` and `lint/`. It reads only
 `.claude-plugin/` and `skills/`.
 
 ## The custom rules

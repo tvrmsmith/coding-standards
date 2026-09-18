@@ -38,7 +38,7 @@ plugins `base.js` imports.
 | --- | --- |
 | `eslint-layer.js` | Loads the package's own ESLint config, spreads the personal preset after it. The layering, and the typed-layer gate. |
 | `lint-changed.sh` | Lints changed `.ts`/`.tsx` only, each through its own package's ESLint binary. |
-| `lint-changed-dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs`, filters the diagnostics down to those files. |
+| `lint-changed-dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then pipes it through `lint-changed`, which blocks the commit on any finding touching a changed line. |
 | `lint-changed-go.sh` | The Go counterpart: runs the personal golangci-lint binary over the packages owning the changed `.go`, filters down to those files. |
 | `hooks/pre-commit` | Template for the installed hook. The enforcement gate. One template, three branches, each self-gating. |
 | `write-vscode-settings.mjs` | The editor half — points the extension at `eslint-layer.js`, so typing sees what committing sees. TypeScript only. |
@@ -112,6 +112,11 @@ a hard stop rather than a printed caveat, because MSBuild compiles disk while th
 the index, and failing a commit over code it does not contain would be worse than refusing to
 guess. And the one route past a false positive is a waiver, one rule on one path, used once,
 with a reason, recorded in a log outside the repo; `lint-changed` prints the exact command.
+
+The C# hook now needs Go on `PATH`, even in a repo with no Go in it. The script builds
+`lint-changed` from this hub into `${XDG_CACHE_HOME:-~/.cache}/coding-standards` on every run,
+which Go's build cache makes free after the first. No Go means the filter cannot run, and an
+unrun filter proves nothing, so the script fails the commit rather than skipping.
 
 ADR 0010 carries the rule and the reasoning.
 
