@@ -1229,9 +1229,22 @@ var rawFlags = []string{"diff", "--no-color", "--no-ext-diff", "--raw"}
 // exotic: git exports it into every hook it runs, and a pre-commit hook is what
 // this gate is built to be.
 //
-// Nothing in the namespace is needed to run git. The repo comes from cmd.Dir
-// and the settings the parsers depend on come from configOverrides.
+// Nothing else in the namespace is needed to run git. The repo comes from
+// cmd.Dir and the settings the parsers depend on come from configOverrides.
 const gitNamespace = "GIT_"
+
+// keptFromNamespace is the one variable the scrub lets through.
+//
+// The argument above is about ambient input: GIT_DIR and GIT_WORK_TREE arrive
+// from whatever shell happened to run the gate and answer every question about
+// a different repository. GIT_INDEX_FILE under a pre-commit hook is the
+// opposite, it is the question being asked. `git commit -a` and
+// `git commit -- <pathspec>` build a temporary index and point the hook at it,
+// so a scrub sends the gate to .git/index, which for `-a` still matches HEAD:
+// every finding passes and the divergence hard stop sees no staged path at all.
+// The index the commit will write is the only index this gate has any business
+// reading.
+var keptFromNamespace = map[string]bool{"GIT_INDEX_FILE": true}
 
 // pinnedConfigFiles is what run puts back after the scrub, alongside whatever
 // blankingEnv contributes for the invocation.
@@ -1322,15 +1335,16 @@ func cause(err error) string {
 	return err.Error()
 }
 
-// sanitizedEnv is the process environment with git's own namespace removed and
-// the two config-file variables pinned. It is built rather than inherited, so
-// neither what the parser reads, nor which repository it reads it from, nor
-// whose config it reads it under depends on how the caller's shell was set up.
+// sanitizedEnv is the process environment with git's own namespace removed
+// bar keptFromNamespace, and the two config-file variables pinned. It is built
+// rather than inherited, so neither what the parser reads, nor which repository
+// it reads it from, nor whose config it reads it under depends on how the
+// caller's shell was set up.
 func sanitizedEnv() []string {
 	env := os.Environ()
 	kept := make([]string, 0, len(env)+len(pinnedConfigFiles))
 	for _, entry := range env {
-		if name, _, _ := strings.Cut(entry, "="); strings.HasPrefix(name, gitNamespace) {
+		if name, _, _ := strings.Cut(entry, "="); strings.HasPrefix(name, gitNamespace) && !keptFromNamespace[name] {
 			continue
 		}
 		kept = append(kept, entry)

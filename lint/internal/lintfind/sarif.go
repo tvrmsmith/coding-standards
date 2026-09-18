@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/url"
 	"path/filepath"
+	"strings"
 
 	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
@@ -57,9 +58,18 @@ type sarifLocation struct {
 // Dropped is one result ParseSARIF could not place inside root. The rule and
 // the URI it named are kept rather than counted, because a caller that drops
 // every result in a report has to say which ones went unchecked.
+//
+// Outside separates the one drop cause that says the report describes another
+// tree from the causes that say the report checked this one and had nothing
+// placeable to say about it. Roslyn writes CS1701, CS1702, CS8021 and the
+// command-line CS2xxx warnings at Location.None as a matter of course, and a
+// result with no region or one naming a path inside the root that is not a
+// regular file on disk, a source-generated document for instance, is the same
+// kind of ordinary. None of those is evidence that nothing was checked.
 type Dropped struct {
-	Rule string
-	URI  string
+	Rule    string
+	URI     string
+	Outside bool
 }
 
 // ParseSARIF reads a SARIF 2.1 log and returns every result it can place
@@ -85,7 +95,11 @@ func ParseSARIF(r io.Reader, root srcpath.Root) ([]Finding, []Dropped, error) {
 				return nil, nil, err
 			}
 			if finding == nil {
-				dropped = append(dropped, Dropped{Rule: result.RuleID, URI: firstURI(result)})
+				dropped = append(dropped, Dropped{
+					Rule:    result.RuleID,
+					URI:     firstURI(result),
+					Outside: namesOnlyOutside(result, root),
+				})
 				continue
 			}
 			findings = append(findings, *finding)
@@ -103,6 +117,38 @@ func firstURI(result sarifResult) string {
 		}
 	}
 	return "(no location)"
+}
+
+// namesOnlyOutside reports whether every artifact this result named sits
+// outside root. It reads the URIs alone, with no region and no disk involved,
+// because the question is which tree the report describes rather than whether
+// a particular location could be scored. A result naming no artifact at all
+// answers false: it made no claim about any tree.
+func namesOnlyOutside(result sarifResult, root srcpath.Root) bool {
+	named := false
+	for _, loc := range append(append([]sarifLocation{}, result.Locations...), result.RelatedLocations...) {
+		uri := loc.PhysicalLocation.ArtifactLocation.URI
+		if uri == "" {
+			continue
+		}
+		named = true
+		if underRoot(uri, root) {
+			return false
+		}
+	}
+	return named
+}
+
+// underRoot reads a URI against the root's directory lexically. Place answers
+// the stronger question, whether the URI names a regular file the gate can
+// score, and conflates a path outside the repo with a path inside it that is
+// not on disk. This is the weaker question the two have to be told apart by.
+func underRoot(uri string, root srcpath.Root) bool {
+	rel, err := filepath.Rel(root.Dir(), uriCandidate(uri, root))
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // suppressedInSource reports whether the target repo already turned this
@@ -202,6 +248,11 @@ func ignoresScope(rule string) bool {
 // absolute, and joined onto root's directory when it is relative, since
 // srcpath.Root.Place only resolves absolute candidates.
 func resolveURI(uri string, root srcpath.Root) (srcpath.Path, bool) {
+	return root.Place(uriCandidate(uri, root)).Inside()
+}
+
+// uriCandidate is the absolute path a SARIF artifactLocation.uri names.
+func uriCandidate(uri string, root srcpath.Root) string {
 	candidate := uri
 	if parsed, err := url.Parse(uri); err == nil && parsed.Scheme == "file" {
 		candidate = parsed.Path
@@ -209,7 +260,7 @@ func resolveURI(uri string, root srcpath.Root) (srcpath.Path, bool) {
 	if !filepath.IsAbs(candidate) {
 		candidate = filepath.Join(root.Dir(), filepath.FromSlash(candidate))
 	}
-	return root.Place(candidate).Inside()
+	return candidate
 }
 
 // quoteVersion renders an absent version distinctly from an empty string

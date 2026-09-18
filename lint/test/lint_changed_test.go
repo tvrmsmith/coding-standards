@@ -624,3 +624,114 @@ func TestUnplaceableReportBesideAPlaceableOneExitsOne(t *testing.T) {
 		t.Fatalf("stderr does not name the report that placed nothing: %s", res.stderr)
 	}
 }
+
+// Roslyn reports CS1701, CS1702, CS8021 and the command-line CS2xxx warnings at
+// Location.None, writes a diagnostic about a whole document with no region, and
+// names source-generated documents that were never written to disk. Every one
+// of those reports checked the code, so none of them is the unplaceable-report
+// hard stop, which exists for a report describing another tree. Tripping on one
+// refuses the commit with no waiver route out, since a dropped result never
+// becomes a waivable finding.
+func TestOrdinaryDropCausesAreNotTheHardStop(t *testing.T) {
+	cases := []struct {
+		name   string
+		result string
+	}{
+		{"no location at all", sarifResultNoLocation("CS8021", "no value for RazorTargetName")},
+		{"no region on an in-repo path", sarifResult("CS0219", "assigned but never used", sarifLocNoRegion("Foo.cs"))},
+		{"a generated document not on disk", sarifResult("CS8618", "non-nullable field", sarifLoc("Gen/Logging.g.cs", 3, 3))},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			stageEdit(f, "Foo.cs")
+
+			res := f.run(sarifDoc(tc.result), filterArgs("--staged")...)
+
+			if res.exitCode != 0 {
+				t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+			}
+		})
+	}
+}
+
+// A report that checked nothing never swallows a finding another report found.
+// The hard stop is the tool breaking and prints on stderr, while a surviving
+// finding is the commit's own problem and has to reach stdout with its waive
+// command, at exit 2, or the developer is told to fix a report instead of the
+// code.
+func TestARealFindingOutranksAnUncheckedReport(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "Foo.cs")
+	found := writeReport(t, "real.sarif",
+		sarifDoc(sarifResult("TVRM0001", "no getter", sarifLoc("Foo.cs", 3, 3))))
+	noloc := writeReport(t, "noloc.sarif", sarifDoc(sarifResultNoLocation("CS1701", "assuming assembly reference")))
+	outside := writeReport(t, "outside.sarif",
+		sarifDoc(sarifResult("TVRM0002", "msg", sarifLoc("/elsewhere/Other.cs", 3, 3))))
+
+	both := f.run("", filterArgs("--staged", "--report", found, "--report", noloc)...)
+	if both.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", both.exitCode, both.stdout, both.stderr)
+	}
+	if !strings.Contains(both.stdout, "TVRM0001") || !strings.Contains(both.stdout, "waive --language") {
+		t.Fatalf("the finding or its waive command never reached stdout: %s", both.stdout)
+	}
+
+	// The reports are given unchecked-first, since a run that stopped at the
+	// first failure would never open the one holding the finding.
+	withOutside := f.run("", filterArgs("--staged", "--report", outside, "--report", found)...)
+	if withOutside.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", withOutside.exitCode, withOutside.stdout, withOutside.stderr)
+	}
+	if !strings.Contains(withOutside.stdout, "TVRM0001") {
+		t.Fatalf("the finding never reached stdout: %s", withOutside.stdout)
+	}
+	if !strings.Contains(withOutside.stderr, "outside.sarif") {
+		t.Fatalf("stderr does not name the report that checked nothing: %s", withOutside.stderr)
+	}
+}
+
+// Every form of commit is driven through a real hook, because the form decides
+// which index git hands it. `git commit -a` and `git commit -- <pathspec>`
+// build a temporary index and name it in GIT_INDEX_FILE, so a gate that reads
+// .git/index reads content matching HEAD and passes every finding, and the
+// commit goes through carrying the code the gate was pointed away from. A
+// pre-staged index is the one case that already worked, which is why it is the
+// third assertion here rather than the only one.
+func TestPreCommitHookBlocksEveryFormOfCommit(t *testing.T) {
+	forms := []struct {
+		name   string
+		commit []string
+		stage  bool
+	}{
+		{"commit -a", []string{"commit", "-a", "-m", "edit"}, false},
+		{"commit with a pathspec", []string{"commit", "-m", "edit", "--", "Foo.cs"}, false},
+		{"add then commit", []string{"commit", "-m", "edit"}, true},
+	}
+	for _, form := range forms {
+		t.Run(form.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.write("Foo.cs", baseFile)
+			f.commitAll("base")
+			f.installPreCommitHook(writeReport(t, "build.sarif",
+				sarifDoc(sarifResult("TVRM0001", "no getter", sarifLoc("Foo.cs", 3, 3)))))
+			base := f.head()
+			f.write("Foo.cs", "line1\nline2\nCHANGED\nline4\nline5\n")
+			if form.stage {
+				f.stage("Foo.cs")
+			}
+
+			code, out := f.gitTry(form.commit...)
+
+			if code == 0 {
+				t.Fatalf("the commit went through with a finding on the changed line: %s", out)
+			}
+			if !strings.Contains(out, "TVRM0001") {
+				t.Fatalf("the hook output does not name the finding: %s", out)
+			}
+			if f.head() != base {
+				t.Fatalf("HEAD moved to %s, so the refused commit was written anyway", f.head())
+			}
+		})
+	}
+}

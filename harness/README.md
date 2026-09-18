@@ -125,9 +125,13 @@ a hard stop rather than a printed caveat, because MSBuild compiles disk while th
 the index, and failing a commit over code it does not contain would be worse than refusing to
 guess. A build that writes no SARIF at all is a hard stop for the same reason, since a clean build
 still writes an empty report and a missing one means `-p:ErrorLog` never took effect. A report
-whose results all fail to place inside the repo is the third, and `lint-changed` names each dropped
+whose results all name files outside the repo is the third, and `lint-changed` names each dropped
 rule and URI; each report answers that question alone, so one project placing nothing still stops
-the commit when another placed results. A report carrying no results at all is still a clean pass. And the one
+the commit when another placed results. Only a URI outside the repo counts, because only that says
+the report describes another tree. Roslyn writes CS1701, CS8021 and the command-line CS2xxx
+warnings at no location at all, reports a whole-document diagnostic with no region, and names
+generated documents that were never written to disk; those results are dropped and the commit goes
+on. A report carrying no results at all is still a clean pass. And the one
 route past a false positive is a waiver, one rule on one path, used once, with a reason, recorded
 in a log outside the repo; `lint-changed` prints the exact command. A waiver is spent only on a run
 that ends clean, so a waived finding on a commit that blocked on something else costs nothing.

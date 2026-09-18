@@ -98,6 +98,49 @@ func (f *fixture) git(args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// gitTry runs one git command that is expected to fail sometimes, returning
+// its exit code and combined output. It is how a case drives a commit a
+// pre-commit hook may refuse.
+func (f *fixture) gitTry(args ...string) (int, string) {
+	f.t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = f.root
+	cmd.Env = append(scrubbedEnv(), gitEnv...)
+	out, err := cmd.CombinedOutput()
+	exitCode := 0
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+	case errors.As(err, &exit):
+		exitCode = exit.ExitCode()
+	default:
+		f.t.Fatalf("git %s: %v", strings.Join(args, " "), err)
+	}
+	return exitCode, string(out)
+}
+
+// installPreCommitHook writes a real pre-commit hook that runs lint-changed
+// over report, the way harness/hooks/pre-commit runs it after a build.
+func (f *fixture) installPreCommitHook(report string) {
+	f.t.Helper()
+	hooks := filepath.Join(f.root, ".git", "hooks")
+	if err := os.MkdirAll(hooks, 0o750); err != nil {
+		f.t.Fatal(err)
+	}
+	script := fmt.Sprintf("#!/bin/sh\nexport TVRMSMITH_WAIVERS=%q\nexec %q --format sarif --language csharp --staged --report %q\n",
+		f.waiverFile, filepath.Join(binDir, "lint-changed"), report)
+	if err := os.WriteFile(filepath.Join(hooks, "pre-commit"), []byte(script), 0o700); err != nil { //nolint:gosec // G306: a hook git will not run is no hook.
+		f.t.Fatal(err)
+	}
+}
+
+// head is the sha the branch points at, so a case can tell a refused commit
+// from one that went through.
+func (f *fixture) head() string {
+	f.t.Helper()
+	return f.git("rev-parse", "HEAD")
+}
+
 // write puts content at the repo-relative path rel, creating parents.
 func (f *fixture) write(rel, content string) {
 	f.t.Helper()
@@ -198,6 +241,12 @@ func sarifDoc(results ...string) string {
 // sarifLoc is one SARIF physicalLocation, a span inclusive of both ends.
 func sarifLoc(path string, start, end int) string {
 	return fmt.Sprintf(`{"physicalLocation":{"artifactLocation":{"uri":%q},"region":{"startLine":%d,"endLine":%d}}}`, path, start, end)
+}
+
+// sarifLocNoRegion is a SARIF physicalLocation naming a file and no region,
+// which is what Roslyn writes for a diagnostic about a whole document.
+func sarifLocNoRegion(path string) string {
+	return fmt.Sprintf(`{"physicalLocation":{"artifactLocation":{"uri":%q}}}`, path)
 }
 
 // sarifResult is one SARIF result with its primary locations.

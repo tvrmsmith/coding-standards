@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -55,14 +54,14 @@ func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	findings, dropped, err := readReports(fa, stdin, repo.Root())
+	reports, err := readReports(fa, stdin, repo.Root())
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
 
 	var survivors []survivor
-	for _, f := range findings {
+	for _, f := range reports.findings {
 		if s, ok := scopeFinding(f, scope); ok {
 			survivors = append(survivors, s)
 		}
@@ -101,8 +100,11 @@ func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
 		matched = append(matched, matchedWaiver{waiver: w, rule: s.finding.Rule, path: path})
 	}
 
-	if len(dropped) > 0 {
-		_, _ = fmt.Fprintf(stderr, "%d result(s) could not be placed inside the repo and were dropped\n", len(dropped))
+	if len(reports.dropped) > 0 {
+		_, _ = fmt.Fprintf(stderr, "%d result(s) could not be placed inside the repo and were dropped\n", len(reports.dropped))
+	}
+	for _, msg := range reports.unchecked {
+		_, _ = fmt.Fprintln(stderr, msg)
 	}
 
 	if len(kept) > 0 {
@@ -112,6 +114,13 @@ func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		reportKept(stdout, waiveBinary(), fa.Language, kept)
 		return 2
+	}
+
+	// A report that checked nothing is the tool breaking rather than a finding,
+	// so it is answered only once no finding has blocked, and before any waiver
+	// is spent on a run the developer has to make again.
+	if len(reports.unchecked) > 0 {
+		return 1
 	}
 
 	// The spends land only now, because a waiver's one use is one commit that
@@ -208,60 +217,81 @@ func (t *indexTree) sha() (string, error) {
 	return t.sum, nil
 }
 
+// parsedReports is every report one run read: the findings they placed, the
+// results they dropped, and the reports that described another tree entirely.
+type parsedReports struct {
+	findings  []lintfind.Finding
+	dropped   []lintfind.Dropped
+	unchecked []string
+}
+
 // readReports parses every --report the caller named, or stdin when it named
 // none. One process reads them all so the whole commit's findings meet the
 // waiver log once: a process per report would spend a waiver against findings
 // the next process had not seen yet.
-func readReports(fa FilterArgs, stdin io.Reader, root srcpath.Root) ([]lintfind.Finding, []lintfind.Dropped, error) {
+//
+// An unchecked report does not stop the reading. A report that describes
+// another tree says nothing about the ones that describe this tree, and a real
+// finding in a later report has to reach stdout rather than being swallowed by
+// the exit 1 the unchecked report earns.
+func readReports(fa FilterArgs, stdin io.Reader, root srcpath.Root) (parsedReports, error) {
+	var out parsedReports
 	if len(fa.Reports) == 0 {
 		findings, dropped, err := lintfind.ParseSARIF(stdin, root)
 		if err != nil {
-			return nil, nil, err
+			return parsedReports{}, err
 		}
-		if err := checkPlaced("the report on stdin", findings, dropped); err != nil {
-			return nil, nil, err
-		}
-		return dedup(findings), dropped, nil
+		out.collect("the report on stdin", findings, dropped)
+		out.findings = dedup(out.findings)
+		return out, nil
 	}
-	var findings []lintfind.Finding
-	var dropped []lintfind.Dropped
 	for _, name := range fa.Reports {
 		//nolint:gosec // G304: the report path is the caller's whole point. The
 		// harness names the files its own build just wrote, in a directory it
 		// created, so there is no trust line for a variable path to cross.
 		f, err := os.Open(name)
 		if err != nil {
-			return nil, nil, fmt.Errorf("opening report %s: %w", name, err)
+			return parsedReports{}, fmt.Errorf("opening report %s: %w", name, err)
 		}
 		got, gotDropped, err := lintfind.ParseSARIF(f, root)
 		_ = f.Close()
 		if err != nil {
-			return nil, nil, err
+			return parsedReports{}, err
 		}
-		if err := checkPlaced(name, got, gotDropped); err != nil {
-			return nil, nil, err
-		}
-		findings = append(findings, got...)
-		dropped = append(dropped, gotDropped...)
+		out.collect(name, got, gotDropped)
 	}
-	return dedup(findings), dropped, nil
+	out.findings = dedup(out.findings)
+	return out, nil
 }
 
-// checkPlaced refuses a report that placed nothing while dropping something.
-// That report checked no code at all, and passing the commit on it would be the
-// gate reporting clean on a report it never read. The question is asked of each
-// report on its own, because a commit spanning two projects where only one
-// resolves its URIs inside the repo would otherwise ride on the other's results.
-// A report with no results at all is a genuine clean pass.
-func checkPlaced(source string, findings []lintfind.Finding, dropped []lintfind.Dropped) error {
-	if len(findings) > 0 || len(dropped) == 0 {
-		return nil
+// collect takes one report's results in and records whether that report
+// checked this repo at all. A report that placed nothing while every artifact
+// it named sat outside the root describes another tree, so passing the commit
+// on it would be the tool reporting clean on a report it never read. The
+// question is asked of each report on its own, because a commit spanning two
+// projects where only one resolves its URIs inside the repo would otherwise
+// ride on the other's results. A report with no results, or one whose results
+// were dropped for any other reason, is a genuine clean pass.
+func (p *parsedReports) collect(source string, findings []lintfind.Finding, dropped []lintfind.Dropped) {
+	p.findings = append(p.findings, findings...)
+	p.dropped = append(p.dropped, dropped...)
+	if len(findings) > 0 {
+		return
+	}
+	var outside []lintfind.Dropped
+	for _, d := range dropped {
+		if d.Outside {
+			outside = append(outside, d)
+		}
+	}
+	if len(outside) == 0 {
+		return
 	}
 	msg := "every result in " + source + " fell outside the repo, so nothing was checked"
-	for _, d := range dropped {
+	for _, d := range outside {
 		msg += fmt.Sprintf("\n  %s at %s", d.Rule, d.URI)
 	}
-	return errors.New(msg)
+	p.unchecked = append(p.unchecked, msg)
 }
 
 // dedup keeps one copy of each distinct finding. A multi-targeted project
