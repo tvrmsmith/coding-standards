@@ -134,7 +134,21 @@ const (
 	// OpenRootUnresolvable is a toplevel git named that would not resolve to a
 	// root path.
 	OpenRootUnresolvable
+	// openKindCount is one past the last kind, so a kind declared above it
+	// bumps the count and reds the length assertion in openkinds_test.go.
+	// It is unexported because it is not a kind and no caller may switch on
+	// it.
+	openKindCount
 )
+
+// OpenKinds is every OpenKind this package defines, in declaration order. A
+// caller mapping each kind onto its own vocabulary, metric-gate onto ADR
+// 0008's codes, has no other way to walk the set: Go gives a switch over a
+// named int no exhaustiveness check, so nothing else catches a kind declared
+// here and left out of that mapping.
+func OpenKinds() []OpenKind {
+	return []OpenKind{OpenGitUnavailable, OpenRepoUnreadable, OpenNoRepo, OpenRootUnresolvable}
+}
 
 // OpenError is Open failing to establish which repository the run measures. It
 // carries a rendered message beside the kind, so a caller with no document

@@ -695,24 +695,33 @@ func asFailure(err error) (*report.Failure, bool) {
 	}
 	var open gitscope.OpenError
 	if errors.As(err, &open) {
-		return &report.Failure{Code: openCode(open.Kind), Message: open.Message}, true
+		code, mapped := openCode(open.Kind)
+		if !mapped {
+			return &report.Failure{
+				Code:    code,
+				Message: fmt.Sprintf("the gate has no error code for gitscope.OpenKind %d. %s", open.Kind, open.Message),
+			}, true
+		}
+		return &report.Failure{Code: code, Message: open.Message}, true
 	}
 	return nil, false
 }
 
-// openCode is ADR 0008's code for each way Open can fail. An unhandled kind
-// would be a code the document has no word for, so the switch is exhaustive
-// and the default panics rather than emitting an empty code.
-func openCode(kind gitscope.OpenKind) string {
+// openCode is ADR 0008's code for each way Open can fail. The bool reports
+// whether kind had a mapping: true for the four kinds gitscope defines today,
+// false for a kind added to that package without a case added here, which
+// returns report.CodeInternalError rather than panicking so the run still
+// exits 1 with a document.
+func openCode(kind gitscope.OpenKind) (string, bool) {
 	switch kind {
 	case gitscope.OpenGitUnavailable:
-		return report.CodeGitUnavailable
+		return report.CodeGitUnavailable, true
 	case gitscope.OpenRepoUnreadable:
-		return report.CodeGitRepoUnreadable
+		return report.CodeGitRepoUnreadable, true
 	case gitscope.OpenNoRepo:
-		return report.CodeNoGitRepo
+		return report.CodeNoGitRepo, true
 	case gitscope.OpenRootUnresolvable:
-		return report.CodeRepoRootUnresolvable
+		return report.CodeRepoRootUnresolvable, true
 	}
-	panic(fmt.Sprintf("unmapped gitscope.OpenKind %d", kind))
+	return report.CodeInternalError, false
 }
