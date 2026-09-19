@@ -72,6 +72,37 @@ func TestAnUnmappedOpenKindStillReachesTheDocument(t *testing.T) {
 	}
 }
 
+// TestAMappedOpenKindKeepsItsCodeAndMessage is the other half of issue 122's
+// fix: making an unmapped kind carry a composed message must not change what a
+// mapped kind carries. Every kind gitscope declares goes through asFailure
+// here, and each one keeps its own ADR 0008 code and gitscope's message
+// verbatim, with none of the "the gate has no error code" prefix.
+func TestAMappedOpenKindKeepsItsCodeAndMessage(t *testing.T) {
+	want := map[gitscope.OpenKind]string{
+		gitscope.OpenGitUnavailable:   report.CodeGitUnavailable,
+		gitscope.OpenRepoUnreadable:   report.CodeGitRepoUnreadable,
+		gitscope.OpenNoRepo:           report.CodeNoGitRepo,
+		gitscope.OpenRootUnresolvable: report.CodeRepoRootUnresolvable,
+	}
+
+	for _, kind := range gitscope.OpenKinds() {
+		message := fmt.Sprintf("gitscope rendered this for kind %d", kind)
+
+		failure, ok := asFailure(gitscope.OpenError{Kind: kind, Message: message})
+
+		if !ok {
+			t.Errorf("asFailure did not type an OpenError of kind %v, so the run would exit 1 with no document", kind)
+			continue
+		}
+		if failure.Code != want[kind] {
+			t.Errorf("the code for kind %v is %q, want %q", kind, failure.Code, want[kind])
+		}
+		if failure.Message != message {
+			t.Errorf("the message for kind %v is %q, want gitscope's own %q", kind, failure.Message, message)
+		}
+	}
+}
+
 // TestOpenCodeMapsEveryDeclaredKind walks gitscope.OpenKinds rather than
 // naming the four kinds again here, so a fifth kind appended to that list
 // without a case added to openCode reds this test instead of silently
