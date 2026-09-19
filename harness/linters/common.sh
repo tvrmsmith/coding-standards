@@ -16,7 +16,8 @@
 # that had not run yet.
 #
 # What it returns is the one convention all three share, ADR 0010's: 2 when a finding survived and
-# the gate says stop, 1 when the branch itself could not answer, 0 otherwise.
+# the gate says stop, 1 when the branch itself could not answer, 0 otherwise. `rank_status` below
+# is that convention as code, for every place two of these codes have to be folded into one.
 #
 # Written for bash 3.2 (the macOS system bash).
 
@@ -111,6 +112,18 @@ ancestor_with() {
     [ "$dir" = "." ] || [ "$dir" = "/" ] && return 1
     dir=$(dirname "$dir")
   done
+}
+
+# Folds a child status into a running one and echoes the result. 0 changes nothing, 2 takes hold
+# only while nothing has broken, and anything else is the gate breaking and sticks: a branch that
+# could not run says nothing about the code it never read, so its 1 outranks another's finding.
+# Echoed rather than assigned, so no caller's variable is written through dynamic scope.
+rank_status() {
+  case $2 in
+    0) echo "$1" ;;
+    2) if [ "$1" -eq 0 ]; then echo 2; else echo "$1"; fi ;;
+    *) echo 1 ;;
+  esac
 }
 
 # Skip, don't fail. A repo bootstrapped for one language must not have its commits blocked by a
