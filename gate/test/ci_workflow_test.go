@@ -94,6 +94,12 @@ type ciJob struct {
 // gateJobSpec is the gate job, read out of ci.yml.
 func gateJobSpec(t *testing.T) ciJob {
 	t.Helper()
+	return jobSpec(t, gateJob)
+}
+
+// jobSpec is one job of ci.yml, by its key under jobs:.
+func jobSpec(t *testing.T, name string) ciJob {
+	t.Helper()
 
 	body, err := os.ReadFile(ciWorkflow)
 	if err != nil {
@@ -107,9 +113,9 @@ func gateJobSpec(t *testing.T) ciJob {
 		t.Fatalf("parsing the workflow this case reads as a contract at %s: %v", ciWorkflow, err)
 	}
 
-	job, ok := workflow.Jobs[gateJob]
+	job, ok := workflow.Jobs[name]
 	if !ok {
-		t.Fatalf("%s declares no %q job, so this case cannot find the steps it pins", ciWorkflow, gateJob)
+		t.Fatalf("%s declares no %q job, so this case cannot find the steps it pins", ciWorkflow, name)
 	}
 	return job
 }
@@ -129,6 +135,11 @@ func gateJobSpec(t *testing.T) ciJob {
 // one directory leaves the rest of the module unlinted. A predicate per hole
 // closes the holes someone thought of; the snapshot closes the rest.
 const (
+	// lintJob is the job the step runs in. Not the gate job, though it lints the
+	// gate's code: the binary is already built there for the fixture test, on the
+	// Go the plugin module declares. Running it beside the gate suite instead
+	// costs a second setup-go and a second build, 40s against a 4s check.
+	lintJob         = "golint"
 	lintStep        = "Lint the root module with the personal preset"
 	lintBuildStepID = "gcl"
 	lintGuard       = "${{ !cancelled() && " + suiteGuardReference +
@@ -141,9 +152,10 @@ const (
 // the plugin module's Go first, `go install` switches toolchains and pulls a
 // ~90MB zip from the module proxy on every run, which is the TLS handshake
 // timeout that failed this job. So the plugin toolchain step is pinned here by
-// the file it reads its version from, and the step must run before the build
-// and carry no id:, because the suite's guard reads steps.setup and must keep
-// meaning the root install rather than this one.
+// the file it reads its version from, and the step must run before the build.
+// It is also the golint job's only Go install, so it is the step that carries
+// id: setup, which is the id both the build step's guard and the lint step's
+// guard read.
 const (
 	pluginGoVersionKey  = "go-version-file"
 	pluginGoVersionFile = "go/plugin/go.mod"
@@ -152,15 +164,15 @@ const (
 )
 
 // TestCIDeclaresTheBlockingLintStep reads ci.yml as the declarative contract it
-// is and asserts the gate job still runs the personal preset over the whole
+// is and asserts the golint job still runs the personal preset over the whole
 // root module with a blocking exit code, off a binary built on the Go the
 // plugin module declares. Renaming the step, narrowing it to gate/, marking it
 // continue-on-error, editing its command in any way or dropping the plugin
 // toolchain install ahead of the build reds this case instead of quietly
 // disarming the gosec sweep this branch cleared.
 func TestCIDeclaresTheBlockingLintStep(t *testing.T) {
-	job := gateJobSpec(t)
-	assertFailureIsFatal(t, job.ContinueOnError, fmt.Sprintf("the %q job", gateJob))
+	job := jobSpec(t, lintJob)
+	assertFailureIsFatal(t, job.ContinueOnError, fmt.Sprintf("the %q job", lintJob))
 
 	var found, buildSteps, pluginToolchains int
 	buildDeclared := false
@@ -169,15 +181,15 @@ func TestCIDeclaresTheBlockingLintStep(t *testing.T) {
 			pluginToolchains++
 			if buildDeclared {
 				t.Errorf("%s: step %d of the %q job installs the %s toolchain after the step with id: %s, which is the step that needs it. The build runs on whatever Go came before it and downloads a toolchain from the module proxy",
-					ciWorkflow, i+1, gateJob, pluginGoVersionFile, lintBuildStepID)
+					ciWorkflow, i+1, lintJob, pluginGoVersionFile, lintBuildStepID)
 			}
-			if step.ID != "" {
-				t.Errorf("%s: step %d of the %q job installs the %s toolchain and declares id: %s. It must carry no id, because %s is read by the suite step's guard and has to keep meaning the root Go install",
-					ciWorkflow, i+1, gateJob, pluginGoVersionFile, step.ID, suiteGuardReference)
+			if step.ID != suiteGuardStepID {
+				t.Errorf("%s: step %d of the %q job installs the %s toolchain and declares id: %q, want %q. It is the job's only Go install, and %s is what both the build step and the lint step guard on, so an id that does not match leaves both guards reading an empty outcome and both steps skipping with the job green",
+					ciWorkflow, i+1, lintJob, pluginGoVersionFile, step.ID, suiteGuardStepID, suiteGuardReference)
 			}
 			if cache := step.with(pluginGoCacheKey); cache != pluginGoCacheFile {
 				t.Errorf("%s: step %d of the %q job installs the %s toolchain with %s: %q, want %q, the sum file beside the go.mod it reads",
-					ciWorkflow, i+1, gateJob, pluginGoVersionFile, pluginGoCacheKey, cache, pluginGoCacheFile)
+					ciWorkflow, i+1, lintJob, pluginGoVersionFile, pluginGoCacheKey, cache, pluginGoCacheFile)
 			}
 		}
 		if step.ID == lintBuildStepID {
@@ -211,15 +223,15 @@ func TestCIDeclaresTheBlockingLintStep(t *testing.T) {
 
 	if found != 1 {
 		t.Errorf("%s: the %q job holds %d steps named %q, want exactly one. Without it nothing keeps a new exec.Command or os.ReadFile from reintroducing a G204 or G304 with CI green",
-			ciWorkflow, gateJob, found, lintStep)
+			ciWorkflow, lintJob, found, lintStep)
 	}
 	if pluginToolchains != 1 {
 		t.Errorf("%s: the %q job holds %d steps installing the Go %s declares, want exactly one ahead of the step with id: %s. Without it that step's `go install` of the pinned golangci-lint sees an older toolchain and fetches a ~90MB zip from the module proxy on every run",
-			ciWorkflow, gateJob, pluginToolchains, pluginGoVersionFile, lintBuildStepID)
+			ciWorkflow, lintJob, pluginToolchains, pluginGoVersionFile, lintBuildStepID)
 	}
 	if buildSteps != 1 {
 		t.Errorf("%s: the %q job declares %d steps with id: %s, want exactly one. The lint step's guard reads that id's outcome, which is false for a step that does not exist, so the lint would never run",
-			ciWorkflow, gateJob, buildSteps, lintBuildStepID)
+			ciWorkflow, lintJob, buildSteps, lintBuildStepID)
 	}
 }
 
