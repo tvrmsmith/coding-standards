@@ -241,18 +241,19 @@ the code, or a `//nolint` that names the linter and gives a reason true of that 
 id in `golangci.yml`'s `gosec.excludes`, which would also disarm the rule in every repo this layer
 visits.
 
-`gosec` is narrower than the rest of that job, because the preset turns it off in `_test.go` for
-the reason given above. The root-module run arms it in non-test code only, so the
-`//nolint:gosec` directives in this repository's own tests suppress nothing today and stand ready
-for the day that exclusion lifts.
+`gosec` reaches the tests in that run like every other linter, which is what the directives in
+`gate/test/` and `lint/test/` answer.
 
 Two Go cases hold that shut, because every other way of disarming the sweep leaves CI green.
 `TestCIDeclaresTheBlockingLintStep` in `gate/test/ci_workflow_test.go` pins the step's `run:` line
 byte for byte and rejects `continue-on-error` on the step and on the job.
 `TestThePresetStillReportsTheRulesThisRepoJustified` in `gate/test/preset_test.go` reds if `gosec`
-leaves `linters.enable`, if `gosec.excludes` gains an id this repository answered with a `//nolint`
-(`G204`, `G301`, `G302`, `G304`, `G306`, `G702`, `G703`), or if `run.issues-exit-code` appears,
-which overrides the exit code from inside the config rather than on the command line.
+leaves `linters.enable`, if `gosec.excludes` gains an id this repository answered at the site
+(`G204`, `G301`, `G302`, `G304`, `G306`, `G702`, `G703`), if `linters.exclusions.rules` grows an
+entry that takes `gosec` off some path, or if `run.issues-exit-code` appears, which overrides the
+exit code from inside the config rather than on the command line. The third is the one the other
+two miss: `gosec.excludes` decides which rules are armed, and an exclusion rule decides how much
+code they run over, so `path: .` empties the sweep with the enable list untouched.
 
 `go/plugin/` and `go/test/` are separate modules, so the root-module run never reaches them. The
 `lint plugin (go)` job runs `go vet` and `go test` over `go/plugin`, and it does run this preset
