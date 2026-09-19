@@ -7,8 +7,10 @@
 // values; a case that disagrees with one is a bug in the gate.
 //
 // One golden has no case here: golden/internal_error.toon, which no run of the
-// real binary can produce. gate/internal/report/internalerror_test.go owns it
-// and says why.
+// real binary can produce, because reaching it needs a gitscope.OpenKind no
+// version of gitscope declares. TestTheUnmappedOpenKindDocumentMatchesTheInternalErrorGolden
+// in gate/cmd/metric-gate owns it instead, driving that kind through the gate's
+// own asFailure.
 package gate_test
 
 import (

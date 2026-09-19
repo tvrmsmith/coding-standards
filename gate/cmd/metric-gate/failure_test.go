@@ -1,12 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/report"
@@ -60,7 +56,7 @@ func TestAnUnrecognisedCauseIsNotTypedAsAFailure(t *testing.T) {
 // no code.
 func TestAnUnmappedOpenKindStillReachesTheDocument(t *testing.T) {
 	failure, ok := asFailure(gitscope.OpenError{
-		Kind:    gitscope.OpenKind(99),
+		Kind:    gitscope.OpenKind(openKindBeyondEveryDeclaredKind),
 		Message: "could not run git: exec: \"git\": executable file not found in $PATH",
 	})
 
@@ -107,73 +103,27 @@ func TestAMappedOpenKindKeepsItsCodeAndMessage(t *testing.T) {
 	}
 }
 
-// TestAnUnmappedOpenKindExitsOneWithADocumentOnStdout is issue 122's outcome
-// rather than its mechanism. The other cases read the Failure struct; this one
-// composes the failure with asFailure and renders it through emit, the same
-// delivery main uses, and asserts the two things the panic destroyed: exit 1,
-// and a document on stdout naming internal_error. Before the fix openCode
-// panicked here, so the process exited with no document at all, the one output
-// shape ADR 0008 refuses. measure itself takes no gitscope seam, so an unmapped
+// TestTheUnmappedOpenKindDocumentMatchesTheInternalErrorGolden is issue 122's
+// outcome rather than its mechanism. The other cases read the Failure struct;
+// this one starts from an OpenError, runs asFailure's real composition, and
+// holds the whole document to gate/test/golden/internal_error.toon, its exit
+// code and its stderr line. Before the fix openCode panicked here, so the
+// process exited with no document at all, the one output shape ADR 0008
+// refuses. This case is the golden's only owner, so a change to openCode's
+// fallback code or asFailure's sentence reds here instead of shipping a
+// document no golden describes. measure takes no gitscope seam, so an unmapped
 // kind cannot be driven through it.
-func TestAnUnmappedOpenKindExitsOneWithADocumentOnStdout(t *testing.T) {
-	failure, ok := asFailure(gitscope.OpenError{Kind: gitscope.OpenKind(99), Message: "could not run git"})
-	if !ok {
-		t.Fatalf("asFailure did not type an unmapped OpenKind, so there is no document to emit")
-	}
-	doc := report.Document{Scope: "merge-base", Failure: failure}
-
-	var stdout, stderr bytes.Buffer
-	code, err := emit(&stdout, &stderr, doc)
-
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	if code != 1 {
-		t.Errorf("exit code = %d, want 1", code)
-	}
-	wantBlock := "\nerror:\n  code: " + report.CodeInternalError + "\n"
-	if !strings.Contains(stdout.String(), wantBlock) {
-		t.Errorf("the emitted document does not carry %q:\n%s", wantBlock, stdout.String())
-	}
-}
-
-// TestTheUnmappedOpenKindDocumentMatchesTheInternalErrorGolden ties the two
-// halves of issue 122's evidence together. report's own
-// TestInternalErrorGoldenMatchesTheDocument pins
-// gate/test/golden/internal_error.toon against a Document whose message is
-// typed out by hand, so on its own it cannot tell whether asFailure still
-// composes that message. This case starts from an OpenError, runs the real
-// composition and the real delivery, and compares the bytes emit wrote against
-// the same golden, so a change to openCode's fallback code or asFailure's
-// sentence reds here instead of shipping a document no golden describes.
 func TestTheUnmappedOpenKindDocumentMatchesTheInternalErrorGolden(t *testing.T) {
-	// Kind 4 rather than openKindBeyondEveryDeclaredKind because the golden
-	// names the kind in its message, and report's own test authors that golden
-	// from kind 4. Both are unmapped, which is all this case needs.
 	failure, ok := asFailure(gitscope.OpenError{
-		Kind:    gitscope.OpenKind(4),
+		Kind:    gitscope.OpenKind(openKindBeyondEveryDeclaredKind),
 		Message: `could not run git: exec: "git": executable file not found in $PATH`,
 	})
 	if !ok {
-		t.Fatalf("asFailure did not type an unmapped OpenKind, so there is no document to emit")
+		t.Fatalf("asFailure did not type an unmapped OpenKind, so there is no document at all")
 	}
 
-	var stdout, stderr bytes.Buffer
-	code, err := emit(&stdout, &stderr, report.Document{Scope: "merge-base", Failure: failure})
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	if code != 1 {
-		t.Errorf("exit code = %d, want 1", code)
-	}
-
-	want, err := os.ReadFile(filepath.Join("..", "..", "test", "golden", "internal_error.toon"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stdout.String() != string(want) {
-		t.Errorf("the emitted document is\n%s\nwant\n%s", stdout.String(), want)
-	}
+	assertDocumentMatches(t, report.Document{Scope: "merge-base", Failure: failure}, "internal_error",
+		"the gate has no error code for gitscope.OpenKind 99. could not run git: exec: \"git\": executable file not found in $PATH\n")
 }
 
 // TestTheFallbackCodeIsRegistered closes the half the mapped cases cannot
