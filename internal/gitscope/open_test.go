@@ -37,4 +37,23 @@ func TestOpenOutsideAGitRepositoryIsTyped(t *testing.T) {
 	if !strings.Contains(open.Message, "not a git repository") {
 		t.Errorf("Message = %q, want git's own complaint inside it", open.Message)
 	}
+	// OpenKinds is what metric-gate walks to prove every kind has an ADR 0008
+	// code, so a kind Open really produces has to be in that list. Asserting it
+	// against a kind a live Open just returned, rather than against the
+	// constants, is what makes the list answerable to Open's behaviour: move a
+	// kind below the openKindCount sentinel and OpenKinds drops it, the mapping
+	// test stops covering it, and this run's failure would ship as
+	// internal_error.
+	if !listsKind(OpenKinds(), open.Kind) {
+		t.Errorf("OpenKinds() = %v, which omits %v, the kind Open just returned", OpenKinds(), open.Kind)
+	}
+}
+
+func listsKind(kinds []OpenKind, want OpenKind) bool {
+	for _, kind := range kinds {
+		if kind == want {
+			return true
+		}
+	}
+	return false
 }

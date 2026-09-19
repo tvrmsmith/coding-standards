@@ -119,6 +119,11 @@ var (
 	// against it. See measure's doc comment for why it happens before
 	// gitscope.Open.
 	CodeWorkingDirectoryUnreadable = register("working_directory_unreadable")
+	// CodeInternalError is a cause the gate reached and has no word for. It is
+	// unreachable by design, every kind a mapping is asked about today is
+	// mapped, and it is registered anyway so a kind added later that outruns
+	// its mapping still costs exit 1 and a document rather than a panic.
+	CodeInternalError = register("internal_error")
 )
 
 // ReasonFileUnmatched is the typed reason on an unknown row: the changed
