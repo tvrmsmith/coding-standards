@@ -147,5 +147,5 @@ go_lint() {
     _go_report_findings "$findings"
   fi
 
-  return $status
+  return "$status"
 }

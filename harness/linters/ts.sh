@@ -117,5 +117,5 @@ ts_lint() {
     fi
   done <<<"$(printf '%s\n' "${pairs[@]}" | cut -f1 | sort -u)"
 
-  return $status
+  return "$status"
 }

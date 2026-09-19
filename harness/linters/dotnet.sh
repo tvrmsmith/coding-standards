@@ -265,5 +265,5 @@ dotnet_lint() {
     status=$(rank_status "$status" "$filter_status")
   fi
 
-  return $status
+  return "$status"
 }
