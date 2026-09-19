@@ -27,7 +27,7 @@ plugin/
     testdata/src/                    # the fixtures, and a stand-in testify to resolve against
 test/
   cases_test.go                      # every enabled linter must report in fixtures/
-  fixtures/                          # one deliberate violation per enabled linter
+  fixtures/                          # one deliberate violation per enabled linter, plus a gosec one inside a _test.go
   smoke/                             # its own module: one violation, for build.sh and bootstrap
 bin/                                 # generated; gitignored
 ```
