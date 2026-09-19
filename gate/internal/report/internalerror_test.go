@@ -13,7 +13,9 @@ import (
 // fixtures through the real binary, and no fifth gitscope.OpenKind exists for
 // it to hit; CodeInternalError is unreachable by construction from any
 // OpenKind gitscope declares today (openkinds_test.go in internal/gitscope
-// pins that OpenKinds is exactly the kinds openCode maps). Document is plain
+// pins that OpenKinds lists every declared kind, and
+// TestAMappedOpenKindKeepsItsCodeAndMessage in gate/cmd/metric-gate pins that
+// openCode maps every kind OpenKinds lists). Document is plain
 // data, so building one here and rendering it is the only way to pin the
 // shape this code's golden takes without inventing a kind that does not
 // exist.
