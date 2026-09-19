@@ -8,4 +8,4 @@ touched_lines_outside_spans: 0
 skipped_paths: []
 error:
   code: internal_error
-  message: the gate has no error code for gitscope.OpenKind 4
+  message: "the gate has no error code for gitscope.OpenKind 4. could not run git: exec: \"git\": executable file not found in $PATH"

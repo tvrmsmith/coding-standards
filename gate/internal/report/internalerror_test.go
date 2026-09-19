@@ -12,19 +12,22 @@ import (
 // gate/test pins every other golden. That suite drives gate/test's own
 // fixtures through the real binary, and no fifth gitscope.OpenKind exists for
 // it to hit; CodeInternalError is unreachable by construction from any
-// OpenKind gitscope declares today (openkinds_test.go in internal/gitscope
-// pins that OpenKinds lists every declared kind, and
-// TestOpenCodeMapsEveryDeclaredKind in gate/cmd/metric-gate pins that openCode
-// maps every kind OpenKinds lists). Document is plain data, so building one
+// OpenKind gitscope declares today, which
+// TestOpenCodeMapsEveryDeclaredKind in gate/cmd/metric-gate pins by walking
+// gitscope.OpenKinds. Document is plain data, so building one
 // here and rendering it is the only way to pin the shape this code's golden
 // takes without inventing a kind that does not exist.
+//
+// The message is the shape metric-gate's asFailure composes for an unmapped
+// kind, the "no error code" sentence with gitscope's own sentence appended, so
+// the golden pins the quoting a real internal_error document would carry.
 func TestInternalErrorGoldenMatchesTheDocument(t *testing.T) {
 	doc := Document{
 		Scope: "merge-base",
 		Base:  nil,
 		Failure: &Failure{
 			Code:    CodeInternalError,
-			Message: "the gate has no error code for gitscope.OpenKind 4",
+			Message: `the gate has no error code for gitscope.OpenKind 4. could not run git: exec: "git": executable file not found in $PATH`,
 		},
 	}
 
