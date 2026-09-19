@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/report"
@@ -101,6 +103,60 @@ func TestAMappedOpenKindKeepsItsCodeAndMessage(t *testing.T) {
 			t.Errorf("the message for kind %v is %q, want gitscope's own %q", kind, failure.Message, message)
 		}
 	}
+}
+
+// TestAnUnmappedOpenKindExitsOneWithADocumentOnStdout is issue 122's outcome
+// rather than its mechanism. The other cases read the Failure struct; this one
+// drives the same unmapped kind through the path main takes, measure's typing
+// of the Open error into the document and emit's delivery of it, and asserts
+// the two things the panic destroyed: exit 1, and a document on stdout naming
+// internal_error. Before the fix openCode panicked here, so the process exited
+// with no document at all, the one output shape ADR 0008 refuses.
+func TestAnUnmappedOpenKindExitsOneWithADocumentOnStdout(t *testing.T) {
+	failure, ok := asFailure(gitscope.OpenError{Kind: gitscope.OpenKind(99), Message: "could not run git"})
+	if !ok {
+		t.Fatalf("asFailure did not type an unmapped OpenKind, so there is no document to emit")
+	}
+	doc := report.Document{Scope: "merge-base", Failure: failure}
+
+	var stdout, stderr bytes.Buffer
+	code, err := emit(&stdout, &stderr, doc)
+
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if got := errorCodeIn(t, stdout.String()); got != report.CodeInternalError {
+		t.Errorf("the document's error.code is %q, want %q", got, report.CodeInternalError)
+	}
+}
+
+// errorCodeIn reads error.code off a rendered document. The document is the
+// gate's published output, so reading it back is reading the contract, not the
+// implementation. The two-space indent is the nesting ADR 0008's shape gives
+// the error block, which gate/test/golden pins.
+func errorCodeIn(t *testing.T, body string) string {
+	t.Helper()
+
+	inError := false
+	for _, line := range strings.Split(body, "\n") {
+		if line == "error:" {
+			inError = true
+			continue
+		}
+		if inError {
+			if value, found := strings.CutPrefix(line, "  code: "); found {
+				return value
+			}
+			if !strings.HasPrefix(line, "  ") {
+				break
+			}
+		}
+	}
+	t.Fatalf("the emitted document carries no error.code:\n%s", body)
+	return ""
 }
 
 // TestOpenCodeMapsEveryDeclaredKind walks gitscope.OpenKinds rather than
