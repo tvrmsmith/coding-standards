@@ -421,40 +421,59 @@ describe('the staged content, not the working copy', () => {
   })
 })
 
-describe('the Go branch, a package named after its module', () => {
-  test('the package holding the changed file is linted, not the module root', () => {
-    const f = repository('tvrmsmith-go-nested-')
-    try {
-      f.registry = join(f.root, 'registry')
-      f.gcl = join(f.root, 'stub-gcl')
-      mkdirSync(join(f.repo, 'gate/gate'), { recursive: true })
-      writeFileSync(join(f.repo, 'gate/go.mod'), 'module gate\n\ngo 1.26.0\n')
-      writeFileSync(join(f.repo, 'gate/gate/handler.go'), 'package gate\n\nfunc H() {}\n')
-      // Reports only for the package it was actually asked to lint, which is what golangci-lint
-      // does: name the module root and the finding in ./gate never appears.
-      executable(
-        f.gcl,
-        [
-          '#!/bin/sh',
-          'for a in "$@"; do',
-          '  [ "$a" = "./gate" ] && echo "$PWD/gate/handler.go:3:1: exported func H (gorule)"',
-          'done',
-          'exit 0',
-        ].join('\n') + '\n',
-      )
-      writeFileSync(f.registry, `${realpathSync(f.repo)}\n`)
-      commitAll(f.repo)
-      writeFileSync(join(f.repo, 'gate/gate/handler.go'), 'package gate\n\nfunc H() { _ = 1 }\n')
+describe('the Go branch names the package holding the changed file', () => {
+  /**
+   * golangci-lint runs per package, so the whole result rides on which package path it is handed.
+   * Each shape below is a module location crossed with a file depth, and each is a way the path
+   * arithmetic can collapse to the wrong package — and a wrong package is silent, since the
+   * absolute-path filter then drops every finding and the file reports clean unlinted.
+   *
+   * The stub is golangci-lint's own contract: it reports only for the package it was asked about.
+   */
+  const shapes = [
+    { name: 'a module at the repo root, file one directory down', module: '.', dir: 'gate', want: './gate' },
+    { name: 'a module at the repo root, file two directories down', module: '.', dir: 'gate/gate', want: './gate/gate' },
+    { name: 'a module below the root, file in the module root', module: 'gate', dir: 'gate', want: './.' },
+    { name: 'a module below the root, package repeating the module name', module: 'gate', dir: 'gate/gate', want: './gate' },
+  ]
 
-      const out = run(f.repo, ['--only', 'go', '--since', 'HEAD'], {
-        TVRMSMITH_GO_REPOS: f.registry,
-        TVRMSMITH_GCL: f.gcl,
-      })
-      assert.match(out, /^ {2}gate\/gate\/handler\.go:3:1: exported func H \(gorule\)$/m)
-    } finally {
-      f.cleanup()
-    }
-  })
+  for (const shape of shapes) {
+    test(shape.name, () => {
+      const f = repository('tvrmsmith-go-shape-')
+      try {
+        const registry = join(f.root, 'registry')
+        const gcl = join(f.root, 'stub-gcl')
+        const file = `${shape.dir}/handler.go`
+        mkdirSync(join(f.repo, shape.dir), { recursive: true })
+        writeFileSync(join(f.repo, shape.module, 'go.mod'), 'module gate\n\ngo 1.26.0\n')
+        writeFileSync(join(f.repo, file), 'package gate\n\nfunc H() {}\n')
+        // Absolute, because the branch runs the linter with --path-mode abs and filters by
+        // absolute path. Baked in rather than derived from $PWD, which is the module directory
+        // and so differs per shape.
+        executable(
+          gcl,
+          [
+            '#!/bin/sh',
+            'for a in "$@"; do',
+            `  [ "$a" = "${shape.want}" ] && echo "${realpathSync(f.repo)}/${file}:3:1: exported func H (gorule)"`,
+            'done',
+            'exit 0',
+          ].join('\n') + '\n',
+        )
+        writeFileSync(registry, `${realpathSync(f.repo)}\n`)
+        commitAll(f.repo)
+        writeFileSync(join(f.repo, file), 'package gate\n\nfunc H() { _ = 1 }\n')
+
+        const out = run(f.repo, ['--only', 'go', '--since', 'HEAD'], {
+          TVRMSMITH_GO_REPOS: registry,
+          TVRMSMITH_GCL: gcl,
+        })
+        assert.match(out, new RegExp(`^ {2}${file.replaceAll('.', '\\.')}:3:1: exported func H \\(gorule\\)$`, 'm'))
+      } finally {
+        f.cleanup()
+      }
+    })
+  }
 })
 
 describe('the C# branch in a repository wired for .NET', () => {
