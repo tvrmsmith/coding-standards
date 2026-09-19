@@ -21,7 +21,8 @@
 # for it. Waivers are one-shot, carry a reason, and live in a log outside the repo.
 #
 # Unlike the other two branches, this one refuses rather than skips when it cannot do its job. A
-# missing analyzer props file, a missing Go toolchain, a build that wrote no SARIF: each would
+# missing dotnet, a missing analyzer props file, a missing Go toolchain, a build that wrote no
+# SARIF: each would
 # mean the commit passing on a compilation nothing inspected, which is the failure this exists to
 # prevent. Those return non-zero. Only "no C# here" and "not wired for .NET" return 0.
 
@@ -48,11 +49,6 @@ dotnet_lint() {
   local scope_args=() report_args=() lint_changed build_out cache_home errorlog_props
   local sarif_dir=$scratch/dotnet-sarif
 
-  command -v dotnet >/dev/null 2>&1 || {
-    echo "lint-changed: no dotnet on PATH — skipped" >&2
-    return 0
-  }
-
   # Whether this repo is adopted is a question the props file already answers: it carries one
   # path-scoped Import per adopted repo, so the scoping condition doubles as the registry. That
   # keeps the pre-commit hook free of per-language state.
@@ -60,6 +56,17 @@ dotnet_lint() {
     not_wired .NET dotnet
     return 0
   fi
+
+  # Below the registry check, so a repo wired for nothing .NET-shaped has already returned. Past
+  # it the repo is adopted, and no dotnet means no compilation, so nothing inspected the changed
+  # C# at all — a GUI git client or a stripped login shell is enough to get here. That is the gate
+  # failing to run, the same as the missing Go toolchain below, so it refuses rather than skips.
+  command -v dotnet >/dev/null 2>&1 || {
+    echo "lint-changed: no dotnet on PATH, so the changed C# cannot be compiled or inspected" >&2
+    echo "  This repo is wired for .NET, so this is a failure rather than a skip. Put dotnet on" >&2
+    echo "  PATH, or unstage the C# changes." >&2
+    return 1
+  }
 
   # Adoption is settled above, so the builds below import the analyzer props directly instead of
   # going through the path-scoped wrapper. The wrapper's condition names the main checkout, and a
@@ -255,11 +262,7 @@ dotnet_lint() {
   fi
 
   if [ $filter_ran -eq 1 ]; then
-    case $filter_status in
-      0) ;;
-      2) [ $status -eq 0 ] && status=2 ;;
-      *) status=1 ;;
-    esac
+    status=$(rank_status "$status" "$filter_status")
   fi
 
   return $status

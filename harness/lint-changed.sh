@@ -92,17 +92,13 @@ for lang in $LANGUAGES; do
 
   [ ${#owned[@]} -gt 0 ] || continue
 
-  # Ranked, not merely zero and non-zero, and not whichever branch happened to run last. 1 is
-  # sticky and beats 2: one broken branch means the gate did not answer, whatever another branch
-  # found. Anything that is neither 0 nor 2 is a branch breaking, including a 127 from a function
-  # that was never defined, so it reports as 1 rather than as some richer code the hook cannot read.
+  # Ranked, not merely zero and non-zero, and not whichever branch happened to run last. The rule
+  # lives in common.sh, next to the branch contract that states it. Anything that is neither 0 nor
+  # 2 is a branch breaking, including a 127 from a function that was never defined, so it reports
+  # as 1 rather than as some richer code the hook cannot read.
   "${lang}_lint" "${owned[@]}"
   branch_status=$?
-  case $branch_status in
-    0) ;;
-    2) [ $status -eq 0 ] && status=2 ;;
-    *) status=1 ;;
-  esac
+  status=$(rank_status "$status" "$branch_status")
 done
 
 exit $status

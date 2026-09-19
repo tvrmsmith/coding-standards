@@ -103,7 +103,11 @@ go_lint() {
     while IFS= read -r dir; do
       [ -n "$dir" ] || continue
       rel=${dir#"$module"/}
-      [ "$rel" = "$module" ] && rel=.
+      # Compared against $dir, the value the strip was applied to: unchanged means the file sits
+      # in the module root. Comparing against $module instead reads a package whose name repeats
+      # the module's — gate/gate under module gate — as the root, and then every finding in it is
+      # filtered out by the absolute-path match below, so the file reports clean unlinted.
+      [ "$rel" = "$dir" ] && rel=.
       packages+=("./$rel")
     done <<<"$(printf '%s\n' "${pairs[@]}" | awk -F'\t' -v m="$module" '$1 == m { print $2 }' | sort -u)"
 

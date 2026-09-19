@@ -3,13 +3,14 @@
 # The TypeScript branch of lint-changed.sh: each changed file through its own package's ESLint,
 # plus the personal layer. Sourced, never executed.
 #
-# **Errors fail, warnings do not**. Deliberate — the custom rule and all nine "you might not need
-# an Effect" rules ship at warn precisely because they propose restructures, and they land on
-# legacy code in batches. A warn that blocks a commit is an error wearing a disguise.
+# This branch follows ADR 0010's exit codes, not yet its blocking rule. An ESLint error returns 2,
+# the shared "a finding survived", rather than ESLint's own 1, and the branch's own guards return
+# 1: a missing layering wrapper is the gate breaking, and the hook has to be able to tell that
+# from a finding it can go and fix.
 #
-# An ESLint error returns 2, the shared "a finding survived" of ADR 0010, rather than ESLint's own
-# 1. The branch's own guards return 1: a missing layering wrapper is the gate breaking, and the
-# hook has to be able to tell that from a finding it can go and fix.
+# **Today an ESLint error blocks and a warning does not**, and no changed-line filter runs here.
+# ADR 0010 asks for both severities to block on any line the change touched, so this branch is
+# short of that, the same gap the Go branch names for slice 3 of issue 108.
 
 layer=${TVRMSMITH_ESLINT_LAYER:-$harness/eslint-layer.js}
 
@@ -46,21 +47,19 @@ _ts_staged_differs() {
   return 0
 }
 
-# ESLint's own codes translated into the shared convention, folded into the branch's `status`,
-# which is this function's caller's local. 1 from ESLint is lint errors and becomes 2, a finding
-# that survived. Anything else is ESLint failing to run at all — a fatal config error is its 2 —
-# and becomes 1, the gate breaking, which sticks over any finding another package reported.
-_ts_rank() {
+# ESLint's own codes translated into the shared convention, which rank_status then folds in. 1
+# from ESLint is lint errors and becomes 2, a finding that survived. Anything else is ESLint
+# failing to run at all — a fatal config error is its 2 — and becomes 1, the gate breaking.
+_ts_shared_code() {
   case $1 in
-    0) ;;
-    1) [ $status -eq 0 ] && status=2 ;;
-    *) status=1 ;;
+    0) echo 0 ;;
+    1) echo 2 ;;
+    *) echo 1 ;;
   esac
-  return 0
 }
 
 ts_lint() {
-  local file pkg rel eslint_dir eslint_bin status=0 pairs=() batch=()
+  local file pkg rel eslint_dir eslint_bin eslint_status status=0 pairs=() batch=()
 
   # 1, not 2: nothing was linted, so this is the gate breaking rather than a surviving finding.
   if [ ! -f "$layer" ]; then
@@ -103,7 +102,8 @@ ts_lint() {
           cd "$pkg" && ESLINT_USE_FLAT_CONFIG=true "$eslint_bin" \
             --config "$layer" --stdin --stdin-filename "$rel"
         )
-        _ts_rank $?
+        eslint_status=$?
+        status=$(rank_status "$status" "$(_ts_shared_code "$eslint_status")")
       else
         batch+=("$rel")
       fi
@@ -112,7 +112,8 @@ ts_lint() {
     if [ ${#batch[@]} -gt 0 ]; then
       echo "=== $pkg ==="
       ( cd "$pkg" && ESLINT_USE_FLAT_CONFIG=true "$eslint_bin" --config "$layer" "${batch[@]}" </dev/null )
-      _ts_rank $?
+      eslint_status=$?
+      status=$(rank_status "$status" "$(_ts_shared_code "$eslint_status")")
     fi
   done <<<"$(printf '%s\n' "${pairs[@]}" | cut -f1 | sort -u)"
 

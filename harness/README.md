@@ -67,6 +67,11 @@ failed build, a golangci-lint run that blew up, a missing layering wrapper, a ba
 from any branch dominates a 2 from another, because a branch that never ran says nothing about the
 code it never read. Advisory Go findings exit 0.
 
+That is the exit-code half of ADR 0010, and TypeScript follows only that half so far. An ESLint
+error blocks, an ESLint warning does not, and no changed-line filter runs on the TypeScript side,
+where the ADR asks for both severities to block on any line the change touched. The Go branch is
+short of the same rule and names slice 3 of issue 108 for it.
+
 Each branch keeps its linter's native output: ESLint's `stylish`, golangci-lint's text, MSBuild's.
 Those shapes make paths clickable in a terminal, and the hook is the reader that matters. A tool
 wanting one machine-readable shape across all three should read the SARIF the C# branch already

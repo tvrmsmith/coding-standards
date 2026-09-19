@@ -43,18 +43,22 @@ status=0
 # blocking half in slice 3 of issue 108.
 "$harness/lint-changed.sh" --staged || status=$?
 
-if [ $status -eq 1 ]; then
-  echo >&2
-  echo "pre-commit: the personal coding standards gate could not run to completion, so the" >&2
-  echo "  staged changes went unchecked. The cause is printed above. This is the tooling" >&2
-  echo "  failing rather than a finding in the code." >&2
-elif [ $status -ne 0 ]; then
+# Only 2 is a finding. Every other non-zero code is the gate breaking, 1 from the script itself
+# and 127 or 126 from a hook installed before the consolidation or pointed at a moved hub, so the
+# broken-gate arm is the catch-all. Calling any of those a finding would print waiver instructions
+# for a gate that read nothing.
+if [ $status -eq 2 ]; then
   echo >&2
   echo "pre-commit: personal coding standards found errors in the staged changes." >&2
   echo "  Fix them. Past a genuine false positive, run the waive command the finding printed," >&2
   echo "  exactly as printed: it names the binary by full path because lint-changed is not on PATH." >&2
   echo "  One rule, one path, one use, logged under XDG_STATE_HOME so it can be audited." >&2
   echo "  SKIP_TVRMSMITH_LINT=1 / --no-verify skip every hook and are not the route to take." >&2
+elif [ $status -ne 0 ]; then
+  echo >&2
+  echo "pre-commit: the personal coding standards gate could not run to completion (exit" >&2
+  echo "  $status), so the staged changes went unchecked. The cause is printed above. This is the" >&2
+  echo "  tooling failing rather than a finding in the code." >&2
 fi
 
 exit $status

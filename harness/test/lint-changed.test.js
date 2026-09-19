@@ -10,8 +10,16 @@
  * golangci-lint think of a file. C# is not stubbable the same way — its findings come from a
  * Roslyn SARIF log — so lint-changed-dotnet.test.js covers that branch against a real dotnet.
  */
-import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -63,14 +71,29 @@ const neutralised = {
   TVRMSMITH_ANALYZER_LOCAL_PROPS: undefined,
 }
 
-/** @returns {string} stdout only, so a case can assert on what the flag promises to emit. */
-function run(cwd, args, env) {
-  return execFileSync(join(harness, 'lint-changed.sh'), args, {
+/**
+ * Both streams and the status. stderr is where every diagnostic goes, and exit 1 is the code the
+ * script shares between a bad argument, an unresolvable ref and a branch that could not run, so a
+ * case asserting the status alone would pass on a failure it never meant to provoke.
+ *
+ * @returns {{ status: number, stdout: string, stderr: string }}
+ */
+function capture(cwd, args, env) {
+  const result = spawnSync(join(harness, 'lint-changed.sh'), args, {
     cwd,
     encoding: 'utf8',
     env: { ...process.env, ...neutralised, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
+  if (result.error) throw result.error
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr }
+}
+
+/** @returns {string} stdout only, so a case can assert on what the flag promises to emit. */
+function run(cwd, args, env) {
+  const { status, stdout, stderr } = capture(cwd, args, env)
+  assert.equal(status, 0, `lint-changed.sh exited ${status}\n${stderr}`)
+  return stdout
 }
 
 describe('the TypeScript branch', () => {
@@ -204,15 +227,6 @@ describe('one invocation, every language the repo is wired for', () => {
 
   const env = (f) => ({ TVRMSMITH_GO_REPOS: f.registry, TVRMSMITH_GCL: f.gcl })
 
-  /** @returns {{ status: number, stdout: string }} — `run` throws on a non-zero exit. */
-  function attempt(cwd, args, environment) {
-    try {
-      return { status: 0, stdout: run(cwd, args, environment) }
-    } catch (error) {
-      return { status: error.status, stdout: error.stdout }
-    }
-  }
-
   test('no --only reports TypeScript and Go from a single call', () => {
     const f = fixture()
     try {
@@ -227,14 +241,24 @@ describe('one invocation, every language the repo is wired for', () => {
   test('a language the repo is not wired for contributes nothing and stops nothing', () => {
     const f = fixture()
     try {
-      // No props file, so the C# branch skips. It must not take the other two down with it, and
-      // it must contribute no output at all. Asserted as the whole of stdout rather than as the
-      // absence of a string: a skipping branch has nothing it is *supposed* to print, so only the
-      // exact report proves it stayed silent.
+      // The props file names no repository, so the C# branch skips. It must not take the other
+      // two down with it, and it must contribute no stdout at all. Asserted as the whole of
+      // stdout rather than as the absence of a string: a skipping branch has nothing it is
+      // *supposed* to print, so only the exact report proves it stayed silent.
       writeFileSync(join(f.repo, 'Program.cs'), 'class Program {}\n')
-      const out = run(f.repo, ['--since', 'HEAD'], env(f))
+      // Staged, or `git diff HEAD` never lists it, the branch is never dispatched, and the case
+      // proves nothing about C# at all.
+      git(f.repo, 'add', 'Program.cs')
+      writeFileSync(join(f.root, 'empty.props'), '<Project />\n')
+      const { status, stdout, stderr } = capture(f.repo, ['--since', 'HEAD'], {
+        ...env(f),
+        TVRMSMITH_ANALYZER_PROPS: join(f.root, 'empty.props'),
+      })
+      assert.equal(status, 0)
+      // Named, so the case cannot pass through some other early return the branch takes.
+      assert.match(stderr, /is not wired for \.NET/)
       assert.equal(
-        out,
+        stdout,
         '=== . ===\nstylish ts finding\n' +
           '\npersonal coding standards — 1 finding(s) in the changed Go files:\n' +
           '  main.go:3:1: go finding (gorule)\n' +
@@ -259,7 +283,7 @@ describe('one invocation, every language the repo is wired for', () => {
   test('a surviving finding exits 2, and the advisory branches still report', () => {
     const f = fixture({ tsExit: 1 })
     try {
-      const { status, stdout } = attempt(f.repo, ['--since', 'HEAD'], env(f))
+      const { status, stdout } = capture(f.repo, ['--since', 'HEAD'], env(f))
       // ESLint's 1 is a lint error, which is this gate's 2: the gate says stop.
       assert.equal(status, 2)
       // Go runs after TypeScript and its findings are advisory. A failing earlier branch must not
@@ -276,7 +300,7 @@ describe('one invocation, every language the repo is wired for', () => {
     // would report a fixable finding when half the change went unexamined.
     const f = fixture({ tsExit: 1, gclExit: 3 })
     try {
-      const { status, stdout } = attempt(f.repo, ['--since', 'HEAD'], env(f))
+      const { status, stdout } = capture(f.repo, ['--since', 'HEAD'], env(f))
       assert.equal(status, 1)
       // The module and the linter's own words both survive. Piping the header and the output
       // into an undefined function discarded exactly this, leaving a blocked commit with no
@@ -292,8 +316,9 @@ describe('one invocation, every language the repo is wired for', () => {
     const f = fixture()
     try {
       // 1, not 2: nothing was linted, so this is the gate breaking rather than a finding.
-      const { status } = attempt(f.repo, ['--only', 'rust', '--since', 'HEAD'], env(f))
+      const { status, stderr } = capture(f.repo, ['--only', 'rust', '--since', 'HEAD'], env(f))
       assert.equal(status, 1)
+      assert.match(stderr, /--only takes one of: ts dotnet go/)
     } finally {
       f.cleanup()
     }
@@ -302,7 +327,7 @@ describe('one invocation, every language the repo is wired for', () => {
   test('a multi-word --only is rejected rather than matching as a substring', () => {
     const f = fixture()
     try {
-      const { status, stdout } = attempt(f.repo, ['--only', 'ts go', '--since', 'HEAD'], env(f))
+      const { status, stdout } = capture(f.repo, ['--only', 'ts go', '--since', 'HEAD'], env(f))
       assert.equal(status, 1)
       assert.equal(stdout, '')
     } finally {
@@ -313,7 +338,7 @@ describe('one invocation, every language the repo is wired for', () => {
   test('a --since ref git cannot resolve fails rather than reporting a clean run', () => {
     const f = fixture()
     try {
-      const { status, stdout } = attempt(f.repo, ['--since', 'no-such-ref-xyz'], env(f))
+      const { status, stdout } = capture(f.repo, ['--since', 'no-such-ref-xyz'], env(f))
       assert.equal(status, 1)
       assert.equal(stdout, '')
     } finally {
@@ -324,11 +349,139 @@ describe('one invocation, every language the repo is wired for', () => {
   test('TVRMSMITH_REGISTRY_KEY naming no directory fails rather than skipping every branch', () => {
     const f = fixture()
     try {
-      const { status } = attempt(f.repo, ['--only', 'go', '--since', 'HEAD'], {
+      const { status, stderr } = capture(f.repo, ['--only', 'go', '--since', 'HEAD'], {
         ...env(f),
         TVRMSMITH_REGISTRY_KEY: join(f.root, 'typo'),
       })
       assert.equal(status, 1)
+      assert.match(stderr, /which is not a directory/)
+    } finally {
+      f.cleanup()
+    }
+  })
+
+  test('--files lints the named paths in every language they span', () => {
+    const f = fixture()
+    try {
+      const out = run(f.repo, ['--files', 'main.ts', 'main.go'], env(f))
+      assert.match(out, /^stylish ts finding$/m)
+      assert.match(out, /^ {2}main\.go:3:1: go finding \(gorule\)$/m)
+    } finally {
+      f.cleanup()
+    }
+  })
+
+  test('--files with no paths lints nothing and exits 0', () => {
+    const f = fixture()
+    try {
+      // An empty list is nothing to lint, not a broken run. The entrypoint exits 1 when the
+      // changed set cannot be computed, and bash 3.2 makes expanding an empty array an error, so
+      // this is the case where the guard's own status could become that verdict.
+      const { status, stdout } = capture(f.repo, ['--files'], env(f))
+      assert.equal(status, 0)
+      assert.equal(stdout, '')
+    } finally {
+      f.cleanup()
+    }
+  })
+})
+
+describe('the staged content, not the working copy', () => {
+  test('TypeScript lints what the commit would contain and an error there exits 2', () => {
+    const f = repository('tvrmsmith-staged-ts-')
+    try {
+      writeFileSync(join(f.repo, 'eslint.config.js'), 'export default []\n')
+      writeFileSync(join(f.repo, 'main.ts'), 'export const a = 1\n')
+      // Prints what it was fed on stdin, so the case can tell the staged copy from the disk copy,
+      // and exits 1, ESLint's lint-error code.
+      executable(
+        join(f.repo, 'node_modules/.bin/eslint'),
+        [
+          '#!/usr/bin/env node',
+          "let body = ''",
+          "process.stdin.on('data', (c) => { body += c })",
+          "process.stdin.on('end', () => { process.stdout.write(`linted: ${body}`); process.exit(1) })",
+        ].join('\n') + '\n',
+      )
+      commitAll(f.repo)
+
+      writeFileSync(join(f.repo, 'main.ts'), 'export const a = 2\n')
+      git(f.repo, 'add', 'main.ts')
+      // A third state on disk. The hook gates what the commit will contain, so linting this copy
+      // would pass a commit on content nobody reviewed.
+      writeFileSync(join(f.repo, 'main.ts'), 'export const a = 3\n')
+
+      const { status, stdout } = capture(f.repo, ['--only', 'ts', '--staged'])
+      assert.equal(status, 2)
+      assert.match(stdout, /^=== main\.ts \(staged content\) ===$/m)
+      assert.match(stdout, /^linted: export const a = 2$/m)
+    } finally {
+      f.cleanup()
+    }
+  })
+})
+
+describe('the Go branch, a package named after its module', () => {
+  test('the package holding the changed file is linted, not the module root', () => {
+    const f = repository('tvrmsmith-go-nested-')
+    try {
+      f.registry = join(f.root, 'registry')
+      f.gcl = join(f.root, 'stub-gcl')
+      mkdirSync(join(f.repo, 'gate/gate'), { recursive: true })
+      writeFileSync(join(f.repo, 'gate/go.mod'), 'module gate\n\ngo 1.26.0\n')
+      writeFileSync(join(f.repo, 'gate/gate/handler.go'), 'package gate\n\nfunc H() {}\n')
+      // Reports only for the package it was actually asked to lint, which is what golangci-lint
+      // does: name the module root and the finding in ./gate never appears.
+      executable(
+        f.gcl,
+        [
+          '#!/bin/sh',
+          'for a in "$@"; do',
+          '  [ "$a" = "./gate" ] && echo "$PWD/gate/handler.go:3:1: exported func H (gorule)"',
+          'done',
+          'exit 0',
+        ].join('\n') + '\n',
+      )
+      writeFileSync(f.registry, `${realpathSync(f.repo)}\n`)
+      commitAll(f.repo)
+      writeFileSync(join(f.repo, 'gate/gate/handler.go'), 'package gate\n\nfunc H() { _ = 1 }\n')
+
+      const out = run(f.repo, ['--only', 'go', '--since', 'HEAD'], {
+        TVRMSMITH_GO_REPOS: f.registry,
+        TVRMSMITH_GCL: f.gcl,
+      })
+      assert.match(out, /^ {2}gate\/gate\/handler\.go:3:1: exported func H \(gorule\)$/m)
+    } finally {
+      f.cleanup()
+    }
+  })
+})
+
+describe('the C# branch in a repository wired for .NET', () => {
+  test('no dotnet on PATH fails rather than passing the staged C# unexamined', () => {
+    const f = repository('tvrmsmith-dotnet-path-')
+    try {
+      const props = join(f.root, 'coding-standards.props')
+      writeFileSync(join(f.repo, 'Program.cs'), 'class Program {}\n')
+      commitAll(f.repo)
+      writeFileSync(join(f.repo, 'Program.cs'), 'class Program { void M() { } }\n')
+      git(f.repo, 'add', 'Program.cs')
+      // The props file's path-scoped condition is the .NET registry, so this repo is adopted.
+      writeFileSync(props, `<Project>\n  <!-- StartsWith('${realpathSync(f.repo)}/') -->\n</Project>\n`)
+
+      // Every PATH entry that carries a dotnet is dropped, so the case is the same on a machine
+      // with the SDK installed and one without. git and the rest of the toolchain stay.
+      const path = (process.env.PATH ?? '')
+        .split(':')
+        .filter((entry) => entry && !existsSync(join(entry, 'dotnet')))
+        .join(':')
+
+      const { status, stderr } = capture(f.repo, ['--only', 'dotnet', '--staged'], {
+        PATH: path,
+        TVRMSMITH_ANALYZER_PROPS: props,
+      })
+      assert.equal(status, 1)
+      assert.match(stderr, /no dotnet on PATH/)
     } finally {
       f.cleanup()
     }
