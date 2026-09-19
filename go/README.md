@@ -252,8 +252,8 @@ byte for byte and rejects `continue-on-error` on the step and on the job.
 leaves `linters.enable`, if `gosec.excludes` gains an id this repository answered at the site
 (`G204`, `G301`, `G302`, `G304`, `G306`, `G702`, `G703`), if `run.issues-exit-code` appears, which
 overrides the exit code from inside the config rather than on the command line, or if any of the
-four keys that decide how much code the linters run over gains an entry: an
-`linters.exclusions.rules` entry naming `gosec` or naming no linter at all, an
+four keys that decide how much code the linters run over gains an entry: a
+`linters.exclusions.rules` entry naming `gosec` or naming no linter at all, a
 `linters.exclusions.paths` or `paths-except` entry, a non-empty `linters.exclusions.presets`, or
 `run.tests`. That last group is what the enable list and `gosec.excludes` miss. Those two decide
 which rules are armed, these decide which code the armed rules see, so `path: .` or
