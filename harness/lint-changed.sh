@@ -101,4 +101,4 @@ for lang in $LANGUAGES; do
   status=$(rank_status "$status" "$branch_status")
 done
 
-exit $status
+exit "$status"
