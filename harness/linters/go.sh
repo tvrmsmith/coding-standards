@@ -102,12 +102,22 @@ go_lint() {
     packages=()
     while IFS= read -r dir; do
       [ -n "$dir" ] || continue
-      rel=${dir#"$module"/}
-      # Compared against $dir, the value the strip was applied to: unchanged means the file sits
-      # in the module root. Comparing against $module instead reads a package whose name repeats
-      # the module's — gate/gate under module gate — as the root, and then every finding in it is
-      # filtered out by the absolute-path match below, so the file reports clean unlinted.
-      [ "$rel" = "$dir" ] && rel=.
+      # Three cases, spelled out, because a prefix strip alone cannot tell them apart and either
+      # collapse sends golangci-lint at the wrong package: its findings are then filtered out by
+      # the absolute-path match below and the file reports clean unlinted.
+      #
+      #   a module at the repo root, where ancestor_with answers "." and there is no prefix to
+      #   strip, so the package path is $dir as it stands;
+      #   the module's own root directory, which is package ".";
+      #   anything below the module, which is $dir with the module prefix removed — including a
+      #   package repeating the module's name, gate/gate under module gate.
+      if [ "$module" = "." ]; then
+        rel=$dir
+      elif [ "$dir" = "$module" ]; then
+        rel=.
+      else
+        rel=${dir#"$module"/}
+      fi
       packages+=("./$rel")
     done <<<"$(printf '%s\n' "${pairs[@]}" | awk -F'\t' -v m="$module" '$1 == m { print $2 }' | sort -u)"
 
