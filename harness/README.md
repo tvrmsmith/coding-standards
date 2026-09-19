@@ -45,7 +45,7 @@ plugins `base.js` imports.
 | --- | --- |
 | `eslint-layer.js` | Loads the package's own ESLint config, spreads the personal preset after it. The layering, and the typed-layer gate. |
 | `lint-changed.sh` | The one entrypoint. Resolves the repo, computes the changed set, runs every language branch that applies. `--only` runs a single one. |
-| `linters/common.sh` | What every branch shares: argument parsing, repo resolution, the changed set, the scratch directory, the ancestor walk each language owns a predicate for. |
+| `linters/common.sh` | What every branch shares: argument parsing, repo resolution, the changed set, the scratch directory, the ancestor walk each language owns a predicate for, and `rank_status`, the one place the ADR 0010 exit convention is folded. |
 | `linters/ts.sh` | Lints changed `.ts`/`.tsx` only, each through its own package's ESLint binary. |
 | `linters/dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then hands every report to one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
 | `errorlog.props` | Sets `ErrorLog` for that build, imported through `CustomAfterMicrosoftCommonTargets`. MSBuild owns the report name because it has to expand `$(TargetFramework)` per inner build and escape the comma before the version suffix; the branch passes only the prefix. |
@@ -194,7 +194,10 @@ waived finding on a commit that blocked on something else costs nothing.
 The C# hook now needs Go on `PATH`, even in a repo with no Go in it. The script builds
 `lint-changed` from this hub into `${XDG_CACHE_HOME:-~/.cache}/coding-standards` on every run,
 which Go's build cache makes free after the first. No Go means the filter cannot run, and an
-unrun filter proves nothing, so the script fails the commit rather than skipping.
+unrun filter proves nothing, so the script fails the commit rather than skipping. A missing
+`dotnet` in an adopted repo fails the same way and for the same reason, since nothing compiled the
+changed C# and nothing inspected it. The PATH check sits below the adoption check, so a repo wired
+only for TypeScript or Go still passes the branch without needing the .NET SDK.
 
 ADR 0010 carries the rule and the reasoning.
 

@@ -20,11 +20,11 @@
 # Past a genuine false positive there is one route, and `lint-changed` prints the exact command
 # for it. Waivers are one-shot, carry a reason, and live in a log outside the repo.
 #
-# Unlike the other two branches, this one refuses rather than skips when it cannot do its job. A
-# missing dotnet, a missing analyzer props file, a missing Go toolchain, a build that wrote no
-# SARIF: each would
-# mean the commit passing on a compilation nothing inspected, which is the failure this exists to
-# prevent. Those return non-zero. Only "no C# here" and "not wired for .NET" return 0.
+# Unlike the other two branches, this one refuses rather than skips when it cannot do its job. In
+# an adopted repo a missing dotnet, a missing analyzer props file, a missing Go toolchain or a
+# build that wrote no SARIF would each mean the commit passing on a compilation nothing inspected,
+# which is the failure this exists to prevent. Those return non-zero. Only "no C# here" and "not
+# wired for .NET" return 0.
 
 config_home=${XDG_CONFIG_HOME:-$HOME/.config}
 props=${TVRMSMITH_ANALYZER_PROPS:-$config_home/coding-standards.props}
