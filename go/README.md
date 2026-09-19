@@ -27,7 +27,7 @@ plugin/
     testdata/src/                    # the fixtures, and a stand-in testify to resolve against
 test/
   cases_test.go                      # every enabled linter must report in fixtures/
-  fixtures/                          # one deliberate violation per enabled linter
+  fixtures/                          # one deliberate violation per enabled linter, plus a gosec one inside a _test.go
   smoke/                             # its own module: one violation, for build.sh and bootstrap
 bin/                                 # generated; gitignored
 ```
@@ -157,19 +157,30 @@ covers security, and the code this runs over is healthcare software. Two rules a
 is `errcheck` with a different id, and `G115` flags every int conversion that could in principle
 overflow, which on real code is hundreds of sites bounded by something the linter cannot see.
 
-`gosec` is also the one linter this config turns off in `_test.go`, and it is the only exclusion
-rule here. golangci-lint's own exclusion presets are all rejected, because a guideline holds in a
-test as much as in production code. This is not that exclusion. `gosec` models an attacker
-reaching the input, and a test supplies every input itself, so its loudest rules cannot mean in a
-test what they mean elsewhere: `G204` flags a subprocess built from a variable, which is every
-test that runs a binary it just compiled; `G304` flags a read from a variable path, which is every
-test reading its own `t.TempDir` fixture; `G306` and `G301` want `0600` on a file the test writes
-and deletes in the same function.
+`gosec` runs in `_test.go` too, and this config carries no exclusion rules at all.
+golangci-lint's own exclusion presets are rejected because a guideline holds in a test as much as
+in production code, and an exclusion written here would hold for every repository this preset
+visits, not just this one. A rule worth keeping is worth answering at the site.
 
-It was measured before it was decided. 42 of the 45 `gosec` findings across this repo sat in
-`_test.go` and none named a real weakness. Forty-two `//nolint` directives carrying the same
-sentence is a directive nobody reads. Every other linter still runs in tests, `errcheck`
-included.
+That is a reversal, and the argument it reverses was a good one. `gosec` models an attacker
+reaching the input, a test supplies every input itself, and the loudest rules fire hardest on
+ordinary test shapes: `G204` on a subprocess built from a variable, which is every test running a
+binary it just compiled; `G304` on a read from a variable path, which is every test reading its
+own `t.TempDir` fixture; `G306` and `G301` on a file the test writes and deletes in one function.
+42 of the 45 findings then in the repo sat in `_test.go` and none named a real weakness.
+
+What settled it was where the exclusion lands. This preset is the product, and it runs over other
+people's repositories, so `path: _test\.go` disarms `gosec` in all of them to spare this one some
+typing. The per-site answer costs more and says more: each directive names why that call is safe,
+and a site whose mode was merely convenient gets tightened instead, which the sweep found for
+fifteen of them. Where the rule is answered rather than fixed, the reason has to be specific
+enough that it could not be pasted onto another site.
+
+`allow-unused: true` is set on `nolintlint`, so a directive that stops suppressing anything is not
+reported. That is deliberate, because a target repository's own live directives all read as dead
+under this preset, but it means a `gosec` exclusion added later would silently hollow out every
+directive rather than red the build. `TestThePresetStillReportsTheRulesThisRepoJustified` exists
+to catch that.
 
 ### Deliberately not enabled
 
@@ -225,23 +236,42 @@ runs machine-locally over code other people wrote and are not being asked to cha
 The hub's own root module is the exception, because here the code is ours to change. The
 `gate (go)` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs this same binary
 and config from the repository root over `./...`, with the default exit code, so any finding under
-`gate/`, `internal/gitscope/` or `internal/srcpath/` reds the build. Clearing one means tightening
-the code, or a `//nolint` that names the linter and gives a reason true of that site. Never a new
-id in `golangci.yml`'s `gosec.excludes`, which would also disarm the rule in every repo this layer
-visits.
+`gate/`, `lint/`, `internal/gitscope/` or `internal/srcpath/` reds the build. Clearing one means
+tightening the code, or a `//nolint` that names the linter and gives a reason true of that site.
+Never a new id in `golangci.yml`'s `gosec.excludes`, which would also disarm the rule in every repo
+this layer visits.
 
-`gosec` is narrower than the rest of that job, because the preset turns it off in `_test.go` for
-the reason given above. The root-module run arms it in non-test code only, so the
-`//nolint:gosec` directives in this repository's own tests suppress nothing today and stand ready
-for the day that exclusion lifts.
+`gosec` reaches `_test.go` in that run like every other linter, which is what the `//nolint:gosec`
+directives across this repository's own tests answer, and what the tightened file modes beside them
+made unnecessary.
 
-Two Go cases hold that shut, because every other way of disarming the sweep leaves CI green.
+Three Go cases hold that shut, because a config edit that disarms the sweep leaves CI green.
 `TestCIDeclaresTheBlockingLintStep` in `gate/test/ci_workflow_test.go` pins the step's `run:` line
 byte for byte and rejects `continue-on-error` on the step and on the job.
-`TestThePresetStillReportsTheRulesThisRepoJustified` in `gate/test/preset_test.go` reds if `gosec`
-leaves `linters.enable`, if `gosec.excludes` gains an id this repository answered with a `//nolint`
-(`G204`, `G301`, `G302`, `G304`, `G306`, `G702`, `G703`), or if `run.issues-exit-code` appears,
-which overrides the exit code from inside the config rather than on the command line.
+`TestThePresetStillReportsTheRulesThisRepoJustified` in `gate/test/preset_test.go` reads the
+preset and reds on each of these keys, enumerated rather than claimed exhaustive:
+
+| Key | What it decides |
+|---|---|
+| `linters.enable`, `linters.disable` | Whether `gosec` runs. `disable` is applied after `enable`, so the entry in `enable` alone proves nothing. |
+| `gosec.excludes`, `gosec.includes` | Which ids report. A non-empty `includes` runs only the ids it names, which disarms all seven answered at the site (`G204`, `G301`, `G302`, `G304`, `G306`, `G702`, `G703`) while `excludes` stays clean. |
+| `gosec.severity`, `gosec.confidence` | The floor a finding must clear. `G204`, `G301`, `G302`, `G304` and `G306` are all Medium, so `severity: high` empties the sweep in one word. |
+| `gosec.config` | Per-rule arguments, where `G306: "0777"` loosens a mode threshold rather than excluding the rule. |
+| `linters.exclusions.rules`, `paths`, `paths-except`, `presets` | How much code the armed rules run over. `paths-except` is here because it is the same disarm read as an allowlist. |
+| `run.tests`, `issues.new`, `new-from-rev`, `new-from-merge-base`, `new-from-patch` | Whether `_test.go` and unchanged code are analysed at all. |
+| `run.issues-exit-code` | Whether a finding fails the step, overridden from inside the config rather than on the command line. |
+
+The last two rows are banned outright rather than pinned to their current value, because a pinned
+default is still one word away from a disarmed run. `presetDisarms` is the function that
+answers all of it, and its table cases feed it every one of those configs, since the committed
+preset carries none of them. Known and not covered there: the output caps
+`issues.max-issues-per-linter` and `issues.max-same-issues`, which `TestNeitherOutputCapTruncates`
+in `go/test` pins instead.
+
+No YAML assertion can prove `gosec` actually fires inside a `_test.go`, which is the linter's
+behaviour rather than the config's. `TestGosecReportsInsideATestFile` in `go/test/cases_test.go`
+runs the binary over `test/fixtures` and requires a `gosec` finding whose file ends in `_test.go`,
+so an upstream rename or a future default that stops analysing tests reds there.
 
 `go/plugin/` and `go/test/` are separate modules, so the root-module run never reaches them. The
 `lint plugin (go)` job runs `go vet` and `go test` over `go/plugin`, and it does run this preset

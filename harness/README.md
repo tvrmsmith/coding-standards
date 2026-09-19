@@ -193,6 +193,19 @@ The Go registry follows the same rule from the other direction: it is keyed on t
 checkout, so one `bootstrap go` covers every worktree the shared hook fires in. See
 [The Go half](#the-go-half).
 
+The .NET half is keyed on the main checkout too, and getting there took one extra move. Its
+registry is the path-scoped `<Import>` in `~/.config/coding-standards.props`, and that same
+`StartsWith('<repo>/')` condition is what MSBuild tests against `MSBuildProjectDirectory` when it
+decides whether to load the analyzers. A worktree outside the main checkout's path fails the test
+inside MSBuild no matter what the hook believes, so resolving the registry lookup alone would have
+fired the hook where no analyzer loads and reported nothing, which reads as a clean tree. So
+`lint-changed-dotnet.sh` imports the analyzer props directly rather than through the scoped
+wrapper: adoption is already settled by the registry check above it, and the condition has no
+second job to do. Ambient IDE and CLI builds still go through the wrapper, so **they** reach the
+main checkout only, and `bootstrap dotnet <worktree>` does not change that: it registers the
+worktree's main checkout, so no worktree path ever enters the condition. Commits from a worktree
+are linted; typing in one is not.
+
 Two things this depends on, both verified against a linked worktree: paths are resolved
 with `git rev-parse --git-path` rather than `$repo/.git/…` (in a worktree `.git` is a *file*,
 so the naive path is `not a directory`), and the hook carries a marker line so a reinstall
@@ -224,8 +237,25 @@ git commit --no-verify               # skip all hooks
 TVRMSMITH_ESLINT_DEBUG=1 …           # print which branch of the wrapper ran, and the typed decision
 TVRMSMITH_TYPED_LINT=0 …             # force the type-aware layer off for this run
 TVRMSMITH_TYPED_LINT=1 …             # force it on
+TVRMSMITH_REGISTRY_KEY=/path/to/repo # answer the adoption question for a caller the lookup gets wrong
 ~/.config/coding-standards/lint-changed.sh --since main
 ```
+
+`TVRMSMITH_REGISTRY_KEY` is read by the `go` and `dotnet` scripts, and only a caller that already
+knows the answer should set it. Both derive adoption from the parent of `git rev-parse
+--git-common-dir`, which is the main checkout for an ordinary worktree and the wrong directory
+entirely for a checkout git does not think is related to the adopted one. The no-mistakes pipeline
+is that caller: it lints in a worktree of a bare repository it keeps under `~/.no-mistakes`, so the
+derived key named that bare repo, missed the registry and skipped every run in silence. It passes
+the registered checkout instead, in `NO_MISTAKES_REPO_PATH`.
+
+It moves which path is looked up. It does not bypass the lookup, so an override naming a path
+nobody adopted still skips, and findings still come from the tree the script is run in.
+
+Nothing here is a wiring guide, and the no-mistakes side of it is not released. Configuring that
+integration needs a build supporting `lint.extra_linters`; on one without it, a `lint:` block in
+`~/.no-mistakes/config.yaml` does not get ignored, it fails the daemon on every command, because
+global config rejects unknown keys.
 
 ## The typed layer is decided per package
 

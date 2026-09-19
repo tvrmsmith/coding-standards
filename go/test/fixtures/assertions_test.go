@@ -9,9 +9,12 @@ package fixtures
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type page struct {
@@ -50,6 +53,18 @@ func TestTparallel(t *testing.T) {
 		t.Parallel()
 		assertReady(t, true)
 	})
+}
+
+// TestGosecReachesTestFiles reads through a variable path, which is G304. gosec fires here only
+// while nothing takes it off `_test.go`, so TestGosecReportsInsideATestFile in cases_test.go is
+// the behavioral half of what gate/test/preset_test.go holds shut in the config.
+func TestGosecReachesTestFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "page.json")
+	require.NoError(t, os.WriteFile(path, []byte("{}"), 0o600))
+
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "{}", string(body))
 }
 
 // assertReady is a helper that never marks itself one, so a failure inside it is reported at
