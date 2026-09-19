@@ -255,14 +255,14 @@ preset and reds on each of these keys, enumerated rather than claimed exhaustive
 |---|---|
 | `linters.enable`, `linters.disable` | Whether `gosec` runs. `disable` is applied after `enable`, so the entry in `enable` alone proves nothing. |
 | `gosec.excludes`, `gosec.includes` | Which ids report. A non-empty `includes` runs only the ids it names, which disarms all seven answered at the site (`G204`, `G301`, `G302`, `G304`, `G306`, `G702`, `G703`) while `excludes` stays clean. |
-| `gosec.severity`, `gosec.confidence` | The floor a finding must clear. Those five of the seven are all Medium, so `severity: high` empties the sweep in one word. |
+| `gosec.severity`, `gosec.confidence` | The floor a finding must clear. `G204`, `G301`, `G302`, `G304` and `G306` are all Medium, so `severity: high` empties the sweep in one word. |
 | `gosec.config` | Per-rule arguments, where `G306: "0777"` loosens a mode threshold rather than excluding the rule. |
 | `linters.exclusions.rules`, `paths`, `paths-except`, `presets` | How much code the armed rules run over. `paths-except` is here because it is the same disarm read as an allowlist. |
 | `run.tests`, `issues.new`, `new-from-rev`, `new-from-merge-base`, `new-from-patch` | Whether `_test.go` and unchanged code are analysed at all. |
 | `run.issues-exit-code` | Whether a finding fails the step, overridden from inside the config rather than on the command line. |
 
-The last three rows are banned outright rather than pinned to their current value, because a
-pinned default is still one word away from a disarmed run. `presetDisarms` is the function that
+The last two rows are banned outright rather than pinned to their current value, because a pinned
+default is still one word away from a disarmed run. `presetDisarms` is the function that
 answers all of it, and its table cases feed it every one of those configs, since the committed
 preset carries none of them. Known and not covered there: the output caps
 `issues.max-issues-per-linter` and `issues.max-same-issues`, which `TestNeitherOutputCapTruncates`
