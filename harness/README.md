@@ -251,7 +251,7 @@ registry is the path-scoped `<Import>` in `~/.config/coding-standards.props`, an
 decides whether to load the analyzers. A worktree outside the main checkout's path fails the test
 inside MSBuild no matter what the hook believes, so resolving the registry lookup alone would have
 fired the hook where no analyzer loads and reported nothing, which reads as a clean tree. So
-`lint-changed-dotnet.sh` imports the analyzer props directly rather than through the scoped
+`linters/dotnet.sh` imports the analyzer props directly rather than through the scoped
 wrapper: adoption is already settled by the registry check above it, and the condition has no
 second job to do. Ambient IDE and CLI builds still go through the wrapper, so **they** reach the
 main checkout only, and `bootstrap dotnet <worktree>` does not change that: it registers the
