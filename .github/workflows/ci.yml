@@ -143,7 +143,7 @@ jobs:
 
       # vet and the suite say the gate compiles and behaves. Neither says the
       # personal preset still reports nothing over it, and until this step
-      # existed the only thing linting gate/*.go was harness/lint-changed-go.sh,
+      # existed the only thing linting gate/*.go was harness/lint-changed.sh's Go branch,
       # which passes --issues-exit-code 0 and never blocks. So a new
       # exec.Command or os.ReadFile could reintroduce a G204 or G304 with CI
       # green. The bootstrap is the same two lines the golint job uses, because

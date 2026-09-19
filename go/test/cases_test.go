@@ -53,7 +53,7 @@ func TestFixturesCoverOnlyEnabledLinters(t *testing.T) {
 // TestNeitherOutputCapTruncates pins `max-issues-per-linter: 0` and `max-same-issues: 0`.
 //
 // Both cap by default, at 50 and at 3, and both drop the excess silently. That is not a cosmetic
-// limit for this layer: harness/lint-changed-go.sh lints whole packages and filters down to the
+// limit for this layer: harness/lint-changed.sh's Go branch lints whole packages and filters down to the
 // changed files afterwards, so a cap applied to the package total leaves the filter an arbitrary
 // subset, and which findings survive shifts with the order parallel analysis finished in. The
 // fixture calls one error-returning function 55 times, which is over both caps at once.

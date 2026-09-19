@@ -1,5 +1,5 @@
 <!--
-  Points the compiler's SARIF log at one file per target framework, for lint-changed-dotnet.sh.
+  Points the compiler's SARIF log at one file per target framework, for harness/linters/dotnet.sh.
 
   Imported through CustomAfterMicrosoftCommonTargets, which is evaluated after the project body.
   The Props hook the analyzers use is too early: a single-targeted project sets TargetFramework
