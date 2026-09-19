@@ -245,21 +245,33 @@ this layer visits.
 directives across this repository's own tests answer, and what the tightened file modes beside them
 made unnecessary.
 
-Two Go cases hold that shut, because every other way of disarming the sweep leaves CI green.
+Three Go cases hold that shut, because a config edit that disarms the sweep leaves CI green.
 `TestCIDeclaresTheBlockingLintStep` in `gate/test/ci_workflow_test.go` pins the step's `run:` line
 byte for byte and rejects `continue-on-error` on the step and on the job.
-`TestThePresetStillReportsTheRulesThisRepoJustified` in `gate/test/preset_test.go` reds if `gosec`
-leaves `linters.enable`, if `gosec.excludes` gains an id this repository answered at the site
-(`G204`, `G301`, `G302`, `G304`, `G306`, `G702`, `G703`), if `run.issues-exit-code` appears, which
-overrides the exit code from inside the config rather than on the command line, or if any of the
-four keys that decide how much code the linters run over gains an entry: a
-`linters.exclusions.rules` entry naming `gosec` or naming no linter at all, a
-`linters.exclusions.paths` or `paths-except` entry, a non-empty `linters.exclusions.presets`, or
-`run.tests`. That last group is what the enable list and `gosec.excludes` miss. Those two decide
-which rules are armed, these decide which code the armed rules see, so `path: .` or
-`run.tests: false` empties the sweep with the enable list untouched. `gosecReachDisarms` is the
-function that answers them, and its own table cases feed it each of those configs, since the
-committed preset carries none of them.
+`TestThePresetStillReportsTheRulesThisRepoJustified` in `gate/test/preset_test.go` reads the
+preset and reds on each of these keys, enumerated rather than claimed exhaustive:
+
+| Key | What it decides |
+|---|---|
+| `linters.enable`, `linters.disable` | Whether `gosec` runs. `disable` is applied after `enable`, so the entry in `enable` alone proves nothing. |
+| `gosec.excludes`, `gosec.includes` | Which ids report. A non-empty `includes` runs only the ids it names, which disarms all seven answered at the site (`G204`, `G301`, `G302`, `G304`, `G306`, `G702`, `G703`) while `excludes` stays clean. |
+| `gosec.severity`, `gosec.confidence` | The floor a finding must clear. Those five of the seven are all Medium, so `severity: high` empties the sweep in one word. |
+| `gosec.config` | Per-rule arguments, where `G306: "0777"` loosens a mode threshold rather than excluding the rule. |
+| `linters.exclusions.rules`, `paths`, `paths-except`, `presets` | How much code the armed rules run over. `paths-except` is here because it is the same disarm read as an allowlist. |
+| `run.tests`, `issues.new`, `new-from-rev`, `new-from-merge-base`, `new-from-patch` | Whether `_test.go` and unchanged code are analysed at all. |
+| `run.issues-exit-code` | Whether a finding fails the step, overridden from inside the config rather than on the command line. |
+
+The last three rows are banned outright rather than pinned to their current value, because a
+pinned default is still one word away from a disarmed run. `presetDisarms` is the function that
+answers all of it, and its table cases feed it every one of those configs, since the committed
+preset carries none of them. Known and not covered there: the output caps
+`issues.max-issues-per-linter` and `issues.max-same-issues`, which `TestNeitherOutputCapTruncates`
+in `go/test` pins instead.
+
+No YAML assertion can prove `gosec` actually fires inside a `_test.go`, which is the linter's
+behaviour rather than the config's. `TestGosecReportsInsideATestFile` in `go/test/cases_test.go`
+runs the binary over `test/fixtures` and requires a `gosec` finding whose file ends in `_test.go`,
+so an upstream rename or a future default that stops analysing tests reds there.
 
 `go/plugin/` and `go/test/` are separate modules, so the root-module run never reaches them. The
 `lint plugin (go)` job runs `go vet` and `go test` over `go/plugin`, and it does run this preset

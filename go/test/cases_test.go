@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -71,6 +72,25 @@ func TestNeitherOutputCapTruncates(t *testing.T) {
 			"an output cap is truncating the report", same, want)
 }
 
+// TestGosecReportsInsideATestFile is the behavioral half of the rule that `gosec` stays armed
+// over `_test.go`.
+//
+// The config half, gate/test/preset_test.go, can only assert that no key takes gosec off test
+// files, and a key it does not know about, an upstream rename, or a future default that stops
+// analysing tests would all pass it. This runs the binary and looks for the finding.
+// fixtures/assertions_test.go reads through a variable path for it.
+func TestGosecReportsInsideATestFile(t *testing.T) {
+	var inTests []string
+	for _, issue := range runFixtures(t) {
+		if issue.FromLinter == "gosec" && strings.HasSuffix(issue.Pos.Filename, "_test.go") {
+			inTests = append(inTests, issue.Pos.Filename)
+		}
+	}
+
+	assert.NotEmpty(t, inTests,
+		"gosec reported nothing in any _test.go under test/fixtures, so the preset is not running it over test files")
+}
+
 // lintFixtures returns the sorted set of linters that reported something in test/fixtures.
 func lintFixtures(t *testing.T) []string {
 	t.Helper()
@@ -86,6 +106,9 @@ func lintFixtures(t *testing.T) []string {
 type issue struct {
 	FromLinter string `json:"FromLinter"`
 	Text       string `json:"Text"`
+	Pos        struct {
+		Filename string `json:"Filename"`
+	} `json:"Pos"`
 }
 
 // runFixtures runs the personal binary over test/fixtures and returns every issue it reported.
