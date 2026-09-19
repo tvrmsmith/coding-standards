@@ -159,6 +159,30 @@ func errorCodeIn(t *testing.T, body string) string {
 	return ""
 }
 
+// TestTheFallbackCodeIsRegistered closes the half the mapped cases cannot
+// reach. An unmapped kind's code has to be a code report registered, not a
+// bare string openCode spells itself: ADR 0008's golden check walks
+// report.Codes(), so a string missing from the registry ships a document
+// naming a code nothing pins and nothing a caller branches on knows.
+func TestTheFallbackCodeIsRegistered(t *testing.T) {
+	code, mapped := openCode(gitscope.OpenKind(openKindBeyondEveryDeclaredKind))
+
+	if mapped {
+		t.Fatalf("openCode reported kind %d as mapped, want the fallback", openKindBeyondEveryDeclaredKind)
+	}
+	for _, registered := range report.Codes() {
+		if registered == code {
+			return
+		}
+	}
+	t.Errorf("openCode fell back to %q, which report.Codes() does not list", code)
+}
+
+// openKindBeyondEveryDeclaredKind is a kind gitscope does not declare, which
+// is the only way to reach the fallback: every kind gitscope.OpenKinds lists
+// is mapped, pinned by TestOpenCodeMapsEveryDeclaredKind.
+const openKindBeyondEveryDeclaredKind = 99
+
 // TestOpenCodeMapsEveryDeclaredKind walks gitscope.OpenKinds rather than
 // naming the four kinds again here, so a fifth kind appended to that list
 // without a case added to openCode reds this test instead of silently
