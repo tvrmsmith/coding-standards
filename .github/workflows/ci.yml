@@ -174,15 +174,15 @@ jobs:
           ./go/build.sh
 
       # Runs from the repository root, not gate/, because the module covers
-      # internal/gitscope and internal/srcpath as well, and those carry
+      # lint/, internal/gitscope and internal/srcpath as well, and those carry
       # //nolint directives of their own that a gate-only run would leave
       # unenforced.
       #
       # No --issues-exit-code here on purpose: the default is 1, and a finding
       # reds the job. Clearing one means tightening the code or adding a
       # //nolint naming the linter and giving a site-specific reason, never an
-      # entry in go/golangci.yml's excludes, which runs over other repositories
-      # too.
+      # entry in go/golangci.yml's excludes or an exclusion rule taking a linter
+      # off a path, either of which runs over other repositories too.
       - name: Lint the root module with the personal preset
         if: ${{ !cancelled() && steps.setup.outcome == 'success' && steps.gcl.outcome == 'success' }}
         run: ./go/bin/tvrmsmith-gcl run --config ./go/golangci.yml --output.text.print-issued-lines=false ./...
