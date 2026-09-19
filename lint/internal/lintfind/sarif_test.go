@@ -531,10 +531,10 @@ func sarifDoc(t *testing.T, uri string, startLine, endLine int) string {
 func writeSource(t *testing.T, root srcpath.Root, path string) {
 	t.Helper()
 	abs := filepath.Join(root.Dir(), filepath.FromSlash(path))
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
 		t.Fatalf("MkdirAll() err = %v", err)
 	}
-	if err := os.WriteFile(abs, []byte("// test fixture\n"), 0o644); err != nil {
+	if err := os.WriteFile(abs, []byte("// test fixture\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile() err = %v", err)
 	}
 }

@@ -79,6 +79,7 @@ func TestOpenReadsTheRepositorysOwnIndexWhateverTheEnvironmentNames(t *testing.T
 // own when index is empty, and returns its trimmed stdout.
 func indexGit(t *testing.T, dir, index string, args ...string) string {
 	t.Helper()
+	//nolint:gosec // the literal "git" with argv each case writes out, run in that case's own t.TempDir repository with the machine's git config pointed at os.DevNull by GIT_CONFIG_GLOBAL/GIT_CONFIG_SYSTEM below
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
