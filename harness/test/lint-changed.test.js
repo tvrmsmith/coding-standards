@@ -13,15 +13,16 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import {
   chmodSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test, { describe } from 'node:test'
 import assert from 'node:assert/strict'
@@ -48,6 +49,35 @@ function executable(path, body) {
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, body)
   chmodSync(path, 0o755)
+}
+
+/**
+ * A single-directory PATH resolving every command the real one did, except the named binary.
+ * Dropping each PATH entry that holds a dotnet is not equivalent: where the SDK sits in /usr/bin,
+ * as it does on the CI runner, that drops git and the rest of the toolchain too and the script
+ * dies at 127 long before the check under test. Shadowing one name leaves everything else
+ * reachable, so the case runs the same with the SDK installed and without it.
+ *
+ * @returns {string} the directory, ready to hand to a child as PATH
+ */
+function pathWithout(dir, command) {
+  mkdirSync(dir, { recursive: true })
+  const taken = new Set([command])
+  for (const entry of (process.env.PATH ?? '').split(delimiter)) {
+    if (!entry) continue
+    let names = []
+    try {
+      names = readdirSync(entry)
+    } catch {
+      continue // A PATH entry that does not exist or cannot be read contributes nothing.
+    }
+    for (const name of names) {
+      if (taken.has(name)) continue // First entry wins, the way PATH lookup itself resolves.
+      taken.add(name)
+      symlinkSync(join(entry, name), join(dir, name))
+    }
+  }
+  return dir
 }
 
 function commitAll(repo) {
@@ -488,15 +518,8 @@ describe('the C# branch in a repository wired for .NET', () => {
       // The props file's path-scoped condition is the .NET registry, so this repo is adopted.
       writeFileSync(props, `<Project>\n  <!-- StartsWith('${realpathSync(f.repo)}/') -->\n</Project>\n`)
 
-      // Every PATH entry that carries a dotnet is dropped, so the case is the same on a machine
-      // with the SDK installed and one without. git and the rest of the toolchain stay.
-      const path = (process.env.PATH ?? '')
-        .split(':')
-        .filter((entry) => entry && !existsSync(join(entry, 'dotnet')))
-        .join(':')
-
       const { status, stderr } = capture(f.repo, ['--only', 'dotnet', '--staged'], {
-        PATH: path,
+        PATH: pathWithout(join(f.root, 'bin'), 'dotnet'),
         TVRMSMITH_ANALYZER_PROPS: props,
       })
       assert.equal(status, 1)
