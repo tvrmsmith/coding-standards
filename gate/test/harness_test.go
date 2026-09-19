@@ -5,6 +5,10 @@
 //
 // Nothing here reaches inside the gate. The golden files are the expected
 // values; a case that disagrees with one is a bug in the gate.
+//
+// One golden has no case here: golden/internal_error.toon, which no run of the
+// real binary can produce. gate/internal/report/internalerror_test.go owns it
+// and says why.
 package gate_test
 
 import (

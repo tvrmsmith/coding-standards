@@ -49,11 +49,11 @@ func TestAnUnrecognisedCauseIsNotTypedAsAFailure(t *testing.T) {
 	}
 }
 
-// TestAnUnmappedOpenKindStillReachesTheDocument pins issue 122: a fifth
-// OpenKind added to gitscope reaches asFailure today by way of a panic, which
-// exits with no document, the one shape ADR 0008 refuses. asFailure must type
-// it as report.CodeInternalError instead, with a message naming the kind that
-// had no code.
+// TestAnUnmappedOpenKindStillReachesTheDocument pins issue 122. A fifth
+// OpenKind added to gitscope used to reach asFailure by way of a panic, which
+// exits with no document, the one shape ADR 0008 refuses. asFailure types it
+// as report.CodeInternalError instead, with a message naming the kind that had
+// no code.
 func TestAnUnmappedOpenKindStillReachesTheDocument(t *testing.T) {
 	failure, ok := asFailure(gitscope.OpenError{
 		Kind:    gitscope.OpenKind(99),
