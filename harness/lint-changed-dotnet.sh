@@ -71,9 +71,19 @@ cd "$repo_root" || exit 1
 # shared anyway — it lives in the common git dir — so keying on $repo_root would install a hook
 # in every worktree that then skipped, which reads exactly like the layer being broken. The
 # common git dir is <main>/.git in both cases, so its parent is the main checkout.
-registry_key=$repo_root
-if common_git_dir=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P); then
-  registry_key=$(cd "$common_git_dir/.." && pwd -P)
+#
+# TVRMSMITH_REGISTRY_KEY overrides the lookup for a caller that knows the answer and would
+# derive the wrong one. The no-mistakes pipeline is that caller: it lints in a detached
+# worktree of its own bare gate repository under ~/.no-mistakes, so the common git dir resolves
+# to that gate rather than to the adopted checkout, and every run would skip silently. It
+# passes the registered checkout in NO_MISTAKES_REPO_PATH. Findings are still taken from the
+# tree this runs in; only the adoption question is answered elsewhere.
+registry_key=${TVRMSMITH_REGISTRY_KEY:-}
+if [ -z "$registry_key" ]; then
+  registry_key=$repo_root
+  if common_git_dir=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P); then
+    registry_key=$(cd "$common_git_dir/.." && pwd -P)
+  fi
 fi
 
 # Whether this repo is adopted is a question the props file already answers: it carries one
