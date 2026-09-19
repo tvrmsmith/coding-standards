@@ -24,7 +24,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	binDir = dir
-	//nolint:gosec // the literal "go" building this module's own ./cmd/lint-changed; the only non-constant argv element is the MkdirTemp path three lines up
+	//nolint:gosec // the literal "go" building this module's own ./cmd/lint-changed; the only non-constant argv element is the MkdirTemp path in dir above
 	cmd := exec.Command("go", "build", "-o", filepath.Join(dir, "lint-changed"), "./cmd/lint-changed")
 	cmd.Dir = ".."
 	if out, err := cmd.CombinedOutput(); err != nil {

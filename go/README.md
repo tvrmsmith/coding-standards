@@ -173,7 +173,7 @@ What settled it was where the exclusion lands. This preset is the product, and i
 people's repositories, so `path: _test\.go` disarms `gosec` in all of them to spare this one some
 typing. The per-site answer costs more and says more: each directive names why that call is safe,
 and a site whose mode was merely convenient gets tightened instead, which the sweep found for
-eleven of them. Where the rule is answered rather than fixed, the reason has to be specific
+fifteen of them. Where the rule is answered rather than fixed, the reason has to be specific
 enough that it could not be pasted onto another site.
 
 `allow-unused: true` is set on `nolintlint`, so a directive that stops suppressing anything is not
@@ -250,11 +250,16 @@ Two Go cases hold that shut, because every other way of disarming the sweep leav
 byte for byte and rejects `continue-on-error` on the step and on the job.
 `TestThePresetStillReportsTheRulesThisRepoJustified` in `gate/test/preset_test.go` reds if `gosec`
 leaves `linters.enable`, if `gosec.excludes` gains an id this repository answered at the site
-(`G204`, `G301`, `G302`, `G304`, `G306`, `G702`, `G703`), if `linters.exclusions.rules` grows an
-entry that takes `gosec` off some path, or if `run.issues-exit-code` appears, which overrides the
-exit code from inside the config rather than on the command line. The third is the one the other
-two miss: `gosec.excludes` decides which rules are armed, and an exclusion rule decides how much
-code they run over, so `path: .` empties the sweep with the enable list untouched.
+(`G204`, `G301`, `G302`, `G304`, `G306`, `G702`, `G703`), if `run.issues-exit-code` appears, which
+overrides the exit code from inside the config rather than on the command line, or if any of the
+four keys that decide how much code the linters run over gains an entry: an
+`linters.exclusions.rules` entry naming `gosec` or naming no linter at all, an
+`linters.exclusions.paths` or `paths-except` entry, a non-empty `linters.exclusions.presets`, or
+`run.tests`. That last group is what the enable list and `gosec.excludes` miss. Those two decide
+which rules are armed, these decide which code the armed rules see, so `path: .` or
+`run.tests: false` empties the sweep with the enable list untouched. `gosecReachDisarms` is the
+function that answers them, and its own table cases feed it each of those configs, since the
+committed preset carries none of them.
 
 `go/plugin/` and `go/test/` are separate modules, so the root-module run never reaches them. The
 `lint plugin (go)` job runs `go vet` and `go test` over `go/plugin`, and it does run this preset
