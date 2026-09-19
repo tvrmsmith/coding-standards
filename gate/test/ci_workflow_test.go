@@ -124,8 +124,8 @@ func gateJobSpec(t *testing.T) ciJob {
 // a `|| true` or `; exit 0` suffix swallows the exit status, a dropped
 // `--config` runs golangci-lint's own plugin-free default set, `--disable=gosec`
 // or `--default=none` empties it, `--new-from-rev` hides everything already on
-// disk, `--issues-exit-code 0` is the flag harness/lint-changed-go.sh passes
-// because it runs over other people's repositories, and narrowing `./...` to
+// disk, `--issues-exit-code 0` is the flag harness/lint-changed.sh's Go branch
+// passes because it runs over other people's repositories, and narrowing `./...` to
 // one directory leaves the rest of the module unlinted. A predicate per hole
 // closes the holes someone thought of; the snapshot closes the rest.
 const (
