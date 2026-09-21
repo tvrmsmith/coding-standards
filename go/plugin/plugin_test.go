@@ -5,17 +5,16 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"golang.org/x/tools/go/analysis"
+
+	"github.com/tvrmsmith/coding-standards/go/plugin/commentblocklength"
 )
 
-// A three-line comment block: silent under the shipped 10-line budget, reported under a budget
-// of two. Which of the two a setting produces is the whole observable difference between the
-// default and a honoured value.
+// A three-line comment block: silent under the shipped budget, reported under a budget of one,
+// which is the smallest value the fallback guard lets through.
 const threeLineBlock = `package fixture
 
 func f() {
@@ -28,23 +27,28 @@ func f() {
 
 func TestCommentBlockLengthBudget(t *testing.T) {
 	for _, test := range []struct {
-		name     string
-		settings any
-		want     []string
+		name       string
+		settings   any
+		wantBudget int
+		want       []string
 	}{
-		{name: "omitted setting falls back to the default", settings: map[string]any{}},
-		{name: "zero falls back to the default", settings: map[string]any{"max": 0}},
-		{name: "negative falls back to the default", settings: map[string]any{"max": -1}},
+		{name: "omitted setting falls back to the default", settings: nil, wantBudget: commentblocklength.DefaultMax},
+		{name: "zero falls back to the default", settings: map[string]any{"max": 0}, wantBudget: commentblocklength.DefaultMax},
+		{name: "negative falls back to the default", settings: map[string]any{"max": -1}, wantBudget: commentblocklength.DefaultMax},
 		{
-			name:     "a positive setting is honoured",
-			settings: map[string]any{"max": 2},
-			want:     []string{"3-line comment block, over the 2-line budget"},
+			name:       "a positive setting is honoured",
+			settings:   map[string]any{"max": 1},
+			wantBudget: 1,
+			want:       []string{"3-line comment block, over the 1-line budget"},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			linter, err := newCommentBlockLength(test.settings)
 			if err != nil {
 				t.Fatalf("newCommentBlockLength(%v): %v", test.settings, err)
+			}
+			if budget := linter.(*commentBlockLength).budget; budget != test.wantBudget {
+				t.Errorf("got budget %d, want %d", budget, test.wantBudget)
 			}
 			analyzers, err := linter.BuildAnalyzers()
 			if err != nil {
@@ -71,10 +75,7 @@ func TestCommentBlockLengthBudget(t *testing.T) {
 func reportsOver(t *testing.T, analyzer *analysis.Analyzer, src string) []string {
 	t.Helper()
 
-	filename := filepath.Join(t.TempDir(), "fixture.go")
-	if err := os.WriteFile(filename, []byte(src), 0o600); err != nil {
-		t.Fatalf("writing the fixture: %v", err)
-	}
+	const filename = "fixture.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, filename, src, parser.ParseComments)
 	if err != nil {

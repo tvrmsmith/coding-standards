@@ -24,9 +24,10 @@ func init() {
 }
 
 type commentBlockLengthSettings struct {
-	// Max is the budget: a block spanning more lines than this is reported. Anything
-	// non-positive means unset, which is how an omitted setting arrives, so it reads as the
-	// default rather than as a budget every comment block busts.
+	// Max is the budget: a block spanning more lines than this is reported. Zero means unset,
+	// which is how an omitted setting arrives, so it reads as the default. A negative value is
+	// a typo, folded into the same branch because taken literally it would flag every comment
+	// block.
 	Max int `json:"max"`
 }
 
