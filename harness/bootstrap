@@ -218,7 +218,7 @@ done
 info "staged $artifacts"
 
 # Keyed on the main checkout, not on $repo: bootstrapping a linked worktree adopts the
-# repository, and lint-changed-dotnet.sh resolves the same way, so one entry covers every
+# repository, and linters/dotnet.sh resolves the same way, so one entry covers every
 # worktree the hook fires in. The scoping condition below still names only this path, so an
 # ambient IDE or CLI build gets the analyzers in the main checkout alone; the hook does not
 # rely on it, because it imports the analyzer props directly.
@@ -353,7 +353,7 @@ step 'Registry'
 # two there is nothing in or around the repo that says "this one is adopted". Without this file,
 # bootstrapping one repo would silently start linting every other repo the hook guards.
 # Keyed on the main checkout, not on $repo: bootstrapping a linked worktree adopts the
-# repository, and lint-changed-go.sh resolves the same way, so one line covers every worktree.
+# repository, and linters/go.sh resolves the same way, so one line covers every worktree.
 # The hook is shared between them regardless, because it lives in the common git dir.
 go_repo_key=$repo
 if go_common_git_dir=$(cd "$repo" && cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P); then
@@ -457,7 +457,7 @@ if [ "$lang" = dotnet ]; then
 
   # Item groups prove delivery, not execution: analyzers only run when csc does. --no-incremental
   # forces that; an up-to-date project reports nothing at all and would look like a clean pass.
-  # References first, forced recompile second — the same two passes lint-changed-dotnet.sh runs,
+  # References first, forced recompile second — the same two passes linters/dotnet.sh runs,
   # and for the same reason: a forced build with BuildProjectReferences=false on a tree whose
   # dependencies were never built reports the entire file as undefined types.
   #

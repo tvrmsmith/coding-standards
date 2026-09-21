@@ -106,6 +106,8 @@ The default base resolves through `origin/HEAD`, then `origin/main`, then `origi
 
 The four diff modes agree except for two points. `--files` carries no line information, so **every method in a listed file is changed**, which is a stated rule rather than an accident. `--staged` reports index line numbers while the extractor parses the disk copy, so a file staged in one state and dirty in another would map hunk ranges onto the wrong text; the gate **exits 1** naming those files. `lint-changed-dotnet.sh` only warns at the same fork, and it is right to, because it reports and never blocks. This one blocks, and silent misattribution is the worst thing a blocking gate can do.
 
+**Amended 2026-09-19, after the supersession**, so it is not among the eight the header says 0007 folded in. 0007 carries no reference to the scripts below and needs none. `lint-changed-dotnet.sh` is now `harness/linters/dotnet.sh`, one branch of a single `harness/lint-changed.sh` entrypoint that dispatches on the languages the changed files touch. The never-blocks property the paragraph above leans on no longer holds either: the C# branch blocks on any analyzer warning touching a line the change wrote. Both halves of the contrast are therefore historical. The rule this ADR states is untouched by either, since the fork it describes is about how a mode maps hunk ranges onto text, not about who blocks.
+
 The extractor contract from ADR 0001 grows two obligations, both because the gate must distinguish "not my language" and "nothing here" from "I failed".
 
 - It **self-describes the file extensions it handles**, so the gate hands it only changed files it can use and adding a language means shipping an extractor rather than editing the gate.

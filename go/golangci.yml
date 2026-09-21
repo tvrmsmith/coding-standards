@@ -149,7 +149,7 @@ issues:
   # Report every finding, not the first 50 per linter and the first 3 sharing a message.
   #
   # Both cap by default, both drop silently, and the truncation is worse here than in a CI run.
-  # harness/lint-changed-go.sh lints whole packages and then filters the output down to the
+  # harness/lint-changed.sh's Go branch lints whole packages and then filters the output down to the
   # changed files, so the cap applies to the package total before the filter ever sees it. Which
   # findings survive depends on the order parallel package analysis finished in, so the same
   # commit reported a different set on every run: on one real repo, three runs of one command
@@ -160,5 +160,5 @@ issues:
 severity:
   # Every personal Go rule is advisory, in the same position as the Roslyn half: this runs
   # machine-locally over code other people wrote and are not being asked to change. The harness
-  # turns the severity into an exit status; see harness/lint-changed-go.sh.
+  # turns the severity into an exit status; see harness/lint-changed.sh's Go branch.
   default: warning

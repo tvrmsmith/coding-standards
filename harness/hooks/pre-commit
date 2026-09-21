@@ -3,12 +3,13 @@
 # Personal coding-standards pre-commit hook — installed machine-locally by
 # `harness/bootstrap ts <repo>`. Never committed to the repository it guards.
 #
-# This hook is the enforcement gate for TypeScript: the editor layer
-# reaches roughly 12% of the rule x package matrix, this reaches all of it.
+# This hook is the enforcement gate, for every language the repo is adopted for. On the
+# TypeScript side it is also the only complete one: the editor layer reaches roughly 12% of the
+# rule x package matrix, this reaches all of it.
 #
-# Three branches, one per language, each a no-op when the commit contains nothing it handles and
-# when the repo was never bootstrapped for it — so this one template serves a repo adopted for
-# any of them, and `bootstrap ts`, `bootstrap dotnet` and `bootstrap go` install it identically.
+# One call, whatever the repo is adopted for. lint-changed.sh runs every language branch that
+# applies and is a no-op for the rest, so this one template serves a repo adopted for any of them,
+# and `bootstrap ts`, `bootstrap dotnet` and `bootstrap go` install it identically.
 #
 # The harness path and any pre-existing hook to chain are substituted in below at install
 # time; `bootstrap` re-reads the `chained=` line on reinstall, so keep its shape.
@@ -31,30 +32,33 @@ fi
 
 status=0
 
-# TypeScript: ESLint over the staged .ts/.tsx, layered. Errors fail, warnings do not.
+# Every language the staged changes touch and this repo is wired for, in one call. Each branch
+# runs even if an earlier one found something — a commit spanning two languages should report
+# both, not stop at whichever came first.
+#
+# One exit convention across all of them, ADR 0010's: 2 is "the gate says stop", a finding that
+# survived, whether an ESLint error or a C# analyzer warning on a line the change wrote. 1 is "the
+# gate broke" and dominates a 2 from another branch, since a branch that could not run proves
+# nothing about the code it never read. Personal Go findings are still advisory and join the
+# blocking half in slice 3 of issue 108.
 "$harness/lint-changed.sh" --staged || status=$?
 
-# C#: the same question asked of the staged .cs, answered by building the projects that own
-# them with the analyzers injected. Every branch runs even if an earlier one found something —
-# a commit spanning two languages should report both, not stop at whichever came first.
-#
-# That branch blocks. A compile error fails as it always did, and so now does any warning
-# touching a line the change wrote, scoped per changed line rather than per changed file. Its
-# exit 2 is "a finding survived"; 1 is the gate itself breaking. See lint-changed-dotnet.sh.
-"$harness/lint-changed-dotnet.sh" --staged || status=$?
-
-# Go: the personal golangci-lint binary over the packages owning the staged .go. Findings report
-# and never block; the C# half no longer does, and Go joins it in slice 3 of issue 108. A
-# non-zero status here means the run itself broke.
-"$harness/lint-changed-go.sh" --staged || status=$?
-
-if [ $status -ne 0 ]; then
+# Only 2 is a finding. Every other non-zero code is the gate breaking, 1 from the script itself
+# and 127 or 126 from a hook installed before the consolidation or pointed at a moved hub, so the
+# broken-gate arm is the catch-all. Calling any of those a finding would print waiver instructions
+# for a gate that read nothing.
+if [ $status -eq 2 ]; then
   echo >&2
   echo "pre-commit: personal coding standards found errors in the staged changes." >&2
   echo "  Fix them. Past a genuine false positive, run the waive command the finding printed," >&2
   echo "  exactly as printed: it names the binary by full path because lint-changed is not on PATH." >&2
   echo "  One rule, one path, one use, logged under XDG_STATE_HOME so it can be audited." >&2
   echo "  SKIP_TVRMSMITH_LINT=1 / --no-verify skip every hook and are not the route to take." >&2
+elif [ $status -ne 0 ]; then
+  echo >&2
+  echo "pre-commit: the personal coding standards gate could not run to completion (exit" >&2
+  echo "  $status), so the staged changes went unchecked. The cause is printed above. This is the" >&2
+  echo "  tooling failing rather than a finding in the code." >&2
 fi
 
 exit $status

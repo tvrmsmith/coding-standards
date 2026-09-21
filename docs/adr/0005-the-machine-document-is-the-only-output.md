@@ -118,6 +118,8 @@ flag spells the default and there is nothing to name it after. Under `--files` t
 so `base` is `null` and `touched_lines_outside_spans` is `0`; a file list carries no line information, so ADR 0003
 makes every method in a listed file changed and neither field has anything to say.
 
+**Amended 2026-09-19, after the supersession**, so it is not among the seventeen the header says 0008 folded in. 0008 carries no reference to the script below and needs none. `lint-changed-dotnet.sh` is now `harness/linters/dotnet.sh`, one branch of a single `harness/lint-changed.sh` entrypoint. The spelling this paragraph borrows is unaffected: `--staged`, `--since` and `--files` are parsed once in the shared `harness/linters/common.sh` and mean there what they meant in the script named above.
+
 The enumeration is **sixteen** codes, and this list supersedes every count above. `staged_file_dirty` is a
 `--staged` run refusing a file staged in one state and on disk in another: the index reports the line numbers and
 the extractor parses the disk copy, so scoring it would attribute coverage to the wrong text, which ADR 0003 makes

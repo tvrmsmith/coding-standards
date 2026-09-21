@@ -225,7 +225,7 @@ Three things about it are load-bearing and fail silently when wrong:
   exists for the same reason in reverse: one build of a large solution compiles dozens of
   projects and the script runs once per project.
 
-The pre-commit hook (`harness/lint-changed-dotnet.sh`) builds with scoping **off** on purpose. It
+The pre-commit hook (`harness/lint-changed.sh`'s C# branch) builds with scoping **off** on purpose. It
 is keyed on what is *staged* and this is keyed on the working tree; letting both filter would make
 the reported set their intersection, silently.
 

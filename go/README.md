@@ -222,7 +222,7 @@ meaningless.
 
 ## Severity, and what blocks
 
-In an adopted repo every rule here is advisory. `harness/lint-changed-go.sh` passes
+In an adopted repo every rule here is advisory. `harness/lint-changed.sh`'s Go branch passes
 `--issues-exit-code=0` and reports the findings without failing, so a finding never blocks a
 commit. A non-zero exit after that flag means the *run* broke, a tree that does not typecheck or
 an unreadable config, and that does fail.
