@@ -94,6 +94,13 @@ In C# the same budget comes from an `.editorconfig` key, `tvrmsmith_comment_bloc
 because Roslyn has no rule-parameter mechanism of its own. In Go it is
 `linters.settings.custom.tvrmsmith-comment-block-length.settings.max`.
 
+The budget has to be positive, and the three halves enforce that differently. ESLint rejects
+anything below `1` against the rule schema. C# falls back to `10` for any value it cannot read as
+a positive integer, including a non-numeric one. Go falls back to `10` for a non-positive
+integer, but a malformed setting, meaning a non-integer value or an unknown key, fails the linter
+load instead, because golangci-lint decodes the settings block with `DisallowUnknownFields` and
+the plugin returns that error. None of the three runs with a budget every comment block busts.
+
 ## No autofix
 
 There cannot be one. Every honest response, whether shortening the prose, moving it to a doc
