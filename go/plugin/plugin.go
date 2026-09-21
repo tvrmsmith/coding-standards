@@ -24,9 +24,9 @@ func init() {
 }
 
 type commentBlockLengthSettings struct {
-	// Max is the budget: a block spanning more lines than this is reported. Zero means unset,
-	// which is how an omitted setting arrives, so it reads as the default rather than as a
-	// budget of zero lines.
+	// Max is the budget: a block spanning more lines than this is reported. Anything
+	// non-positive means unset, which is how an omitted setting arrives, so it reads as the
+	// default rather than as a budget every comment block busts.
 	Max int `json:"max"`
 }
 
@@ -43,7 +43,7 @@ func newCommentBlockLength(input any) (register.LinterPlugin, error) {
 	}
 
 	budget := settings.Max
-	if budget == 0 {
+	if budget <= 0 {
 		budget = commentblocklength.DefaultMax
 	}
 	return &commentBlockLength{budget: budget}, nil
