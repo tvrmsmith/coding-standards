@@ -24,18 +24,18 @@ const DefaultMax = 10
 
 // NewAnalyzer builds the analyzer with a caller-supplied budget, because golangci-lint hands
 // plugin settings to the plugin rather than to the analyzer's own flag set.
-func NewAnalyzer(max int) *analysis.Analyzer {
+func NewAnalyzer(budget int) *analysis.Analyzer {
 	return &analysis.Analyzer{
 		Name: "commentblocklength",
 		Doc:  "reports a run of non-documentation comments longer than the budget",
 		URL:  "https://github.com/tvrmsmith/coding-standards/blob/main/packages/eslint-plugin-tvrmsmith/docs/rules/comment-block-length.md",
 		Run: func(pass *analysis.Pass) (any, error) {
-			return run(pass, max)
+			return run(pass, budget)
 		},
 	}
 }
 
-func run(pass *analysis.Pass, max int) (any, error) {
+func run(pass *analysis.Pass, budget int) (any, error) {
 	for _, file := range pass.Files {
 		filename := pass.Fset.Position(file.Pos()).Filename
 		src, err := pass.ReadFile(filename)
@@ -45,7 +45,7 @@ func run(pass *analysis.Pass, max int) (any, error) {
 
 		for _, block := range blocks(file, pass.Fset, src) {
 			lines := block.lines(pass.Fset)
-			if lines <= max {
+			if lines <= budget {
 				continue
 			}
 			pass.Report(analysis.Diagnostic{
@@ -55,7 +55,7 @@ func run(pass *analysis.Pass, max int) (any, error) {
 					"%d-line comment block, over the %d-line budget. Is it justifying the code below it? "+
 						"Then fix the code. Is it documenting a contract or an invariant? Then move it above "+
 						"the declaration it documents, where a doc comment is exempt.",
-					lines, max),
+					lines, budget),
 			})
 		}
 	}

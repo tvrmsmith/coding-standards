@@ -31,7 +31,7 @@ type commentBlockLengthSettings struct {
 }
 
 type commentBlockLength struct {
-	max int
+	budget int
 }
 
 var _ register.LinterPlugin = (*commentBlockLength)(nil)
@@ -42,15 +42,15 @@ func newCommentBlockLength(input any) (register.LinterPlugin, error) {
 		return nil, fmt.Errorf("decoding tvrmsmith-comment-block-length settings: %w", err)
 	}
 
-	max := settings.Max
-	if max == 0 {
-		max = commentblocklength.DefaultMax
+	budget := settings.Max
+	if budget == 0 {
+		budget = commentblocklength.DefaultMax
 	}
-	return &commentBlockLength{max: max}, nil
+	return &commentBlockLength{budget: budget}, nil
 }
 
 func (c *commentBlockLength) BuildAnalyzers() ([]*analysis.Analyzer, error) {
-	return []*analysis.Analyzer{commentblocklength.NewAnalyzer(c.max)}, nil
+	return []*analysis.Analyzer{commentblocklength.NewAnalyzer(c.budget)}, nil
 }
 
 // LoadModeSyntax: the rule reads comments and declaration positions, never a type, so
