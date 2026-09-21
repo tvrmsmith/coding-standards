@@ -17,6 +17,7 @@ build.sh                             # builds bin/tvrmsmith-gcl, then proves the
 plugin/
   go.mod
   plugin.go                          # one register.Plugin call per rule
+  plugin_test.go                     # how each settings value resolves to a budget
   commentblocklength/
     analyzer.go                      # the Go half of comment-block-length
     analyzer_test.go
