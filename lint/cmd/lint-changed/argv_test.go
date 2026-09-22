@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 
@@ -125,8 +126,8 @@ func TestParseFilterRejectsUnknownFormat(t *testing.T) {
 	if err == nil {
 		t.Fatalf("got nil, want an error")
 	}
-	ue, ok := err.(*UsageError)
-	if !ok {
+	var ue *UsageError
+	if !errors.As(err, &ue) {
 		t.Fatalf("got %T, want *UsageError", err)
 	}
 	want := "unknown --format 'bogus', want one of sarif, golangci, eslint"
@@ -176,8 +177,8 @@ func TestParseFilterFormatIsSticky(t *testing.T) {
 // applies to a run with zero reports.
 func TestParseFilterReportWithNoFormatIsUsageError(t *testing.T) {
 	_, err := Parse([]string{"--staged", "--report", "a.json"})
-	ue, ok := err.(*UsageError)
-	if !ok {
+	var ue *UsageError
+	if !errors.As(err, &ue) {
 		t.Fatalf("got %T (%v), want *UsageError", err, err)
 	}
 	want := "--report a.json has no --format before it"
@@ -190,8 +191,8 @@ func TestParseFilterReportWithNoFormatIsUsageError(t *testing.T) {
 // language now, so asserting it from the command line is gone.
 func TestParseFilterLanguageIsUnknownArgument(t *testing.T) {
 	_, err := Parse([]string{"--staged", "--language", "csharp"})
-	ue, ok := err.(*UsageError)
-	if !ok {
+	var ue *UsageError
+	if !errors.As(err, &ue) {
 		t.Fatalf("got %T (%v), want *UsageError", err, err)
 	}
 	want := "unknown argument '--language'"
@@ -245,8 +246,8 @@ func TestParseSpend(t *testing.T) {
 // Scenario 13: spend with no --waiver at all is a usage error.
 func TestParseSpendRequiresAtLeastOneWaiver(t *testing.T) {
 	_, err := Parse([]string{"spend"})
-	ue, ok := err.(*UsageError)
-	if !ok {
+	var ue *UsageError
+	if !errors.As(err, &ue) {
 		t.Fatalf("got %T (%v), want *UsageError", err, err)
 	}
 	want := "spend: at least one --waiver is required"
