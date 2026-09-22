@@ -81,7 +81,7 @@ var grandfathered = map[string]ceilingOverride{
 	},
 	"0010-lint-blocks-on-any-warning-touching-a-changed-line.md": {
 		block: 686,
-		why:  "five dated amendments landed inside the Current rule block, so folding them back is a consolidation",
+		why:   "five dated amendments landed inside the Current rule block, so folding them back is a consolidation",
 	},
 }
 
