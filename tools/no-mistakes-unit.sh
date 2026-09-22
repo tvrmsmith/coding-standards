@@ -36,8 +36,9 @@ list_is_complete() {
 # The root-module packages whose tests reach a changed file under the unit's directory. A file maps
 # to the package directory holding it, or the nearest one above it inside the unit. A package is
 # selected when it is that package or depends on it, test imports included, so a change under
-# internal also runs gate/test, which drives it end to end. lint/test builds lint-changed with
-# `go build` rather than importing it, so it is added whenever lint-changed is selected.
+# internal also runs gate/test, which drives it end to end. lint/test and gate/test build their
+# binaries with `go build` rather than importing them, so each is added whenever a package it builds
+# (lint-changed, or metric-gate and the stub extractor) is selected.
 #
 # Falls back to every package under the unit when a changed file there sits in no package, and to
 # the whole module when no-mistakes dropped the changed list.
@@ -72,7 +73,9 @@ root_packages() {
       BEGIN { n = split(want, w, "\n"); for (i = 1; i <= n; i++) hit[w[i]] = 1 }
       { for (i = 1; i <= NF; i++) if ($i in hit) { print $1; next } }' |
     sed -E 's/ \[.*//; s/\.test$//; s/_test$//' |
-    awk '{ print } sub("/lint/cmd/lint-changed$", "/lint/test")' | sort -u
+    awk '{ print }
+      sub("/lint/cmd/lint-changed$", "/lint/test") ||
+      sub("/gate/(cmd/metric-gate|test/stub)$", "/gate/test")' | sort -u
 }
 
 # Tests the packages in the current directory's module and writes the unit's JUnit report and
