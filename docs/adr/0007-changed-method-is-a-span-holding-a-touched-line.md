@@ -1,7 +1,7 @@
 # A changed method is a working-tree span holding at least one touched line
 
 **Status:** accepted 2026-09-09. Consolidates [ADR 0003](https://github.com/tvrmsmith/coding-standards/blob/3fd48d4ad6c2a98d2332fb872ab319e80658bb91/docs/adr/0003-changed-method-is-a-span-holding-a-touched-line.md)
-and its eight amendments. The decision is unchanged; 0003 holds the reasoning that got here.
+and its eight amendments. The decision is unchanged; 0003's last commit holds the reasoning.
 
 ## Current rule
 
@@ -143,11 +143,11 @@ otherwise good report.
 
 **Trimmed 2026-09-11**, with Trevor's approval, because this file's header delegates the reasoning
 to 0003 and the section then restated it. Every option and the reasoning that rejected each stay in
-[ADR 0003](https://github.com/tvrmsmith/coding-standards/blob/3fd48d4ad6c2a98d2332fb872ab319e80658bb91/docs/adr/0003-changed-method-is-a-span-holding-a-touched-line.md), which is preserved. Nothing
+[ADR 0003](https://github.com/tvrmsmith/coding-standards/blob/3fd48d4ad6c2a98d2332fb872ab319e80658bb91/docs/adr/0003-changed-method-is-a-span-holding-a-touched-line.md), which git keeps. Nothing
 here reopens them.
 
 ## Consequences
 
 **Trimmed 2026-09-14**, with Trevor's approval, on the precedent set above.
-[ADR 0003](https://github.com/tvrmsmith/coding-standards/blob/3fd48d4ad6c2a98d2332fb872ab319e80658bb91/docs/adr/0003-changed-method-is-a-span-holding-a-touched-line.md)'s Consequences is preserved and
+[ADR 0003](https://github.com/tvrmsmith/coding-standards/blob/3fd48d4ad6c2a98d2332fb872ab319e80658bb91/docs/adr/0003-changed-method-is-a-span-holding-a-touched-line.md)'s Consequences, which git keeps,
 states both still, the first word for word.

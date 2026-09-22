@@ -2,7 +2,7 @@
 
 **Status:** accepted 2026-09-09. Consolidates
 [ADR 0006](https://github.com/tvrmsmith/coding-standards/blob/3fd48d4ad6c2a98d2332fb872ab319e80658bb91/docs/adr/0006-the-csharp-extractor-is-written-in-house.md) and its eight amendments. The decision
-is unchanged; 0006 holds the reasoning that got here.
+is unchanged; 0006's last commit holds the reasoning.
 
 ## Current rule
 
