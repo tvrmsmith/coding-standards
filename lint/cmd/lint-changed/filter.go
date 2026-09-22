@@ -39,10 +39,14 @@ func scopeFinding(f lintfind.Finding, scope scopeSet) (survivor, bool) {
 	return survivor{finding: f, locations: locs}, true
 }
 
-// runFilter is the blocking form: it reads a report off stdin, scopes it to
-// the diff, lets a waiver suppress a survivor, and reports the rest. Exit 0
-// is nothing survived, 1 is the tool breaking, 2 is a finding surviving.
-func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
+// runFilter is the blocking form: it reads every --report named, scopes them
+// to the diff, lets a waiver suppress a survivor, and reports the rest. Exit
+// 0 is nothing survived, 1 is the tool breaking, 2 is a finding surviving.
+//
+// It never spends a matched waiver. Only the dispatcher that calls this
+// filter across every language branch of one commit knows whether the whole
+// commit went through, so spending is the separate KindSpend form.
+func runFilter(fa FilterArgs, stdout, stderr io.Writer) int {
 	// OpenHook rather than Open, because git runs this filter from a pre-commit
 	// hook and the index it names there is the index the commit will write.
 	repo, err := gitscope.OpenHook()
@@ -57,11 +61,7 @@ func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	reports, err := readReports(fa, stdin, repo.Root())
-	if err != nil {
-		_, _ = fmt.Fprintln(stderr, err)
-		return 1
-	}
+	reports := readReports(fa, repo.Root())
 
 	var survivors []survivor
 	for _, f := range reports.findings {
@@ -94,13 +94,23 @@ func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
 			return 1
 		}
 		path := s.waivePath()
-		w, ok := store.Match(fa.Language, path, s.finding.Rule, tree, claimed)
+		w, ok := store.Match(s.finding.Language, path, s.finding.Rule, tree, claimed)
 		if !ok {
 			kept = append(kept, s)
 			continue
 		}
 		claimed[w.ID] = true
 		matched = append(matched, matchedWaiver{waiver: w, rule: s.finding.Rule, path: path})
+	}
+
+	// Written unconditionally once matching has finished, whatever the
+	// verdict below: the file records what matched, and the decision to
+	// spend belongs to the dispatcher alone.
+	if fa.MatchedWaivers != "" {
+		if err := writeMatchedWaivers(fa.MatchedWaivers, matched); err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+			return 1
+		}
 	}
 
 	if len(reports.dropped) > 0 {
@@ -110,47 +120,50 @@ func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, msg)
 	}
 
+	// Printed for every matched waiver on every verdict, not only when the
+	// run blocks: the filter never spends, so it never knows why a waiver
+	// went unspent, only that it matched.
+	for _, m := range matched {
+		_, _ = fmt.Fprintf(stderr, "waiver %s matched %s on %s\n", m.waiver.ID, m.rule, m.path)
+	}
+
 	if len(kept) > 0 {
-		for _, m := range matched {
-			_, _ = fmt.Fprintf(stderr, "waiver %s matched %s on %s but was not spent: the run blocked on another finding\n",
-				m.waiver.ID, m.rule, m.path)
-		}
-		reportKept(stdout, stderr, waiveBinary(), fa.Language, kept)
+		reportKept(stdout, stderr, waiveBinary(), kept)
 		return 2
 	}
 
 	// A report that checked nothing is the tool breaking rather than a finding,
-	// so it is answered only once no finding has blocked, and before any waiver
-	// is spent on a run the developer has to make again.
+	// so it is answered only once no finding has blocked.
 	if len(reports.unchecked) > 0 {
 		return 1
 	}
 
-	// The spends land only now, because a waiver's one use is one commit that
-	// actually went through. Spending during the loop would burn a waiver on a
-	// run that blocked anyway, and fixing the blocking finding changes the
-	// index tree, so the burnt waiver would no longer match.
-	for _, m := range matched {
-		tree, err := trees.sha()
-		if err != nil {
-			_, _ = fmt.Fprintln(stderr, err)
-			return 1
-		}
-		if err := store.Spend(m.waiver, tree); err != nil {
-			_, _ = fmt.Fprintln(stderr, err)
-			return 1
-		}
-		_, _ = fmt.Fprintf(stderr, "waiver %s suppressed %s on %s\n", m.waiver.ID, m.rule, m.path)
-	}
 	return 0
 }
 
-// matchedWaiver is a waiver that covered a survivor, held until the run knows
-// whether anything else blocked it.
+// matchedWaiver is a waiver that covered a survivor.
 type matchedWaiver struct {
 	waiver waiver.Waiver
 	rule   string
 	path   srcpath.Path
+}
+
+// writeMatchedWaivers writes the id of every matched waiver, one per line, to
+// path, truncating whatever was there. An empty matched list still writes an
+// empty file: the caller asked to know what matched, and nothing matching is
+// itself an answer.
+func writeMatchedWaivers(path string, matched []matchedWaiver) error {
+	var b strings.Builder
+	for _, m := range matched {
+		b.WriteString(m.waiver.ID)
+		b.WriteByte('\n')
+	}
+	//nolint:gosec // G306: this file is read straight back by the dispatcher
+	// that invoked this run, never executed, so 0644 costs nothing here.
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		return fmt.Errorf("writing matched waivers to %s: %w", path, err)
+	}
+	return nil
 }
 
 // waivePath is the path a waiver for this survivor names, empty when the
@@ -171,12 +184,12 @@ func (s survivor) waivePath() srcpath.Path {
 // makes that one regex possible. The waive command that would clear each one
 // goes to stderr instead, the stream everything that is not a finding
 // already lives on.
-func reportKept(stdout, stderr io.Writer, bin, language string, kept []survivor) {
+func reportKept(stdout, stderr io.Writer, bin string, kept []survivor) {
 	for _, s := range kept {
 		loc := firstLocation(s)
 		_, _ = fmt.Fprintf(stdout, "%s:%d:%d: %s: %s\n", loc.Path, loc.StartLine, loc.StartColumn, s.finding.Rule, flatten(s.finding.Message))
 		_, _ = fmt.Fprintf(stderr, "%s waive --language %s%s --rule %s --reason \"<why>\"\n",
-			bin, language, pathFlag(s.waivePath()), s.finding.Rule)
+			bin, s.finding.Language, pathFlag(s.waivePath()), s.finding.Rule)
 	}
 }
 
@@ -244,50 +257,44 @@ func (t *indexTree) sha() (string, error) {
 }
 
 // parsedReports is every report one run read: the findings they placed, the
-// results they dropped, and the reports that described another tree entirely.
+// results they dropped, and the reports that could not be read at all or
+// described another tree entirely.
 type parsedReports struct {
 	findings  []lintfind.Finding
 	dropped   []lintfind.Dropped
 	unchecked []string
 }
 
-// readReports parses every --report the caller named, or stdin when it named
-// none. One process reads them all so the whole commit's findings meet the
-// waiver log once: a process per report would spend a waiver against findings
-// the next process had not seen yet.
+// readReports parses every --report the caller named, one process reading
+// them all so a waiver is matched against the whole commit's findings at
+// once, not just the one report a process per language would have seen.
+// Zero reports is legal and parses to no findings at all, which is what a
+// branch that ran and found nothing reports as.
 //
-// An unchecked report does not stop the reading. A report that describes
-// another tree says nothing about the ones that describe this tree, and a real
-// finding in a later report has to reach stdout rather than being swallowed by
-// the exit 1 the unchecked report earns.
-func readReports(fa FilterArgs, stdin io.Reader, root srcpath.Root) (parsedReports, error) {
+// A report that cannot be opened or parsed does not stop the reading: it is
+// recorded into unchecked and the rest are still read, so one unreadable
+// report never hides what another found.
+func readReports(fa FilterArgs, root srcpath.Root) parsedReports {
 	var out parsedReports
-	if len(fa.Reports) == 0 {
-		findings, dropped, err := fa.Parser(stdin, root)
-		if err != nil {
-			return parsedReports{}, err
-		}
-		out.collect("the report on stdin", findings, dropped)
-		out.findings = dedup(out.findings)
-		return out, nil
-	}
-	for _, name := range fa.Reports {
+	for _, r := range fa.Reports {
 		//nolint:gosec // G304: the report path is the caller's whole point. The
 		// harness names the files its own build just wrote, in a directory it
 		// created, so there is no trust line for a variable path to cross.
-		f, err := os.Open(name)
+		f, err := os.Open(r.Path)
 		if err != nil {
-			return parsedReports{}, fmt.Errorf("opening report %s: %w", name, err)
+			out.unchecked = append(out.unchecked, fmt.Sprintf("could not read report %s: %v", r.Path, err))
+			continue
 		}
-		got, gotDropped, err := fa.Parser(f, root)
+		got, gotDropped, err := r.Parser(f, root)
 		_ = f.Close()
 		if err != nil {
-			return parsedReports{}, err
+			out.unchecked = append(out.unchecked, fmt.Sprintf("could not read report %s: %v", r.Path, err))
+			continue
 		}
-		out.collect(name, got, gotDropped)
+		out.collect(r.Path, got, gotDropped)
 	}
 	out.findings = dedup(out.findings)
-	return out, nil
+	return out
 }
 
 // collect takes one report's results in and records whether that report
@@ -326,11 +333,17 @@ func (p *parsedReports) collect(source string, findings []lintfind.Finding, drop
 // arrives two or more times. The framework and the owning project are not part
 // of the identity the gate judges, and a duplicate would print twice and demand
 // a second waiver for a single line of code.
+//
+// Language is part of the key: one process now reads findings from every
+// language branch of a commit, and the same rule string can mean two
+// unrelated things in two languages (UNPARSED, which both the ESLint and
+// golangci parsers emit for an entry they cannot read), so a Go and a
+// TypeScript finding sharing a rule and message stay two findings.
 func dedup(findings []lintfind.Finding) []lintfind.Finding {
 	seen := make(map[string]bool, len(findings))
 	unique := make([]lintfind.Finding, 0, len(findings))
 	for _, f := range findings {
-		key := f.Rule + "\x00" + f.Message
+		key := f.Language + "\x00" + f.Rule + "\x00" + f.Message
 		for _, loc := range f.Locations {
 			key += fmt.Sprintf("\x00%s:%d:%d-%d", loc.Path, loc.StartLine, loc.StartColumn, loc.EndLine)
 		}

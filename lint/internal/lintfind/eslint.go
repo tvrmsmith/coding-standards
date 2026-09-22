@@ -77,6 +77,13 @@ func ParseESLint(r io.Reader, root srcpath.Root) ([]Finding, []Dropped, error) {
 			findings = append(findings, placeESLintMessage(msg, path))
 		}
 	}
+	// Stamped here, the single success return, rather than at
+	// placeESLintMessage's construction sites (there are several, including
+	// the unparsed() calls), so a future construction site inside this
+	// parser cannot forget it.
+	for i := range findings {
+		findings[i].Language = LanguageTS
+	}
 	return findings, dropped, nil
 }
 

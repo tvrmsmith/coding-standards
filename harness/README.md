@@ -44,12 +44,12 @@ plugins `base.js` imports.
 | File | Job |
 | --- | --- |
 | `eslint-layer.js` | Loads the package's own ESLint config, spreads the personal preset after it. The layering, and the typed-layer gate. |
-| `lint-changed.sh` | The one entrypoint. Resolves the repo, computes the changed set, runs every language branch that applies. `--only` runs a single one. |
-| `linters/common.sh` | What every branch shares: argument parsing, repo resolution, the changed set, the scratch directory, the ancestor walk each language owns a predicate for, `lint_changed_bin`, which builds the filter once per run and memoises the path to a file, `lint_changed_run`, the one `lint-changed` call every branch ends on, and `rank_status`, the one place the ADR 0010 exit convention is folded. |
-| `linters/ts.sh` | Lints the changed JavaScript and TypeScript, each file through its own package's ESLint binary, to a JSON report, then hands every report to one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
-| `linters/dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then hands every report to one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
+| `lint-changed.sh` | The one entrypoint. Resolves the repo, computes the changed set, runs every language branch that applies, then runs one `lint-changed` over every report the branches produced and, on a full `--staged` run, spends the waivers it matched once the whole run is clean. `--only` runs a single branch. |
+| `linters/common.sh` | What every branch shares: argument parsing, repo resolution, the changed set, the scratch directory, the ancestor walk each language owns a predicate for, `lint_changed_bin`, which builds the filter once per run and memoises the path to a file, `add_reports`, the call every branch ends on to hand its reports up, `run_filter`, the one `lint-changed` call that reads them, `spend_waivers`, and `rank_status`, the one place the ADR 0010 exit convention is folded. |
+| `linters/ts.sh` | Lints the changed JavaScript and TypeScript, each file through its own package's ESLint binary, to a JSON report, then hands every report up to the dispatcher's one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
+| `linters/dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then hands every report up to the dispatcher's one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
 | `errorlog.props` | Sets `ErrorLog` for that build, imported through `CustomAfterMicrosoftCommonTargets`. MSBuild owns the report name because it has to expand `$(TargetFramework)` per inner build and escape the comma before the version suffix; the branch passes only the prefix. |
-| `linters/go.sh` | The Go counterpart: runs the personal golangci-lint binary over the packages owning the changed `.go` to a JSON report per module, then hands every report to one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
+| `linters/go.sh` | The Go counterpart: runs the personal golangci-lint binary over the packages owning the changed `.go` to a JSON report per module, then hands every report up to the dispatcher's one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
 | `hooks/pre-commit` | Template for the installed hook. The enforcement gate. One template, one `lint-changed.sh --staged` call, whatever the repo is adopted for. |
 | `write-vscode-settings.mjs` | The editor half — points the extension at `eslint-layer.js`, so typing sees what committing sees. TypeScript only. |
 | `bootstrap` | Installs all of the above into one repo, per language: `ts`, `dotnet` or `go`. |
@@ -64,20 +64,37 @@ linting nothing. The flag must come before `--files`, which swallows everything 
 Exit codes are one convention across the three, ADR 0010's. **2 is a surviving finding**, an
 ESLint warning, a C# analyzer warning or a golangci-lint issue on a line the change wrote, and
 **1 is the gate breaking**: a failed build, a golangci-lint run that blew up, a missing layering
-wrapper, a bad argument. A 1 from any branch dominates a 2 from another, because a branch that
-never ran says nothing about the code it never read.
+wrapper, a bad argument. A branch returns only 0 or 1, and the 2 comes from the one filter run
+over every branch's reports. A 1 from any branch dominates the filter's 2, because a branch that
+never ran says nothing about the code it never read. The findings the filter did read still reach
+stdout.
+
+A filter run that pairs an unreadable report with a surviving finding in another report exits 2,
+not 1 as it used to. The run reads every report before it answers, so one it cannot read no longer
+hides what another found. The unreadable report is still named on stderr, and no waiver is spent on
+that run.
 
 All three branches follow the whole of ADR 0010, not just its exit codes. Each runs its linter
-into a machine-readable report, then hands every report from that run to one `lint-changed`
-process, which keeps the findings touching a line the change wrote, spends any waiver and sets
-the status. Severity does not tier: an ESLint severity-1 warning blocks exactly as a severity-2
-error does.
+into a machine-readable report and hands every report up. After the last branch, `lint-changed.sh`
+runs one `lint-changed` process over all of them, in branch order, which keeps the findings
+touching a line the change wrote, applies any waiver and sets the status. Severity does not tier:
+an ESLint severity-1 warning blocks exactly as a severity-2 error does.
 
-Under `--staged` that process runs even when the branch produced no report at all, on an empty
-document in the branch's own format. ADR 0010's staged-versus-disk hard stop lives in
-`lint-changed` and covers every staged path, so a branch that returned early because nothing
-reached a report is how a commit whose staged files were all deleted from the working tree used
-to go through unexamined.
+One process for the whole run, not one per branch, because a waiver is one commit's worth of
+permission. With a filter per branch, a commit touching Go and TypeScript spent the Go waiver on
+Go's clean share, then TypeScript blocked the commit, and the waiver was gone with no commit behind
+it. The filter itself never spends: it writes the id of every waiver it matched to a file, and
+`lint-changed.sh` spends them only when the total status is 0, so a branch that broke or a finding
+that survived anywhere in the run leaves every waiver unspent. It spends only on a full `--staged`
+run, the pre-commit hook's: a `--since` or `--files` run makes no commit, and an `--only` run lints
+one language of one, so those runs pass a waived finding and leave the waiver unspent.
+
+Under `--staged` that process runs even when no branch produced a report, as long as at least one
+branch reached the point of handing its reports up. ADR 0010's staged-versus-disk hard stop lives in
+`lint-changed` and covers every staged path, so skipping the filter for want of a report is how a
+commit whose staged files were all deleted from the working tree used to go through unexamined.
+When every branch skipped, as in a repo adopted for none of the languages in the change, no filter
+runs and the commit goes through, as it always did.
 
 So every branch needs Go on `PATH`, even in a repo with no Go in it. `linters/common.sh` builds
 `lint-changed` from this hub into `${XDG_CACHE_HOME:-~/.cache}/coding-standards` once per run,
@@ -174,10 +191,9 @@ stay distinct so a hook can tell them apart. A failed build reports 1 rather tha
 own status through, since MSBuild exiting 2 for its own reasons must not read as a surviving
 finding.
 
-Every project's report goes into a single `lint-changed` run, named with a repeatable `--report`.
-A process per report spent whatever waiver matched its own report without knowing another report
-still blocked the commit, so one process now sees the whole commit's findings and makes one spend
-decision. The script writes one report per target framework, so a multi-targeted project reports
+Every project's report goes into the dispatcher's single `lint-changed` run, beside every other
+branch's, named with a repeatable `--report` under a sticky `--format`. The script writes one
+report per target framework, so a multi-targeted project reports
 the same source-level warning several times; `lint-changed` collapses those to one finding, on the
 identity `CONTEXT.md` gives under Finding.
 
@@ -204,8 +220,9 @@ warnings at no location at all, reports a whole-document diagnostic with no regi
 generated documents that were never written to disk; those results are dropped and the commit goes
 on. A report carrying no results at all is still a clean pass. And the one route past a false
 positive is a waiver, one rule on one path, used once, with a reason, recorded in a log outside the
-repo; `lint-changed` prints the exact command. A waiver is spent only on a run that ends clean, so a
-waived finding on a commit that blocked on something else costs nothing.
+repo; `lint-changed` prints the exact command. A waiver is spent only on a run that ends clean, in
+every language the commit touches, so a waived finding on a commit that blocked on something else
+costs nothing.
 
 This branch needs Go on `PATH` like the other two, for the shared `lint-changed` build described
 above. A missing `dotnet` in an adopted repo fails the same way and for the same reason, since
@@ -294,6 +311,12 @@ The log is `${XDG_STATE_HOME:-~/.local/state}/coding-standards/waivers.jsonl`, a
 `TVRMSMITH_WAIVERS` overrides it. State rather than config, because `~/.config/coding-standards` is
 the symlink to this hub, and an audit log must not land inside a repo the gate guards.
 `lint-changed waivers` lists every record with its spend state.
+
+`lint-changed.sh` is the only thing that spends. A `lint-changed` filter run invoked directly
+reports each waiver it matched on stderr and leaves it unspent, however clean the run, because a
+direct run is not a commit. The dispatcher spends through `lint-changed spend --waiver <id>`, only
+on a full `--staged` run with no `--only`, and only after every branch and the filter came back
+clean.
 
 The two skips below defeat every check at once, which is why the hook no longer offers them:
 

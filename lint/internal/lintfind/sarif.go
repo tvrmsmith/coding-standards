@@ -106,6 +106,12 @@ func ParseSARIF(r io.Reader, root srcpath.Root) ([]Finding, []Dropped, error) {
 			findings = append(findings, *finding)
 		}
 	}
+	// Stamped here, the single success return, rather than at placeResult's
+	// construction site, so a future construction site inside this parser
+	// cannot forget it.
+	for i := range findings {
+		findings[i].Language = LanguageCSharp
+	}
 	return findings, dropped, nil
 }
 

@@ -14,8 +14,8 @@
  * findings come from a Roslyn SARIF log — so lint-changed-dotnet.test.js covers that branch against
  * a real dotnet.
  *
- * `lint-changed` itself is not stubbed, because the verdict each branch reports is now its own.
- * That needs go on PATH, so every case that reaches a branch's filter skips without it.
+ * `lint-changed` itself is not stubbed, because the verdict over every branch's reports is its own.
+ * That needs go on PATH, so every case that reaches the filter skips without it.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
 import {
@@ -23,6 +23,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -425,10 +426,13 @@ describe('one invocation, every language the repo is wired for', () => {
     try {
       const { status, stdout, stderr } = capture(f.repo, ['--since', 'HEAD'], env(f))
       assert.equal(status, 2, `stdout:\n${stdout}\nstderr:\n${stderr}`)
-      // TypeScript reports first and returns 2. Go runs after it and its finding has to reach the
-      // same stdout, or a mixed commit hands back only whichever language blocked first and the
-      // next run surfaces the rest. Asserted as the whole of stdout, in dispatch order.
+      // TypeScript reports first and Go runs after it, and both findings have to reach the same
+      // stdout, or a mixed commit hands back only whichever language blocked first and the next
+      // run surfaces the rest. Asserted as the whole of stdout, in dispatch order.
       assert.equal(stdout, bothPorcelain)
+      // One filter reads both reports, so each waive hint takes its language from its own finding.
+      assert.match(stderr, /waive --language ts --path main\.ts --rule no-unused-vars /)
+      assert.match(stderr, /waive --language go --path main\.go --rule gorule /)
     } finally {
       f.cleanup()
     }
@@ -506,6 +510,175 @@ describe('one invocation, every language the repo is wired for', () => {
     const f = fixture()
     try {
       const { status, stdout, stderr } = capture(f.repo, ['--files', 'main.ts', 'main.go'], env(f))
+      assert.equal(status, 2, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+      assert.match(stdout, /^main\.ts:1:7: no-unused-vars: /m)
+      assert.match(stdout, /^main\.go:3:1: gorule: go finding$/m)
+    } finally {
+      f.cleanup()
+    }
+  })
+
+  describe("a waiver is one commit's worth of permission", () => {
+    /**
+     * A waiver log of the fixture's own, rather than the file-wide one, because a waiver these
+     * cases leave unspent would still match the same finding in every later fixture.
+     */
+    function waivers(f, ...findings) {
+      const log = join(f.root, 'waivers.jsonl')
+      const lines = findings.map(({ language, path, rule }) =>
+        JSON.stringify({ kind: 'waiver', id: `${language}-waiver`, language, path, rule, reason: 'test' }),
+      )
+      writeFileSync(log, lines.map((line) => `${line}\n`).join(''))
+      return log
+    }
+
+    /** @returns {object[]} every record in the log, in the order they were written */
+    const records = (log) =>
+      readFileSync(log, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+
+    /** The pre-commit hook's run, the only one that spends: every change staged, disk matching. */
+    function staged(f) {
+      git(f.repo, 'add', 'main.ts', 'main.go')
+      return f
+    }
+
+    const tsFinding = { language: 'ts', path: 'main.ts', rule: 'no-unused-vars' }
+    const goFinding = { language: 'go', path: 'main.go', rule: 'gorule' }
+
+    test('a waiver per finding lets the whole commit through and is spent', { skip }, () => {
+      const f = staged(fixture())
+      try {
+        const log = waivers(f, tsFinding, goFinding)
+        const { status, stdout, stderr } = capture(f.repo, ['--staged'], {
+          ...env(f),
+          TVRMSMITH_WAIVERS: log,
+        })
+        assert.equal(status, 0, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        assert.equal(stdout, '')
+        assert.deepEqual(
+          records(log).map(({ kind, id }) => ({ kind, id })),
+          [
+            { kind: 'waiver', id: 'ts-waiver' },
+            { kind: 'waiver', id: 'go-waiver' },
+            { kind: 'spend', id: 'ts-waiver' },
+            { kind: 'spend', id: 'go-waiver' },
+          ],
+        )
+      } finally {
+        f.cleanup()
+      }
+    })
+
+    test('a waiver is not spent while another language still blocks', { skip }, () => {
+      // One filter process per language spent the TypeScript waiver on TypeScript's clean share,
+      // then Go blocked the commit, so the waiver was gone and the commit it paid for never made.
+      const f = staged(fixture())
+      try {
+        const log = waivers(f, tsFinding)
+        const { status, stdout, stderr } = capture(f.repo, ['--staged'], {
+          ...env(f),
+          TVRMSMITH_WAIVERS: log,
+        })
+        assert.equal(status, 2, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        assert.equal(stdout, 'main.go:3:1: gorule: go finding\n')
+        assert.equal(records(log).length, 1)
+      } finally {
+        f.cleanup()
+      }
+    })
+
+    test('a waiver is not spent while another branch is broken', { skip }, () => {
+      // The filter comes back clean, since the one finding it read is waived, but the Go run broke
+      // and git will not make the commit.
+      const f = staged(fixture({ gclExit: 3 }))
+      try {
+        const log = waivers(f, tsFinding)
+        const { status, stdout, stderr } = capture(f.repo, ['--staged'], {
+          ...env(f),
+          TVRMSMITH_WAIVERS: log,
+        })
+        assert.equal(status, 1, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        assert.equal(stdout, '')
+        assert.equal(records(log).length, 1)
+      } finally {
+        f.cleanup()
+      }
+    })
+
+    for (const [name, args] of [
+      ['a clean --since run', ['--since', 'HEAD']],
+      ['a clean --files run', ['--files', 'main.ts', 'main.go']],
+    ]) {
+      test(`${name} passes on its waivers and spends none`, { skip }, () => {
+        // Neither run is a commit, so a waiver it matches lets the finding through and stays for
+        // the commit that follows.
+        const f = fixture()
+        try {
+          const log = waivers(f, tsFinding, goFinding)
+          const { status, stdout, stderr } = capture(f.repo, args, { ...env(f), TVRMSMITH_WAIVERS: log })
+          assert.equal(status, 0, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+          assert.equal(stdout, '')
+          assert.match(stderr, /waiver ts-waiver matched/)
+          assert.match(stderr, /waiver go-waiver matched/)
+          assert.deepEqual(
+            records(log).map(({ kind }) => kind),
+            ['waiver', 'waiver'],
+          )
+        } finally {
+          f.cleanup()
+        }
+      })
+    }
+
+    test('a clean --only --staged run spends none', { skip }, () => {
+      // --only lints one language's share of the commit, so its clean result says nothing about
+      // the rest, and no-mistakes runs one such entry per language.
+      const f = staged(fixture())
+      try {
+        const log = waivers(f, goFinding)
+        const { status, stdout, stderr } = capture(f.repo, ['--only', 'go', '--staged'], {
+          ...env(f),
+          TVRMSMITH_WAIVERS: log,
+        })
+        assert.equal(status, 0, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        assert.equal(stdout, '')
+        assert.match(stderr, /waiver go-waiver matched/)
+        assert.equal(records(log).length, 1)
+      } finally {
+        f.cleanup()
+      }
+    })
+
+    test('a clean run whose spend fails exits 1', { skip: skip || (process.getuid?.() === 0 && 'root ignores a read-only log') }, () => {
+      // Every finding is waived, so the total is clean until spend runs. The filter only reads the
+      // log, and spend's append is the first write, so a read-only log fails the spend alone and
+      // the commit must not go through with its waivers unspent.
+      const f = staged(fixture())
+      try {
+        const log = waivers(f, tsFinding, goFinding)
+        chmodSync(log, 0o444)
+        const { status, stdout, stderr } = capture(f.repo, ['--staged'], {
+          ...env(f),
+          TVRMSMITH_WAIVERS: log,
+        })
+        assert.equal(status, 1, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        assert.equal(stdout, '')
+        assert.equal(records(log).length, 2)
+      } finally {
+        f.cleanup()
+      }
+    })
+  })
+
+  test('--files naming a path absent from disk still lints the rest', { skip }, () => {
+    // lint-changed refuses a --files path that is not a regular file, so the dispatcher must
+    // leave the absent one out of the filter's scope rather than break the whole run over it.
+    const f = fixture()
+    try {
+      const { status, stdout, stderr } = capture(f.repo, ['--files', 'main.ts', 'main.go', 'gone.go'], env(f))
       assert.equal(status, 2, `stdout:\n${stdout}\nstderr:\n${stderr}`)
       assert.match(stdout, /^main\.ts:1:7: no-unused-vars: /m)
       assert.match(stdout, /^main\.go:3:1: gorule: go finding$/m)

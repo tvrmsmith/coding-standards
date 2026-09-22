@@ -22,7 +22,19 @@ type Finding struct {
 	Severity     string
 	IgnoresScope bool
 	Locations    []Location
+	// Language is the waiver-log key for the linter that produced this
+	// finding. The parser stamps it, because the parser is the only thing
+	// that knows.
+	Language string
 }
+
+// The three waiver-log keys a Finding's Language carries. These strings are
+// already written to users' waiver logs on disk, so they must not change.
+const (
+	LanguageCSharp = "csharp"
+	LanguageGo     = "go"
+	LanguageTS     = "ts"
+)
 
 // Location is a span in one file, inclusive of both lines. StartColumn is the
 // only column: nothing scopes on columns (ADR 0003/0007 scope on lines) and

@@ -5,13 +5,14 @@
 #
 # ESLint runs per package, since flat config does not cascade and the wrapper loads the package's
 # own config from the process cwd. So this lints the packages owning the changed files and hands
-# their JSON reports to `lint-changed`, which keeps the findings touching a line the change
-# actually wrote and drops the rest. Severity 1 and severity 2 are alike to it, per ADR 0010.
+# their JSON reports up for the dispatcher's one `lint-changed` run, which keeps the findings
+# touching a line the change actually wrote and drops the rest. Severity 1 and severity 2 are alike
+# to it, per ADR 0010.
 #
-# This blocks, on ADR 0010's convention: 2 when a finding survived that filter, 1 when this branch
-# could not answer at all — a missing layering wrapper, an ESLint run that blew up, a filter that
-# would not build. Past a genuine false positive there is one route, and `lint-changed` prints the
-# exact command for it.
+# This blocks, on ADR 0010's convention: the filter answers 2 when a finding survived it, and this
+# branch returns 1 when it could not answer at all — a missing layering wrapper, an ESLint run that
+# blew up, a filter that would not build. Past a genuine false positive there is one route, and
+# `lint-changed` prints the exact command for it.
 
 layer=${TVRMSMITH_ESLINT_LAYER:-$harness/eslint-layer.js}
 
@@ -42,7 +43,7 @@ _ts_has_eslint_bin() { [ -x "$1/node_modules/.bin/eslint" ]; }
 
 ts_lint() {
   local file pkg rel eslint_dir eslint_bin status=0 present=() pairs=() batch=()
-  local report reports=() scope_args=() filter_status
+  local report reports=()
   local report_dir=$scratch/ts-reports package_count=0
 
   # 1, not 2: nothing was linted, so this is the gate breaking rather than a surviving finding.
@@ -54,8 +55,9 @@ ts_lint() {
   # Deleted in the change, or named by --files and never there. ESLint reads the disk, so there is
   # nothing here for it to lint. The staged-versus-disk question a missing file raises is
   # lint-changed's, and it asks it across every staged path under --staged rather than only the
-  # ones that reached a report, which is why nothing here returns early: lint_changed_run at the
-  # bottom has to be reached even when no package produced a report at all.
+  # ones that reached a report, which is why nothing here returns early: add_reports at the bottom
+  # has to be reached even when no package produced a report at all, or the dispatcher runs no
+  # filter to ask it.
   for file in "$@"; do
     [ -e "$file" ] && present+=("$file")
   done
@@ -68,12 +70,6 @@ ts_lint() {
     fi
   done
 
-  case "$mode" in
-    --staged) scope_args=(--staged) ;;
-    --since)  scope_args=(--since "$ref") ;;
-    --files)  scope_args=(--files "$(IFS=,; echo "${present[*]-}")") ;;
-  esac
-
   # Fail fast, before a single ESLint run: a filter that will not build makes every report it
   # would have produced unreadable anyway.
   lint_changed_bin >/dev/null || return 1
@@ -82,8 +78,8 @@ ts_lint() {
   # Read line by line rather than word-split: an unquoted `$(...)` splits a package or file path on
   # every space it holds and then globs each piece, so ESLint would be handed two arguments naming
   # nothing and fail the commit over a file that does not exist. With no package at all the loop
-  # reads one empty line and does nothing, which is the path that leaves the tail below to ask the
-  # divergence question on its own.
+  # reads one empty line and does nothing, which is the path that leaves the dispatcher's filter to
+  # ask the divergence question on its own.
   while IFS= read -r pkg; do
     [ -n "$pkg" ] || continue
     # ancestor_with starts at the parent of the path it is given, so it takes a path *inside* the
@@ -149,13 +145,10 @@ ts_lint() {
     esac
   done <<<"$(printf '%s\n' ${pairs[@]+"${pairs[@]}"} | cut -f1 | sort -u)"
 
-  # Every package's report goes into one lint-changed run. A broken run is reported as 1 whatever
-  # the filter said, because a filter that read only some of the packages proves nothing about the
-  # one that blew up. rank_status is that rule.
-  lint_changed_run eslint ts '[]' \
-    ${scope_args[@]+"${scope_args[@]}"} -- ${reports[@]+"${reports[@]}"}
-  filter_status=$?
-  status=$(rank_status "$status" "$filter_status")
+  # Every package that did produce a report still hands it on, beside a 1 for the one that blew
+  # up: the dispatcher reports 1 whatever the filter says, because a filter that read only some of
+  # the packages proves nothing about the rest, but the findings it did read still reach stdout.
+  add_reports eslint ${reports[@]+"${reports[@]}"}
 
   return "$status"
 }
