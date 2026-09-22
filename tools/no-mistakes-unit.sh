@@ -36,7 +36,8 @@ list_is_complete() {
 # The root-module packages whose tests reach a changed file under the unit's directory. A file maps
 # to the package directory holding it, or the nearest one above it inside the unit. A package is
 # selected when it is that package or depends on it, test imports included, so a change under
-# internal also runs gate/test and lint/test, which drive it end to end.
+# internal also runs gate/test, which drives it end to end. lint/test builds lint-changed with
+# `go build` rather than importing it, so it is added whenever lint-changed is selected.
 #
 # Falls back to every package under the unit when a changed file there sits in no package, and to
 # the whole module when no-mistakes dropped the changed list.
@@ -70,7 +71,8 @@ root_packages() {
     awk -v want="$imports" '
       BEGIN { n = split(want, w, "\n"); for (i = 1; i <= n; i++) hit[w[i]] = 1 }
       { for (i = 1; i <= NF; i++) if ($i in hit) { print $1; next } }' |
-    sed -E 's/ \[.*//; s/\.test$//; s/_test$//' | sort -u
+    sed -E 's/ \[.*//; s/\.test$//; s/_test$//' |
+    awk '{ print } sub("/lint/cmd/lint-changed$", "/lint/test")' | sort -u
 }
 
 # Tests the packages in the current directory's module and writes the unit's JUnit report and
@@ -118,8 +120,14 @@ unit_dotnet() {
   done
 }
 
+# harness depends on eslint-config through `link:`, which reads that directory's own node_modules,
+# and eslint-config links eslint-plugin the same way, so both install first, as ci.yml does.
 unit_node() {
-  local package=$1
+  local package=$1 dep
+  for dep in packages/eslint-plugin-tvrmsmith packages/eslint-config-tvrmsmith; do
+    [ "$dep" = "$package" ] && break
+    (cd "$root/$dep" && pnpm install --frozen-lockfile --prefer-offline)
+  done
   cd "$root/$package"
   pnpm install --frozen-lockfile --prefer-offline
   node --test --experimental-test-coverage \
