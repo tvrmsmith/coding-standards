@@ -54,10 +54,17 @@ history, and a consequence it already states is that history.
 A file that still reads straight through is fine however many dated paragraphs it carries; a file
 that does not is over a ceiling, and the ceiling is what says so.
 
-**The `## Current rule` block stays under 250 words**, and the whole file under 1500. The block is
-what a reader is expected to read in full, so it has to be readable in one sitting; the file is what
-they scroll when the block is not enough. A decision that will not fit is more than one decision.
-Neither ceiling is checked mechanically yet, which is [issue 87](https://github.com/tvrmsmith/coding-standards/issues/87).
+**The `## Current rule` block stays at 250 words or fewer**, and the whole file at 1500 or fewer.
+The block is what a reader is expected to read in full, so it has to be readable in one sitting; the
+file is what they scroll when the block is not enough. A decision that will not fit is more than one
+decision.
+
+`docs/test/adr_ceiling_test.go` measures both, on every `go test ./...`, counting the way `wc -w`
+does. A superseded record is exempt by its status rather than by a list. A record already over a
+ceiling when that check landed carries a raised limit there, which it may shrink under and may not
+grow past, and the entry has to go once the record meets the real ceiling. No word count is written
+into this file: a hand-kept count goes stale on the first edit, which is what
+[issue 87](https://github.com/tvrmsmith/coding-standards/issues/87) was.
 
 0004 was consolidated in place on 2026-09-11, which took it from 2606 words to 1791, and the pass
 dropped three clauses it should have kept. Two later passes put them back. The `os.SameFile` root-prefix fold landed on main while all
