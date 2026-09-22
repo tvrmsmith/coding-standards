@@ -59,8 +59,9 @@ The block is what a reader is expected to read in full, so it has to be readable
 file is what they scroll when the block is not enough. A decision that will not fit is more than one
 decision.
 
-Neither ceiling is checked by a test. No word count is written into this file, because a hand-kept
-count goes stale on the first edit, which is what
+CI checks neither ceiling. `.claude/settings.json` sets both as the limits for an `adr-size`
+Claude Code hook, which reports an overrun at the edit and never blocks it. No word count is
+written into this file, because a hand-kept count goes stale on the first edit, which is what
 [issue 87](https://github.com/tvrmsmith/coding-standards/issues/87) was. Run `wc -w` when you need
 one.
 
