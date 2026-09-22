@@ -72,6 +72,8 @@ go/                                  # the Go lint layer: one golangci-lint bina
 go.mod                               # one Go module, rooted here, covering internal/, gate/, lint/
                                      #   and docs/test/
 docs/                                # adr/, the decision records, plus the C# decision points
+  agents/                            #   how an agent works this repo: issue tracker, triage
+                                     #   labels, where the domain docs live
   test/                              #   the mechanical checks over those records, ADR word
                                      #   ceilings first
 internal/                            # laid out to be shared by the Go binaries in this module
