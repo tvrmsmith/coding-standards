@@ -167,8 +167,10 @@ dotnet_lint() {
     # must not be read as that.
     if [ $build_status -ne 0 ]; then
       status=1
-      echo "=== $proj — build failed ==="
-      grep -E ': (error|warning) [A-Z]+[0-9]+' <<<"$out" | sort -u
+      # stderr, not stdout: stdout carries one porcelain finding line and nothing else, and an
+      # MSBuild diagnostic is close enough to that shape for the one regex to read it as a finding.
+      echo "=== $proj — build failed ===" >&2
+      grep -E ': (error|warning) [A-Z]+[0-9]+' <<<"$out" | sort -u >&2
       continue
     fi
 
@@ -190,8 +192,8 @@ dotnet_lint() {
         -p:TvrmsmithSarifPrefix="$prefix" -v:m --nologo 2>&1 </dev/null)
     if [ $? -ne 0 ]; then
       status=1
-      echo "=== $proj — the diagnostics pass failed after a clean build ==="
-      grep -E ': error [A-Z]+[0-9]+' <<<"$out" | sort -u
+      echo "=== $proj — the diagnostics pass failed after a clean build ===" >&2
+      grep -E ': error [A-Z]+[0-9]+' <<<"$out" | sort -u >&2
       continue
     fi
 

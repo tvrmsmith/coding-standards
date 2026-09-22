@@ -218,8 +218,12 @@ func placeLocation(loc sarifLocation, root srcpath.Root) (Location, bool) {
 	if region.StartLine == 0 {
 		return Location{}, false
 	}
+	// An endLine below startLine spans no line at all, so the scope filter
+	// would match it against nothing and the finding would vanish with
+	// neither a Dropped entry nor an UNPARSED marker. Absent reads as 0 and
+	// takes the same floor.
 	endLine := region.EndLine
-	if endLine == 0 {
+	if endLine < region.StartLine {
 		endLine = region.StartLine
 	}
 	// An absent startColumn and an explicit 0 are indistinguishable through

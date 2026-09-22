@@ -113,11 +113,17 @@ func ignoresGolangCIScope(linter string) bool {
 
 // golangciLocation reads one issue's Pos and LineRange into a Location.
 // EndLine is LineRange.To when the issue carries a LineRange and Pos.Line
-// otherwise, since golangci attaches a LineRange to some issues and not
-// others and ADR 0010 scopes on every line of a span. StartColumn falls back
-// to 1 when golangci writes 0, which the typecheck linter genuinely does.
+// otherwise, and StartColumn falls back to 1 when golangci writes 0, which
+// the typecheck linter genuinely does.
 //
-// A To below Pos.Line is refused the same way, since the scope filter wants
+// In practice EndLine always equals Pos.Line today. golangci-lint 2.13.2 does
+// not carry analysis.Diagnostic.End into its JSON report, so LineRange is nil
+// on every issue the pinned binary produces, including the spans the two
+// custom analyzers under go/plugin set. go/README.md records the consequence
+// as a known gap. The branch stays because it costs nothing and reads the
+// spans straight away if golangci ever writes them.
+//
+// A To below Pos.Line is refused, since the scope filter wants
 // line >= StartLine && line <= EndLine and such a span matches no line at
 // all, so the finding would vanish with neither a Dropped entry nor an
 // UNPARSED marker. Every sibling parser defends its span the same way.

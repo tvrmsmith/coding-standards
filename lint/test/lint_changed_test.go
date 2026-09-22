@@ -1,6 +1,7 @@
 package lintchanged_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -877,6 +878,28 @@ func TestESLintSpanningATouchedLineSurvives(t *testing.T) {
 	}
 	if res.stdout != "a.js:1:5: no-unreachable: Unreachable code.\n" {
 		t.Fatalf("stdout = %q, want the finding reported at the span's start", res.stdout)
+	}
+}
+
+// A non-fatal ESLint message with no ruleId is an ordinary finding and obeys
+// scope. ESLint reports a stale eslint-disable directive that way, and
+// reading it as UNPARSED made it ignore scope, so a one-line edit anywhere in
+// a file holding such a directive blocked the commit on a line the change
+// never wrote. stageEdit writes line 3, so line 1 is untouched here.
+func TestESLintNonFatalNullRuleIDOnAnUntouchedLineDoesNotBlock(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "a.js")
+	doc := fmt.Sprintf(
+		`[{"filePath":%q,"messages":[{"ruleId":null,"severity":1,"message":"Unused eslint-disable directive (no problems were reported).","line":1,"column":1}]}]`,
+		f.absPath("a.js"))
+
+	res := f.run(doc, "--format", "eslint", "--language", "ts", "--staged")
+
+	if res.exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if res.stdout != "" {
+		t.Fatalf("stdout = %q, want nothing", res.stdout)
 	}
 }
 

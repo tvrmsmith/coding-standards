@@ -291,6 +291,27 @@ test('a staged file deleted from the working tree stops the commit', { skip }, (
   }
 })
 
+test('a package with no installed eslint fails rather than passing its files unlinted', { skip }, () => {
+  const f = fixture()
+  try {
+    // Committed, so the only changed file the run sees is src/a.js.
+    rmSync(join(f.repo, 'node_modules'), { recursive: true })
+    git(f.repo, 'add', '-A')
+    git(f.repo, 'commit', '--quiet', '-m', 'uninstall')
+    touchLineThree(f.repo)
+
+    // The package carries an ESLint config, so it is adopted and not_wired does not cover it.
+    // Skipping it left every changed file in it unlinted and the commit passing clean, which is
+    // the one verdict a gate must never produce. 1 and not 2: nothing was found, nothing ran.
+    const { status, stdout, stderr } = lint(f.repo, f)
+    assert.equal(status, 1, `expected the gate to refuse\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+    assert.match(stderr, /no installed eslint/)
+    assert.equal(stdout, '')
+  } finally {
+    f.cleanup()
+  }
+})
+
 test('a file the package ignores does not block', { skip }, () => {
   const f = fixture()
   try {

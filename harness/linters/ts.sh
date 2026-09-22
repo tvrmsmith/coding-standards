@@ -36,7 +36,8 @@ _ts_has_config() {
 
 # ESLint itself always comes from the repo, never from the harness: the package pins the version
 # its config was written for, ESLint 8 or 9, and its plugins resolve relative to it. Nothing is
-# installed on demand — a package whose dependencies are not installed is skipped, loudly.
+# installed on demand. A package whose dependencies are not installed fails the commit rather than
+# passing it, since every changed file in it would otherwise go unlinted and report clean.
 _ts_has_eslint_bin() { [ -x "$1/node_modules/.bin/eslint" ]; }
 
 ts_lint() {
@@ -87,8 +88,12 @@ ts_lint() {
     [ -n "$pkg" ] || continue
     # ancestor_with starts at the parent of the path it is given, so it takes a path *inside* the
     # package: the package's own node_modules is the first place to look.
+    # 1, not 2, and not a skip: this package's changed files reached no linter at all, so a clean
+    # answer over them would be a false clean, the one verdict a gate must never produce. The
+    # missing-layer branch above and lint_changed_bin's missing-go branch refuse for the same reason.
     eslint_dir=$(ancestor_with "$pkg/." _ts_has_eslint_bin) || {
-      echo "lint-changed: $pkg has no installed eslint — skipped (run its package manager install)" >&2
+      status=1
+      echo "lint-changed: $pkg has no installed eslint (run its package manager install)" >&2
       continue
     }
     eslint_bin=$repo_root/$eslint_dir/node_modules/.bin/eslint

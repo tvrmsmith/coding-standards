@@ -24,10 +24,21 @@ type eslintMessage struct {
 	// Severity is 2 for an error and 1 for a warning. Both block, per ADR
 	// 0010, so the numbers are read once here and the string is reportage.
 	Severity int `json:"severity"`
-	Line     int `json:"line"`
-	Column   int `json:"column"`
-	EndLine  int `json:"endLine"`
+	// Fatal is true only for a parse error, the one case where the file was
+	// never linted at all. It is what separates that from an ordinary message
+	// ESLint reports without a ruleId, such as a stale eslint-disable
+	// directive under reportUnusedDisableDirectives.
+	Fatal   bool `json:"fatal"`
+	Line    int  `json:"line"`
+	Column  int  `json:"column"`
+	EndLine int  `json:"endLine"`
 }
+
+// eslintCoreRule is the rule name a message carrying no ruleId reports under.
+// ESLint writes null there for its own linter-level reports, which name no
+// rule but are still findings at a real line, and a Finding needs a stable
+// rule for the porcelain line and for the waiver key.
+const eslintCoreRule = "eslint"
 
 // ParseESLint reads ESLint's own JSON report and returns every message it
 // can place inside root, alongside the messages it dropped as unplaceable.
@@ -53,9 +64,10 @@ func ParseESLint(r io.Reader, root srcpath.Root) ([]Finding, []Dropped, error) {
 		}
 
 		// filePath resolves once per file result, since every message in it
-		// names the same file. ESLint resolves --stdin-filename against its
-		// own cwd before reporting it, so the staged-content run
-		// harness/linters/ts.sh makes lands on a real repo path too.
+		// names the same file. ESLint reports an absolute filePath for every
+		// file it read off disk, which is the only way harness/linters/ts.sh
+		// runs it, so the path root.Place is handed already names a real file
+		// in the tree.
 		path, ok := root.Place(result.FilePath).Inside()
 		for _, msg := range result.Messages {
 			if !ok {
@@ -68,19 +80,21 @@ func ParseESLint(r io.Reader, root srcpath.Root) ([]Finding, []Dropped, error) {
 	return findings, dropped, nil
 }
 
-// ruleName reads a message's ruleId, which ESLint writes null for a fatal
-// parse error that never reached rule checking.
+// ruleName reads a message's ruleId, falling back to eslintCoreRule for the
+// linter-level reports ESLint writes null there for.
 func ruleName(ruleID *string) string {
 	if ruleID == nil {
-		return ""
+		return eslintCoreRule
 	}
 	return *ruleID
 }
 
-// placeESLintMessage turns one ESLint message into a Finding. A message with
-// no ruleId, ESLint's own shape for a fatal parse error, or one with no line
-// at all, is a message this package cannot read as an ordinary finding and
-// becomes unparsed instead.
+// placeESLintMessage turns one ESLint message into a Finding. A fatal message
+// says the file never parsed, so nothing in it was linted and a clean scope
+// result over it would prove nothing; that one becomes unparsed, which
+// ignores scope. So does a message carrying no line at all, since there is no
+// span to scope against. Every other message is an ordinary finding, ruleId
+// or no ruleId.
 func placeESLintMessage(msg eslintMessage, path srcpath.Path) Finding {
 	if msg.Line == 0 {
 		// Line 1 column 1, so the report still points at the file and a waiver
@@ -90,8 +104,8 @@ func placeESLintMessage(msg eslintMessage, path srcpath.Path) Finding {
 			Location{Path: path, StartLine: 1, StartColumn: 1, EndLine: 1})
 	}
 	loc := eslintLocation(msg, path)
-	if msg.RuleID == nil {
-		return unparsed("eslint", "message carries no ruleId", msg.Message, loc)
+	if msg.Fatal {
+		return unparsed("eslint", "file did not parse", msg.Message, loc)
 	}
 
 	severity := "warning"
@@ -99,7 +113,7 @@ func placeESLintMessage(msg eslintMessage, path srcpath.Path) Finding {
 		severity = "error"
 	}
 	return Finding{
-		Rule:      *msg.RuleID,
+		Rule:      ruleName(msg.RuleID),
 		Message:   msg.Message,
 		Severity:  severity,
 		Locations: []Location{loc},
@@ -107,11 +121,14 @@ func placeESLintMessage(msg eslintMessage, path srcpath.Path) Finding {
 }
 
 // eslintLocation reads one message's line, column and endLine into a
-// Location. EndLine is the message's own endLine when present and Line
-// otherwise, and StartColumn is 1 when column is 0 or absent.
+// Location. EndLine is the message's own endLine when that is at or past
+// Line, and Line otherwise: an endLine below the start line spans no line at
+// all, so the scope filter would match it against nothing and the finding
+// would vanish with neither a Dropped entry nor an UNPARSED marker.
+// StartColumn is 1 when column is 0 or absent.
 func eslintLocation(msg eslintMessage, path srcpath.Path) Location {
 	endLine := msg.EndLine
-	if endLine == 0 {
+	if endLine < msg.Line {
 		endLine = msg.Line
 	}
 	column := msg.Column

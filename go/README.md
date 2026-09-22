@@ -230,6 +230,14 @@ no longer means the findings are advisory: it means golangci-lint's own exit cod
 a finding belongs to `lint-changed`, which reads the JSON report and keeps only what the change
 touched.
 
+Known gap: a Go finding over a multi-line span is scoped by its first line alone. golangci-lint
+2.13.2 does not carry `analysis.Diagnostic.End` into its JSON report, so the `LineRange` the
+parser would widen the span from is nil on every issue, including the spans
+`commentblocklength` and `combineassertions` set. Extending an existing over-long comment block
+without touching the line the block is reported at therefore does not block today. Closing it
+means either reporting the last line from the analyzers or widening scope for span-bearing
+linters, and neither is decided.
+
 The C# half no longer sits here and works the same way. The injected Roslyn ids still ship at
 `Warning` rather than `Error`, because the changed-line filter is what decides whether a warning
 stops a commit, so raising the severity would buy nothing and would red whole-repo builds over

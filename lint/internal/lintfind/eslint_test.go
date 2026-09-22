@@ -2,6 +2,7 @@ package lintfind
 
 import (
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -130,11 +131,67 @@ func TestParseESLintFatalMessageIsUnparsed(t *testing.T) {
 		Rule:         "UNPARSED",
 		Severity:     "error",
 		IgnoresScope: true,
-		Message:      "eslint: message carries no ruleId: Parsing error: Unexpected token",
+		Message:      "eslint: file did not parse: Parsing error: Unexpected token",
 		Locations:    []Location{{Path: srcpath.Path("bad.js"), StartLine: 2, StartColumn: 1, EndLine: 2}},
 	}
 	if !reflect.DeepEqual(findings[0], want) {
 		t.Errorf("findings[0] = %#v, want %#v", findings[0], want)
+	}
+}
+
+// TestParseESLintNonFatalNullRuleIDIsAnOrdinaryFinding pins the other half of
+// the fatal split. ESLint reports a stale eslint-disable directive as ruleId
+// null, fatal absent, at a real line, and that file was linted, so it is an
+// ordinary finding under a stable rule name and it respects scope. Reading it
+// as UNPARSED instead made it ignore scope, which blocked every commit
+// touching a file holding such a directive, clearable only by a waiver.
+func TestParseESLintNonFatalNullRuleIDIsAnOrdinaryFinding(t *testing.T) {
+	root := testRoot(t)
+	writeSource(t, root, "a.js")
+	path := jsonEscape(root.Abs(srcpath.Path("a.js")))
+
+	doc := `[{"filePath":"` + path + `","messages":[
+		{"ruleId":null,"severity":1,"message":"Unused eslint-disable directive (no problems were reported).","line":4,"column":1}
+	]}]`
+	findings, _, err := ParseESLint(strings.NewReader(doc), root)
+	if err != nil {
+		t.Fatalf("ParseESLint() err = %v, want nil", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("len(findings) = %d, want 1", len(findings))
+	}
+	want := Finding{
+		Rule:      "eslint",
+		Message:   "Unused eslint-disable directive (no problems were reported).",
+		Severity:  "warning",
+		Locations: []Location{{Path: srcpath.Path("a.js"), StartLine: 4, StartColumn: 1, EndLine: 4}},
+	}
+	if !reflect.DeepEqual(findings[0], want) {
+		t.Errorf("findings[0] = %#v, want %#v", findings[0], want)
+	}
+}
+
+// TestParseESLintEndLineBelowLineIsRefused pins the floor on endLine. A span
+// ending above where it starts matches no line at all, so the scope filter
+// would drop the finding with neither a Dropped entry nor an UNPARSED marker,
+// the silent drop this design refuses. The span falls back to the message's
+// own line instead.
+func TestParseESLintEndLineBelowLineIsRefused(t *testing.T) {
+	root := testRoot(t)
+	writeSource(t, root, "a.js")
+	path := jsonEscape(root.Abs(srcpath.Path("a.js")))
+
+	doc := `[{"filePath":"` + path + `","messages":[{"ruleId":"no-undef","severity":2,"message":"m","line":5,"column":2,"endLine":3}]}]`
+	findings, _, err := ParseESLint(strings.NewReader(doc), root)
+	if err != nil {
+		t.Fatalf("ParseESLint() err = %v, want nil", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("len(findings) = %d, want 1", len(findings))
+	}
+	want := Location{Path: srcpath.Path("a.js"), StartLine: 5, StartColumn: 2, EndLine: 5}
+	if got := findings[0].Locations[0]; got != want {
+		t.Errorf("location = %#v, want %#v", got, want)
 	}
 }
 
@@ -162,9 +219,17 @@ func TestParseESLintOnlySuppressedMessagesIsClean(t *testing.T) {
 // TestParseESLintDropsMessageOutsideRoot pins E5: a file result whose
 // filePath is outside root parses to no Finding and one Dropped naming the
 // filePath as the report wrote it.
+//
+// The file is written for real, because srcpath.Root.Place calls
+// EvalSymlinks first and reports not-inside on any error. Left absent, the
+// placement fails before the root comparison runs and the case passes with
+// that comparison deleted.
 func TestParseESLintDropsMessageOutsideRoot(t *testing.T) {
 	root := testRoot(t)
 	outside := t.TempDir() + "/a.js"
+	if err := os.WriteFile(outside, []byte("// another tree\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() err = %v", err)
+	}
 
 	doc := `[{"filePath":"` + jsonEscape(outside) + `","messages":[
 		{"ruleId":"no-unused-vars","severity":2,"message":"m","line":1,"column":1}

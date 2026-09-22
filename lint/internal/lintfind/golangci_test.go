@@ -3,6 +3,7 @@ package lintfind
 import (
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -126,9 +127,17 @@ func TestParseGolangCIKeepsOwnErrorSeverity(t *testing.T) {
 // TestParseGolangCIDropsIssueOutsideRoot pins G5: an issue whose Pos.Filename
 // names a path outside root parses to no Finding and one Dropped naming the
 // filename as the report wrote it.
+//
+// The file is written for real, because srcpath.Root.Place calls
+// EvalSymlinks first and reports not-inside on any error. Left absent, the
+// placement fails before the root comparison runs and the case passes with
+// that comparison deleted.
 func TestParseGolangCIDropsIssueOutsideRoot(t *testing.T) {
 	root := testRoot(t)
 	outside := t.TempDir() + "/main.go"
+	if err := os.WriteFile(outside, []byte("// another tree\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() err = %v", err)
+	}
 
 	doc := `{"Issues":[{"FromLinter":"forbidigo","Text":"a finding","Pos":{"Filename":"` + jsonEscape(outside) + `","Line":1,"Column":1}}]}`
 	findings, dropped, err := ParseGolangCI(strings.NewReader(doc), root)

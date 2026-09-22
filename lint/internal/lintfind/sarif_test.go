@@ -197,6 +197,29 @@ func TestParseSARIFAbsentStartColumnDefaultsToOne(t *testing.T) {
 	}
 }
 
+// TestParseSARIFEndLineBelowStartLineIsRefused pins the floor on endLine. A
+// region ending above where it starts matches no line at all, so the scope
+// filter would drop the finding with neither a Dropped entry nor an UNPARSED
+// marker, the silent drop this design refuses. The span falls back to the
+// region's own startLine instead.
+func TestParseSARIFEndLineBelowStartLineIsRefused(t *testing.T) {
+	root := testRoot(t)
+	writeSource(t, root, "src/Foo.cs")
+
+	findings, _, err := ParseSARIF(strings.NewReader(sarifDoc(t, "src/Foo.cs", 5, 3)), root)
+
+	if err != nil {
+		t.Fatalf("ParseSARIF() err = %v, want nil", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("len(findings) = %d, want 1", len(findings))
+	}
+	want := Location{Path: srcpath.Path("src/Foo.cs"), StartLine: 5, StartColumn: 1, EndLine: 5}
+	if got := findings[0].Locations[0]; got != want {
+		t.Errorf("location = %#v, want %#v", got, want)
+	}
+}
+
 // TestParseSARIFExplicitZeroStartColumnDefaultsToOne pins that an explicit 0
 // answers the same as an absent startColumn. Roslyn never writes an explicit
 // 0, but encoding/json cannot tell the two apart, so both have to agree
