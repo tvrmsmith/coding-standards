@@ -1,5 +1,5 @@
 // Command lint-changed is the blocking half of a pre-commit lint gate. See
-// argv.go for the three forms it takes and the exit codes each returns.
+// argv.go for the four forms it takes and the exit codes each returns.
 package main
 
 import (
