@@ -406,7 +406,7 @@ func (e extractor) collect(parsed extraction, handed []srcpath.Path) ([]Span, er
 	for _, path := range handed {
 		given[path.String()] = true
 	}
-	// ADR 0004 makes the echo byte-identical, so a path the gate never sent
+	// ADR 0011 makes the echo byte-identical, so a path the gate never sent
 	// is checked before anything is read out of the response.
 	for _, echoed := range echoedPaths(parsed) {
 		if !given[echoed] {
