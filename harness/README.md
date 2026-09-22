@@ -45,11 +45,11 @@ plugins `base.js` imports.
 | --- | --- |
 | `eslint-layer.js` | Loads the package's own ESLint config, spreads the personal preset after it. The layering, and the typed-layer gate. |
 | `lint-changed.sh` | The one entrypoint. Resolves the repo, computes the changed set, runs every language branch that applies. `--only` runs a single one. |
-| `linters/common.sh` | What every branch shares: argument parsing, repo resolution, the changed set, the scratch directory, the ancestor walk each language owns a predicate for, and `rank_status`, the one place the ADR 0010 exit convention is folded. |
-| `linters/ts.sh` | Lints changed `.ts`/`.tsx` only, each through its own package's ESLint binary. |
+| `linters/common.sh` | What every branch shares: argument parsing, repo resolution, the changed set, the scratch directory, the ancestor walk each language owns a predicate for, `lint_changed_bin`, which builds the filter once per run and memoises the path to a file, and `rank_status`, the one place the ADR 0010 exit convention is folded. |
+| `linters/ts.sh` | Lints the changed JavaScript and TypeScript, each file through its own package's ESLint binary, to a JSON report, then hands every report to one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
 | `linters/dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then hands every report to one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
 | `errorlog.props` | Sets `ErrorLog` for that build, imported through `CustomAfterMicrosoftCommonTargets`. MSBuild owns the report name because it has to expand `$(TargetFramework)` per inner build and escape the comma before the version suffix; the branch passes only the prefix. |
-| `linters/go.sh` | The Go counterpart: runs the personal golangci-lint binary over the packages owning the changed `.go`, filters down to those files. |
+| `linters/go.sh` | The Go counterpart: runs the personal golangci-lint binary over the packages owning the changed `.go` to a JSON report per module, then hands every report to one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
 | `hooks/pre-commit` | Template for the installed hook. The enforcement gate. One template, one `lint-changed.sh --staged` call, whatever the repo is adopted for. |
 | `write-vscode-settings.mjs` | The editor half — points the extension at `eslint-layer.js`, so typing sees what committing sees. TypeScript only. |
 | `bootstrap` | Installs all of the above into one repo, per language: `ts`, `dotnet` or `go`. |
@@ -72,6 +72,11 @@ into a machine-readable report, then hands every report from that run to one `li
 process, which keeps the findings touching a line the change wrote, spends any waiver and sets
 the status. Severity does not tier: an ESLint severity-1 warning blocks exactly as a severity-2
 error does.
+
+So every branch needs Go on `PATH`, even in a repo with no Go in it. `linters/common.sh` builds
+`lint-changed` from this hub into `${XDG_CACHE_HOME:-~/.cache}/coding-standards` once per run,
+which Go's build cache makes free after the first. No Go means the filter cannot run, and an unrun
+filter proves nothing, so the branch fails the commit rather than skipping.
 
 Output is one shape across all three, whatever the linter's own format was. `lint-changed` writes
 one line per surviving finding to stdout, `path:line:column: RULE: message`, repo-relative, and
@@ -99,8 +104,10 @@ ESLint and installs nothing.
 
 **The pre-commit hook is the gate.** It runs the full personal preset — custom rule, all nine
 effect rules, the typescript-eslint / testing-library / jest-dom / jest slices — over exactly
-the files the commit will contain. Errors block; warnings do not, on purpose (the rules that
-propose restructures ship at `warn`, and a warn that blocks a commit is an error in a hat).
+the files the commit will contain. Severity does not tier: a warning blocks exactly as an error
+does, once the finding touches a line the change wrote (ADR 0010). The rules that propose a
+restructure still ship at `warn`, which now decides only how an editor paints them and how loud a
+whole-repo run is, never whether a commit stops.
 
 **The editor is feedback, not enforcement** — but it now carries the same rules. It points
 `eslint.options.overrideConfigFile` at `eslint-layer.js`, the wrapper the hook already uses,
@@ -192,13 +199,11 @@ positive is a waiver, one rule on one path, used once, with a reason, recorded i
 repo; `lint-changed` prints the exact command. A waiver is spent only on a run that ends clean, so a
 waived finding on a commit that blocked on something else costs nothing.
 
-The C# hook now needs Go on `PATH`, even in a repo with no Go in it. The script builds
-`lint-changed` from this hub into `${XDG_CACHE_HOME:-~/.cache}/coding-standards` on every run,
-which Go's build cache makes free after the first. No Go means the filter cannot run, and an
-unrun filter proves nothing, so the script fails the commit rather than skipping. A missing
-`dotnet` in an adopted repo fails the same way and for the same reason, since nothing compiled the
-changed C# and nothing inspected it. The PATH check sits below the adoption check, so a repo wired
-only for TypeScript or Go still passes the branch without needing the .NET SDK.
+This branch needs Go on `PATH` like the other two, for the shared `lint-changed` build described
+above. A missing `dotnet` in an adopted repo fails the same way and for the same reason, since
+nothing compiled the changed C# and nothing inspected it. The PATH check sits below the adoption
+check, so a repo wired only for TypeScript or Go still passes the branch without needing the .NET
+SDK.
 
 ADR 0010 carries the rule and the reasoning.
 

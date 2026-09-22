@@ -141,9 +141,10 @@ threshold. It has a rule.
 ## Finding
 
 One diagnostic, as the linter reported it: a rule id, a message, a severity left as the tool said
-it, and one or more **locations**. A location is a span in one source file, inclusive of both lines.
-Primary and related locations are the same kind of thing here, because the in-scope rule treats them
-alike.
+it, and one or more **locations**. A location is a span in one source file, inclusive of both lines,
+carrying the column its first line starts at. Nothing scopes on the column, which is there so the
+reported line can point at the finding. Primary and related locations are the same kind of thing
+here, because the in-scope rule treats them alike.
 
 The rule, the message and the locations are the whole identity. Two reports carrying all three the
 same are one finding, not two, so a project built for several target frameworks and a file linked
@@ -158,10 +159,15 @@ definition is the one above, shared with the gate, and a finding in scope blocks
 finding out of scope is dropped and never reported, so a legacy file you touch one line in hands you
 no backlog.
 
-A few rule ids ignore scope: the ones meaning the analyzer failed to load, where a clean result
-proves nothing and the diff underneath is beside the point. Roslyn reports those at no location at
-all, so such a finding carries no path, and the waiver for one carries no path either: it keys on
-the language and the rule alone.
+A few rule ids ignore scope: the ones saying the report proves nothing about the code underneath it,
+where a clean scope result would be meaningless. Three kinds reach that route. An analyzer that
+failed to load, which Roslyn reports at no location at all. A package that does not compile, which
+golangci-lint reports as one `typecheck` issue at line 1, so an untouched first line would otherwise
+let a tree that does not build through. And a report entry no parser could read, reported under
+`UNPARSED`, because dropping it silently would be indistinguishable from a clean file.
+
+A finding that ignores scope and carries no path is waived on the language and the rule alone, since
+there is no path to name.
 
 A finding the target repo already suppressed in its own source, with a `#pragma` or a
 `[SuppressMessage]`, never reaches the scope question. That repo made its decision and this tool

@@ -220,9 +220,10 @@ identifies the node.
 | `react-hooks/exhaustive-deps` | warn | F8 |
 
 All nine of the effect plugin's rules are enabled. All warn: each proposes a restructure rather than
-a local edit, the effect plugin's own recommended preset ships them at warn, and these are exactly
-the rules with zero editor reach — they surface in a batch at commit time, where an error severity
-would block the commit on refactors that need thought.
+a local edit, and the effect plugin's own recommended preset ships them at warn. Severity is not
+what decides whether a commit stops, though. The pre-commit hook blocks on a warning and an error
+alike once the finding touches a line the change wrote (ADR 0010), so these block on a restructure
+the change itself introduced and stay silent over one it merely sits near.
 
 `no-derived-state` and `no-adjust-state-on-prop-change` are complements, and between them F11 has no
 review residue left: the first needs the new state value to derive from a prop, and the second fires
@@ -285,9 +286,9 @@ A few things worth knowing before editing them:
   with no Express in it gets no visitors and no cost. `sonarjs/x-powered-by` is the one that reports
   on the file rather than on a line: it fires at the end of any file that instantiates an app and
   never disables the header, because there the silence is the defect.
-- **Volume is not a reason to exclude a rule.** The pre-commit hook scopes reporting to changed
-  files, so a large standing backlog costs nothing. The exclusions below are all about the rule
-  being wrong, not loud.
+- **Volume is not a reason to exclude a rule.** The pre-commit hook reports only the findings that
+  touch a line the change wrote, so a large standing backlog costs nothing. The exclusions below
+  are all about the rule being wrong, not loud.
 
 ## The typed layer
 
@@ -321,8 +322,10 @@ package that would otherwise get it; `TVRMSMITH_TYPED_LINT=1` forces it on. Set
 Two things about the severities here:
 
 - **The `no-unsafe-*` family warns rather than errors.** The `any` is almost always arriving from an
-  untyped dependency or a `JSON.parse`, so the fix is upstream of the line being flagged, and an
-  error would block a commit on someone else's type declarations.
+  untyped dependency or a `JSON.parse`, so the fix is upstream of the line being flagged, and the
+  severity keeps a whole-repo run and the editor from painting that as an error. It is the
+  changed-line filter, not the severity, that keeps a commit from blocking on someone else's type
+  declarations.
 - **The overlaps stay resolved in favour of the untyped copy.** Where a plugin ships both, the
   typed layer drops its version rather than double-reporting. `typed.js` names each one it dropped.
 
