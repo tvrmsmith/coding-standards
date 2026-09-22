@@ -527,7 +527,7 @@ func workedExampleFromADR0008(t *testing.T) string {
 		t.Fatalf("%s holds %d fenced block(s), want exactly 1: this test reads the worked example out of that block, so it cannot tell which one is the contract",
 			adr0008, len(sections)/2)
 	}
-	return strings.TrimPrefix(sections[1], "\n") + "\n"
+	return sections[1] + "\n"
 }
 
 func TestEncode_NestedDocFieldIndentsTwoSpacesDeeper(t *testing.T) {

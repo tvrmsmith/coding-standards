@@ -9,6 +9,7 @@
 package docs_test
 
 import (
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -62,9 +63,8 @@ type limits struct {
 // Superseded records take no entry. They are exempt by their status, read
 // off the file, so the exemption cannot outlive the supersession.
 type ceilingOverride struct {
-	block int
-	file  int
-	why   string
+	limits
+	why string
 }
 
 // grandfathered is every ADR that was already over a ceiling when this check
@@ -72,40 +72,81 @@ type ceilingOverride struct {
 // with the ceiling.
 var grandfathered = map[string]ceilingOverride{
 	"0004-source-paths-are-repo-relative-and-resolved-deterministically.md": {
-		file: 2193,
-		why:  "consolidated once already, and README's Conventions section names a split as the next move on it",
+		limits: limits{file: 2193},
+		why:    "consolidated once already, and README's Conventions section names a split as the next move on it",
 	},
 	"0007-changed-method-is-a-span-holding-a-touched-line.md": {
-		file: 1660,
-		why:  "an amendment pushed it over, which is what surfaced issue 87",
+		limits: limits{file: 1660},
+		why:    "an amendment pushed it over, which is what surfaced issue 87",
 	},
 	"0010-lint-blocks-on-any-warning-touching-a-changed-line.md": {
-		block: 686,
-		why:   "five dated amendments landed inside the Current rule block, so folding them back is a consolidation",
+		limits: limits{block: 686},
+		why:    "five dated amendments landed inside the Current rule block, so folding them back is a consolidation",
 	},
 }
 
-// TestEveryLiveADRMeetsItsCeilings is the check issue 87 asked for. It
-// reports the file, the measured count and the ceiling it broke, so the
-// failure carries everything needed to act on it.
-func TestEveryLiveADRMeetsItsCeilings(t *testing.T) {
-	for _, record := range readADRs(t) {
+// breachKind is which of the check's three failures a record hit.
+type breachKind int
+
+const (
+	noCurrentRuleBlock breachKind = iota
+	blockOverCeiling
+	fileOverCeiling
+)
+
+// breach is one failure, as a value rather than a sentence, so the fixture
+// table below can assert what the check reported and not how it reads.
+type breach struct {
+	name  string
+	kind  breachKind
+	words int
+	limit int
+}
+
+// breaches is the whole of the check issue 87 asked for, over whatever set of
+// records it is handed and whatever raised limits apply to them. Superseded
+// records are exempt by their status and produce nothing.
+func breaches(records []adr, overrides map[string]ceilingOverride) []breach {
+	var found []breach
+	for _, record := range records {
 		if record.superseded {
 			continue
 		}
 		if !record.hasBlock {
-			t.Errorf("%s carries no %q heading, so the block a reader is told to read in full does not exist",
-				record.name, currentRuleHeading)
+			found = append(found, breach{name: record.name, kind: noCurrentRuleBlock})
 			continue
 		}
-		limit := ceilingsFor(record.name)
+		limit := ceilingsFor(record.name, overrides)
 		if record.blockWords > limit.block {
-			t.Errorf("%s: the Current rule block is %d words, over its %d-word ceiling. A decision that will not fit in the block is more than one decision; docs/adr/README.md's Conventions section has the four ways to change an ADR",
-				record.name, record.blockWords, limit.block)
+			found = append(found, breach{record.name, blockOverCeiling, record.blockWords, limit.block})
 		}
 		if record.fileWords > limit.file {
+			found = append(found, breach{record.name, fileOverCeiling, record.fileWords, limit.file})
+		}
+	}
+	return found
+}
+
+// TestEveryLiveADRMeetsItsCeilings runs the check over docs/adr. It reports
+// the file, the measured count and the ceiling it broke, so the failure
+// carries everything needed to act on it.
+func TestEveryLiveADRMeetsItsCeilings(t *testing.T) {
+	records, err := readADRs(adrGlob)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, b := range breaches(records, grandfathered) {
+		switch b.kind {
+		case noCurrentRuleBlock:
+			t.Errorf("%s carries no %q heading, so the block a reader is told to read in full does not exist",
+				b.name, currentRuleHeading)
+		case blockOverCeiling:
+			t.Errorf("%s: the Current rule block is %d words, over its %d-word ceiling. A decision that will not fit in the block is more than one decision; docs/adr/README.md's Conventions section has the four ways to change an ADR",
+				b.name, b.words, b.limit)
+		case fileOverCeiling:
 			t.Errorf("%s: the file is %d words, over its %d-word ceiling. Length is the trigger to consolidate, split or trim, and every one of those is a decision to escalate to the user rather than to make here",
-				record.name, record.fileWords, limit.file)
+				b.name, b.words, b.limit)
 		}
 	}
 }
@@ -115,8 +156,13 @@ func TestEveryLiveADRMeetsItsCeilings(t *testing.T) {
 // a raised limit nothing needs, and leaving it in place would let the file
 // grow straight back to it.
 func TestGrandfatheredEntriesAreStillEarned(t *testing.T) {
+	records, err := readADRs(adrGlob)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	measured := map[string]adr{}
-	for _, record := range readADRs(t) {
+	for _, record := range records {
 		measured[record.name] = record
 	}
 
@@ -149,30 +195,29 @@ type adr struct {
 	fileWords  int
 }
 
-// readADRs measures every record in docs/adr. A glob matching nothing is a
-// failure rather than a vacuous pass: this check would otherwise stay green
-// on a renamed directory while measuring nothing at all, the same guard
-// TestInternalDoesNotDependOnGate makes about an empty dependency graph.
-func readADRs(t *testing.T) []adr {
-	t.Helper()
-
-	paths, err := filepath.Glob(adrGlob)
+// readADRs measures every record the glob matches, in the sorted order
+// filepath.Glob returns. A glob matching nothing is a failure rather than a
+// vacuous pass: this check would otherwise stay green on a renamed directory
+// while measuring nothing at all, the same guard TestInternalDoesNotDependOnGate
+// makes about an empty dependency graph.
+func readADRs(glob string) ([]adr, error) {
+	paths, err := filepath.Glob(glob)
 	if err != nil {
-		t.Fatalf("globbing %s: %v", adrGlob, err)
+		return nil, fmt.Errorf("globbing %s: %w", glob, err)
 	}
 	if len(paths) == 0 {
-		t.Fatalf("%s matched no file, so this check walked an empty set and would pass whatever docs/adr holds", adrGlob)
+		return nil, fmt.Errorf("%s matched no file, so this check walked an empty set and would pass whatever the directory holds", glob)
 	}
 
 	records := make([]adr, 0, len(paths))
 	for _, path := range paths {
 		text, err := os.ReadFile(filepath.Clean(path))
 		if err != nil {
-			t.Fatalf("reading %s: %v", path, err)
+			return nil, fmt.Errorf("reading %s: %w", path, err)
 		}
 		records = append(records, measure(filepath.Base(path), string(text)))
 	}
-	return records
+	return records, nil
 }
 
 // measure counts one record whole and again over its Current rule block.
@@ -241,17 +286,15 @@ func currentRule(text string) (string, bool) {
 }
 
 // ceilingsFor is the standard pair unless this record carries an override.
-func ceilingsFor(name string) limits {
-	limit := limits{block: blockCeiling, file: fileCeiling}
-	over, ok := grandfathered[name]
-	if !ok {
-		return limit
+// A missing entry and an entry raising only one of the two leave the same
+// zero behind, which both read as the standard ceiling.
+func ceilingsFor(name string, overrides map[string]ceilingOverride) limits {
+	limit := overrides[name].limits
+	if limit.block == 0 {
+		limit.block = blockCeiling
 	}
-	if over.block > 0 {
-		limit.block = over.block
-	}
-	if over.file > 0 {
-		limit.file = over.file
+	if limit.file == 0 {
+		limit.file = fileCeiling
 	}
 	return limit
 }
