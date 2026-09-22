@@ -83,6 +83,30 @@ func TestParseESLintNoEndLineFallsBackToLine(t *testing.T) {
 	}
 }
 
+// TestParseESLintEndLineSpansTheWholeMessage pins that a message whose
+// endLine is past its line keeps the whole span, not just the first line.
+// ADR 0010 scopes on a span holding a touched line, so collapsing this to
+// the start line would silently drop a rule like no-unreachable over a block
+// whose opening line the change never wrote.
+func TestParseESLintEndLineSpansTheWholeMessage(t *testing.T) {
+	root := testRoot(t)
+	writeSource(t, root, "a.js")
+	path := jsonEscape(root.Abs(srcpath.Path("a.js")))
+
+	doc := `[{"filePath":"` + path + `","messages":[{"ruleId":"no-unreachable","severity":2,"message":"m","line":3,"column":5,"endLine":7,"endColumn":2}]}]`
+	findings, _, err := ParseESLint(strings.NewReader(doc), root)
+	if err != nil {
+		t.Fatalf("ParseESLint() err = %v, want nil", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("len(findings) = %d, want 1", len(findings))
+	}
+	want := Location{Path: srcpath.Path("a.js"), StartLine: 3, StartColumn: 5, EndLine: 7}
+	if got := findings[0].Locations[0]; got != want {
+		t.Errorf("location = %#v, want %#v", got, want)
+	}
+}
+
 // TestParseESLintFatalMessageIsUnparsed pins E3: ESLint's fatal parse-error
 // message, ruleId null, parses to one UNPARSED Finding that keeps its
 // location, since ESLint knows where the syntax error is, and ignores scope,

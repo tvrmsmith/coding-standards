@@ -306,11 +306,17 @@ func golangciDoc(path, fromLinter, text string, line, col int) string {
 
 // eslintDoc is a minimal ESLint JSON report with one file result and one
 // message, the shape lintfind.ParseESLint reads. path is the absolute path
-// the case resolved for its own fixture file: ESLint resolves
-// --stdin-filename against its own cwd before reporting it, so the
-// staged-content run harness/linters/ts.sh makes lands on a real repo path
-// too.
+// the case resolved for its own fixture file, which is what ESLint reports:
+// harness/linters/ts.sh runs it from the package directory and it writes
+// filePath resolved against that cwd.
 func eslintDoc(path, ruleID, message string, severity, line, col int) string {
 	return fmt.Sprintf(`[{"filePath":%q,"messages":[{"ruleId":%q,"message":%q,"severity":%d,"line":%d,"column":%d}]}]`,
 		path, ruleID, message, severity, line, col)
+}
+
+// eslintDocSpan is eslintDoc with an endLine, for a message spanning more
+// than the line it starts on.
+func eslintDocSpan(path, ruleID, message string, severity, line, col, endLine int) string {
+	return fmt.Sprintf(`[{"filePath":%q,"messages":[{"ruleId":%q,"message":%q,"severity":%d,"line":%d,"column":%d,"endLine":%d}]}]`,
+		path, ruleID, message, severity, line, col, endLine)
 }

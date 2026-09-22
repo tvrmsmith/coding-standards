@@ -860,6 +860,26 @@ func TestESLintFormatEndToEnd(t *testing.T) {
 	}
 }
 
+// An ESLint message spanning several lines is in scope when the change
+// touched any of them, not only the line it starts on. stageEdit writes line
+// 3, so a message running from line 1 to line 4 holds a touched line while
+// its own start line was never written. ADR 0010 scopes on the span, and
+// collapsing one to its start line drops the finding silently.
+func TestESLintSpanningATouchedLineSurvives(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "a.js")
+	doc := eslintDocSpan(f.absPath("a.js"), "no-unreachable", "Unreachable code.", 2, 1, 5, 4)
+
+	res := f.run(doc, "--format", "eslint", "--language", "ts", "--staged")
+
+	if res.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if res.stdout != "a.js:1:5: no-unreachable: Unreachable code.\n" {
+		t.Fatalf("stdout = %q, want the finding reported at the span's start", res.stdout)
+	}
+}
+
 // Every form of commit is driven through a real hook, because the form decides
 // which index git hands it. `git commit -a` and `git commit -- <pathspec>`
 // build a temporary index and name it in GIT_INDEX_FILE, so a gate that reads
