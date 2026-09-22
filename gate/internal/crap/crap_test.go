@@ -19,7 +19,7 @@ func TestMeasurement(t *testing.T) {
 		coverage       float64
 		threshold      int
 		score          float64
-		action         string
+		action         crap.Action
 		targetCoverage *float64
 	}{
 		{"low complexity zero coverage clears a generous threshold", 4, 0, 30, 20, crap.ActionNone, nil},

@@ -4,6 +4,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/tvrmsmith/coding-standards/gate/internal/crap"
 )
 
 // Every list-shaped behaviour of a document is a fan-out over Metrics, and
@@ -17,7 +19,7 @@ func scoredRow(name string, score float64) Row {
 	return Row{
 		File: "src/Ordering/OrderService.cs", Start: 1, End: 20, Name: name,
 		Complexity: 4, Coverage: &coverage, Score: &score,
-		State: StateMeasured, Action: "raise_coverage",
+		State: StateMeasured, Action: crap.ActionRaiseCoverage,
 	}
 }
 

@@ -20,13 +20,29 @@ const DisplayName = "CRAP"
 // what a run actually reads; this stays for the caller building that entry.
 const DefaultThreshold = 30
 
-// The two fix instructions and their absence, as ADR 0008 types them. It
-// requires action to be a typed cell rather than prose, and its 2026-09-14
-// amendment enumerates these three tokens.
+// Action is the fix instruction the document's `action` cell carries. ADR
+// 0008 requires that cell to be typed rather than prose and enumerates the
+// three tokens below, so the gate spells them as a type, the same way
+// report.State spells its own three, rather than as bare strings in a field
+// any string at all can be assigned to.
+//
+// Go will still convert an untyped constant, so `Action("split-method")`
+// and a literal in a composite literal both compile. What the type buys is
+// the rest: a `string` variable no longer assigns into the field, the three
+// constants are the discoverable vocabulary, and the asymmetry issue 94
+// found inside report.Row is gone.
+//
+// It lives here rather than beside report.State, which it sits next to in
+// report.Row, because report already depends on this package through scope
+// and metric, so the named type could only travel in this direction.
+type Action string
+
+// The two fix instructions and their absence, the whole of what `action` can
+// be.
 const (
-	ActionSplitMethod   = "split_method"
-	ActionRaiseCoverage = "raise_coverage"
-	ActionNone          = "none"
+	ActionSplitMethod   Action = "split_method"
+	ActionRaiseCoverage Action = "raise_coverage"
+	ActionNone          Action = "none"
 )
 
 // Measurement is one method's complexity and coverage fraction judged against
@@ -54,7 +70,7 @@ func (m Measurement) Score() float64 {
 // Action is the one fix instruction that applies. split_method is emitted
 // exactly when complexity exceeds the threshold, because at full coverage
 // CRAP reduces to comp and no test can rescue the method.
-func (m Measurement) Action() string {
+func (m Measurement) Action() Action {
 	switch {
 	case m.Complexity > m.Threshold:
 		return ActionSplitMethod
