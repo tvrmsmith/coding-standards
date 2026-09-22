@@ -45,8 +45,8 @@ _dotnet_has_csproj() { ls "$1"/*.csproj >/dev/null 2>&1; }
 
 dotnet_lint() {
   local file proj dir out build_status status=0 pairs=() projects project_count
-  local files=() prefix sarif sarifs=() found filter_status filter_ran=0
-  local scope_args=() report_args=() lint_changed build_out cache_home errorlog_props
+  local files=() prefix sarif sarifs=() found filter_status
+  local scope_args=() errorlog_props
   local sarif_dir=$scratch/dotnet-sarif
 
   # Whether this repo is adopted is a question the props file already answers: it carries one
@@ -118,28 +118,11 @@ dotnet_lint() {
     [ "$project_count" -gt 4 ] && echo "lint-changed: $project_count projects to build; this will take a moment" >&2
   fi
 
-  # lint-changed is the blocking half, and it is language-neutral: it reads the SARIF below, keeps
-  # only the findings touching a changed line, applies any waiver, and sets the exit status.
-  #
-  # Built here rather than bootstrapped, because Go's build cache makes a rebuild of an unchanged
-  # tree cost milliseconds against a dotnet build's seconds, and building every time is one less
-  # thing that can go stale. It has to be a built binary rather than `go run`: lint-changed reads
-  # the git repo it is *run in*, and `go run` would have to run in the hub's module directory.
-  command -v go >/dev/null 2>&1 || {
-    echo "lint-changed: no go on PATH, so the changed-line filter cannot run" >&2
-    echo "  Findings would go unchecked and the commit would pass unexamined, so this is a failure" >&2
-    echo "  rather than a skip. Install Go, or unstage the C# changes." >&2
-    return 1
-  }
-
-  cache_home=${XDG_CACHE_HOME:-$HOME/.cache}
-  lint_changed=$cache_home/coding-standards/lint-changed
-  mkdir -p "$(dirname "$lint_changed")" || return 1
-  if ! build_out=$(cd "$hub" && go build -o "$lint_changed" ./lint/cmd/lint-changed 2>&1); then
-    echo "lint-changed: could not build the changed-line filter" >&2
-    printf '%s\n' "$build_out" >&2
-    return 1
-  fi
+  # The blocking half, built by common.sh now that the Go branch wants the same binary. It reads
+  # the SARIF below, keeps only the findings touching a changed line, applies any waiver, and sets
+  # the exit status. Built here, before a single build runs, because a filter that will not build
+  # makes every SARIF it would have produced unreadable anyway.
+  lint_changed_bin >/dev/null || return 1
 
   case "$mode" in
     --staged) scope_args=(--staged) ;;
@@ -184,8 +167,10 @@ dotnet_lint() {
     # must not be read as that.
     if [ $build_status -ne 0 ]; then
       status=1
-      echo "=== $proj — build failed ==="
-      grep -E ': (error|warning) [A-Z]+[0-9]+' <<<"$out" | sort -u
+      # stderr, not stdout: stdout carries one porcelain finding line and nothing else, and an
+      # MSBuild diagnostic is close enough to that shape for the one regex to read it as a finding.
+      echo "=== $proj — build failed ===" >&2
+      grep -E ': (error|warning) [A-Z]+[0-9]+' <<<"$out" | sort -u >&2
       continue
     fi
 
@@ -207,8 +192,8 @@ dotnet_lint() {
         -p:TvrmsmithSarifPrefix="$prefix" -v:m --nologo 2>&1 </dev/null)
     if [ $? -ne 0 ]; then
       status=1
-      echo "=== $proj — the diagnostics pass failed after a clean build ==="
-      grep -E ': error [A-Z]+[0-9]+' <<<"$out" | sort -u
+      echo "=== $proj — the diagnostics pass failed after a clean build ===" >&2
+      grep -E ': error [A-Z]+[0-9]+' <<<"$out" | sort -u >&2
       continue
     fi
 
@@ -230,40 +215,15 @@ dotnet_lint() {
     fi
   done <<<"$projects"
 
-  # Every report goes into one lint-changed run, named with --report. A process per report was the
-  # first shape and it was wrong: a waiver is one commit's worth of permission, and each process
-  # spent whatever matched its own report without knowing another report still blocked the commit,
-  # so the waiver was burnt on a commit that never went through. One process sees the whole
-  # commit's findings and makes one spend decision. Merging the SARIF here instead would mean this
+  # Every report goes into one lint-changed run. Merging the SARIF here instead would mean this
   # branch understanding SARIF, which is the one thing handing the job to lint-changed buys.
   #
   # A broken run is reported as 1 whatever else happened, because a filter that did not run proves
   # nothing; 2 only survives when nothing broke.
-  #
-  # The ${#sarifs[@]} guard is for bash 3.2, where expanding an empty array under `set -u` is an
-  # unbound-variable error rather than an empty expansion.
-  #
-  # With no report at all, a --staged run still goes through, on a SARIF carrying no results. The
-  # staged-versus-disk hard stop covers every staged path and lives in lint-changed, so skipping
-  # the run when nothing was built is how a commit whose every staged .cs was deleted from the
-  # working tree went through unexamined.
-  if [ ${#sarifs[@]} -gt 0 ]; then
-    for sarif in "${sarifs[@]}"; do
-      report_args+=(--report "$sarif")
-    done
-    "$lint_changed" --format sarif --language csharp "${scope_args[@]}" "${report_args[@]}" </dev/null
-    filter_status=$?
-    filter_ran=1
-  elif [ "$mode" = "--staged" ]; then
-    printf '%s' '{"version":"2.1.0","runs":[{"results":[]}]}' \
-      | "$lint_changed" --format sarif --language csharp --staged
-    filter_status=$?
-    filter_ran=1
-  fi
-
-  if [ $filter_ran -eq 1 ]; then
-    status=$(rank_status "$status" "$filter_status")
-  fi
+  lint_changed_run sarif csharp '{"version":"2.1.0","runs":[{"results":[]}]}' \
+    ${scope_args[@]+"${scope_args[@]}"} -- ${sarifs[@]+"${sarifs[@]}"}
+  filter_status=$?
+  status=$(rank_status "$status" "$filter_status")
 
   return "$status"
 }

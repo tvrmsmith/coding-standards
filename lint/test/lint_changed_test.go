@@ -1,8 +1,10 @@
 package lintchanged_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -24,21 +26,78 @@ func filterArgs(extra ...string) []string {
 	return append([]string{"--format", "sarif", "--language", "csharp"}, extra...)
 }
 
-// 1. A finding on a touched line survives, exit 2.
+// 1. A finding on a touched line survives, exit 2, and stdout carries
+// exactly the one porcelain line and nothing else: this is the whole point
+// of the shape, so the assertion is on the whole of stdout, not a substring.
 func TestFindingOnTouchedLineSurvives(t *testing.T) {
 	f := newFixture(t)
 	stageEdit(f, "Foo.cs")
 
-	res := f.run(sarifDoc(sarifResult("TVRM0001", "no getter", sarifLoc("Foo.cs", 3, 3))), filterArgs("--staged")...)
+	res := f.run(sarifDoc(sarifResult("TVRM0001", "no getter", sarifLocCol("Foo.cs", 3, 3, 7))), filterArgs("--staged")...)
 
 	if res.exitCode != 2 {
 		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
 	}
-	if !strings.Contains(res.stdout, "TVRM0001") || !strings.Contains(res.stdout, "Foo.cs:3") {
-		t.Fatalf("stdout missing the surviving finding: %s", res.stdout)
+	if res.stdout != "Foo.cs:3:7: TVRM0001: no getter\n" {
+		t.Fatalf("stdout = %q, want exactly the one porcelain line", res.stdout)
 	}
-	if !strings.Contains(res.stdout, "lint-changed waive --language csharp --path Foo.cs --rule TVRM0001") {
-		t.Fatalf("stdout missing the waive command: %s", res.stdout)
+}
+
+// 2. The waive command for a surviving finding is on stderr, never stdout:
+// stdout carries only the porcelain line no-mistakes' lint.extra_linters
+// parses.
+func TestWaiveCommandIsOnStderrNotStdout(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "Foo.cs")
+
+	res := f.run(sarifDoc(sarifResult("TVRM0001", "no getter", sarifLocCol("Foo.cs", 3, 3, 7))), filterArgs("--staged")...)
+
+	if res.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if !strings.Contains(res.stderr, "waive --language csharp --path Foo.cs --rule TVRM0001") {
+		t.Fatalf("stderr missing the waive command: %s", res.stderr)
+	}
+	if strings.Contains(res.stdout, "waive") {
+		t.Fatalf("stdout carries the waive command, want it on stderr only: %s", res.stdout)
+	}
+}
+
+// 1b. A finding on a touched line reports its column.
+func TestFindingOnTouchedLineReportsColumn(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "Foo.cs")
+
+	res := f.run(sarifDoc(sarifResult("TVRM0001", "no getter", sarifLocCol("Foo.cs", 3, 3, 7))), filterArgs("--staged")...)
+
+	if res.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if !strings.Contains(res.stdout, "Foo.cs:3:7") {
+		t.Fatalf("stdout missing the column: %s", res.stdout)
+	}
+}
+
+// 1c. Two findings at the same line and different columns stay two findings:
+// before the column joined the dedup key these collapsed into one.
+func TestSameLineDifferentColumnsStayTwoFindings(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "Foo.cs")
+
+	doc := sarifDoc(
+		sarifResult("TVRM0001", "no getter", sarifLocCol("Foo.cs", 3, 3, 7)),
+		sarifResult("TVRM0001", "no getter", sarifLocCol("Foo.cs", 3, 3, 11)),
+	)
+	res := f.run(doc, filterArgs("--staged")...)
+
+	if res.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if !strings.Contains(res.stdout, "Foo.cs:3:7") {
+		t.Fatalf("stdout missing the finding at column 7: %s", res.stdout)
+	}
+	if !strings.Contains(res.stdout, "Foo.cs:3:11") {
+		t.Fatalf("stdout missing the finding at column 11: %s", res.stdout)
 	}
 }
 
@@ -86,15 +145,36 @@ func TestMultiLineSpan(t *testing.T) {
 }
 
 // 5. A finding whose primary location is untouched but whose related
-// location is touched survives.
+// location is touched survives, reported once at the related location: one
+// finding, one line, at the first location that survived scoping.
 func TestRelatedLocationTouchedSurvives(t *testing.T) {
 	f := newFixture(t)
 	stageEdit(f, "Foo.cs")
 
-	res := f.run(sarifDoc(sarifResultRelated("TVRM0001", "msg", sarifLoc("Foo.cs", 5, 5), sarifLoc("Foo.cs", 3, 3))), filterArgs("--staged")...)
+	res := f.run(sarifDoc(sarifResultRelated("TVRM0001", "no getter", sarifLoc("Foo.cs", 9, 9), sarifLocCol("Foo.cs", 3, 3, 4))), filterArgs("--staged")...)
 
 	if res.exitCode != 2 {
 		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if res.stdout != "Foo.cs:3:4: TVRM0001: no getter\n" {
+		t.Fatalf("stdout = %q, want exactly the one porcelain line at the surviving location", res.stdout)
+	}
+}
+
+// 5b. A multi-line message is flattened onto the one porcelain line: golangci's
+// typecheck linter genuinely emits a multi-line Text, and a second line would
+// otherwise be unparseable as a finding of its own.
+func TestMultiLineMessageIsFlattened(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "Foo.cs")
+
+	res := f.run(sarifDoc(sarifResult("TVRM0001", "first line\nsecond line", sarifLoc("Foo.cs", 3, 3))), filterArgs("--staged")...)
+
+	if res.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if res.stdout != "Foo.cs:3:1: TVRM0001: first line second line\n" {
+		t.Fatalf("stdout = %q, want the message flattened onto one line", res.stdout)
 	}
 }
 
@@ -106,13 +186,44 @@ func TestIgnoresScopeSurvivesEmptyDiff(t *testing.T) {
 	f.commitAll("base")
 	// No staged change: the touched map is empty.
 
-	res := f.run(sarifDoc(sarifResultNoLocation("AD0001", "analyzer crashed")), filterArgs("--staged")...)
+	res := f.run(sarifDoc(sarifResultNoLocation("AD0001", "analyzer failed to load")), filterArgs("--staged")...)
 
 	if res.exitCode != 2 {
 		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
 	}
-	if !strings.Contains(res.stdout, "AD0001") {
-		t.Fatalf("stdout does not name the analyzer load failure: %s", res.stdout)
+	if res.stdout != ".:1:1: AD0001: analyzer failed to load\n" {
+		t.Fatalf("stdout = %q, want the placeholder location for a finding with no location at all", res.stdout)
+	}
+}
+
+// 6b. Every stdout line of a multi-finding run matches the porcelain regex
+// no-mistakes' lint.extra_linters parses with, compiled here from the literal
+// so this case fails if the shape drifts.
+func TestEveryStdoutLineMatchesThePorcelainRegex(t *testing.T) {
+	f := newFixture(t)
+	f.write("Foo.cs", baseFile)
+	f.commitAll("base")
+	f.write("Foo.cs", "line1\nCHANGED\nCHANGED\nline4\nline5\n")
+	f.stage("Foo.cs")
+
+	doc := sarifDoc(
+		sarifResult("TVRM0001", "msg one", sarifLoc("Foo.cs", 2, 2)),
+		sarifResult("TVRM0002", "msg two", sarifLoc("Foo.cs", 3, 3)),
+	)
+	res := f.run(doc, filterArgs("--staged")...)
+
+	if res.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	re := regexp.MustCompile(`^(.+):(\d+):(\d+): ([^:]+): (.*)$`)
+	lines := strings.Split(strings.TrimRight(res.stdout, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("stdout has %d line(s), want 2: %q", len(lines), res.stdout)
+	}
+	for _, line := range lines {
+		if !re.MatchString(line) {
+			t.Errorf("line %q does not match the porcelain regex", line)
+		}
 	}
 }
 
@@ -586,8 +697,8 @@ func TestDuplicateFindingAcrossReportsIsReportedOnce(t *testing.T) {
 	if got := strings.Count(blocked.stdout, "TVRM0001:"); got != 1 {
 		t.Fatalf("the finding is reported %d times, want 1: %s", got, blocked.stdout)
 	}
-	if got := strings.Count(blocked.stdout, "waive --language"); got != 1 {
-		t.Fatalf("%d waive commands printed, want 1: %s", got, blocked.stdout)
+	if got := strings.Count(blocked.stderr, "waive --language"); got != 1 {
+		t.Fatalf("%d waive commands printed, want 1: %s", got, blocked.stderr)
 	}
 
 	recorded := f.run("", "waive", "--language", "csharp", "--path", "Foo.cs", "--rule", "TVRM0001", "--reason", "a false positive")
@@ -673,8 +784,11 @@ func TestARealFindingOutranksAnUncheckedReport(t *testing.T) {
 	if both.exitCode != 2 {
 		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", both.exitCode, both.stdout, both.stderr)
 	}
-	if !strings.Contains(both.stdout, "TVRM0001") || !strings.Contains(both.stdout, "waive --language") {
-		t.Fatalf("the finding or its waive command never reached stdout: %s", both.stdout)
+	if !strings.Contains(both.stdout, "TVRM0001") {
+		t.Fatalf("the finding never reached stdout: %s", both.stdout)
+	}
+	if !strings.Contains(both.stderr, "waive --language") {
+		t.Fatalf("the waive command never reached stderr: %s", both.stderr)
 	}
 
 	// The reports are given unchecked-first, since a run that stopped at the
@@ -688,6 +802,104 @@ func TestARealFindingOutranksAnUncheckedReport(t *testing.T) {
 	}
 	if !strings.Contains(withOutside.stderr, "outside.sarif") {
 		t.Fatalf("stderr does not name the report that checked nothing: %s", withOutside.stderr)
+	}
+}
+
+// 8. End to end through the golangci parser: --format selects ParseGolangCI,
+// and its own report shape survives scoping and porcelain the same as SARIF
+// does.
+func TestGolangCIFormatEndToEnd(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "main.go")
+	doc := golangciDoc(f.absPath("main.go"), "forbidigo", "use of `fmt.Println` forbidden", 3, 2)
+
+	res := f.run(doc, "--format", "golangci", "--language", "go", "--staged")
+
+	if res.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if res.stdout != "main.go:3:2: forbidigo: use of `fmt.Println` forbidden\n" {
+		t.Fatalf("stdout = %q, want the golangci finding as one porcelain line", res.stdout)
+	}
+}
+
+// 8b. A typecheck issue ignores scope the same way AD0001 does: golangci
+// reports a package that fails to compile as one issue at Pos.Line 1,
+// Pos.Column 0, so it survives a diff that never touches line 1.
+func TestGolangCITypecheckIgnoresScope(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "bad.go")
+	text := ": # gcltest\n./bad.go:1:28: syntax error: unexpected {, expected )"
+	doc := golangciDoc(f.absPath("bad.go"), "typecheck", text, 1, 0)
+
+	res := f.run(doc, "--format", "golangci", "--language", "go", "--staged")
+
+	if res.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	want := "bad.go:1:1: typecheck: : # gcltest ./bad.go:1:28: syntax error: unexpected {, expected )\n"
+	if res.stdout != want {
+		t.Fatalf("stdout = %q, want %q", res.stdout, want)
+	}
+}
+
+// 9. End to end through the ESLint parser: --format selects ParseESLint, and
+// its own report shape survives scoping and porcelain the same as SARIF and
+// golangci do.
+func TestESLintFormatEndToEnd(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "a.js")
+	doc := eslintDoc(f.absPath("a.js"), "no-unused-vars", "'x' is assigned a value but never used.", 2, 3, 7)
+
+	res := f.run(doc, "--format", "eslint", "--language", "ts", "--staged")
+
+	if res.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if res.stdout != "a.js:3:7: no-unused-vars: 'x' is assigned a value but never used.\n" {
+		t.Fatalf("stdout = %q, want the eslint finding as one porcelain line", res.stdout)
+	}
+}
+
+// An ESLint message spanning several lines is in scope when the change
+// touched any of them, not only the line it starts on. stageEdit writes line
+// 3, so a message running from line 1 to line 4 holds a touched line while
+// its own start line was never written. ADR 0010 scopes on the span, and
+// collapsing one to its start line drops the finding silently.
+func TestESLintSpanningATouchedLineSurvives(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "a.js")
+	doc := eslintDocSpan(f.absPath("a.js"), "no-unreachable", "Unreachable code.", 2, 1, 5, 4)
+
+	res := f.run(doc, "--format", "eslint", "--language", "ts", "--staged")
+
+	if res.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if res.stdout != "a.js:1:5: no-unreachable: Unreachable code.\n" {
+		t.Fatalf("stdout = %q, want the finding reported at the span's start", res.stdout)
+	}
+}
+
+// A non-fatal ESLint message with no ruleId is an ordinary finding and obeys
+// scope. ESLint reports a stale eslint-disable directive that way, and
+// reading it as UNPARSED made it ignore scope, so a one-line edit anywhere in
+// a file holding such a directive blocked the commit on a line the change
+// never wrote. stageEdit writes line 3, so line 1 is untouched here.
+func TestESLintNonFatalNullRuleIDOnAnUntouchedLineDoesNotBlock(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "a.js")
+	doc := fmt.Sprintf(
+		`[{"filePath":%q,"messages":[{"ruleId":null,"severity":1,"message":"Unused eslint-disable directive (no problems were reported).","line":1,"column":1}]}]`,
+		f.absPath("a.js"))
+
+	res := f.run(doc, "--format", "eslint", "--language", "ts", "--staged")
+
+	if res.exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if res.stdout != "" {
+		t.Fatalf("stdout = %q, want nothing", res.stdout)
 	}
 }
 

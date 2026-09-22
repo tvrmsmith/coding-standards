@@ -134,11 +134,118 @@ func TestParseSARIFRelativeURI(t *testing.T) {
 		Message:  "Combine these assertions on the same object.",
 		Severity: "warning",
 		Locations: []Location{
-			{Path: srcpath.Path("src/OrderService.cs"), StartLine: 12, EndLine: 12},
+			{Path: srcpath.Path("src/OrderService.cs"), StartLine: 12, StartColumn: 1, EndLine: 12},
 		},
 	}}
 	if !reflect.DeepEqual(findings, want) {
 		t.Errorf("findings = %#v, want %#v", findings, want)
+	}
+}
+
+// TestParseSARIFReadsStartColumn pins the new StartColumn field: a region
+// naming one parses to a Location whose StartColumn matches it.
+func TestParseSARIFReadsStartColumn(t *testing.T) {
+	root := testRoot(t)
+	writeSource(t, root, "src/Foo.cs")
+
+	doc := `{"version": "2.1.0", "runs": [{"results": [{
+		"ruleId": "TVRM0001",
+		"message": {"text": "a finding"},
+		"locations": [{"physicalLocation": {
+			"artifactLocation": {"uri": "src/Foo.cs"},
+			"region": {"startLine": 3, "startColumn": 7, "endLine": 3}}}]
+	}]}]}`
+
+	findings, _, err := ParseSARIF(strings.NewReader(doc), root)
+
+	if err != nil {
+		t.Fatalf("ParseSARIF() err = %v, want nil", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("len(findings) = %d, want 1", len(findings))
+	}
+	if got := findings[0].Locations[0].StartColumn; got != 7 {
+		t.Errorf("StartColumn = %d, want 7", got)
+	}
+}
+
+// TestParseSARIFAbsentStartColumnDefaultsToOne pins SARIF 2.1's own default
+// for region.startColumn: a region naming no startColumn at all parses to a
+// Location whose StartColumn is 1.
+func TestParseSARIFAbsentStartColumnDefaultsToOne(t *testing.T) {
+	root := testRoot(t)
+	writeSource(t, root, "src/Foo.cs")
+
+	doc := `{"version": "2.1.0", "runs": [{"results": [{
+		"ruleId": "TVRM0001",
+		"message": {"text": "a finding"},
+		"locations": [{"physicalLocation": {
+			"artifactLocation": {"uri": "src/Foo.cs"},
+			"region": {"startLine": 3, "endLine": 3}}}]
+	}]}]}`
+
+	findings, _, err := ParseSARIF(strings.NewReader(doc), root)
+
+	if err != nil {
+		t.Fatalf("ParseSARIF() err = %v, want nil", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("len(findings) = %d, want 1", len(findings))
+	}
+	if got := findings[0].Locations[0].StartColumn; got != 1 {
+		t.Errorf("StartColumn = %d, want 1", got)
+	}
+}
+
+// TestParseSARIFEndLineBelowStartLineIsRefused pins the floor on endLine. A
+// region ending above where it starts matches no line at all, so the scope
+// filter would drop the finding with neither a Dropped entry nor an UNPARSED
+// marker, the silent drop this design refuses. The span falls back to the
+// region's own startLine instead.
+func TestParseSARIFEndLineBelowStartLineIsRefused(t *testing.T) {
+	root := testRoot(t)
+	writeSource(t, root, "src/Foo.cs")
+
+	findings, _, err := ParseSARIF(strings.NewReader(sarifDoc(t, "src/Foo.cs", 5, 3)), root)
+
+	if err != nil {
+		t.Fatalf("ParseSARIF() err = %v, want nil", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("len(findings) = %d, want 1", len(findings))
+	}
+	want := Location{Path: srcpath.Path("src/Foo.cs"), StartLine: 5, StartColumn: 1, EndLine: 5}
+	if got := findings[0].Locations[0]; got != want {
+		t.Errorf("location = %#v, want %#v", got, want)
+	}
+}
+
+// TestParseSARIFExplicitZeroStartColumnDefaultsToOne pins that an explicit 0
+// answers the same as an absent startColumn. Roslyn never writes an explicit
+// 0, but encoding/json cannot tell the two apart, so both have to agree
+// rather than leaving the case to luck.
+func TestParseSARIFExplicitZeroStartColumnDefaultsToOne(t *testing.T) {
+	root := testRoot(t)
+	writeSource(t, root, "src/Foo.cs")
+
+	doc := `{"version": "2.1.0", "runs": [{"results": [{
+		"ruleId": "TVRM0001",
+		"message": {"text": "a finding"},
+		"locations": [{"physicalLocation": {
+			"artifactLocation": {"uri": "src/Foo.cs"},
+			"region": {"startLine": 3, "startColumn": 0, "endLine": 3}}}]
+	}]}]}`
+
+	findings, _, err := ParseSARIF(strings.NewReader(doc), root)
+
+	if err != nil {
+		t.Fatalf("ParseSARIF() err = %v, want nil", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("len(findings) = %d, want 1", len(findings))
+	}
+	if got := findings[0].Locations[0].StartColumn; got != 1 {
+		t.Errorf("StartColumn = %d, want 1", got)
 	}
 }
 
@@ -164,7 +271,7 @@ func TestParseSARIFAbsoluteFileURIWithPercentEncoding(t *testing.T) {
 	if len(findings) != 1 {
 		t.Fatalf("len(findings) = %d, want 1", len(findings))
 	}
-	want := Location{Path: srcpath.Path("my repo/src/Foo.cs"), StartLine: 5, EndLine: 5}
+	want := Location{Path: srcpath.Path("my repo/src/Foo.cs"), StartLine: 5, StartColumn: 1, EndLine: 5}
 	if findings[0].Locations[0] != want {
 		t.Errorf("Locations[0] = %+v, want %+v", findings[0].Locations[0], want)
 	}
@@ -276,8 +383,8 @@ func TestParseSARIFSkeletonExample(t *testing.T) {
 		Message:  "Combine these assertions on the same object.",
 		Severity: "warning",
 		Locations: []Location{
-			{Path: srcpath.Path("src/OrderService.cs"), StartLine: 12, EndLine: 12},
-			{Path: srcpath.Path("src/OrderService.cs"), StartLine: 14, EndLine: 14},
+			{Path: srcpath.Path("src/OrderService.cs"), StartLine: 12, StartColumn: 9, EndLine: 12},
+			{Path: srcpath.Path("src/OrderService.cs"), StartLine: 14, StartColumn: 9, EndLine: 14},
 		},
 	}}
 	if !reflect.DeepEqual(findings, want) {

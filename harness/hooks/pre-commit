@@ -37,10 +37,9 @@ status=0
 # both, not stop at whichever came first.
 #
 # One exit convention across all of them, ADR 0010's: 2 is "the gate says stop", a finding that
-# survived, whether an ESLint error or a C# analyzer warning on a line the change wrote. 1 is "the
-# gate broke" and dominates a 2 from another branch, since a branch that could not run proves
-# nothing about the code it never read. Personal Go findings are still advisory and join the
-# blocking half in slice 3 of issue 108.
+# survived, whether an ESLint warning, a C# analyzer warning or a golangci-lint issue on a line
+# the change wrote. 1 is "the gate broke" and dominates a 2 from another branch, since a branch
+# that could not run proves nothing about the code it never read.
 "$harness/lint-changed.sh" --staged || status=$?
 
 # Only 2 is a finding. Every other non-zero code is the gate breaking, 1 from the script itself

@@ -30,6 +30,17 @@ Each means an analyzer failed to load, so a clean result under it proves nothing
 is keyed on a path, so a waiver for one of these carries no path either and keys on the language and
 the rule alone. That is the only route past them.
 
+**Amended 2026-09-21.** The general rule is that an entry means the analysis never ran, so a clean
+scope result under it proves nothing. Three routes satisfy it. The four C# ids above, each an
+analyzer that failed to load. golangci-lint's `typecheck` issue, which is how it reports a package
+that will not compile, at line 1 column 0 and at exit 0, so scoping it would pass a commit whose Go
+does not build whenever line 1 is untouched. The `UNPARSED` fallback rule a parser reports an entry
+it cannot read under, since an entry it could not read is one it could not scope either, and
+dropping it silently would look the same as a clean file. These differ from the C# four in one way.
+`typecheck` and most `UNPARSED` entries carry a real location, so their waivers stay keyed on a
+path. Only an entry with no usable location at all takes the path-less route the paragraph above
+describes.
+
 Under `--staged`, a staged path whose disk copy differs from the index stops the run before any
 finding is judged. The linter reads disk and the commit carries the index, so a divergent file makes
 the whole report describe code that is not being committed. The check covers every staged path, not

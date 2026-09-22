@@ -79,7 +79,7 @@ gate/                                # the metric gate: a Go binary, one TOON do
   test/                              # black-box tests against the built binary, with goldens
 lint/                                # lint-changed: the language-neutral half of the pre-commit lint
   cmd/lint-changed/                  #   keeps the findings touching a changed line, sets the exit status
-  internal/                          #   the SARIF reader and the append-only waiver log
+  internal/                          #   the SARIF, golangci-lint and ESLint readers, and the waiver log
   test/                              # black-box tests against the built binary
 harness/                             # machine-local adoption harness: editor layer + pre-commit
 ```

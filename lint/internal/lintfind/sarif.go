@@ -49,21 +49,22 @@ type sarifLocation struct {
 			URI string `json:"uri"`
 		} `json:"artifactLocation"`
 		Region struct {
-			StartLine int `json:"startLine"`
-			EndLine   int `json:"endLine"`
+			StartLine   int `json:"startLine"`
+			StartColumn int `json:"startColumn"`
+			EndLine     int `json:"endLine"`
 		} `json:"region"`
 	} `json:"physicalLocation"`
 }
 
-// Dropped is one result ParseSARIF could not place inside root. The rule and
+// Dropped is one entry a Parser could not place inside root. The rule and
 // the URI it named are kept rather than counted, because a caller that drops
-// every result in a report has to say which ones went unchecked.
+// every entry in a report has to say which ones went unchecked.
 //
 // Outside separates the one drop cause that says the report describes another
 // tree from the causes that say the report checked this one and had nothing
 // placeable to say about it. Roslyn writes CS1701, CS1702, CS8021 and the
-// command-line CS2xxx warnings at Location.None as a matter of course, and a
-// result with no region or one naming a path inside the root that is not a
+// command-line CS2xxx warnings at Location.None as a matter of course, and an
+// entry with no region or one naming a path inside the root that is not a
 // regular file on disk, a source-generated document for instance, is the same
 // kind of ordinary. None of those is evidence that nothing was checked.
 type Dropped struct {
@@ -217,16 +218,27 @@ func placeLocation(loc sarifLocation, root srcpath.Root) (Location, bool) {
 	if region.StartLine == 0 {
 		return Location{}, false
 	}
+	// An endLine below startLine spans no line at all, so the scope filter
+	// would match it against nothing and the finding would vanish with
+	// neither a Dropped entry nor an UNPARSED marker. Absent reads as 0 and
+	// takes the same floor.
 	endLine := region.EndLine
-	if endLine == 0 {
+	if endLine < region.StartLine {
 		endLine = region.StartLine
+	}
+	// An absent startColumn and an explicit 0 are indistinguishable through
+	// encoding/json, and SARIF 2.1 itself defaults region.startColumn to 1, so
+	// both read as 1 here rather than leaving either to luck.
+	startColumn := region.StartColumn
+	if startColumn == 0 {
+		startColumn = 1
 	}
 
 	path, ok := resolveURI(loc.PhysicalLocation.ArtifactLocation.URI, root)
 	if !ok {
 		return Location{}, false
 	}
-	return Location{Path: path, StartLine: region.StartLine, EndLine: endLine}, true
+	return Location{Path: path, StartLine: region.StartLine, StartColumn: startColumn, EndLine: endLine}, true
 }
 
 // ignoresScope reports whether rule names an analyzer that failed to load

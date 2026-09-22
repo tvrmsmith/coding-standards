@@ -18,10 +18,10 @@
 # flood is indistinguishable from noise.
 #
 # One exit convention, everywhere, the one ADR 0010 sets: **2 is "the gate says stop", 1 is "the
-# gate broke"**. A surviving finding returns 2 — an ESLint error, a C# analyzer warning on a line
-# the change wrote. Anything that stopped the gate from answering returns 1 — a failed build, a
-# golangci-lint run that blew up, a missing layering wrapper, a bad argument. Personal Go findings
-# are advisory and return 0.
+# gate broke"**. A surviving finding returns 2, an ESLint warning or a C# analyzer warning or a
+# golangci-lint issue on a line the change wrote. Anything that stopped the gate from answering
+# returns 1, a failed build, a golangci-lint run that blew up, a missing layering wrapper, a bad
+# argument. All three branches block; none of them reports advisory findings any more.
 #
 # So the aggregate is not plain highest-wins: a 1 from any branch dominates a 2 from another. A
 # filter that did not run proves nothing, and a surviving finding reported next to a broken branch

@@ -1,9 +1,19 @@
 // Package lintfind holds the finding currency shared by every language's
 // linter, plus the parsers that read each linter's own report format into
-// it. SARIF 2.1, the shape Roslyn's <ErrorLog> emits, is the first parser.
+// it. SARIF 2.1, the shape Roslyn's <ErrorLog> emits, is the first parser;
+// golangci-lint's and ESLint's own JSON formats are the second and third.
 package lintfind
 
-import "github.com/tvrmsmith/coding-standards/internal/srcpath"
+import (
+	"io"
+
+	"github.com/tvrmsmith/coding-standards/internal/srcpath"
+)
+
+// Parser reads one linter's own report format into the shared Finding
+// currency, alongside the entries it could not place inside root.
+// ParseSARIF, ParseGolangCI and ParseESLint all match this shape.
+type Parser func(r io.Reader, root srcpath.Root) ([]Finding, []Dropped, error)
 
 // Finding is one diagnostic, in the one shape every language reports into.
 type Finding struct {
@@ -14,11 +24,15 @@ type Finding struct {
 	Locations    []Location
 }
 
-// Location is a span in one file, inclusive of both lines.
+// Location is a span in one file, inclusive of both lines. StartColumn is the
+// only column: nothing scopes on columns (ADR 0003/0007 scope on lines) and
+// the one output line lint-changed prints per finding carries a single
+// column.
 type Location struct {
-	Path      srcpath.Path
-	StartLine int
-	EndLine   int
+	Path        srcpath.Path
+	StartLine   int
+	StartColumn int
+	EndLine     int
 }
 
 // UnreadableReportError is a report this package refuses to read: malformed
@@ -31,3 +45,23 @@ type UnreadableReportError struct {
 }
 
 func (e UnreadableReportError) Error() string { return e.Message }
+
+// unparsed is the finding a report entry this package cannot read reports
+// under. Dropping it silently is the one thing a blocking gate must not do:
+// a dropped finding is indistinguishable from a clean file.
+//
+// IgnoresScope is true for the same reason AD0001 sets it: an entry this
+// package could not read is one it could not scope either, so a clean scope
+// result under it proves nothing. It keeps whatever location the entry did
+// carry, so the report can still point at the file; an entry with no usable
+// location passes none and takes the Location.None waiver route already
+// built for AD0001.
+func unparsed(format, problem, detail string, locations ...Location) Finding {
+	return Finding{
+		Rule:         "UNPARSED",
+		Severity:     "error",
+		IgnoresScope: true,
+		Message:      format + ": " + problem + ": " + detail,
+		Locations:    locations,
+	}
+}

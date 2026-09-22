@@ -7,13 +7,13 @@
 # resolve.
 #
 # golangci-lint runs per package, not per file, so this lints the packages owning the changed
-# files and filters the output down to those files.
+# files and hands their JSON reports to `lint-changed`, which keeps the findings touching a line
+# the change actually wrote and drops the rest.
 #
-# Exit status: **findings report, a broken run fails.** Every personal Go rule is advisory, the
-# same position the injected Roslyn ids are in, so a finding never blocks a commit. golangci-lint
-# exiting non-zero after --issues-exit-code=0 means something else went wrong — code that does not
-# typecheck, an unreadable config, a missing package — and that is reported as a failure rather
-# than swallowed.
+# This blocks, on ADR 0010's convention: 2 when a finding survived that filter, 1 when this branch
+# could not answer at all — a missing linter binary, a golangci run that blew up, a filter that
+# would not build. Past a genuine false positive there is one route, and `lint-changed` prints the
+# exact command for it.
 
 gcl=${TVRMSMITH_GCL:-$hub/go/bin/tvrmsmith-gcl}
 golangci_config=${TVRMSMITH_GOLANGCI_CONFIG:-$hub/go/golangci.yml}
@@ -28,34 +28,10 @@ go_owns() {
 
 _go_has_mod() { [ -f "$1/go.mod" ]; }
 
-# golangci-lint reads the disk, so it cannot honour a file staged in one state and left in another
-# the way ESLint can. Say so rather than let it pass silently.
-_go_warn_divergent() {
-  local file divergent=()
-  [ "$mode" = "--staged" ] || return 0
-  for file in "$@"; do
-    git diff --quiet -- "$file" || divergent+=("$file")
-  done
-  [ ${#divergent[@]} -gt 0 ] || return 0
-  echo "lint-changed: these are staged in one state and on disk in another; the linter sees the disk copy:" >&2
-  printf '    %s\n' "${divergent[@]}" >&2
-}
-
-# The human half of the branch's output. The caller has already deduped and sorted, because the
-# sort key belongs to golangci-lint's format. Paths go relative so the reader sees the repo, not
-# the machine.
-_go_report_findings() {
-  local file=$1 count
-  count=$(wc -l <"$file" | tr -d ' ')
-  echo
-  echo "personal coding standards — $count finding(s) in the changed Go files:"
-  sed 's|^'"$repo_root"'/||; s/^/  /' "$file"
-  echo
-  echo "  reported, not blocking. Every personal Go rule is advisory, so the commit proceeds."
-}
-
 go_lint() {
-  local file module dir rel out status=0 present=() pairs=() packages=() findings=$scratch/go
+  local file module dir rel status=0 present=() pairs=() packages=()
+  local report reports=() scope_args=() filter_status
+  local report_dir=$scratch/go-reports module_count=0
 
   # Which repos are adopted is state the Go side has nowhere else to keep: nothing is installed in
   # the target and the binary is machine-wide, so without this file bootstrapping one repo would
@@ -70,41 +46,49 @@ go_lint() {
     return 1
   fi
 
-  # Deleted in the change, or named by --files and never there. golangci-lint reads the disk and
-  # this branch is advisory, so there is nothing here to report and nothing to refuse. Filtered
-  # before the divergence warning, which would otherwise name a path with no disk copy as staged
-  # in one state and on disk in another.
+  # Deleted in the change, or named by --files and never there. golangci-lint reads the disk, so
+  # there is nothing here for it to lint. The staged-versus-disk question a missing file raises is
+  # lint-changed's, and it asks it across every staged path under --staged rather than only the
+  # ones that reached a report, which is why nothing here returns early: lint_changed_run at the
+  # bottom has to be reached even when no module produced a report at all.
   for file in "$@"; do
     [ -e "$file" ] && present+=("$file")
   done
-  [ ${#present[@]} -gt 0 ] || return 0
-
-  _go_warn_divergent "${present[@]}"
 
   # The module a file belongs to: nearest ancestor holding a go.mod. golangci-lint has to run from
   # there — outside a module it reports "directory prefix does not contain main module" and finds
   # nothing — and a monorepo can hold several.
-  for file in "${present[@]}"; do
+  for file in ${present[@]+"${present[@]}"}; do
     if module=$(ancestor_with "$file" _go_has_mod); then
       pairs+=("$module	$(dirname "$file")	$repo_root/$file")
     else
       echo "lint-changed: no go.mod above $file — skipped" >&2
     fi
   done
-  [ ${#pairs[@]} -gt 0 ] || return 0
 
-  : >"$findings"
+  case "$mode" in
+    --staged) scope_args=(--staged) ;;
+    --since)  scope_args=(--since "$ref") ;;
+    --files)  scope_args=(--files "$(IFS=,; echo "${present[*]-}")") ;;
+  esac
+
+  # Fail fast, before a single golangci run: a filter that will not build makes every report it
+  # would have produced unreadable anyway.
+  lint_changed_bin >/dev/null || return 1
+  mkdir -p "$report_dir" || return 1
+
   # Read line by line rather than word-split: an unquoted `$(...)` splits a module or file path on
   # every space it holds and then globs each piece, which is the one thing the NUL-delimited
-  # changed set upstream exists to prevent.
+  # changed set upstream exists to prevent. With no module at all the loop reads one empty line
+  # and does nothing, which is the path that leaves the tail below to ask the divergence question
+  # on its own.
   while IFS= read -r module; do
     [ -n "$module" ] || continue
     packages=()
     while IFS= read -r dir; do
       [ -n "$dir" ] || continue
       # Three cases, spelled out, because a prefix strip alone cannot tell them apart and either
-      # collapse sends golangci-lint at the wrong package: its findings are then filtered out by
-      # the absolute-path match below and the file reports clean unlinted.
+      # collapse sends golangci-lint at the wrong package, so the file reports clean unlinted.
       #
       #   a module at the repo root, where ancestor_with answers "." and there is no prefix to
       #   strip, so the package path is $dir as it stands;
@@ -119,33 +103,54 @@ go_lint() {
         rel=${dir#"$module"/}
       fi
       packages+=("./$rel")
-    done <<<"$(printf '%s\n' "${pairs[@]}" | awk -F'\t' -v m="$module" '$1 == m { print $2 }' | sort -u)"
+    done <<<"$(printf '%s\n' ${pairs[@]+"${pairs[@]}"} | awk -F'\t' -v m="$module" '$1 == m { print $2 }' | sort -u)"
 
-    # --path-mode abs so the reported paths can be matched against the changed set without
-    # depending on which directory golangci-lint decided to make them relative to.
-    out=$(cd "$module" && "$gcl" run --config "$golangci_config" --path-mode abs --issues-exit-code 0 \
-      --output.text.print-issued-lines=false --output.text.colors=false "${packages[@]}" 2>&1 </dev/null)
-    if [ $? -ne 0 ]; then
+    # One report per module, named by count rather than by the module path, which can hold any
+    # byte a directory name can.
+    module_count=$((module_count + 1))
+    report=$report_dir/$module_count.json
+
+    # Every one of these flags is load-bearing, so each gets its reason.
+    #
+    # --path-mode abs so the reported paths resolve inside the repo whatever directory golangci
+    # decided to make them relative to.
+    #
+    # --issues-exit-code 0 stays now that this branch blocks. lint-changed owns the blocking
+    # verdict, so golangci's own non-zero has to keep meaning only that the run itself broke, the
+    # same split dotnet.sh draws where the build's verdict stays the build's.
+    #
+    # --output.json.path takes a file rather than `stdout`. Pointed at stdout, golangci writes the
+    # JSON document on the first line and then a human summary after it on the same stream, which
+    # is unparseable as a report; a file sidesteps it and is the --report shape lint-changed wants
+    # anyway. --show-stats=false silences that same summary, leaving golangci's stdout byte-empty.
+    #
+    # --max-issues-per-linter 0 --max-same-issues 0 because the defaults, 50 and 3, truncate
+    # silently. A blocking gate that drops the fifty-first finding is the silent drop this whole
+    # design exists to prevent.
+    #
+    # golangci's stderr is let through rather than captured: it carries the deprecation warnings
+    # and the real diagnostics of a run that went wrong, and a reader needs those where they
+    # happen rather than folded into a failure message after the fact.
+    if ! (cd "$module" && "$gcl" run --config "$golangci_config" --path-mode abs --issues-exit-code 0 \
+      --show-stats=false --max-issues-per-linter 0 --max-same-issues 0 \
+      --output.json.path "$report" "${packages[@]}") </dev/null; then
       status=1
-      echo "=== $module — the lint run failed ==="
-      printf '%s\n' "$out"
+      # stderr, not stdout: stdout carries one porcelain finding line and nothing else, and a
+      # banner on it is a line no-mistakes' one regex can read.
+      echo "=== $module — the lint run failed ===" >&2
       continue
     fi
 
-    while IFS= read -r file; do
-      [ -n "$file" ] || continue
-      grep -F "$file:" <<<"$out" >>"$findings"
-    done <<<"$(printf '%s\n' "${pairs[@]}" | awk -F'\t' -v m="$module" '$1 == m { print $3 }' | sort -u)"
-  done <<<"$(printf '%s\n' "${pairs[@]}" | cut -f1 | sort -u)"
+    reports+=("$report")
+  done <<<"$(printf '%s\n' ${pairs[@]+"${pairs[@]}"} | cut -f1 | sort -u)"
 
-  if [ -s "$findings" ]; then
-    # Dedupe (a file can be reported by two passes) and order by file, then line, then column.
-    # Numerically: a plain sort reads line 102 as coming before line 14. The trailing `-k4` is
-    # load-bearing, because `-u` compares the keys rather than the line: without it, two linters
-    # reporting the same position would collapse into one finding.
-    sort -u -t: -k1,1 -k2,2n -k3,3n -k4 "$findings" -o "$findings"
-    _go_report_findings "$findings"
-  fi
+  # Every module's report goes into one lint-changed run. A broken run is reported as 1 whatever
+  # the filter said, because a filter that read only some of the modules proves nothing about the
+  # one that blew up. rank_status is that rule.
+  lint_changed_run golangci go '{"Issues":[]}' \
+    ${scope_args[@]+"${scope_args[@]}"} -- ${reports[@]+"${reports[@]}"}
+  filter_status=$?
+  status=$(rank_status "$status" "$filter_status")
 
   return "$status"
 }
