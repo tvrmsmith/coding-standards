@@ -88,6 +88,8 @@ lint/                                # lint-changed: the language-neutral half o
   internal/                          #   the SARIF, golangci-lint and ESLint readers, and the waiver log
   test/                              # black-box tests against the built binary
 harness/                             # machine-local adoption harness: editor layer + pre-commit
+tools/                               # no-mistakes-unit.sh: runs each Test-step unit that
+                                     #   .no-mistakes.yaml declares
 ```
 
 `go/` carries its own modules, one per fixture and one for the plugin, because a golangci-lint
