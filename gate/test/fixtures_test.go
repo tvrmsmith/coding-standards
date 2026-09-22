@@ -566,16 +566,21 @@ func (f *fixture) symlinkTo(target, rel string) {
 // re-hashes a file whose mode changed and the whole diff comes back
 // unreadable, so the case would pin git's refusal rather than the gate's
 // counting; with it git answers from the index blob and never opens the file.
-// A dangling symlink used to stand in for an unreadable add and stopped:
-// addedContent reads an added link as the link, so its target text digests
-// fine whether or not the target exists. Root ignores the mode, so a case
-// relying on this skips there.
-func (f *fixture) addUnreadable(rel string) {
+// A dangling symlink used to stand in for an unreadable add and stopped: move
+// detection leaves an added link out, so no read of it can fail. Root ignores
+// the mode, so a case relying on this skips there.
+//
+// The add is asserted after the mode goes to 0, because that git still reports
+// it as an add is the whole arrangement. Left unasserted, a caller whose golden
+// is the same one a run with no unreadable add produces would keep passing on a
+// helper that had stopped producing one.
+func (f *fixture) addUnreadable(base, rel string) {
 	f.t.Helper()
 	f.write(rel, "unreadable\n")
 	f.git("add", rel)
 	f.git("update-index", "--assume-unchanged", rel)
 	f.denyReadFile(rel)
+	f.assertAddedAs(base, rel, realFile)
 }
 
 // removeFile deletes rel from the working tree and leaves the index holding

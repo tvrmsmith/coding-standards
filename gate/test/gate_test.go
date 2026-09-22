@@ -152,7 +152,7 @@ func TestAnAddNobodyCanReadLeavesEveryOtherAddMeasured(t *testing.T) {
 	// unmeasured. The unreadable add could be carrying that content itself, so
 	// nothing here is a move and every method Moved.cs holds stays the gate's
 	// to score.
-	f.addUnreadable("notes.md")
+	f.addUnreadable("main", "notes.md")
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: moved, lines: spanCoverage(5, 3, 3)}))
 	f.stub = stubConfig{
@@ -180,7 +180,7 @@ func TestAnAddNobodyCanReadStillLeavesTheMovesTheDeletesExplainDropped(t *testin
 	// one more claimant, not a switch that turns move detection off.
 	f.git("mv", firstOrigin, moved)
 	f.git("rm", secondOrigin)
-	f.addUnreadable("notes.md")
+	f.addUnreadable("main", "notes.md")
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(moved), []span{vanish}),

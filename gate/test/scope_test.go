@@ -1244,13 +1244,13 @@ func TestStagedLooksForPureMovesInTheIndexRatherThanTheWorkingTree(t *testing.T)
 		"0 of 1 changed methods over CRAP threshold 30, worst score 4.13\n")
 }
 
-// TestAnAddedSymlinkIsDigestedAsTheLinkRatherThanAsItsTarget pins the other
-// half of what the case above is about, which snapshot each scope digests an
-// added path from. The staged branch reads the index blob, which for a link is
-// the one line holding the target path; the working-tree branch reads the file
-// on disk, which followed the link and digested the target's whole content.
-// Issue 110 reported that asymmetry, and the two scopes now digest the same
-// bytes.
+// TestAnAddedSymlinkIsNeverDigestedAsItsTarget pins the other half of what the
+// case above is about, which snapshot each scope digests an added path from.
+// The staged branch reads the index blob, which for a link is the one line
+// holding the target path; the working-tree branch reads the file on disk,
+// which followed the link and digested the target's whole content. Issue 110
+// reported that asymmetry, and move detection now leaves an added link out
+// altogether, so neither scope digests one.
 //
 // Link.cs is dropped from the changed set either way, for holding no source,
 // so the link is not what the misread costs. Moved.cs is. Digested through
@@ -1258,7 +1258,7 @@ func TestStagedLooksForPureMovesInTheIndexRatherThanTheWorkingTree(t *testing.T)
 // deleted blob, and counting leaves both measured, so a file the developer
 // only renamed comes back as a whole-file add. Under the misread this run
 // measures Moved.Vanish and exits 1 for want of a coverage report.
-func TestAnAddedSymlinkIsDigestedAsTheLinkRatherThanAsItsTarget(t *testing.T) {
+func TestAnAddedSymlinkIsNeverDigestedAsItsTarget(t *testing.T) {
 	const origin = "src/Ordering/Origin.cs"
 	const moved = "src/Ordering/Moved.cs"
 	const target = "src/Ordering/Target.cs"

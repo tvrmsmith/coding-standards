@@ -27,8 +27,8 @@ const (
 // for byte, so a digest read through the link claims that content against the
 // deleted blob: two adds claim one delete, counting drops neither, and
 // Moved.cs comes back measured as a whole-file add rather than as the move it
-// is. Reading the link's own new side leaves the link claiming nothing but the
-// target path it holds.
+// is. Move detection leaves an added link out, so the link claims nothing and
+// the delete explains the one add that is left.
 func TestTouchedLinesDropsAnAddedSymlinkAndStillSeesTheMoveBesideIt(t *testing.T) {
 	repo, head := linkAndMoveFixture(t)
 	base := Base{Ref: "HEAD", Commit: head}
@@ -38,7 +38,9 @@ func TestTouchedLinesDropsAnAddedSymlinkAndStillSeesTheMoveBesideIt(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(linkedPaths(records), srcpath.Path(fixtureLink)) {
+	if !slices.ContainsFunc(records, func(record rawRecord) bool {
+		return record.Path == srcpath.Path(fixtureLink) && record.Status == "A" && record.NewMode == symlinkMode
+	}) {
 		t.Fatalf("the raw listing %v holds no added link at %s, want the fixture to stage one", records, fixtureLink)
 	}
 
@@ -60,6 +62,20 @@ func TestTouchedLinesDropsAnAddedSymlinkAndStillSeesTheMoveBesideIt(t *testing.T
 // hands `cat-file` an added path's all-zero id, and no add is ever digested.
 func TestTouchedLinesStagedDropsTheSameAddedSymlinkAndMove(t *testing.T) {
 	repo, head := linkAndMoveFixture(t)
+	// The working tree holds a real source file where the index holds the link,
+	// so the two scopes have different answers and a --staged run that read the
+	// working tree would come back naming the link's path.
+	if err := os.Remove(repo.root.Abs(srcpath.Path(fixtureLink))); err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureFile(t, repo.Root().Dir(), fixtureLink, "// link\n")
+	onDisk, err := repo.TouchedLines(Base{Ref: "HEAD", Commit: head})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(touchedPaths(onDisk), []string{fixtureLink}) {
+		t.Fatalf("the working-tree scope names %v, want only %s so the two scopes disagree", touchedPaths(onDisk), fixtureLink)
+	}
 
 	touched, err := repo.TouchedLines(Base{Ref: "HEAD", Commit: head, Staged: true})
 
@@ -103,9 +119,10 @@ func TestTouchedLinesDropsARetargetedSymlink(t *testing.T) {
 }
 
 // retargetedLinkFixture commits a link beside the two files it can point at,
-// then repoints it on disk. The two targets hold different content, so the
-// repoint is a real change to the link's own blob rather than a no-op git
-// would leave out of the diff.
+// then repoints it on disk. A link's blob holds the target path rather than
+// any of the target's content, so writing a different path into it is a real
+// change to the link's own blob rather than a no-op git would leave out of the
+// diff.
 func retargetedLinkFixture(t *testing.T) (Repo, string) {
 	t.Helper()
 

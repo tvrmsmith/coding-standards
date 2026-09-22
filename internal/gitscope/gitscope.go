@@ -1082,23 +1082,16 @@ func (r Repo) pureMoves(base Base, records []rawRecord) []srcpath.Path {
 // guard is asked about, and the run passes on exactly the divergence that guard
 // exists to refuse.
 //
-// An added symbolic link is read as the link, never through it. os.ReadFile
-// follows the link and digests the target's content, so a link whose target
-// carries a deleted file's content looks like the move of that file, and the
-// same repository state under --staged does not, since `cat-file` on the link's
-// blob reads the one line holding the target path. Reading the link's own new
-// side is what the index branch already does, so both scopes digest the same
-// bytes (issue 110). The link is dropped from the changed set either way, but a
-// digest read through it also claims the target's content against the deleted
-// side and can leave a real move measured as a whole-file add.
+// An added symbolic link never reaches here, because os.ReadFile would follow
+// it and digest the target's whole content while `cat-file` on the link's blob
+// gives the index branch the one line holding the target path, so the two
+// scopes answered differently for one repository state (issue 110).
+// addsAndDeletes drops an added link ahead of this, which is the same answer
+// for both scopes and no digest taken through a link at all.
 func (r Repo) addedContent(base Base, add rawRecord) ([]byte, error) {
 	if base.Staged {
 		body, err := r.git("cat-file", "blob", add.Dst)
 		return []byte(body), err
-	}
-	if add.NewMode == symlinkMode {
-		target, err := os.Readlink(r.root.Abs(add.Path))
-		return []byte(target), err
 	}
 	return os.ReadFile(r.root.Abs(add.Path))
 }
@@ -1120,8 +1113,8 @@ func squashedDigest(body []byte) [sha256.Size]byte {
 const gitlinkMode = "160000"
 
 // symlinkMode is the mode git gives a symbolic link. Its blob holds the path
-// the link points at rather than any source, which is what linkedPaths drops
-// from the changed set and what addedContent digests for an added link.
+// the link points at rather than any source, which is why linkedPaths drops it
+// from the changed set and addsAndDeletes leaves it out of move detection.
 const symlinkMode = "120000"
 
 // rawRecord is one `git diff --raw -z` record: the metadata field ":<old mode>
@@ -1169,11 +1162,17 @@ func parseRawRecords(raw string) ([]rawRecord, error) {
 // old-side blob ids it deleted, which is the pair pure-move detection compares.
 // A submodule is skipped on both sides, since a gitlink's object id names a
 // commit in another repository rather than a blob this repo can read.
+//
+// An added symbolic link is skipped beside it. The changed set drops the link
+// for holding no source, so it can never be a move worth finding, and the one
+// line it does hold, the path it points at, is content a deleted file can
+// coincide with: a delete carrying that same text has two claimants rather than
+// one, so the genuine move beside the link stays measured as a whole-file add.
 func addsAndDeletes(records []rawRecord) (added []rawRecord, deleted []string) {
 	for _, record := range records {
 		switch record.Status {
 		case "A":
-			if record.NewMode == gitlinkMode {
+			if record.NewMode == gitlinkMode || record.NewMode == symlinkMode {
 				continue
 			}
 			added = append(added, record)
