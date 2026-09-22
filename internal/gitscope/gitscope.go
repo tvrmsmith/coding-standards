@@ -537,14 +537,16 @@ func (r Repo) objectType(oid string) (string, error) {
 // also edited the file is measured.
 //
 // ACM also excludes T, so a typechange contributes no touched lines in either
-// direction, and the two drops have different reasons. A source file replaced
-// by a symlink is the wanted answer, since a link holds no source to measure,
-// and widening the letters to ACMT would hand the extractor the link path,
-// which it follows to report the target's spans under a name that does not
-// hold them. A symlink replaced by a real source file is an accepted gap, and
-// measuring it needs a pass classifying the new side's mode before extraction,
-// which is issue 84 rather than a wider letter set. See the ADR 0007 amendment
-// beginning "`--diff-filter=ACM` excludes `T`,".
+// direction, and the drops have different reasons. A source file replaced by a
+// symlink is the wanted answer, since a link holds no source to measure. A
+// symlink replaced by a real source file is an accepted gap, and measuring it
+// needs a wider letter set kept apart from the link direction, which is issue
+// 84. See the ADR 0007 amendment beginning "`--diff-filter=ACM` excludes `T`,".
+//
+// A link arriving as status A does pass ACM, so linkedPaths drops any changed
+// path whose new side is a link, which is the same reading of "a link holds no
+// source to measure" on the route the letters cannot reach. That drop owes ADR
+// 0007 an amendment.
 //
 // Nothing gets out of here untyped. Every cause below this line, a git
 // invocation that failed as much as a patch the parser refused, comes back as
@@ -577,14 +579,68 @@ func (r Repo) touchedLines(base Base) (map[srcpath.Path][]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	moved, err := r.pureMoves(base, drivers)
+	records, err := r.rawChanges(base, drivers)
 	if err != nil {
 		return nil, err
 	}
-	for _, path := range moved {
+	for _, path := range linkedPaths(records) {
+		delete(touched, path)
+	}
+	for _, path := range r.pureMoves(base, records) {
 		delete(touched, path)
 	}
 	return touched, nil
+}
+
+// rawChanges is the `--raw` listing of the same diff the patch above came
+// from, read once and given two readings, the symlink drop and pure-move
+// detection. Both need the per-path modes and object ids only `--raw` carries,
+// and a second invocation would be a second snapshot of a working tree that
+// can change between them, so one path could be a link to one reading and a
+// file to the other.
+//
+// `--diff-filter=ACMD` is the union of what the two readings ask about, ACM for
+// the paths the changed set holds and D for the deletions a move is explained
+// by. `--no-renames` travels for the reason it travels on the patch: a pair git
+// scored as a rename comes back as R, which neither reading has a case for.
+func (r Repo) rawChanges(base Base, drivers []string) ([]rawRecord, error) {
+	args := slices.Concat(rawFlags, []string{"-z", "--abbrev=40", "--no-renames", "--diff-filter=ACMD"}, cachedFlag(base), []string{base.Commit})
+	raw, err := r.gitBlanking(drivers, args...)
+	if err != nil {
+		return nil, err
+	}
+	return parseRawRecords(raw)
+}
+
+// linkedPaths lists the changed paths whose new side is a symbolic link, which
+// the changed set drops.
+//
+// A link holds no source to measure, which is the reading ADR 0007 already
+// takes of the typechange `--diff-filter=ACM` excludes: a source file replaced
+// by a link is the wanted answer. A link arriving as status A passes that
+// filter, and dropping it here is the same reading on the route the letters
+// cannot reach. Mode comes from the diff rather than from an lstat, so the
+// answer is the index's under --staged and the working tree's otherwise, each
+// matching the side that scope measures.
+//
+// Left in, the link's own new side is one line holding the path it points at.
+// An extractor handed the link follows it and reports the target's spans under
+// the link's path, so where those spans cover line 1 a method is measured under
+// a path that does not hold it, the coverage lookup finds nothing, and the run
+// fails as an unknown changed method with no edit that clears it (issue 109).
+// Where they do not, the line falls inside no span and only
+// touched_lines_outside_spans moves. A link pointing out of the repo is the
+// same drop, so the changed-set path needs no guard of its own for a target no
+// commit of this repo holds (issue 103), unlike `--files`, where the path is
+// one a developer typed as a request to measure that file.
+func linkedPaths(records []rawRecord) []srcpath.Path {
+	var links []srcpath.Path
+	for _, record := range records {
+		if record.NewMode == symlinkMode {
+			links = append(links, record.Path)
+		}
+	}
+	return links
 }
 
 // cachedFlag is `--cached` when base.Staged, which is what turns a diff's
@@ -969,18 +1025,10 @@ func noMatch(err error) bool {
 // what removes git's own answer to which of the two is the move, and guessing
 // would silently unscore a brand-new file. Counting depends on no `git diff
 // --raw` ordering, so the answer is the same whichever order git lists them in.
-func (r Repo) pureMoves(base Base, drivers []string) ([]srcpath.Path, error) {
-	args := slices.Concat(rawFlags, []string{"-z", "--abbrev=40", "--no-renames", "--diff-filter=AD"}, cachedFlag(base), []string{base.Commit})
-	raw, err := r.gitBlanking(drivers, args...)
-	if err != nil {
-		return nil, err
-	}
-	added, deleted, err := parseRawAddsAndDeletes(raw)
-	if err != nil {
-		return nil, err
-	}
+func (r Repo) pureMoves(base Base, records []rawRecord) []srcpath.Path {
+	added, deleted := addsAndDeletes(records)
 	if len(added) == 0 || len(deleted) == 0 {
-		return nil, nil
+		return nil
 	}
 	carried := map[[sha256.Size]byte]int{}
 	for _, blob := range deleted {
@@ -1020,7 +1068,7 @@ func (r Repo) pureMoves(base Base, drivers []string) ([]srcpath.Path, error) {
 		}
 		moves = append(moves, add.Path)
 	}
-	return moves, nil
+	return moves
 }
 
 // addedContent reads the new side of an added path, from the same snapshot the
@@ -1033,20 +1081,19 @@ func (r Repo) pureMoves(base Base, drivers []string) ([]srcpath.Path, error) {
 // an extractor, never claimed, and so never among the paths the staged_file_dirty
 // guard is asked about, and the run passes on exactly the divergence that guard
 // exists to refuse.
-func (r Repo) addedContent(base Base, add addedFile) ([]byte, error) {
+//
+// An added symbolic link never reaches here, because os.ReadFile would follow
+// it and digest the target's whole content while `cat-file` on the link's blob
+// gives the index branch the one line holding the target path, so the two
+// scopes answered differently for one repository state (issue 110).
+// addsAndDeletes drops an added link ahead of this, which is the same answer
+// for both scopes and no digest taken through a link at all.
+func (r Repo) addedContent(base Base, add rawRecord) ([]byte, error) {
 	if base.Staged {
-		body, err := r.git("cat-file", "blob", add.Blob)
+		body, err := r.git("cat-file", "blob", add.Dst)
 		return []byte(body), err
 	}
 	return os.ReadFile(r.root.Abs(add.Path))
-}
-
-// addedFile is one path a diff added, with the object id of its new-side
-// content. The id is all zeros for a working-tree diff, where the new side is
-// the file on disk and no object holds it.
-type addedFile struct {
-	Path srcpath.Path
-	Blob string
 }
 
 // squashedDigest digests body in the form `git diff -w` compares it in: every
@@ -1065,35 +1112,78 @@ func squashedDigest(body []byte) [sha256.Size]byte {
 // submodule contributes nothing to the deleted-side content.
 const gitlinkMode = "160000"
 
-// parseRawAddsAndDeletes reads `git diff --raw -z` records, returning the
-// paths the diff added with their new-side blob ids and the old-side blob ids
-// it deleted. A record is the metadata field ":<mode> <mode> <src> <dst>
-// <status>" followed by the path, both NUL-terminated.
-func parseRawAddsAndDeletes(raw string) (added []addedFile, deleted []string, err error) {
-	records := nulRecords(raw)
-	if len(records)%2 != 0 {
-		return nil, nil, fmt.Errorf("git diff --raw emitted %d fields, want pairs", len(records))
+// symlinkMode is the mode git gives a symbolic link. Its blob holds the path
+// the link points at rather than any source, which is why linkedPaths drops it
+// from the changed set and addsAndDeletes leaves it out of move detection.
+const symlinkMode = "120000"
+
+// rawRecord is one `git diff --raw -z` record: the metadata field ":<old mode>
+// <new mode> <src> <dst> <status>" followed by the path, both NUL-terminated.
+//
+// Src and Dst are the object ids of the two sides. Dst is all zeros for a
+// working-tree diff, where the new side is the file on disk and no object
+// holds it.
+type rawRecord struct {
+	OldMode string
+	NewMode string
+	Src     string
+	Dst     string
+	Status  string
+	Path    srcpath.Path
+}
+
+// parseRawRecords reads a whole `git diff --raw -z` listing. One parser serves
+// every reading of that listing, so a malformed record is one refusal rather
+// than one per caller.
+func parseRawRecords(raw string) ([]rawRecord, error) {
+	fields := nulRecords(raw)
+	if len(fields)%2 != 0 {
+		return nil, fmt.Errorf("git diff --raw emitted %d fields, want pairs", len(fields))
 	}
-	for i := 0; i < len(records); i += 2 {
-		fields := strings.Fields(records[i])
-		if len(fields) != 5 {
-			return nil, nil, fmt.Errorf("git diff --raw record is malformed: %q", records[i])
+	var records []rawRecord
+	for i := 0; i < len(fields); i += 2 {
+		metadata := strings.Fields(fields[i])
+		if len(metadata) != 5 {
+			return nil, fmt.Errorf("git diff --raw record is malformed: %q", fields[i])
 		}
-		oldMode, newMode, src, dst, status := strings.TrimPrefix(fields[0], ":"), fields[1], fields[2], fields[3], fields[4]
-		switch status {
+		records = append(records, rawRecord{
+			OldMode: strings.TrimPrefix(metadata[0], ":"),
+			NewMode: metadata[1],
+			Src:     metadata[2],
+			Dst:     metadata[3],
+			Status:  metadata[4],
+			Path:    srcpath.FromSlash(fields[i+1]),
+		})
+	}
+	return records, nil
+}
+
+// addsAndDeletes splits raw records into the paths the diff added and the
+// old-side blob ids it deleted, which is the pair pure-move detection compares.
+// A submodule is skipped on both sides, since a gitlink's object id names a
+// commit in another repository rather than a blob this repo can read.
+//
+// An added symbolic link is skipped beside it. The changed set drops the link
+// for holding no source, so it can never be a move worth finding, and the one
+// line it does hold, the path it points at, is content a deleted file can
+// coincide with: a delete carrying that same text has two claimants rather than
+// one, so the genuine move beside the link stays measured as a whole-file add.
+func addsAndDeletes(records []rawRecord) (added []rawRecord, deleted []string) {
+	for _, record := range records {
+		switch record.Status {
 		case "A":
-			if newMode == gitlinkMode {
+			if record.NewMode == gitlinkMode || record.NewMode == symlinkMode {
 				continue
 			}
-			added = append(added, addedFile{Path: srcpath.FromSlash(records[i+1]), Blob: dst})
+			added = append(added, record)
 		case "D":
-			if oldMode == gitlinkMode {
+			if record.OldMode == gitlinkMode {
 				continue
 			}
-			deleted = append(deleted, src)
+			deleted = append(deleted, record.Src)
 		}
 	}
-	return added, deleted, nil
+	return added, deleted
 }
 
 // parseTouchedLines reads hunk headers out of a unified diff.
