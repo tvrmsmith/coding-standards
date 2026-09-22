@@ -246,8 +246,9 @@ code other people wrote and are not being asked to change.
 The hub's own root module is the exception, because here the code is ours to change. The
 `gate (go)` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs this same binary
 and config from the repository root over `./...`, with the default exit code, so any finding under
-`gate/`, `lint/`, `internal/gitscope/` or `internal/srcpath/` reds the build. Clearing one means
-tightening the code, or a `//nolint` that names the linter and gives a reason true of that site.
+`gate/`, `lint/`, `internal/gitscope/`, `internal/srcpath/` or `docs/test/` reds the build.
+Clearing one means tightening the code, or a `//nolint` that names the linter and gives a reason
+true of that site.
 Never a new id in `golangci.yml`'s `gosec.excludes`, which would also disarm the rule in every repo
 this layer visits.
 

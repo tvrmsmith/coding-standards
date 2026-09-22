@@ -60,6 +60,40 @@ threshold, because at full coverage CRAP reduces to complexity and no test can r
 Adding a token is a contract change and edits this paragraph on the same commit, the same way adding
 a cause registers its `error.code` in `gate/internal/report`.
 
+**Amended 2026-09-22.** Two things consolidating
+[ADR 0005](0005-the-machine-document-is-the-only-output.md) into this file lost, both restored here
+(issue 89). The first is how a typed float cell is rendered. A column's precision is a rounding rule
+and not a padding rule: the cell is rounded half up to that precision and then written in the spec's
+§2 canonical decimal form, no exponent, no padded trailing zeros, and no fraction at all once it is
+zero. `coverage` and `target_coverage` round at three decimals, `score` at two. Fixed-width padding,
+`1.000` on a fully covered method, was rejected on the spec escalation as a deliberate §2 violation,
+and rounding then rendering canonically is not one. `cellToken` in `gate/internal/toon` is where it
+lives.
+
+The second is a document, whole, so the shape this section describes can also be read:
+
+```
+status: fail
+tool: metric-gate/0.1.0
+spec: toon/4.1.1
+scope: merge-base
+base: origin/main@9f3c110
+changed_methods: 4
+touched_lines_outside_spans: 1
+skipped_paths: []
+metrics[1|]{name|threshold|measured|failed}:
+  crap|30|4|2
+crap[4|]{file|start|end|name|complexity|coverage|score|state|action|target_coverage|reason}:
+  src/Ordering/Pricing.cs|18|71|Pricing.Quote|34|0.55|139.34|measured|split_method|null|null
+  src/Ordering/OrderService.cs|41|58|OrderService.PlaceAsync|9|0.1|68.05|measured|raise_coverage|0.363|null
+  src/Ordering/OrderService.cs|60|64|OrderService.Cancel|3|0.667|3.33|measured|none|null|null
+  src/Ordering/Order.cs|14|14|Order.get_Id|1|1|1|structural_na|none|null|null
+```
+
+The last row is the precision rule in one line: a coverage of 1.0 and a score of 1.0 both render as
+`1`, never as `1.000` or `1.00`. `TestEncode_ADR0008WorkedExample` pins these exact bytes, so the
+document above and the encoder cannot drift apart.
+
 `skipped_paths` lists paths no extractor claimed, and two things produce it. The first is a
 `--files` path that resolves to a real file no extractor claims. The second is coverage discovery,
 covering the paths it could not read, a directory it cannot enter among them, and the reports it

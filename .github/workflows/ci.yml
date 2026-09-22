@@ -174,9 +174,9 @@ jobs:
           ./go/build.sh
 
       # Runs from the repository root, not gate/, because the module covers
-      # lint/, internal/gitscope and internal/srcpath as well, and those carry
-      # //nolint directives of their own that a gate-only run would leave
-      # unenforced.
+      # lint/, internal/gitscope, internal/srcpath and docs/test/ as well, and
+      # those carry //nolint directives of their own that a gate-only run would
+      # leave unenforced.
       #
       # No --issues-exit-code here on purpose: the default is 1, and a finding
       # reds the job. Clearing one means tightening the code or adding a
