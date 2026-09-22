@@ -59,18 +59,15 @@ The block is what a reader is expected to read in full, so it has to be readable
 file is what they scroll when the block is not enough. A decision that will not fit is more than one
 decision.
 
-`docs/test/adr_ceiling_test.go` measures both, on every `go test ./...`, counting the way `wc -w`
-does. A superseded record is exempt by its status rather than by a list. A record already over a
-ceiling when that check landed carries a raised limit there, which it may shrink under and may not
-grow past, and the entry has to go once the record meets the real ceiling. No word count is written
-into this file, because a hand-kept count goes stale on the first edit, which is what
-[issue 87](https://github.com/tvrmsmith/coding-standards/issues/87) was.
+CI checks neither ceiling. `.claude/settings.json` sets both as the limits for an `adr-size`
+Claude Code hook, which reports an overrun at the edit and never blocks it. No word count is
+written into this file, because a hand-kept count goes stale on the first edit, which is what
+[issue 87](https://github.com/tvrmsmith/coding-standards/issues/87) was. Run `wc -w` when you need
+one.
 
 0004 was consolidated in place on 2026-09-11, and that pass dropped three clauses it should have
-kept. Two later passes put them back, so the record is still over the file ceiling and carries a
-raised limit for it. The remaining excess is reasoning rather than restatement, so trimming it
-again buys little. The next move on it is a split, superseded by one new ADR per decision, under
-the mechanics above. Its live measurement is the raised limit in `docs/test/adr_ceiling_test.go`,
-which is the only place a number for it is written down.
+kept. Two later passes put them back, so the record is still over the file ceiling. The remaining
+excess is reasoning rather than restatement, so trimming it again buys little. The next move on it
+is a split, superseded by one new ADR per decision, under the mechanics above.
 
 If an ADR looks wrong, that is a decision to escalate to the user, not an edit to make.

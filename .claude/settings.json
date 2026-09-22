@@ -1,0 +1,6 @@
+{
+  "env": {
+    "ADR_BLOCK_WORDS": "250",
+    "ADR_FILE_WORDS": "1500"
+  }
+}
