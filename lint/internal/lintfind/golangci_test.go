@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -201,9 +202,8 @@ func TestParseGolangCILineRangeBelowPosIsRefused(t *testing.T) {
 	filename := jsonEscape(root.Abs(srcpath.Path("main.go")))
 
 	for _, to := range []int{0, 3} {
-		doc := fmt.Sprintf(
-			`{"Issues":[{"FromLinter":"revive","Text":"a finding","Pos":{"Filename":"%s","Line":4,"Column":2},"LineRange":{"From":4,"To":%d}}]}`,
-			filename, to)
+		doc := `{"Issues":[{"FromLinter":"revive","Text":"a finding","Pos":{"Filename":"` + filename +
+			`","Line":4,"Column":2},"LineRange":{"From":4,"To":` + strconv.Itoa(to) + `}}]}`
 		findings, _, err := ParseGolangCI(strings.NewReader(doc), root)
 		if err != nil {
 			t.Fatalf("ParseGolangCI(To %d) err = %v, want nil", to, err)
