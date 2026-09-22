@@ -558,6 +558,31 @@ func (f *fixture) symlinkTo(target, rel string) {
 	}
 }
 
+// addUnreadable stages a new file at rel and leaves it on disk with every
+// permission off, which is an added path git reports and the gate cannot
+// digest.
+//
+// `--assume-unchanged` is what keeps the two halves apart. Without it git
+// re-hashes a file whose mode changed and the whole diff comes back
+// unreadable, so the case would pin git's refusal rather than the gate's
+// counting; with it git answers from the index blob and never opens the file.
+// A dangling symlink used to stand in for an unreadable add and stopped: move
+// detection leaves an added link out, so no read of it can fail. Root ignores
+// the mode, so a case relying on this skips there.
+//
+// The add is asserted after the mode goes to 0, because that git still reports
+// it as an add is the whole arrangement. Left unasserted, a caller whose golden
+// is the same one a run with no unreadable add produces would keep passing on a
+// helper that had stopped producing one.
+func (f *fixture) addUnreadable(base, rel string) {
+	f.t.Helper()
+	f.write(rel, "unreadable\n")
+	f.git("add", rel)
+	f.git("update-index", "--assume-unchanged", rel)
+	f.denyReadFile(rel)
+	f.assertAddedAs(base, rel, realFile)
+}
+
 // removeFile deletes rel from the working tree and leaves the index holding
 // it, which is the unstaged deletion half of a divergence between the two.
 func (f *fixture) removeFile(rel string) {

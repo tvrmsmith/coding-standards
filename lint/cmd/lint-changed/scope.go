@@ -112,9 +112,10 @@ func resolveBase(repo gitscope.Repo, fa FilterArgs) (gitscope.Base, error) {
 // mentions and not only the ones TouchedLines returned: a staged-and-dirty
 // file with no findings still got compiled from disk, so its divergence
 // invalidates the whole run. TouchedLines is the wrong source for the list
-// because it diffs with -w and --diff-filter=ACM and then drops pure moves, so
-// a staged deletion, a pure rename and a whitespace-only edit all have no key
-// in it and would go unchecked.
+// because it diffs with -w and --diff-filter=ACM and then drops both pure
+// moves and any path whose new side is a symbolic link, so a staged deletion, a
+// pure rename, a whitespace-only edit and a staged link all have no key in it
+// and would go unchecked.
 //
 // A staged deletion is asked separately, because git cannot answer it: the
 // index no longer holds the path, so git reads the file still sitting on disk
