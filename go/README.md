@@ -225,7 +225,7 @@ meaningless.
 
 In an adopted repo a finding here blocks the commit when it touches a line the change wrote
 (ADR 0010). `harness/lint-changed.sh`'s Go branch still passes `--issues-exit-code=0`, but that
-no longer means the findings are advisory: it means golangci-lint's own exit code is reserved for
+no longer means the findings are advisory. It means golangci-lint's own exit code is reserved for
 "the *run* broke", a tree that does not typecheck or an unreadable config, while the verdict over
 a finding belongs to `lint-changed`, which reads the JSON report and keeps only what the change
 touched.

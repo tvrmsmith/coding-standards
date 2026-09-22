@@ -163,8 +163,9 @@ A few rule ids ignore scope: the ones saying the report proves nothing about the
 where a clean scope result would be meaningless. Three kinds reach that route. An analyzer that
 failed to load, which Roslyn reports at no location at all. A package that does not compile, which
 golangci-lint reports as one `typecheck` issue at line 1, so an untouched first line would otherwise
-let a tree that does not build through. And a report entry no parser could read, reported under
-`UNPARSED`, because dropping it silently would be indistinguishable from a clean file.
+let a tree that does not build through. And anything reported under `UNPARSED`, which covers both
+a report entry no parser could read and a file ESLint marks as never parsed, because dropping
+either silently would be indistinguishable from a clean file.
 
 A finding that ignores scope and carries no path is waived on the language and the rule alone, since
 there is no path to name.

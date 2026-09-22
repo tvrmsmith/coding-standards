@@ -104,7 +104,9 @@ naming a repository in neither registry still skips. A value naming no directory
 different thing and fails the run, since it could only ever produce a lookup that misses, and a
 typo would otherwise turn the whole gate into a silent no-op. The TypeScript branch needs no such thing,
 it keys on nothing. It does need `node_modules` to exist, because it runs the target repo's own
-ESLint and installs nothing.
+ESLint and installs nothing. A package carrying an ESLint config but no installed `eslint` binary
+fails the run with a 1 rather than skipping, since every changed file in it would otherwise reach
+no linter and the commit would pass on a clean answer nothing produced.
 
 ## Two layers, different jobs
 
