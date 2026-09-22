@@ -152,8 +152,7 @@ func TestAnAddNobodyCanReadLeavesEveryOtherAddMeasured(t *testing.T) {
 	// unmeasured. The unreadable add could be carrying that content itself, so
 	// nothing here is a move and every method Moved.cs holds stays the gate's
 	// to score.
-	f.symlinkTo(filepath.Join(f.root, "gone.md"), "notes.md")
-	f.git("add", "notes.md")
+	f.addUnreadable("notes.md")
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: moved, lines: spanCoverage(5, 3, 3)}))
 	f.stub = stubConfig{
@@ -181,8 +180,7 @@ func TestAnAddNobodyCanReadStillLeavesTheMovesTheDeletesExplainDropped(t *testin
 	// one more claimant, not a switch that turns move detection off.
 	f.git("mv", firstOrigin, moved)
 	f.git("rm", secondOrigin)
-	f.symlinkTo(filepath.Join(f.root, "gone.md"), "notes.md")
-	f.git("add", "notes.md")
+	f.addUnreadable("notes.md")
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(moved), []span{vanish}),
@@ -799,9 +797,9 @@ func TestMethodMovedWithinOneFileIsMeasuredAtItsNewLocation(t *testing.T) {
 // is why the flag stays pinned whole rather than narrowed to only the letters
 // this suite happens to exercise, the alternative issue 25 considered and
 // rejected. That reaches only the typechange. A `.cs` symlink added outright
-// arrives as status A, passes ACM, and is handed to the extractor like any
-// other new file, which is the claim
-// TestASymlinkAddedOutrightIsHandedToTheExtractor pins.
+// arrives as status A and passes ACM, so the letters admit it and a mode drop
+// ahead of extraction is what keeps it out, which is the claim
+// TestASymlinkAddedOutrightIsWithheldFromTheChangedSet pins.
 // TestASymlinkReplacedByASourceFileContributesNoChangedMethods
 // pins the opposite direction of the same typechange.
 func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) {
@@ -898,26 +896,17 @@ func TestATypechangeIsWithheldWhileTheRestOfTheDiffIsMeasured(t *testing.T) {
 // this direction's new side is the whole real source file, every line of it
 // claimed under Order.cs, while the case above gets a new side holding the
 // link's own text, the path it points at, as one line under an equally
-// claimed `.cs` path. The second of those is what makes the flag edit wrong.
-// The extractor is handed the link path, which is the half
-// TestASymlinkAddedOutrightIsHandedToTheExtractor pins on the status A route.
-// An extractor that follows the link then reports the target file's spans
-// under the link's path; that step is the premise both added-symlink cases
-// feed their stub, not behaviour this suite verifies.
-// Touched line 1 then falls inside no
-// span, so the guaranteed effect is touched_lines_outside_spans going 0 to 1
-// and nothing measured, at exit 0. Where the target's spans do cover the
-// link's first line, the worse effect follows. A method is measured under a
-// path that does not hold it, the coverage lookup against that path finds
-// nothing, and the run fails as an unknown changed method, the gate response
-// TestASymlinkAddedOutrightMeasuringItsTargetsSpansFailsAsUnknown pins.
-// Measuring the
-// direction this case covers needs a
-// mode-aware pass classifying the new side of a typechange before anything
-// reaches the extractor, not a flag edit. That pass is the work this change
-// does not take on, so the gap above is accepted rather than closed. Spans
-// reported under a path that does not hold them is worse than methods that go
-// unmeasured until an edit reaches them.
+// claimed `.cs` path. The second of those is what makes the flag edit wrong
+// on its own: an extractor handed a link path follows it and reports the
+// target file's spans under the link's path, which is spans under a path that
+// does not hold them, worse than methods that go unmeasured until an edit
+// reaches them.
+//
+// The mode drop TestASymlinkAddedOutrightIsWithheldFromTheChangedSet pins is
+// half of what measuring this direction needs, since it already withholds a
+// new side that is a link. The other half is a letter set admitting a
+// typechange at all, and the two have to land together, which is issue 84.
+// Until then the gap above is accepted rather than closed.
 func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
@@ -947,28 +936,36 @@ func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) 
 	assertNotHandedToExtractor(t, handed)
 }
 
-// TestASymlinkAddedOutrightIsHandedToTheExtractor pins the claim the two
-// typechange direction cases above rest on without stating it as a case of
-// its own. A `.cs` symlink added outright arrives as status A, passes
-// --diff-filter=ACM, and is handed to the extractor, which is the
-// arrangement this case runs. The claim does not hold for every added link:
-// issue 110 records that on the working-tree path addedContent reads an
-// added link with os.ReadFile, so a link whose target's content matches a
-// deleted file's is dropped as a pure move, while a staged run keeps it.
-// Both typechange direction cases rest on that claim and neither states it,
-// each putting it to different work.
-// TestASourceFileReplacedByASymlinkContributesNoChangedMethods reads it as
-// the reason the filter stays pinned whole rather than narrowed to the
-// letters this suite exercises, the alternative issue 25 rejected, since a
-// narrowed filter would reach the added symlink too.
-// TestASymlinkReplacedByASourceFileContributesNoChangedMethods reads it as
-// the reason widening the filter to ACMT is the wrong remedy, since ACMT
-// hands a link path to the extractor the way status A already does. One
-// claim carries both arguments, and until now nothing pinned it.
+// TestASymlinkAddedOutrightIsWithheldFromTheChangedSet pins the route the
+// filter letters cannot reach. A `.cs` symlink added outright arrives as
+// status A and passes --diff-filter=ACM, so nothing about the letter set
+// keeps it out; the gate drops it by mode instead, and this case is what
+// holds that drop in place.
+//
+// The arrangement is the one issue 109 reported as a live false failure, so
+// the stub reports a span covering line 1, the link's only line. Handed the
+// link, an extractor follows it and reports OrderService.cs's spans under
+// Order.cs, the coverage lookup against that path finds nothing, and the run
+// exits 1 on an unknown changed method with no edit that clears it. Dropping
+// the link ahead of extraction is what makes that unreachable, and a
+// regression reds here as exit 1 rather than as a changed cell.
+//
+// The two typechange direction cases above used to rest on the opposite
+// claim, that an added link reaches the extractor, each putting it to
+// different work: issue 25's narrowed-filter alternative would have reached
+// the added link, and an ACMT widen hands over a link path the way status A
+// once did. Both arguments survive the drop, since what they are about is
+// which paths the letters admit, and the mode drop now sits behind the
+// letters for either route.
 //
 // The symlink points at OrderService.cs, its sibling in the same directory,
 // so the link is not dangling.
-func TestASymlinkAddedOutrightIsHandedToTheExtractor(t *testing.T) {
+func TestASymlinkAddedOutrightIsWithheldFromTheChangedSet(t *testing.T) {
+	// The span starts at line 1, the link's only line, so an extractor that
+	// followed the link would put a measured method on a path holding nothing
+	// but the target's name.
+	orderHeader := span{File: orderFile, Name: "Order.Header", StartLine: 1, EndLine: 4, Complexity: 3}
+
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -978,62 +975,10 @@ func TestASymlinkAddedOutrightIsHandedToTheExtractor(t *testing.T) {
 	// TestANewFileNeverAddedToTheIndexContributesNoChangedMethods records.
 	f.git("add", orderFile)
 	f.assertAddedAs("main", orderFile, symlink)
-	handed := filepath.Join(t.TempDir(), "handed")
-	f.stub = stubConfig{
-		Extensions: []string{".cs"},
-		Stdout:     extractorOutput(t, parsed(orderFile), []span{orderTotal}),
-		StdinLog:   handed,
-	}
-
-	// The new side of an added symlink is one line holding the target path
-	// text, line 1, which falls outside Order.Total's 60-64 span, so
-	// touched_lines_outside_spans goes to 1 with nothing measured. That cell
-	// is what discriminates this golden from empty_changed_set: a gate that
-	// started dropping added symlinks from the changed set would emit
-	// empty_changed_set instead, which differs in exactly that field.
-	f.run().assertMatches(t, "added_symlink", 0, f.baseLabel("main"),
-		"no changed methods, nothing to measure\n")
-
-	assertHandedToExtractor(t, handed, orderFile+"\n")
-}
-
-// TestASymlinkAddedOutrightMeasuringItsTargetsSpansFailsAsUnknown pins the
-// harmful half of what the case above establishes. The sibling picks a span
-// the link's one touched line cannot reach, so it lands at exit 0 with
-// nothing measured; this one picks a span covering line 1, which is the
-// arrangement that goes wrong. The stub stands in for an extractor that
-// follows the link and reports OrderService.cs's spans under Order.cs; what
-// this case pins is the gate's response to a span arriving under a path the
-// coverage report does not name. A method is measured under a path that does
-// not hold it, the coverage lookup against that path finds nothing, and the
-// run fails as an unknown changed method.
-//
-// TestASymlinkReplacedByASourceFileContributesNoChangedMethods describes this
-// effect in prose as the reason an ACMT widen is the wrong remedy. On a
-// typechange it stays hypothetical, gated behind a widen nobody made. On the
-// added-symlink path it is live today, since status A passes ACM and reaches
-// the extractor, so this case records it as a document rather than an
-// argument.
-//
-// Issue 109 owns that live false failure: an in-repo added `.cs` symlink
-// whose target's spans cover line 1 exits 1 and no edit clears it. The golden
-// below records what the gate does today, not the wanted answer, so issue
-// 109's fix will rewrite it. Issue 84 is the typechange direction and issue
-// 103 the out-of-root target; 109 is a third, distinct failure.
-func TestASymlinkAddedOutrightMeasuringItsTargetsSpansFailsAsUnknown(t *testing.T) {
-	// The span starts at line 1, the link's only line, so following the link
-	// puts a measured method on a path holding nothing but the target's name.
-	orderHeader := span{File: orderFile, Name: "Order.Header", StartLine: 1, EndLine: 4, Complexity: 3}
-
-	f := newFixture(t, "main")
-	f.write(orderService, csharpFile(80))
-	f.commitAll("initial")
-	f.symlinkTo(filepath.Base(orderService), orderFile)
-	f.git("add", orderFile)
-	f.assertAddedAs("main", orderFile, symlink)
 	// The report knows OrderService.cs, the file the link points at, and has
-	// never heard of Order.cs, the path the span arrives under. That mismatch
-	// is the failure, not a gap in the report.
+	// never heard of Order.cs. That mismatch is what the old behaviour failed
+	// on, and it is still here, so the pass below comes from the link never
+	// being measured rather than from a report that happens to cover it.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	handed := filepath.Join(t.TempDir(), "handed")
@@ -1043,11 +988,83 @@ func TestASymlinkAddedOutrightMeasuringItsTargetsSpansFailsAsUnknown(t *testing.
 		StdinLog:   handed,
 	}
 
-	f.run().assertMatches(t, "added_symlink_unknown_method", 1, f.baseLabel("main"),
-		"1 changed method could not be attributed to a coverage report\n"+
-			"0 of 1 changed methods over CRAP threshold 30, worst score 0.00\n")
+	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
+		"no changed methods, nothing to measure\n")
 
-	assertHandedToExtractor(t, handed, orderFile+"\n")
+	assertNotHandedToExtractor(t, handed)
+}
+
+// TestAnAddedSymlinkOutOfTheRepoIsWithheldRatherThanRefused pins the
+// changed-set answer to the hazard
+// TestFilesNamingASymlinkOutOfTheRepoFailsNamingThePathAsTyped guards on the
+// --files path, which issue 103 asked about. The two paths answer it
+// differently and both answers are right. A --files name is a developer
+// asking for that file to be measured, so a target no commit of this repo
+// holds is a refusal naming the path as typed. A path in the changed set
+// arrives from the diff carrying its mode, so the link is dropped for holding
+// no source, and where it points never comes up.
+//
+// What both answers refuse is the same: measuring a file outside the repo and
+// reporting it under an in-repo path. The drop here is the mode drop the case
+// above pins, not a guard of its own, so nothing in the changed-set path reads
+// the target at all.
+func TestAnAddedSymlinkOutOfTheRepoIsWithheldRatherThanRefused(t *testing.T) {
+	const outsideLink = "src/Ordering/Outside.cs"
+	outside := filepath.Join(t.TempDir(), "outside.cs")
+	writeAbsolute(t, outside, csharpFile(10))
+
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.symlinkTo(outside, outsideLink)
+	f.git("add", outsideLink)
+	f.assertAddedAs("main", outsideLink, symlink)
+	handed := filepath.Join(t.TempDir(), "handed")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout: extractorOutput(t, parsed(outsideLink),
+			[]span{{File: outsideLink, Name: "Outside.Header", StartLine: 1, EndLine: 4, Complexity: 3}}),
+		StdinLog: handed,
+	}
+
+	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
+		"no changed methods, nothing to measure\n")
+
+	assertNotHandedToExtractor(t, handed)
+}
+
+// TestAnAddedSymlinkIsWithheldWhileTheRestOfTheDiffIsMeasured is the positive
+// control for the two cases above, the same one
+// TestATypechangeIsWithheldWhileTheRestOfTheDiffIsMeasured is for the
+// typechange pair. Both of those assert an absence against
+// empty_changed_set, which is also what a run that extracted nothing at all
+// produces, so a change that skipped extraction for an unrelated reason would
+// leave them green for the wrong reason. Here the added link sits beside an
+// ordinary edit, the document is non-empty, and the drop becomes a live
+// extractor handed one path and not the other.
+func TestAnAddedSymlinkIsWithheldWhileTheRestOfTheDiffIsMeasured(t *testing.T) {
+	f := newFixture(t, "main")
+	f.write(orderService, csharpFile(80))
+	f.commitAll("initial")
+	f.symlinkTo(filepath.Base(orderService), orderFile)
+	f.git("add", orderFile)
+	f.touchLine(orderService, 62)
+	f.assertAddedAs("main", orderFile, symlink)
+	// Two thirds of Cancel's three instrumentable lines are covered, the same
+	// arithmetic pass_single_method holds.
+	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
+		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
+	handed := filepath.Join(t.TempDir(), "handed")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
+		StdinLog:   handed,
+	}
+
+	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
+		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
+
+	assertHandedToExtractor(t, handed, orderService+"\n")
 }
 
 // TestDeletingAMethodAttributesTheZeroLengthHunkToTheLineBeforeIt pins which

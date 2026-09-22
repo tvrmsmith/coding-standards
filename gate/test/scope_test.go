@@ -1244,6 +1244,52 @@ func TestStagedLooksForPureMovesInTheIndexRatherThanTheWorkingTree(t *testing.T)
 		"0 of 1 changed methods over CRAP threshold 30, worst score 4.13\n")
 }
 
+// TestAnAddedSymlinkIsDigestedAsTheLinkRatherThanAsItsTarget pins the other
+// half of what the case above is about, which snapshot each scope digests an
+// added path from. The staged branch reads the index blob, which for a link is
+// the one line holding the target path; the working-tree branch reads the file
+// on disk, which followed the link and digested the target's whole content.
+// Issue 110 reported that asymmetry, and the two scopes now digest the same
+// bytes.
+//
+// Link.cs is dropped from the changed set either way, for holding no source,
+// so the link is not what the misread costs. Moved.cs is. Digested through
+// the link, Link.cs claims the content Origin.cs carried, two adds claim one
+// deleted blob, and counting leaves both measured, so a file the developer
+// only renamed comes back as a whole-file add. Under the misread this run
+// measures Moved.Vanish and exits 1 for want of a coverage report.
+func TestAnAddedSymlinkIsDigestedAsTheLinkRatherThanAsItsTarget(t *testing.T) {
+	const origin = "src/Ordering/Origin.cs"
+	const moved = "src/Ordering/Moved.cs"
+	const target = "src/Ordering/Target.cs"
+	const link = "src/Ordering/Link.cs"
+	vanish := span{File: moved, Name: "Moved.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
+
+	f := newFixture(t, "main")
+	f.write(origin, csharpFile(20))
+	// Target.cs carries Origin.cs's content byte for byte, which is what makes
+	// a digest read through the link match the deleted blob.
+	f.copyFile(origin, target)
+	f.commitAll("initial")
+	f.copyFile(origin, moved)
+	f.removeFile(origin)
+	f.symlinkTo(filepath.Base(target), link)
+	f.git("add", moved, link)
+	f.assertAddedAs("main", link, symlink)
+
+	handed := filepath.Join(t.TempDir(), "handed")
+	f.stub = stubConfig{
+		Extensions: []string{".cs"},
+		Stdout:     extractorOutput(t, parsed(moved), []span{vanish}),
+		StdinLog:   handed,
+	}
+
+	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
+		"no changed methods, nothing to measure\n")
+
+	assertNotHandedToExtractor(t, handed)
+}
+
 func TestFilesOrdersTheSpansItFoundRatherThanKeepingTheExtractorsOrder(t *testing.T) {
 	const calc = "src/Ordering/Calc.cs"
 	// Two methods declared on one line, so the document's own sort by
