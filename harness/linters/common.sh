@@ -226,8 +226,8 @@ run_filter() {
   "$bin" "${scope[@]}" --matched-waivers "$matched_waivers" "${filter_reports[@]}" </dev/null
 }
 
-# Marks every waiver the filter matched as spent. The dispatcher calls it only on a clean total, so
-# a branch that broke, which git will not commit past, spends nothing.
+# Marks every waiver the filter matched as spent. The dispatcher calls it only on a clean total of a
+# full --staged run, so a branch that broke, which git will not commit past, spends nothing.
 spend_waivers() {
   local bin id waivers=()
   while IFS= read -r id; do
