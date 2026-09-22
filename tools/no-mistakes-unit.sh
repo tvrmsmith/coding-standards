@@ -6,6 +6,9 @@
 #   no-mistakes-unit.sh go
 #   no-mistakes-unit.sh dotnet
 #   no-mistakes-unit.sh node <package-dir>
+#   no-mistakes-unit.sh select <directory>
+#
+# select prints the packages `root <directory>` would test, one per line, and runs nothing.
 #
 # The step refuses a green exit that proves nothing, so every unit writes a Cobertura or LCOV
 # profile and a JUnit or TRX report into $NO_MISTAKES_COVERAGE_DIR. Before this file existed the
@@ -14,7 +17,6 @@
 # Runs from the repository root, where no-mistakes starts every unit command.
 set -euo pipefail
 
-out=${NO_MISTAKES_COVERAGE_DIR:?set by no-mistakes to the directory the profile and report go in}
 root=$(pwd)
 
 # Pinned rather than @latest, so a release of either tool cannot change a run's verdict.
@@ -49,7 +51,7 @@ root_packages() {
     return
   fi
   local dirs touched=() file dir best
-  dirs=$(go list -f '{{.Dir}}' "./$unit/..." | sed "s#^$root/##")
+  dirs=$(go list -f '{{.Dir}}' "./$unit/..." | sed "s#^$root/##") || return
   while IFS= read -r file; do
     [ "${file#"$unit"/}" = "$file" ] && continue
     best=""
@@ -65,12 +67,12 @@ root_packages() {
     touched+=("./$best")
   done < <(changed_files)
   local imports
-  imports=$(go list "${touched[@]}" | sort -u)
+  imports=$(go list "${touched[@]}" | tr '\n' ' ') || return
   # -test lists each package's test variants, whose deps carry the test imports. The variant names
   # ("p [p.test]", "p_test [p.test]", "p.test") all reduce to the package p.
   go list -test -f '{{.ImportPath}} {{join .Deps " "}}' ./... |
     awk -v want="$imports" '
-      BEGIN { n = split(want, w, "\n"); for (i = 1; i <= n; i++) hit[w[i]] = 1 }
+      BEGIN { n = split(want, w, " "); for (i = 1; i <= n; i++) hit[w[i]] = 1 }
       { for (i = 1; i <= NF; i++) if ($i in hit) { print $1; next } }' |
     sed -E 's/ \[.*//; s/\.test$//; s/_test$//' |
     awk '{ print }
@@ -80,16 +82,17 @@ root_packages() {
 
 # Tests the packages in the current directory's module and writes the unit's JUnit report and
 # Cobertura profile, both named for the module. -coverpkg=./... instruments the whole module, so a
-# package holding only tests (docs/test, gate/test) still writes a profile, and the code gate/test
+# package holding only tests (gate/test) still writes a profile, and the code gate/test
 # drives across packages is credited.
 go_test() {
   local name=$1 tmp
   shift
   tmp=$(mktemp -d)
+  # shellcheck disable=SC2064 # tmp is local, so it has to expand before the function returns
+  trap "rm -rf '$tmp'" EXIT
   go run "$gotestsum" --format pkgname --junitfile "$out/$name.junit.xml" -- \
     -count=1 -coverpkg=./... -coverprofile="$tmp/cover.out" "$@"
   go run "$cobertura" <"$tmp/cover.out" >"$out/$name.cobertura.xml"
-  rm -rf "$tmp"
 }
 
 unit_root() {
@@ -113,6 +116,7 @@ unit_go() {
   (cd go/test && go_test go-test .)
 }
 
+# dotnet/tests/Consumer is left out because it exists to emit diagnostics, not to be run.
 unit_dotnet() {
   local project
   for project in Tvrmsmith.Analyzers.Tests Tvrmsmith.MetricGate.CSharp.Tests; do
@@ -140,8 +144,13 @@ unit_node() {
     test/*.test.js
 }
 
-unit=${1:?usage: no-mistakes-unit.sh root|go|dotnet|node ...}
+unit=${1:?usage: no-mistakes-unit.sh root|go|dotnet|node|select ...}
 shift
+if [ "$unit" = select ]; then
+  root_packages "${1:?usage: no-mistakes-unit.sh select <directory>}"
+  exit
+fi
+out=${NO_MISTAKES_COVERAGE_DIR:?set by no-mistakes to the directory the profile and report go in}
 case $unit in
   root) unit_root "$@" ;;
   go) unit_go ;;
