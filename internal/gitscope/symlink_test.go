@@ -71,6 +71,68 @@ func TestTouchedLinesStagedDropsTheSameAddedSymlinkAndMove(t *testing.T) {
 	}
 }
 
+// A link already committed and then retargeted arrives as status M, not A, so
+// it reaches the changed set by a second route the same drop has to close. The
+// patch carries the one line the link holds, and an extractor handed the path
+// follows the new target and reports its spans under the link's name, which is
+// issue 109's failure from an edit rather than from an add. The drop keys on
+// the new side's mode, so the status it arrives under does not matter.
+func TestTouchedLinesDropsARetargetedSymlink(t *testing.T) {
+	repo, head := retargetedLinkFixture(t)
+	base := Base{Ref: "HEAD", Commit: head}
+	// The link really did arrive as a modification carrying a link's mode, so
+	// the case pins the drop rather than a git that listed nothing.
+	records, err := repo.rawChanges(base, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(records, func(record rawRecord) bool {
+		return record.Path == srcpath.Path(fixtureLink) && record.Status == "M"
+	}) {
+		t.Fatalf("the raw listing %v holds no modified %s, want the fixture to retarget the committed link", records, fixtureLink)
+	}
+
+	touched, err := repo.TouchedLines(base)
+
+	if err != nil {
+		t.Fatalf("TouchedLines over a retargeted link errored %v, want an empty changed set", err)
+	}
+	if len(touched) != 0 {
+		t.Errorf("TouchedLines named %v, want %s dropped for holding no source", touchedPaths(touched), fixtureLink)
+	}
+}
+
+// retargetedLinkFixture commits a link beside the two files it can point at,
+// then repoints it on disk. The two targets hold different content, so the
+// repoint is a real change to the link's own blob rather than a no-op git
+// would leave out of the diff.
+func retargetedLinkFixture(t *testing.T) (Repo, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	fixtureGit(t, dir, "init", "--quiet")
+	writeFixtureFile(t, dir, fixtureOrigin, "// origin\n")
+	writeFixtureFile(t, dir, fixtureTarget, "// target\n")
+	if err := os.Symlink("Origin.cs", filepath.Join(dir, filepath.FromSlash(fixtureLink))); err != nil {
+		t.Fatal(err)
+	}
+	fixtureGit(t, dir, "add", "--all")
+	fixtureGit(t, dir, "commit", "--quiet", "-m", "initial")
+	if err := os.Remove(filepath.Join(dir, filepath.FromSlash(fixtureLink))); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("Target.cs", filepath.Join(dir, filepath.FromSlash(fixtureLink))); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := srcpath.NewRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := Repo{root: root}
+	return repo, fixtureHead(t, repo)
+}
+
 // linkAndMoveFixture stages an added link beside a pure move, with the link's
 // target holding the moved file's content byte for byte, so a digest read
 // through the link is the one that mismeasures the move. The index and the
