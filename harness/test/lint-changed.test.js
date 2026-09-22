@@ -430,6 +430,9 @@ describe('one invocation, every language the repo is wired for', () => {
       // stdout, or a mixed commit hands back only whichever language blocked first and the next
       // run surfaces the rest. Asserted as the whole of stdout, in dispatch order.
       assert.equal(stdout, bothPorcelain)
+      // One filter reads both reports, so each waive hint takes its language from its own finding.
+      assert.match(stderr, /waive --language ts --path main\.ts --rule no-unused-vars /)
+      assert.match(stderr, /waive --language go --path main\.go --rule gorule /)
     } finally {
       f.cleanup()
     }
@@ -594,6 +597,26 @@ describe('one invocation, every language the repo is wired for', () => {
         assert.equal(status, 1, `stdout:\n${stdout}\nstderr:\n${stderr}`)
         assert.equal(stdout, '')
         assert.equal(records(log).length, 1)
+      } finally {
+        f.cleanup()
+      }
+    })
+
+    test('a clean run whose spend fails exits 1', { skip: skip || (process.getuid?.() === 0 && 'root ignores a read-only log') }, () => {
+      // Every finding is waived, so the total is clean until spend runs. The filter only reads the
+      // log, and spend's append is the first write, so a read-only log fails the spend alone and
+      // the commit must not go through with its waivers unspent.
+      const f = fixture()
+      try {
+        const log = waivers(f, tsFinding, goFinding)
+        chmodSync(log, 0o444)
+        const { status, stdout, stderr } = capture(f.repo, ['--since', 'HEAD'], {
+          ...env(f),
+          TVRMSMITH_WAIVERS: log,
+        })
+        assert.equal(status, 1, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        assert.equal(stdout, '')
+        assert.equal(records(log).length, 2)
       } finally {
         f.cleanup()
       }

@@ -1,5 +1,5 @@
 // Command lint-changed is the blocking half of a pre-commit lint gate. It
-// reads one or more linter reports named by --report, keeps only the
+// reads every linter report named by --report, zero or more, keeps only the
 // findings that touch lines the commit changed, lets a one-shot waiver
 // suppress one of them, and exits non-zero if any survive. A separate spend
 // form marks a matched waiver as used, once the dispatcher that called the

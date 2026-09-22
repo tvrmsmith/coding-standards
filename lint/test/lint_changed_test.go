@@ -550,7 +550,8 @@ func TestOneWaiverCoversOneFinding(t *testing.T) {
 
 // A waiver is spent only on a run that ends clean. A run the waiver could not
 // rescue leaves it unspent, so the agent that fixes the blocking finding still
-// has it.
+// has it. The blocking run still names the matched id in --matched-waivers,
+// so nothing but the dispatcher's clean-total check keeps it from being spent.
 func TestWaiverIsNotSpentOnABlockingRun(t *testing.T) {
 	f := newFixture(t)
 	f.write("Foo.cs", baseFile)
@@ -565,9 +566,17 @@ func TestWaiverIsNotSpentOnABlockingRun(t *testing.T) {
 		sarifResult("TVRM0002", "the real one", sarifLoc("Foo.cs", 3, 3)),
 	)
 
-	blocked := f.run(doc, filterArgs("--staged")...)
+	matchedFile := filepath.Join(t.TempDir(), "matched.txt")
+	blocked := f.run(doc, filterArgs("--staged", "--matched-waivers", matchedFile)...)
 	if blocked.exitCode != 2 {
 		t.Fatalf("exit code = %d, want 2\nstdout: %s", blocked.exitCode, blocked.stdout)
+	}
+	matched, err := os.ReadFile(matchedFile) //nolint:gosec // G304: matchedFile is a fixed name under this test's own t.TempDir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(matched)) != id {
+		t.Fatalf("matched-waivers file = %q, want exactly the matched id %q", matched, id)
 	}
 	if lines := f.waiverLogLines(); len(lines) != 1 {
 		t.Fatalf("waiver log has %d lines, want 1 (the record alone, no spend)", len(lines))
@@ -759,7 +768,10 @@ func TestReportsAreFilteredInOneRun(t *testing.T) {
 // language's finding sharing that same rule string. This is the bug the
 // single filter process exists to fix: language joined the waiver match key
 // and the dedup key, so Go's TVRM0001 and C#'s TVRM0001 stay two distinct
-// things the log can waive independently.
+// things the log can waive independently. The located pair also differs in
+// path, so a location-less pair sharing the rule UNPARSED isolates language:
+// the TypeScript one comes first and would claim the go waiver if Match
+// ignored language.
 func TestWaiverDoesNotLeakAcrossLanguages(t *testing.T) {
 	f := newFixture(t)
 	// Both files' base content lands in one commit so that staging either
@@ -778,10 +790,19 @@ func TestWaiverDoesNotLeakAcrossLanguages(t *testing.T) {
 		t.Fatalf("waive: exit code = %d, stderr: %s", waived.exitCode, waived.stderr)
 	}
 
+	pathless := f.run("", "waive", "--language", "go", "--rule", "UNPARSED", "--reason", "go report entry with no filename")
+	if pathless.exitCode != 0 {
+		t.Fatalf("waive: exit code = %d, stderr: %s", pathless.exitCode, pathless.stderr)
+	}
+
 	goReport := writeReport(t, "go.json", golangciDoc(f.absPath("main.go"), "TVRM0001", "go finding", 3, 1))
 	csReport := writeReport(t, "cs.sarif", sarifDoc(sarifResult("TVRM0001", "csharp finding", sarifLoc("Foo.cs", 3, 3))))
+	tsPathless := writeReport(t, "ts-pathless.json", eslintDoc("", "no-unused-vars", "ts pathless finding", 2, 1, 1))
+	goPathless := writeReport(t, "go-pathless.json", golangciDoc("", "revive", "go pathless finding", 1, 1))
 
-	res := f.run("", "--format", "golangci", "--report", goReport, "--format", "sarif", "--report", csReport, "--staged")
+	res := f.run("", "--format", "eslint", "--report", tsPathless,
+		"--format", "golangci", "--report", goReport, "--report", goPathless,
+		"--format", "sarif", "--report", csReport, "--staged")
 
 	if res.exitCode != 2 {
 		t.Fatalf("exit code = %d, want 2: the C# finding must still block\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
@@ -791,6 +812,12 @@ func TestWaiverDoesNotLeakAcrossLanguages(t *testing.T) {
 	}
 	if !strings.Contains(res.stdout, "Foo.cs:3") {
 		t.Fatalf("stdout does not report the surviving C# finding: %s", res.stdout)
+	}
+	if !strings.Contains(res.stdout, "ts pathless finding") {
+		t.Fatalf("the go waiver suppressed the TypeScript UNPARSED finding: %s", res.stdout)
+	}
+	if strings.Contains(res.stdout, "go pathless finding") {
+		t.Fatalf("the go UNPARSED finding was not suppressed by its own waiver: %s", res.stdout)
 	}
 }
 

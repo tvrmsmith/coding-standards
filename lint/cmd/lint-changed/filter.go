@@ -336,9 +336,9 @@ func (p *parsedReports) collect(source string, findings []lintfind.Finding, drop
 //
 // Language is part of the key: one process now reads findings from every
 // language branch of a commit, and the same rule string can mean two
-// unrelated things in two languages (TVRM0001 against tvrmsmith-combine-
-// assertions), so a Go and a C# finding sharing a rule and message stay two
-// findings.
+// unrelated things in two languages (UNPARSED, which both the ESLint and
+// golangci parsers emit for an entry they cannot read), so a Go and a
+// TypeScript finding sharing a rule and message stay two findings.
 func dedup(findings []lintfind.Finding) []lintfind.Finding {
 	seen := make(map[string]bool, len(findings))
 	unique := make([]lintfind.Finding, 0, len(findings))
