@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/tvrmsmith/coding-standards/gate/internal/crap"
 	"github.com/tvrmsmith/coding-standards/gate/internal/scope"
 	"github.com/tvrmsmith/coding-standards/gate/internal/toon"
 	"github.com/tvrmsmith/coding-standards/internal/srcpath"
@@ -157,15 +158,18 @@ const (
 
 // Row is one changed method as the document reports it.
 type Row struct {
-	File           srcpath.Path
-	Start          int
-	End            int
-	Name           string
-	Complexity     int
-	Coverage       *float64
-	Score          *float64
-	State          State
-	Action         string
+	File       srcpath.Path
+	Start      int
+	End        int
+	Name       string
+	Complexity int
+	Coverage   *float64
+	Score      *float64
+	State      State
+	// Action carries crap's own type rather than a bare string, so the three
+	// tokens ADR 0008 closes are spelled once, in the package that decides
+	// which one applies.
+	Action         crap.Action
 	TargetCoverage *float64
 	Reason         string
 }
@@ -176,7 +180,7 @@ func (r Row) cells() []any {
 	return []any{
 		r.File.String(), r.Start, r.End, r.Name, r.Complexity,
 		nullable(r.Coverage), nullable(r.Score), string(r.State),
-		r.Action, nullable(r.TargetCoverage), reasonCell(r.Reason),
+		string(r.Action), nullable(r.TargetCoverage), reasonCell(r.Reason),
 	}
 }
 

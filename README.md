@@ -70,6 +70,9 @@ go/                                  # the Go lint layer: one golangci-lint bina
   golangci.yml                       #   the curated config, passed to the target with --config
   test/                              #   a fixture per enabled linter, and the proof each fires
 go.mod                               # one Go module, rooted here, covering internal/, gate/ and lint/
+docs/                                # adr/, the decision records, plus the C# decision points
+  agents/                            #   how an agent works this repo: issue tracker, triage
+                                     #   labels, where the domain docs live
 internal/                            # laid out to be shared by the Go binaries in this module
   gitscope/                          #   which commit a run diffs against, and which lines it touched
   srcpath/                           #   the one path currency: repo-relative, resolved
