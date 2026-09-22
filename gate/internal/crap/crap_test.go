@@ -62,6 +62,30 @@ func TestMeasurement(t *testing.T) {
 	}
 }
 
+// TestActionTokensSurviveTheStringConversion pins what report.Row.cells does
+// with the named type issue 94 introduced: it writes string(Action) into the
+// document's `action` cell, so each verdict must convert to the exact token
+// ADR 0008 enumerates. Comparing against the constants alone would pass with
+// any three values, since the constants would move with them.
+func TestActionTokensSurviveTheStringConversion(t *testing.T) {
+	cases := []struct {
+		measurement crap.Measurement
+		token       string
+	}{
+		{crap.Measurement{Complexity: 34, Coverage: 0.55, Threshold: 30}, "split_method"},
+		{crap.Measurement{Complexity: 9, Coverage: 0.1, Threshold: 30}, "raise_coverage"},
+		{crap.Measurement{Complexity: 3, Coverage: 0.667, Threshold: 30}, "none"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.token, func(t *testing.T) {
+			if got := string(c.measurement.Action()); got != c.token {
+				t.Errorf("string(Action()) = %q, want %q", got, c.token)
+			}
+		})
+	}
+}
+
 // TestScoreIgnoresThreshold pins seam 2's other half: two Measurements
 // differing only in Threshold score identically, since Score answers a
 // question about the method alone.
