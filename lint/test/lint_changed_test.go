@@ -262,7 +262,7 @@ func TestMatchingWaiverSuppresses(t *testing.T) {
 	if !strings.Contains(res.stderr, "waiver "+id+" matched TVRM0001 on Foo.cs") {
 		t.Fatalf("stderr missing the match notice: %s", res.stderr)
 	}
-	got, err := os.ReadFile(matchedFile)
+	got, err := os.ReadFile(matchedFile) //nolint:gosec // G304: matchedFile is a fixed name under this test's own t.TempDir
 	if err != nil {
 		t.Fatal(err)
 	}
