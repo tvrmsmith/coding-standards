@@ -109,6 +109,70 @@ func TestStdoutPutsEveryRowsTableAfterTheWholeSummary(t *testing.T) {
 	}
 }
 
+// TestActionCellCarriesTheTokenTheMeasurementChose runs a measurement's own
+// verdict through the field and into the document, which is the whole of what
+// issue 94's typed Action has to keep working: crap.Measurement.Action feeds
+// Row.Action with no conversion at the call site, and the row's `action` cell
+// still renders as the bare token, not a quoted or Go-formatted value.
+func TestActionCellCarriesTheTokenTheMeasurementChose(t *testing.T) {
+	measurements := []crap.Measurement{
+		{Complexity: 34, Coverage: 0.55, Threshold: 30},
+		{Complexity: 9, Coverage: 0.1, Threshold: 30},
+		{Complexity: 3, Coverage: 0.667, Threshold: 30},
+	}
+	var rows []Row
+	for i, m := range measurements {
+		score, coverage := m.Score(), m.Coverage
+		rows = append(rows, Row{
+			File: "src/Ordering/OrderService.cs", Start: i + 1, End: i + 2, Name: "Cancel",
+			Complexity: m.Complexity, Coverage: &coverage, Score: &score,
+			State: StateMeasured, Action: m.Action(), TargetCoverage: m.TargetCoverage(),
+		})
+	}
+	doc := Document{ChangedMethods: len(rows), Metrics: []Metric{
+		{Name: "crap", Display: "CRAP", Threshold: 30, Rows: rows},
+	}}
+
+	body, err := doc.Stdout()
+	if err != nil {
+		t.Fatalf("Stdout(): %v", err)
+	}
+
+	// Descending score, so the three rows arrive in the order written above.
+	got := actionCells(string(body), "crap")
+	want := []string{"split_method", "raise_coverage", "none"}
+	if !slices.Equal(got, want) {
+		t.Errorf("action cells = %v, want %v\n%s", got, want, body)
+	}
+}
+
+// actionCells reads the `action` column out of one metric's rendered table.
+// The column order is the one rowsTable fixes, and the cells are the TOON
+// byte contract ADR 0008 pins, so the ninth field of each indented line under
+// the metric's key is that row's action.
+func actionCells(rendered, metric string) []string {
+	const actionColumn = 8
+	var cells []string
+	inTable := false
+	for _, line := range strings.Split(rendered, "\n") {
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, " ") {
+			inTable = strings.HasPrefix(line, metric+"[")
+			continue
+		}
+		if !inTable {
+			continue
+		}
+		fields := strings.Split(strings.TrimSpace(line), "|")
+		if len(fields) > actionColumn {
+			cells = append(cells, fields[actionColumn])
+		}
+	}
+	return cells
+}
+
 // topLevelKeys reads the document's own keys off the rendered TOON, which is
 // the byte contract ADR 0008 fixes and gate/test/golden pins: a key sits at
 // column zero and ends at the first `:` or `[`.
