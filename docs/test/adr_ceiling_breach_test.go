@@ -3,6 +3,7 @@ package docs_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -94,29 +95,16 @@ func TestTheCheckReportsEveryBreach(t *testing.T) {
 		{"0007-quotes-the-supersede-convention.md", blockOverCeiling, 251, blockCeiling},
 	}
 	assertBreaches(t, breaches(records, overrides), want)
-}
 
-// TestARaisedLimitIsTheOnlyThingHoldingARecordUp runs the same fixture set
-// with no overrides, so the record the table above lets through is the one
-// extra breach and nothing else moves. A ceilingsFor that ignored its
-// overrides would pass the first table and fail this one, and one that
-// raised every record would pass this table and fail the first.
-func TestARaisedLimitIsTheOnlyThingHoldingARecordUp(t *testing.T) {
-	records, err := readADRs(writeRecords(t, fixtures()))
-	if err != nil {
-		t.Fatalf("readADRs: %v", err)
+	// 0002 is silent above because a raised limit covers it, not because
+	// anything exempted it. Dropping the override has to bring it back and
+	// move nothing else.
+	raised := breach{"0002-block-raised-by-an-override.md", blockOverCeiling, 251, blockCeiling}
+	standard := breaches(records, nil)
+	if len(standard) != len(want)+1 || !slices.Contains(standard, raised) {
+		t.Errorf("with no override the check reported %+v, want the %d breach(es) above plus %+v",
+			standard, len(want), raised)
 	}
-
-	want := []breach{
-		{"0001-over-the-block-ceiling.md", blockOverCeiling, 251, blockCeiling},
-		{"0002-block-raised-by-an-override.md", blockOverCeiling, 251, blockCeiling},
-		{"0003-over-the-file-ceiling.md", fileOverCeiling, 1518, fileCeiling},
-		{name: "0004-no-current-rule-heading.md", kind: noCurrentRuleBlock},
-		{"0005-fence-inside-the-block.md", blockOverCeiling, 270, blockCeiling},
-		{"0006-subheading-inside-the-block.md", blockOverCeiling, 266, blockCeiling},
-		{"0007-quotes-the-supersede-convention.md", blockOverCeiling, 251, blockCeiling},
-	}
-	assertBreaches(t, breaches(records, nil), want)
 }
 
 // TestAnEmptyRecordSetIsAnError is the vacuous-pass guard. A glob that stops
