@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/tvrmsmith/coding-standards/internal/gitscope"
 	"github.com/tvrmsmith/coding-standards/internal/srcpath"
@@ -114,7 +115,7 @@ func runFilter(fa FilterArgs, stdin io.Reader, stdout, stderr io.Writer) int {
 			_, _ = fmt.Fprintf(stderr, "waiver %s matched %s on %s but was not spent: the run blocked on another finding\n",
 				m.waiver.ID, m.rule, m.path)
 		}
-		reportKept(stdout, waiveBinary(), fa.Language, kept)
+		reportKept(stdout, stderr, waiveBinary(), fa.Language, kept)
 		return 2
 	}
 
@@ -163,17 +164,40 @@ func (s survivor) waivePath() srcpath.Path {
 	return s.locations[0].Path
 }
 
-// reportKept prints every finding that blocked the commit, with the command
-// that would waive it.
-func reportKept(stdout io.Writer, bin, language string, kept []survivor) {
+// reportKept prints stdout's one machine-readable line per surviving
+// finding, at its first in-scope location, and nothing else: the consumer is
+// no-mistakes' lint.extra_linters, which reads this stream with one regex
+// across every language, and ADR 0005/0008 already settled that the machine
+// document is the only output. The waive command that would clear each one
+// goes to stderr instead, the stream everything that is not a finding
+// already lives on.
+func reportKept(stdout, stderr io.Writer, bin, language string, kept []survivor) {
 	for _, s := range kept {
-		_, _ = fmt.Fprintf(stdout, "%s: %s\n", s.finding.Rule, s.finding.Message)
-		for _, loc := range s.locations {
-			_, _ = fmt.Fprintf(stdout, "  %s:%d\n", loc.Path, loc.StartLine)
-		}
-		_, _ = fmt.Fprintf(stdout, "  %s waive --language %s%s --rule %s --reason \"<why>\"\n\n",
+		loc := firstLocation(s)
+		_, _ = fmt.Fprintf(stdout, "%s:%d:%d: %s: %s\n", loc.Path, loc.StartLine, loc.StartColumn, s.finding.Rule, flatten(s.finding.Message))
+		_, _ = fmt.Fprintf(stderr, "%s waive --language %s%s --rule %s --reason \"<why>\"\n",
 			bin, language, pathFlag(s.waivePath()), s.finding.Rule)
 	}
+}
+
+// firstLocation is the location a survivor's porcelain line reports at: its
+// first in-scope location, the one scopeFinding kept first, when it has one,
+// or a placeholder when it has none at all. AD0001 and its kin are reported
+// at Location.None, and stdout must never drop a finding for lack of
+// somewhere to point at it.
+func firstLocation(s survivor) lintfind.Location {
+	if len(s.locations) == 0 {
+		return lintfind.Location{Path: ".", StartLine: 1, StartColumn: 1}
+	}
+	return s.locations[0]
+}
+
+// flatten collapses a finding's message onto the one line the porcelain
+// shape allows. golangci's typecheck linter genuinely emits a multi-line
+// Text, and a message that spilled onto a second line would make that line
+// unparseable as a finding of its own.
+func flatten(msg string) string {
+	return strings.Join(strings.Fields(msg), " ")
 }
 
 // pathFlag is the --path the printed command carries, or nothing at all for a
@@ -239,7 +263,7 @@ type parsedReports struct {
 func readReports(fa FilterArgs, stdin io.Reader, root srcpath.Root) (parsedReports, error) {
 	var out parsedReports
 	if len(fa.Reports) == 0 {
-		findings, dropped, err := lintfind.ParseSARIF(stdin, root)
+		findings, dropped, err := fa.Parser(stdin, root)
 		if err != nil {
 			return parsedReports{}, err
 		}
@@ -255,7 +279,7 @@ func readReports(fa FilterArgs, stdin io.Reader, root srcpath.Root) (parsedRepor
 		if err != nil {
 			return parsedReports{}, fmt.Errorf("opening report %s: %w", name, err)
 		}
-		got, gotDropped, err := lintfind.ParseSARIF(f, root)
+		got, gotDropped, err := fa.Parser(f, root)
 		_ = f.Close()
 		if err != nil {
 			return parsedReports{}, err
@@ -308,7 +332,7 @@ func dedup(findings []lintfind.Finding) []lintfind.Finding {
 	for _, f := range findings {
 		key := f.Rule + "\x00" + f.Message
 		for _, loc := range f.Locations {
-			key += fmt.Sprintf("\x00%s:%d-%d", loc.Path, loc.StartLine, loc.EndLine)
+			key += fmt.Sprintf("\x00%s:%d:%d-%d", loc.Path, loc.StartLine, loc.StartColumn, loc.EndLine)
 		}
 		if seen[key] {
 			continue

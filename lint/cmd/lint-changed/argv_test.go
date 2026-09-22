@@ -140,3 +140,23 @@ func TestParseUnknownFlag(t *testing.T) {
 		t.Fatal("got nil, want a usage error")
 	}
 }
+
+// An unknown --format is refused at parse time, the same way an absent
+// --language is, rather than reaching readReports and failing against
+// whatever the first report happens to look like.
+func TestParseFilterRejectsUnknownFormat(t *testing.T) {
+	_, err := Parse([]string{"--format", "bogus", "--language", "csharp", "--staged"})
+	if err == nil || !strings.Contains(err.Error(), "unknown --format 'bogus'") || !strings.Contains(err.Error(), "sarif, golangci, eslint") {
+		t.Fatalf("got %v, want an error naming the unknown format and the valid ones", err)
+	}
+}
+
+func TestParseFilterAcceptsGolangCIFormat(t *testing.T) {
+	cmd, err := Parse([]string{"--format", "golangci", "--language", "go", "--staged"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cmd.Filter.Parser == nil {
+		t.Fatal("got a nil Parser, want lintfind.ParseGolangCI")
+	}
+}

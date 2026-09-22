@@ -126,6 +126,49 @@ rank_status() {
   esac
 }
 
+# The blocking half every branch hands its reports to. `lint-changed` is language-neutral: it
+# reads a linter's own report, keeps the findings touching a changed line, applies any waiver and
+# sets the exit status. This echoes the binary's path, or returns 1 with the reason on stderr.
+#
+# Built here rather than bootstrapped, because Go's build cache makes a rebuild of an unchanged
+# tree cost milliseconds against a dotnet build's seconds, and building every time is one less
+# thing that can go stale. It has to be a built binary rather than `go run`: lint-changed reads
+# the git repo it is *run in*, and `go run` would have to run in the hub's module directory.
+#
+# The memo is a file and not a variable because every caller reads the path through `$(...)`,
+# which runs the function in a subshell, so an assignment it made would die with that subshell and
+# all three branches would rebuild. $scratch is per-process and removed at exit, which is exactly
+# the lifetime the memo wants.
+lint_changed_bin() {
+  local cache_home bin build_out memo=$scratch/lint-changed-path
+
+  if [ -s "$memo" ]; then
+    cat "$memo"
+    return 0
+  fi
+
+  command -v go >/dev/null 2>&1 || {
+    echo "lint-changed: no go on PATH, so the changed-line filter cannot run" >&2
+    echo "  Findings would go unchecked and the commit would pass unexamined, so this is a failure" >&2
+    echo "  rather than a skip. Install Go, or unstage the changes." >&2
+    return 1
+  }
+
+  cache_home=${XDG_CACHE_HOME:-$HOME/.cache}
+  bin=$cache_home/coding-standards/lint-changed
+  mkdir -p "$(dirname "$bin")" || return 1
+  if ! build_out=$(cd "$hub" && go build -o "$bin" ./lint/cmd/lint-changed 2>&1); then
+    echo "lint-changed: could not build the changed-line filter" >&2
+    printf '%s\n' "$build_out" >&2
+    return 1
+  fi
+
+  # Only a success is remembered. A memo written on a failed build would hand the next branch a
+  # path to a binary that is missing or stale, and it would run it rather than see the message.
+  printf '%s\n' "$bin" >"$memo"
+  printf '%s\n' "$bin"
+}
+
 # Skip, don't fail. A repo bootstrapped for one language must not have its commits blocked by a
 # branch that was never wired up. Silent under --staged, because the hook runs on every commit.
 not_wired() {

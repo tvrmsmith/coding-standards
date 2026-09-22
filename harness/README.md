@@ -61,22 +61,23 @@ plugins `base.js` imports.
 findings and a single language's exit code. An unknown name is rejected rather than quietly
 linting nothing. The flag must come before `--files`, which swallows everything after it.
 
-Exit codes are one convention across the three, ADR 0010's. **2 is a surviving finding** — an
-ESLint error, a C# analyzer warning on a line the change wrote — and **1 is the gate breaking**: a
-failed build, a golangci-lint run that blew up, a missing layering wrapper, a bad argument. A 1
-from any branch dominates a 2 from another, because a branch that never ran says nothing about the
-code it never read. Advisory Go findings exit 0.
+Exit codes are one convention across the three, ADR 0010's. **2 is a surviving finding**, an
+ESLint warning, a C# analyzer warning or a golangci-lint issue on a line the change wrote, and
+**1 is the gate breaking**: a failed build, a golangci-lint run that blew up, a missing layering
+wrapper, a bad argument. A 1 from any branch dominates a 2 from another, because a branch that
+never ran says nothing about the code it never read.
 
-That is the exit-code half of ADR 0010, and TypeScript follows only that half so far. An ESLint
-error blocks, an ESLint warning does not, and no changed-line filter runs on the TypeScript side,
-where the ADR asks for both severities to block on any line the change touched. The Go branch is
-short of the same rule and names slice 3 of issue 108 for it.
+All three branches follow the whole of ADR 0010, not just its exit codes. Each runs its linter
+into a machine-readable report, then hands every report from that run to one `lint-changed`
+process, which keeps the findings touching a line the change wrote, spends any waiver and sets
+the status. Severity does not tier: an ESLint severity-1 warning blocks exactly as a severity-2
+error does.
 
-Each branch keeps its linter's native output: ESLint's `stylish`, golangci-lint's text, MSBuild's.
-Those shapes make paths clickable in a terminal, and the hook is the reader that matters. A tool
-wanting one machine-readable shape across all three should read the SARIF the C# branch already
-produces rather than re-parse three text formats, which is where the `lint-changed` binary is
-going.
+Output is one shape across all three, whatever the linter's own format was. `lint-changed` writes
+one line per surviving finding to stdout, `path:line:column: RULE: message`, repo-relative, and
+nothing else; every header, diagnostic and waive command goes to stderr. One regex reads all three
+languages, which is what no-mistakes' `lint.extra_linters` wants, and ADR 0005/0008 already
+settled that the machine document is the only output.
 
 ### Linting a checkout that cannot say which repository it is
 
@@ -221,12 +222,12 @@ Three things about it differ from the other two:
   `test/lint-changed-go.test.js` pins all four combinations of registered/not and
   worktree/not, because a skip that should have been a run is silent and looks exactly like a
   repo with no findings.
-- **Findings report and never block**, which the .NET half no longer does.
-  `--issues-exit-code=0` makes it explicit, and it also means a non-zero exit is unambiguous:
-  the run itself broke. This is the last half in that position, not a settled convention. Go
-  moves to the .NET arrangement in the third slice of
-  [issue 108](https://github.com/tvrmsmith/coding-standards/issues/108), which drops that flag
-  and pipes golangci-lint's JSON through `lint-changed`.
+- **A finding blocks when it touches a changed line**, the same arrangement as the .NET half.
+  `--issues-exit-code=0` stays, and now means golangci-lint's own exit code is reserved for one
+  thing: the run itself broke. The verdict over a finding belongs to `lint-changed`, which reads
+  the JSON report golangci-lint writes with `--output.json.path`. A package that fails to compile
+  arrives as a single `typecheck` issue at line 1, so that rule ignores scope rather than sailing
+  through on an untouched first line.
 - **There is no editor half yet.** The hook is the whole gate.
 
 `bootstrap go` is also the one mode that accepts the hub itself as its target. The other two

@@ -105,8 +105,10 @@ describe('lint-changed.sh --only dotnet', () => {
       assert.equal(status, 2, `expected the blocking exit code\nstdout:\n${stdout}\nstderr:\n${stderr}`)
       assert.match(stdout, /CS0219/)
       assert.match(stdout, /src\/Foo\.cs/)
-      // Decision 4: the printed waive command is the only route past a false positive.
-      assert.match(stdout, /waive/)
+      // Decision 4: the printed waive command is the only route past a false positive. It goes to
+      // stderr, because stdout carries nothing but the one finding line per ADR 0005/0008.
+      assert.match(stderr, /waive/)
+      assert.doesNotMatch(stdout, /waive/)
     } finally {
       f.cleanup()
     }

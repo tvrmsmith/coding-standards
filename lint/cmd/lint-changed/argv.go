@@ -10,7 +10,11 @@
 // usage mistake must never collapse into the last of the three.
 package main
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/tvrmsmith/coding-standards/lint/internal/lintfind"
+)
 
 // Kind is which of lint-changed's three forms argv named.
 type Kind int
@@ -57,6 +61,11 @@ type FilterArgs struct {
 	// commit's worth of permission and a process per report would spend it on
 	// whichever report happened to come first.
 	Reports []string
+	// Parser is the lintfind.Parser --format resolved to. It is resolved at
+	// parse time, alongside every other usage mistake, rather than at read
+	// time, so an unknown --format is a usage error and not a report-reading
+	// failure blamed on whichever report happened to come first.
+	Parser lintfind.Parser
 }
 
 // WaiveArgs is argv for the waive form.
@@ -159,6 +168,11 @@ func parseFilter(args []string) (FilterArgs, error) {
 	if fa.Format == "" {
 		return FilterArgs{}, &UsageError{Problem: "--format is required"}
 	}
+	parser, err := formatParser(fa.Format)
+	if err != nil {
+		return FilterArgs{}, err
+	}
+	fa.Parser = parser
 	if fa.Language == "" {
 		return FilterArgs{}, &UsageError{Problem: "--language is required"}
 	}
@@ -166,6 +180,22 @@ func parseFilter(args []string) (FilterArgs, error) {
 		return FilterArgs{}, &UsageError{Problem: "exactly one of --staged, --since, --files is required"}
 	}
 	return fa, nil
+}
+
+// formatParser resolves --format to the lintfind.Parser that reads it. An
+// unknown value is a usage error rather than a nil Parser, so a caller that
+// misspells --format learns that before the run ever opens a report.
+func formatParser(format string) (lintfind.Parser, error) {
+	switch format {
+	case "sarif":
+		return lintfind.ParseSARIF, nil
+	case "golangci":
+		return lintfind.ParseGolangCI, nil
+	case "eslint":
+		return lintfind.ParseESLint, nil
+	default:
+		return nil, &UsageError{Problem: "unknown --format '" + format + "', want one of sarif, golangci, eslint"}
+	}
 }
 
 func parseWaive(args []string) (WaiveArgs, error) {

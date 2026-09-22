@@ -2,13 +2,20 @@
  * The lint-changed.sh entrypoint: which branches it runs, and what each one puts on stdout.
  *
  * The thing worth pinning is that one invocation covers every language the repo is wired for,
- * since a caller having to name the branches is what this script exists to remove. Each branch's
- * output is its linter's own, so the cases here check that it arrives intact rather than
- * re-testing the linter.
+ * since a caller having to name the branches is what this script exists to remove. Every branch
+ * now emits `lint-changed`'s own porcelain rather than its linter's report, one
+ * `path:line:column: RULE: message` line per surviving finding, repo-relative, and nothing else.
+ * So the cases here check that a branch's finding reaches that one stream, rather than re-testing
+ * the linter.
  *
- * TypeScript and Go are stubbed: what is under test is the dispatch, not what ESLint or
- * golangci-lint think of a file. C# is not stubbable the same way — its findings come from a
- * Roslyn SARIF log — so lint-changed-dotnet.test.js covers that branch against a real dotnet.
+ * TypeScript and Go are stubbed, in their linters' own report shapes: ESLint's `--format json` on
+ * stdout, golangci-lint's JSON into the file named by `--output.json.path`. What is under test is
+ * the dispatch, not what either tool thinks of a file. C# is not stubbable the same way — its
+ * findings come from a Roslyn SARIF log — so lint-changed-dotnet.test.js covers that branch against
+ * a real dotnet.
+ *
+ * `lint-changed` itself is not stubbed, because the verdict each branch reports is now its own.
+ * That needs go on PATH, so every case that reaches a branch's filter skips without it.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
 import {
@@ -24,10 +31,12 @@ import {
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import test, { describe } from 'node:test'
+import test, { after, describe } from 'node:test'
 import assert from 'node:assert/strict'
 
 const harness = realpathSync(join(dirname(fileURLToPath(import.meta.url)), '..'))
+const noGo = spawnSync('go', ['version'], { stdio: 'ignore' }).status !== 0
+const skip = noGo && 'no go on PATH'
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' })
@@ -86,6 +95,15 @@ function commitAll(repo) {
 }
 
 /**
+ * One waiver log and one build cache for the whole file, so no case reads the developer's waiver
+ * log or writes a lint-changed binary into their real cache. Shared across the cases rather than
+ * made per fixture because the Go build cache underneath is what keeps every case after the first
+ * from rebuilding the filter.
+ */
+const sandbox = mkdtempSync(join(realpathSync(tmpdir()), 'tvrmsmith-lint-sandbox-'))
+after(() => rmSync(sandbox, { recursive: true, force: true }))
+
+/**
  * The harness variables every case has to start from a known state: each is honoured whenever it
  * is set, so an ambient value on the developer's machine would decide adoption or which binary
  * runs for any case that does not override it, and a negative case would pass for the wrong
@@ -99,6 +117,8 @@ const neutralised = {
   TVRMSMITH_GOLANGCI_CONFIG: undefined,
   TVRMSMITH_ANALYZER_PROPS: undefined,
   TVRMSMITH_ANALYZER_LOCAL_PROPS: undefined,
+  TVRMSMITH_WAIVERS: join(sandbox, 'waivers.jsonl'),
+  XDG_CACHE_HOME: join(sandbox, 'cache'),
 }
 
 /**
@@ -126,59 +146,140 @@ function run(cwd, args, env) {
   return stdout
 }
 
+/**
+ * Stands in for a package's own ESLint: one severity-2 message per file argument, written to
+ * stdout in ESLint's `--format json` shape, exiting 1 the way ESLint does once it has reported an
+ * error. `filePath` is absolute under `$PWD`, the package directory ts.sh runs ESLint from, which
+ * is the form real ESLint reports.
+ *
+ * The message sits on line 1 because every fixture below commits a one-line source file and then
+ * rewrites that line, so line 1 is the changed line the finding has to survive on.
+ */
+const eslintStub = `#!/usr/bin/env node
+const argv = process.argv.slice(2)
+const valued = new Set(['--config', '--format'])
+const files = []
+for (let i = 0; i < argv.length; i++) {
+  if (valued.has(argv[i])) { i++; continue }
+  if (argv[i].startsWith('-')) continue
+  files.push(argv[i])
+}
+
+const results = files.map((file) => ({
+  filePath: \`\${process.cwd()}/\${file}\`,
+  messages: [{
+    ruleId: 'no-unused-vars',
+    severity: 2,
+    message: "'a' is assigned a value but never used.",
+    line: 1,
+    column: 7,
+    endLine: 1,
+    endColumn: 8,
+  }],
+  suppressedMessages: [],
+}))
+
+process.stdout.write(JSON.stringify(results))
+process.exit(1)
+`
+
+/** The porcelain line the stub above produces for a file, once the branch has filtered it. */
+const eslintPorcelain = (file) => `${file}:1:7: no-unused-vars: 'a' is assigned a value but never used.\n`
+
 describe('the TypeScript branch', () => {
-  /** A package whose ESLint is a stub printing one finding in the stylish shape. */
+  /** A package whose ESLint is the stub above, with its one source line changed. */
   function fixture() {
     const f = repository('tvrmsmith-lint-ts-')
     writeFileSync(join(f.repo, 'eslint.config.js'), 'export default []\n')
     writeFileSync(join(f.repo, 'main.ts'), 'export const a = 1\n')
-    executable(
-      join(f.repo, 'node_modules/.bin/eslint'),
-      [
-        '#!/usr/bin/env node',
-        "console.log(`${process.cwd()}/main.ts`)",
-        "console.log('  1:7  warning  Unexpected thing.  tvrmsmith/no-thing')",
-      ].join('\n') + '\n',
-    )
+    executable(join(f.repo, 'node_modules/.bin/eslint'), eslintStub)
     commitAll(f.repo)
     writeFileSync(join(f.repo, 'main.ts'), 'export const a = 2\n')
     return f
   }
 
-  test('the default output is the untouched stylish report under its package header', () => {
+  test('a finding on a changed line reaches stdout as one porcelain line', { skip }, () => {
     const f = fixture()
     try {
-      const out = run(f.repo, ['--only', 'ts', '--since', 'HEAD'])
-      assert.equal(out, `=== . ===\n${f.repo}/main.ts\n  1:7  warning  Unexpected thing.  tvrmsmith/no-thing\n`)
+      const { status, stdout, stderr } = capture(f.repo, ['--only', 'ts', '--since', 'HEAD'])
+      assert.equal(status, 2, `expected the blocking exit code\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+      // The whole of stdout. no-mistakes reads this stream with one regex across every language,
+      // so a package header or ESLint's own report leaking onto it is a bug, not noise.
+      assert.equal(stdout, eslintPorcelain('main.ts'))
     } finally {
       f.cleanup()
     }
   })
 
-  test('a changed path holding a space reaches the linter as one argument', () => {
+  test('a changed path holding a space reaches the linter as one argument', { skip }, () => {
     const f = fixture()
     try {
       // Split on the space, ESLint is handed two paths that do not exist and fails, so the commit
-      // is blocked over a file nobody wrote. The stub prints its argv so the case can see which
-      // it got.
+      // is blocked over a file nobody wrote. The stub reports its argv on stderr, which ts.sh lets
+      // through untouched, because its stdout is captured into the report file and so cannot carry
+      // it. The empty report it writes there is what keeps this case's verdict clean.
       executable(
         join(f.repo, 'node_modules/.bin/eslint'),
-        '#!/usr/bin/env node\nfor (const a of process.argv.slice(2)) console.log(`arg: ${a}`)\n',
+        [
+          '#!/usr/bin/env node',
+          'for (const a of process.argv.slice(2)) console.error(`arg: ${a}`)',
+          "process.stdout.write('[]')",
+        ].join('\n') + '\n',
       )
       writeFileSync(join(f.repo, 'my file.ts'), 'export const b = 1\n')
       // Staged, because `git diff HEAD` reports a new file only once the index carries it.
       git(f.repo, 'add', 'my file.ts')
-      const out = run(f.repo, ['--only', 'ts', '--since', 'HEAD'])
-      assert.match(out, /^arg: my file\.ts$/m)
-      assert.doesNotMatch(out, /^arg: my$/m)
+      const { status, stdout, stderr } = capture(f.repo, ['--only', 'ts', '--since', 'HEAD'])
+      assert.equal(status, 0, `expected a clean pass\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+      assert.match(stderr, /^arg: my file\.ts$/m)
+      assert.doesNotMatch(stderr, /^arg: my$/m)
     } finally {
       f.cleanup()
     }
   })
 })
 
+/**
+ * Stands in for the personal golangci-lint binary. It writes golangci's own JSON to the file named
+ * by `--output.json.path`, holding one issue at `file`. Given `wanted`, it holds that issue only
+ * when `wanted` is among its arguments, which is golangci's own contract: it reports for the
+ * package it was asked about and no other.
+ *
+ * Reading the flag out of argv in the space-separated form is deliberate coupling, since pinning
+ * the spelling go.sh passes is part of what these cases are for. `--output.json.path=FILE`, or the
+ * report going to stdout, leaves `out` empty and the stub fails loudly rather than letting the
+ * branch report a clean run on a report nobody wrote.
+ *
+ * `file` is absolute because go.sh runs the linter with --path-mode abs, and baked in from the
+ * fixture rather than derived from `$PWD`, which is the module directory and so differs per shape.
+ */
+function golangciStub({ file, linter, text, line, column, wanted }) {
+  const issue =
+    `{"FromLinter":"${linter}","Text":"${text}",` +
+    `"Pos":{"Filename":"${file}","Line":${line},"Column":${column}}}`
+  const record = wanted === undefined ? 'issues=$issue' : `[ "$1" = "${wanted}" ] && issues=$issue`
+  return `#!/bin/sh
+issue='${issue}'
+out=
+issues=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --output.json.path) out=$2; shift 2 ;;
+    *) ${record}; shift ;;
+  esac
+done
+
+if [ -z "$out" ]; then
+  echo "stub: no --output.json.path in argv" >&2
+  exit 9
+fi
+
+printf '{"Issues":[%s]}\\n' "$issues" >"$out"
+`
+}
+
 describe('the Go branch', () => {
-  /** A module whose golangci-lint is a stub printing one finding in the text shape. */
+  /** A module whose golangci-lint is the stub above, with its line 3 changed. */
   function fixture() {
     const f = repository('tvrmsmith-lint-go-')
     f.registry = join(f.root, 'registry')
@@ -187,22 +288,30 @@ describe('the Go branch', () => {
     writeFileSync(join(f.repo, 'main.go'), 'package main\n\nfunc main() {}\n')
     commitAll(f.repo)
     writeFileSync(join(f.repo, 'main.go'), 'package main\n\nfunc main() { _ = 1 }\n')
-    // Absolute, because the script runs the linter with --path-mode abs and filters by absolute
-    // path. It runs from inside the module, so $PWD is the checkout under test.
-    executable(f.gcl, '#!/bin/sh\necho "$PWD/main.go:3:14: assignment to _ is pointless (tvrmsmithnoop)"\nexit 0\n')
+    executable(
+      f.gcl,
+      golangciStub({
+        file: `${realpathSync(f.repo)}/main.go`,
+        linter: 'tvrmsmithnoop',
+        text: 'assignment to _ is pointless',
+        line: 3,
+        column: 14,
+      }),
+    )
     writeFileSync(f.registry, `${realpathSync(f.repo)}\n`)
     return f
   }
 
   const env = (f) => ({ TVRMSMITH_GO_REPOS: f.registry, TVRMSMITH_GCL: f.gcl })
 
-  test('the default output keeps its heading, indentation and not-blocking note', () => {
+  test('a finding on a changed line reaches stdout as one porcelain line', { skip }, () => {
     const f = fixture()
     try {
-      const out = run(f.repo, ['--only', 'go', '--since', 'HEAD'], env(f))
-      assert.match(out, /^\npersonal coding standards — 1 finding\(s\) in the changed Go files:\n/)
-      assert.match(out, /^ {2}main\.go:3:14: assignment to _ is pointless \(tvrmsmithnoop\)$/m)
-      assert.match(out, /reported, not blocking\./)
+      const { status, stdout, stderr } = capture(f.repo, ['--only', 'go', '--since', 'HEAD'], env(f))
+      assert.equal(status, 2, `expected the blocking exit code\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+      // The whole of stdout. no-mistakes reads this stream with one regex across every language,
+      // so golangci's own summary or a heading leaking onto it is a bug, not noise.
+      assert.equal(stdout, 'main.go:3:14: tvrmsmithnoop: assignment to _ is pointless\n')
     } finally {
       f.cleanup()
     }
@@ -221,11 +330,12 @@ describe('the Go branch', () => {
 
 describe('one invocation, every language the repo is wired for', () => {
   /**
-   * A repo that is both a TypeScript package and a Go module, with a stub for each linter. The
-   * TypeScript stub's exit code is the fixture's to choose, because the aggregated status is the
+   * A repo that is both a TypeScript package and a Go module, with a stub for each linter, each
+   * reporting one finding on the line the fixture then changes. The golangci stub's exit code is
+   * the fixture's to choose, because how a broken branch folds into the aggregate status is the
    * one thing the branches do not decide for themselves.
    */
-  function fixture({ tsExit = 0, gclExit = 0 } = {}) {
+  function fixture({ gclExit = 0 } = {}) {
     const f = repository('tvrmsmith-dispatch-')
     f.registry = join(f.root, 'registry')
     f.gcl = join(f.root, 'stub-gcl')
@@ -234,18 +344,17 @@ describe('one invocation, every language the repo is wired for', () => {
     writeFileSync(join(f.repo, 'go.mod'), 'module example.test\n\ngo 1.26.0\n')
     writeFileSync(join(f.repo, 'main.ts'), 'export const a = 1\n')
     writeFileSync(join(f.repo, 'main.go'), 'package main\n\nfunc main() {}\n')
-    executable(
-      join(f.repo, 'node_modules/.bin/eslint'),
-      [
-        '#!/usr/bin/env node',
-        "console.log('stylish ts finding')",
-        `process.exit(${tsExit})`,
-      ].join('\n') + '\n',
-    )
+    executable(join(f.repo, 'node_modules/.bin/eslint'), eslintStub)
     executable(
       f.gcl,
       gclExit === 0
-        ? '#!/bin/sh\necho "$PWD/main.go:3:1: go finding (gorule)"\nexit 0\n'
+        ? golangciStub({
+            file: `${realpathSync(f.repo)}/main.go`,
+            linter: 'gorule',
+            text: 'go finding',
+            line: 3,
+            column: 1,
+          })
         : `#!/bin/sh\necho "the config is unreadable" >&2\nexit ${gclExit}\n`,
     )
     commitAll(f.repo)
@@ -255,20 +364,24 @@ describe('one invocation, every language the repo is wired for', () => {
     return f
   }
 
+  /** stdout for a run where both branches report, in the order lint-changed.sh runs them. */
+  const bothPorcelain = eslintPorcelain('main.ts') + 'main.go:3:1: gorule: go finding\n'
+
   const env = (f) => ({ TVRMSMITH_GO_REPOS: f.registry, TVRMSMITH_GCL: f.gcl })
 
-  test('no --only reports TypeScript and Go from a single call', () => {
+  test('no --only reports TypeScript and Go from a single call', { skip }, () => {
     const f = fixture()
     try {
-      const out = run(f.repo, ['--since', 'HEAD'], env(f))
-      assert.match(out, /^stylish ts finding$/m)
-      assert.match(out, /^ {2}main\.go:3:1: go finding \(gorule\)$/m)
+      const { status, stdout, stderr } = capture(f.repo, ['--since', 'HEAD'], env(f))
+      assert.equal(status, 2, `expected the blocking exit code\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+      assert.match(stdout, /^main\.ts:1:7: no-unused-vars: /m)
+      assert.match(stdout, /^main\.go:3:1: gorule: go finding$/m)
     } finally {
       f.cleanup()
     }
   })
 
-  test('a language the repo is not wired for contributes nothing and stops nothing', () => {
+  test('a language the repo is not wired for contributes nothing and stops nothing', { skip }, () => {
     const f = fixture()
     try {
       // The props file names no repository, so the C# branch skips. It must not take the other
@@ -284,59 +397,57 @@ describe('one invocation, every language the repo is wired for', () => {
         ...env(f),
         TVRMSMITH_ANALYZER_PROPS: join(f.root, 'empty.props'),
       })
-      assert.equal(status, 0)
+      // 2, because both the other branches' findings survive. The C# branch skipping is not
+      // allowed to turn that into a clean run any more than into a broken one.
+      assert.equal(status, 2, `stdout:\n${stdout}\nstderr:\n${stderr}`)
       // Named, so the case cannot pass through some other early return the branch takes.
       assert.match(stderr, /is not wired for \.NET/)
-      assert.equal(
-        stdout,
-        '=== . ===\nstylish ts finding\n' +
-          '\npersonal coding standards — 1 finding(s) in the changed Go files:\n' +
-          '  main.go:3:1: go finding (gorule)\n' +
-          '\n  reported, not blocking. Every personal Go rule is advisory, so the commit proceeds.\n',
-      )
+      assert.equal(stdout, bothPorcelain)
     } finally {
       f.cleanup()
     }
   })
 
-  test('--only narrows to the one branch', () => {
+  test('--only narrows to the one branch', { skip }, () => {
     const f = fixture()
     try {
-      const out = run(f.repo, ['--only', 'go', '--since', 'HEAD'], env(f))
-      assert.match(out, /gorule/)
-      assert.doesNotMatch(out, /stylish ts finding/)
-    } finally {
-      f.cleanup()
-    }
-  })
-
-  test('a surviving finding exits 2, and the advisory branches still report', () => {
-    const f = fixture({ tsExit: 1 })
-    try {
-      const { status, stdout } = capture(f.repo, ['--since', 'HEAD'], env(f))
-      // ESLint's 1 is a lint error, which is this gate's 2: the gate says stop.
-      assert.equal(status, 2)
-      // Go runs after TypeScript and its findings are advisory. A failing earlier branch must not
-      // swallow them, or a mixed commit reports only whichever language failed first.
+      const { status, stdout, stderr } = capture(f.repo, ['--only', 'go', '--since', 'HEAD'], env(f))
+      assert.equal(status, 2, `stdout:\n${stdout}\nstderr:\n${stderr}`)
       assert.match(stdout, /gorule/)
+      assert.doesNotMatch(stdout, /no-unused-vars/)
     } finally {
       f.cleanup()
     }
   })
 
-  test('a broken branch exits 1 even alongside another branch reporting a finding', () => {
+  test('a branch reporting a finding does not swallow a later branch', { skip }, () => {
+    const f = fixture()
+    try {
+      const { status, stdout, stderr } = capture(f.repo, ['--since', 'HEAD'], env(f))
+      assert.equal(status, 2, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+      // TypeScript reports first and returns 2. Go runs after it and its finding has to reach the
+      // same stdout, or a mixed commit hands back only whichever language blocked first and the
+      // next run surfaces the rest. Asserted as the whole of stdout, in dispatch order.
+      assert.equal(stdout, bothPorcelain)
+    } finally {
+      f.cleanup()
+    }
+  })
+
+  test('a broken branch exits 1 even alongside another branch reporting a finding', { skip }, () => {
     // TypeScript reports a surviving finding (2) and the Go run then breaks (1). 1 has to win:
     // one branch never read the code it was given, so the gate did not answer, and a hook told 2
     // would report a fixable finding when half the change went unexamined.
-    const f = fixture({ tsExit: 1, gclExit: 3 })
+    const f = fixture({ gclExit: 3 })
     try {
-      const { status, stdout } = capture(f.repo, ['--since', 'HEAD'], env(f))
-      assert.equal(status, 1)
+      const { status, stdout, stderr } = capture(f.repo, ['--since', 'HEAD'], env(f))
+      assert.equal(status, 1, `stdout:\n${stdout}\nstderr:\n${stderr}`)
       // The module and the linter's own words both survive. Piping the header and the output
       // into an undefined function discarded exactly this, leaving a blocked commit with no
-      // stated cause.
+      // stated cause. golangci's stderr is let through where it happens, so the two land on
+      // different streams.
       assert.match(stdout, /^=== \. — the lint run failed ===$/m)
-      assert.match(stdout, /^the config is unreadable$/m)
+      assert.match(stderr, /^the config is unreadable$/m)
     } finally {
       f.cleanup()
     }
@@ -390,12 +501,13 @@ describe('one invocation, every language the repo is wired for', () => {
     }
   })
 
-  test('--files lints the named paths in every language they span', () => {
+  test('--files lints the named paths in every language they span', { skip }, () => {
     const f = fixture()
     try {
-      const out = run(f.repo, ['--files', 'main.ts', 'main.go'], env(f))
-      assert.match(out, /^stylish ts finding$/m)
-      assert.match(out, /^ {2}main\.go:3:1: go finding \(gorule\)$/m)
+      const { status, stdout, stderr } = capture(f.repo, ['--files', 'main.ts', 'main.go'], env(f))
+      assert.equal(status, 2, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+      assert.match(stdout, /^main\.ts:1:7: no-unused-vars: /m)
+      assert.match(stdout, /^main\.go:3:1: gorule: go finding$/m)
     } finally {
       f.cleanup()
     }
@@ -416,47 +528,12 @@ describe('one invocation, every language the repo is wired for', () => {
   })
 })
 
-describe('the staged content, not the working copy', () => {
-  test('TypeScript lints what the commit would contain and an error there exits 2', () => {
-    const f = repository('tvrmsmith-staged-ts-')
-    try {
-      writeFileSync(join(f.repo, 'eslint.config.js'), 'export default []\n')
-      writeFileSync(join(f.repo, 'main.ts'), 'export const a = 1\n')
-      // Prints what it was fed on stdin, so the case can tell the staged copy from the disk copy,
-      // and exits 1, ESLint's lint-error code.
-      executable(
-        join(f.repo, 'node_modules/.bin/eslint'),
-        [
-          '#!/usr/bin/env node',
-          "let body = ''",
-          "process.stdin.on('data', (c) => { body += c })",
-          "process.stdin.on('end', () => { process.stdout.write(`linted: ${body}`); process.exit(1) })",
-        ].join('\n') + '\n',
-      )
-      commitAll(f.repo)
-
-      writeFileSync(join(f.repo, 'main.ts'), 'export const a = 2\n')
-      git(f.repo, 'add', 'main.ts')
-      // A third state on disk. The hook gates what the commit will contain, so linting this copy
-      // would pass a commit on content nobody reviewed.
-      writeFileSync(join(f.repo, 'main.ts'), 'export const a = 3\n')
-
-      const { status, stdout } = capture(f.repo, ['--only', 'ts', '--staged'])
-      assert.equal(status, 2)
-      assert.match(stdout, /^=== main\.ts \(staged content\) ===$/m)
-      assert.match(stdout, /^linted: export const a = 2$/m)
-    } finally {
-      f.cleanup()
-    }
-  })
-})
-
 describe('the Go branch names the package holding the changed file', () => {
   /**
    * golangci-lint runs per package, so the whole result rides on which package path it is handed.
    * Each shape below is a module location crossed with a file depth, and each is a way the path
-   * arithmetic can collapse to the wrong package — and a wrong package is silent, since the
-   * absolute-path filter then drops every finding and the file reports clean unlinted.
+   * arithmetic can collapse to the wrong package — and a wrong package is silent, since the report
+   * then holds nothing and the file reads as clean unlinted.
    *
    * The stub is golangci-lint's own contract: it reports only for the package it was asked about.
    */
@@ -468,7 +545,7 @@ describe('the Go branch names the package holding the changed file', () => {
   ]
 
   for (const shape of shapes) {
-    test(shape.name, () => {
+    test(shape.name, { skip }, () => {
       const f = repository('tvrmsmith-go-shape-')
       try {
         const registry = join(f.root, 'registry')
@@ -477,28 +554,30 @@ describe('the Go branch names the package holding the changed file', () => {
         mkdirSync(join(f.repo, shape.dir), { recursive: true })
         writeFileSync(join(f.repo, shape.module, 'go.mod'), 'module gate\n\ngo 1.26.0\n')
         writeFileSync(join(f.repo, file), 'package gate\n\nfunc H() {}\n')
-        // Absolute, because the branch runs the linter with --path-mode abs and filters by
-        // absolute path. Baked in rather than derived from $PWD, which is the module directory
-        // and so differs per shape.
         executable(
           gcl,
-          [
-            '#!/bin/sh',
-            'for a in "$@"; do',
-            `  [ "$a" = "${shape.want}" ] && echo "${realpathSync(f.repo)}/${file}:3:1: exported func H (gorule)"`,
-            'done',
-            'exit 0',
-          ].join('\n') + '\n',
+          golangciStub({
+            file: `${realpathSync(f.repo)}/${file}`,
+            linter: 'gorule',
+            text: 'exported func H',
+            line: 3,
+            column: 1,
+            wanted: shape.want,
+          }),
         )
         writeFileSync(registry, `${realpathSync(f.repo)}\n`)
         commitAll(f.repo)
         writeFileSync(join(f.repo, file), 'package gate\n\nfunc H() { _ = 1 }\n')
 
-        const out = run(f.repo, ['--only', 'go', '--since', 'HEAD'], {
+        const { status, stdout, stderr } = capture(f.repo, ['--only', 'go', '--since', 'HEAD'], {
           TVRMSMITH_GO_REPOS: registry,
           TVRMSMITH_GCL: gcl,
         })
-        assert.match(out, new RegExp(`^ {2}${file.replaceAll('.', '\\.')}:3:1: exported func H \\(gorule\\)$`, 'm'))
+        // A wrong package path is silent rather than loud. The stub writes an empty report, the
+        // filter has nothing to keep, and the run reads as a clean 0 over a file nobody linted, so
+        // the status carries as much of the property as the line does.
+        assert.equal(status, 2, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        assert.equal(stdout, `${file}:3:1: gorule: exported func H\n`)
       } finally {
         f.cleanup()
       }

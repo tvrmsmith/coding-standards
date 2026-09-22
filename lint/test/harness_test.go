@@ -170,6 +170,23 @@ func (f *fixture) stage(rel string) {
 	f.git("add", rel)
 }
 
+// absPath is the resolved absolute path of a file already written into the
+// fixture, the form golangci and eslint name their own paths in. t.TempDir()
+// hands back a path under /var that is on macOS a symlink to /private/var,
+// and srcpath.Root resolves symlinks when it places a candidate path, so a
+// report naming the raw filepath.Join(f.root, rel) fails to place inside the
+// root: it names a real file, but not at the resolved path the root compares
+// against. Resolving here, the same way srcpath.Root.Place does internally,
+// is what makes the report describe a path the parser can place.
+func (f *fixture) absPath(rel string) string {
+	f.t.Helper()
+	resolved, err := filepath.EvalSymlinks(filepath.Join(f.root, filepath.FromSlash(rel)))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return resolved
+}
+
 // writeTree is the index tree sha a case expects a waiver to be matched and
 // spent against, read back out of the fixture rather than out of the
 // binary's own output.
@@ -247,6 +264,12 @@ func sarifLoc(path string, start, end int) string {
 	return fmt.Sprintf(`{"physicalLocation":{"artifactLocation":{"uri":%q},"region":{"startLine":%d,"endLine":%d}}}`, path, start, end)
 }
 
+// sarifLocCol is sarifLoc's sibling carrying an explicit startColumn, for the
+// cases that pin the column threading through the filter.
+func sarifLocCol(path string, start, end, col int) string {
+	return fmt.Sprintf(`{"physicalLocation":{"artifactLocation":{"uri":%q},"region":{"startLine":%d,"startColumn":%d,"endLine":%d}}}`, path, start, col, end)
+}
+
 // sarifLocNoRegion is a SARIF physicalLocation naming a file and no region,
 // which is what Roslyn writes for a diagnostic about a whole document.
 func sarifLocNoRegion(path string) string {
@@ -270,4 +293,24 @@ func sarifResultNoLocation(rule, message string) string {
 func sarifResultRelated(rule, message string, primary, related string) string {
 	return fmt.Sprintf(`{"ruleId":%q,"level":"warning","message":{"text":%q},"locations":[%s],"relatedLocations":[%s]}`,
 		rule, message, primary, related)
+}
+
+// golangciDoc is a minimal golangci-lint JSON report with one issue, the
+// shape lintfind.ParseGolangCI reads. path is the absolute path the case
+// resolved for its own fixture file: golangci reports Pos.Filename absolute,
+// since harness/linters/go.sh runs it with --path-mode abs.
+func golangciDoc(path, fromLinter, text string, line, col int) string {
+	return fmt.Sprintf(`{"Issues":[{"FromLinter":%q,"Text":%q,"Severity":"","Pos":{"Filename":%q,"Line":%d,"Column":%d}}]}`,
+		fromLinter, text, path, line, col)
+}
+
+// eslintDoc is a minimal ESLint JSON report with one file result and one
+// message, the shape lintfind.ParseESLint reads. path is the absolute path
+// the case resolved for its own fixture file: ESLint resolves
+// --stdin-filename against its own cwd before reporting it, so the
+// staged-content run harness/linters/ts.sh makes lands on a real repo path
+// too.
+func eslintDoc(path, ruleID, message string, severity, line, col int) string {
+	return fmt.Sprintf(`[{"filePath":%q,"messages":[{"ruleId":%q,"message":%q,"severity":%d,"line":%d,"column":%d}]}]`,
+		path, ruleID, message, severity, line, col)
 }

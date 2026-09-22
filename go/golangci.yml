@@ -158,7 +158,9 @@ issues:
   max-same-issues: 0
 
 severity:
-  # Every personal Go rule is advisory, in the same position as the Roslyn half: this runs
-  # machine-locally over code other people wrote and are not being asked to change. The harness
-  # turns the severity into an exit status; see harness/lint-changed.sh's Go branch.
+  # warning, not error, in the same position as the Roslyn half. What decides whether a finding
+  # stops a commit is the changed-line filter, not this field, so raising it would buy nothing:
+  # this runs machine-locally over code other people wrote and are not being asked to change, and
+  # only the lines their change wrote are in scope. The field reaches lint-changed as the
+  # finding's severity; see harness/lint-changed.sh's Go branch.
   default: warning

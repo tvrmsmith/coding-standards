@@ -223,16 +223,17 @@ meaningless.
 
 ## Severity, and what blocks
 
-In an adopted repo every rule here is advisory. `harness/lint-changed.sh`'s Go branch passes
-`--issues-exit-code=0` and reports the findings without failing, so a finding never blocks a
-commit. A non-zero exit after that flag means the *run* broke, a tree that does not typecheck or
-an unreadable config, and that does fail.
+In an adopted repo a finding here blocks the commit when it touches a line the change wrote
+(ADR 0010). `harness/lint-changed.sh`'s Go branch still passes `--issues-exit-code=0`, but that
+no longer means the findings are advisory: it means golangci-lint's own exit code is reserved for
+"the *run* broke", a tree that does not typecheck or an unreadable config, while the verdict over
+a finding belongs to `lint-changed`, which reads the JSON report and keeps only what the change
+touched.
 
-The C# half no longer sits here. Its findings block the commit when they touch a changed line
-(ADR 0010), and Go joins it in the third slice of
-[issue 108](https://github.com/tvrmsmith/coding-standards/issues/108). The injected Roslyn ids
-still ship at `Warning`, for the reason this config's rules are advisory today, because this
-runs machine-locally over code other people wrote and are not being asked to change.
+The C# half no longer sits here and works the same way. The injected Roslyn ids still ship at
+`Warning` rather than `Error`, because the changed-line filter is what decides whether a warning
+stops a commit, so raising the severity would buy nothing and would red whole-repo builds over
+code other people wrote and are not being asked to change.
 
 The hub's own root module is the exception, because here the code is ours to change. The
 `gate (go)` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs this same binary
