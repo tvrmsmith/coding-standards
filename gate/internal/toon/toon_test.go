@@ -1,6 +1,8 @@
 package toon_test
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/tvrmsmith/coding-standards/gate/internal/toon"
@@ -446,20 +448,20 @@ func TestEncode_TableFloatCellCarriesTheRoundingPastTheDecimalPoint(t *testing.T
 	}
 }
 
-// TestEncode_ADR0005WorkedExample is a fixed-bytes contract. The live
-// rule, that stdout is one TOON document of a fixed shape, is ADR 0008
-// ("The machine document is the only output"). The worked example these
-// bytes are copied from, and the spec §2 ruling on Column.Precision
-// that corrected it (round, then render canonically; no padded trailing
-// zeros), are in ADR 0005, the superseded record 0008 consolidates;
-// issue 89 tracks giving 0008 a worked example, which would retire the
-// citation. Two cells depart from the 0005 example, which was written
-// against a --since run and prints scope: since and base: main@9f3c110.
-// The merge-base scope token is fixed live by ADR 0008 ("scope is one
-// of merge-base, staged, since, files"), and the base label is this
-// test's own concrete ref, since no ADR fixes one for the default mode.
-// No cell is re-derived by running the encoder.
-func TestEncode_ADR0005WorkedExample(t *testing.T) {
+// TestEncode_ADR0008WorkedExample is a fixed-bytes contract. Both halves
+// of it are live record now: ADR 0008 ("The machine document is the only
+// output") states the fixed shape, and its 2026-09-22 amendment carries
+// the worked example and the spec §2 ruling on Column.Precision that
+// corrected it (round, then render canonically; no padded trailing
+// zeros). The citation used to point at the superseded ADR 0005, which
+// held both while 0008 did not, and issue 89 closed that gap.
+//
+// The expected bytes are read out of the ADR rather than copied into
+// this file. Copied, the two would be a convention that they match; read,
+// they are one document, and an edit to either side reds here. The
+// document below is built by hand from the same example, so no cell is
+// re-derived by running the encoder.
+func TestEncode_ADR0008WorkedExample(t *testing.T) {
 	doc := toon.Doc{Fields: []toon.Field{
 		{Key: "status", Value: "fail"},
 		{Key: "tool", Value: "metric-gate/0.1.0"},
@@ -495,24 +497,37 @@ func TestEncode_ADR0005WorkedExample(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode returned error: %v", err)
 	}
-	want := "status: fail\n" +
-		"tool: metric-gate/0.1.0\n" +
-		"spec: toon/4.1.1\n" +
-		"scope: merge-base\n" +
-		"base: origin/main@9f3c110\n" +
-		"changed_methods: 4\n" +
-		"touched_lines_outside_spans: 1\n" +
-		"skipped_paths: []\n" +
-		"metrics[1|]{name|threshold|measured|failed}:\n" +
-		"  crap|30|4|2\n" +
-		"crap[4|]{file|start|end|name|complexity|coverage|score|state|action|target_coverage|reason}:\n" +
-		"  src/Ordering/Pricing.cs|18|71|Pricing.Quote|34|0.55|139.34|measured|split_method|null|null\n" +
-		"  src/Ordering/OrderService.cs|41|58|OrderService.PlaceAsync|9|0.1|68.05|measured|raise_coverage|0.363|null\n" +
-		"  src/Ordering/OrderService.cs|60|64|OrderService.Cancel|3|0.667|3.33|measured|none|null|null\n" +
-		"  src/Ordering/Order.cs|14|14|Order.get_Id|1|1|1|structural_na|none|null|null\n"
+	want := workedExampleFromADR0008(t)
 	if string(got) != want {
-		t.Errorf("Encode() =\n%s\nwant\n%s", got, want)
+		t.Errorf("Encode() =\n%s\nwant the bytes in %s\n%s", got, adr0008, want)
 	}
+}
+
+// adr0008 is the record whose amendment carries the worked example, from
+// this package's own directory.
+const adr0008 = "../../../docs/adr/0008-the-machine-document-is-the-only-output.md"
+
+// workedExampleFromADR0008 is the fenced block the ADR's 2026-09-22
+// amendment holds, which is the document the encoder has to produce.
+//
+// The ADR carries exactly one fenced block and this insists on that rather
+// than taking the first. A second block added later would otherwise silently
+// decide which one this test pins, and the wrong one read as the contract is
+// a green test over an unchecked encoder.
+func workedExampleFromADR0008(t *testing.T) string {
+	t.Helper()
+
+	text, err := os.ReadFile(adr0008)
+	if err != nil {
+		t.Fatalf("reading %s: %v", adr0008, err)
+	}
+
+	sections := strings.Split(string(text), "\n```\n")
+	if len(sections) != 3 {
+		t.Fatalf("%s holds %d fenced block(s), want exactly 1: this test reads the worked example out of that block, so it cannot tell which one is the contract",
+			adr0008, len(sections)/2)
+	}
+	return strings.TrimPrefix(sections[1], "\n") + "\n"
 }
 
 func TestEncode_NestedDocFieldIndentsTwoSpacesDeeper(t *testing.T) {
