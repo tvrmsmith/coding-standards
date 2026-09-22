@@ -60,10 +60,20 @@ test('test variant names reduce to the package they test', { skip }, () => {
 })
 
 test('two changed packages select the union of their dependents', { skip }, () => {
-  const selected = select('internal', ['internal/gitscope/a.go', 'internal/srcpath/b.go'])
-  for (const expected of ['internal/gitscope', 'internal/srcpath', 'lint/test', 'gate/test']) {
-    assert.ok(selected.includes(pkg(expected)), `${expected} missing from ${selected}`)
-  }
+  const toon = select('gate', ['gate/internal/toon/a.go'])
+  const scope = select('gate', ['gate/internal/scope/b.go'])
+  assert.ok(!toon.includes(pkg('gate/internal/scope')), 'toon alone must not select scope')
+  assert.ok(!scope.includes(pkg('gate/internal/toon')), 'scope alone must not select toon')
+  const union = [...new Set([...toon, ...scope])].sort()
+  assert.deepEqual(select('gate', ['gate/internal/toon/a.go', 'gate/internal/scope/b.go']), union)
+  assert.deepEqual(select('gate', ['gate/internal/scope/b.go', 'gate/internal/toon/a.go']), union)
+})
+
+test('a change to metric-gate selects gate/test, which builds it', { skip }, () => {
+  assert.deepEqual(select('gate', ['gate/cmd/metric-gate/main.go']), [
+    pkg('gate/cmd/metric-gate'),
+    pkg('gate/test'),
+  ])
 })
 
 test('changed files outside the unit do not widen its selection', { skip }, () => {
