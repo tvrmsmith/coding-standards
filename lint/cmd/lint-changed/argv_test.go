@@ -94,6 +94,21 @@ func TestParseWaive(t *testing.T) {
 	}
 }
 
+// A waiver keys on the language a finding carries, and findings only ever
+// carry csharp, go or ts. Any other --language records a waiver that can
+// never match, so waive refuses it instead.
+func TestParseWaiveRejectsUnknownLanguage(t *testing.T) {
+	_, err := Parse([]string{"waive", "--language", "typescript", "--path", "a.ts", "--rule", "no-console", "--reason", "why"})
+	var ue *UsageError
+	if !errors.As(err, &ue) {
+		t.Fatalf("got %v, want *UsageError", err)
+	}
+	want := "waive: unknown --language 'typescript', want one of csharp, go, ts"
+	if ue.Problem != want {
+		t.Fatalf("Problem = %q, want %q", ue.Problem, want)
+	}
+}
+
 func TestParseWaivers(t *testing.T) {
 	cmd, err := Parse([]string{"waivers"})
 	if err != nil {
