@@ -169,6 +169,50 @@ lint_changed_bin() {
   printf '%s\n' "$bin"
 }
 
+# The tail every branch ends on: one `lint-changed` process over every report that branch's run
+# produced, whose exit status is the branch's verdict. One process and not one per report, because
+# a waiver is one commit's worth of permission, and a process per report spends it on whatever
+# matched its own report without knowing another report still blocks the commit.
+#
+# With no report at all a --staged run still goes through, on an empty document in the branch's
+# own format. ADR 0010's staged-versus-disk hard stop covers every staged path and lives in
+# lint-changed, so a branch that returned early because nothing reached a report is how a commit
+# whose every staged file was deleted from the working tree went through unexamined. Returning
+# early is safe only when there is no such stop to ask for, which is every mode but --staged.
+#
+# Called as: lint_changed_run <format> <language> <empty-document> <scope-arg>... -- <report>...
+# The status is returned rather than echoed, since lint-changed's own stdout is the porcelain the
+# caller must not swallow.
+lint_changed_run() {
+  local format=$1 language=$2 empty=$3 bin report
+  shift 3
+
+  local scope=() report_args=()
+  while [ $# -gt 0 ]; do
+    [ "$1" = "--" ] && { shift; break; }
+    scope+=("$1")
+    shift
+  done
+  for report in "$@"; do
+    report_args+=(--report "$report")
+  done
+
+  if [ ${#report_args[@]} -eq 0 ] && [ "$mode" != "--staged" ]; then
+    return 0
+  fi
+
+  bin=$(lint_changed_bin) || return 1
+
+  # The ${#...[@]} guards are for bash 3.2, where expanding an empty array under `set -u` is an
+  # unbound-variable error rather than an empty expansion.
+  if [ ${#report_args[@]} -gt 0 ]; then
+    "$bin" --format "$format" --language "$language" \
+      ${scope[@]+"${scope[@]}"} "${report_args[@]}" </dev/null
+    return $?
+  fi
+  printf '%s' "$empty" | "$bin" --format "$format" --language "$language" --staged
+}
+
 # Skip, don't fail. A repo bootstrapped for one language must not have its commits blocked by a
 # branch that was never wired up. Silent under --staged, because the hook runs on every commit.
 not_wired() {

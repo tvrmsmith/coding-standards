@@ -41,7 +41,7 @@ _ts_has_eslint_bin() { [ -x "$1/node_modules/.bin/eslint" ]; }
 
 ts_lint() {
   local file pkg rel eslint_dir eslint_bin status=0 present=() pairs=() batch=()
-  local report reports=() report_args=() scope_args=() lint_changed filter_status
+  local report reports=() scope_args=() filter_status
   local report_dir=$scratch/ts-reports package_count=0
 
   # 1, not 2: nothing was linted, so this is the gate breaking rather than a surviving finding.
@@ -53,33 +53,36 @@ ts_lint() {
   # Deleted in the change, or named by --files and never there. ESLint reads the disk, so there is
   # nothing here for it to lint. The staged-versus-disk question a missing file raises is
   # lint-changed's, and it asks it across every staged path under --staged rather than only the
-  # ones that reached a report.
+  # ones that reached a report, which is why nothing here returns early: lint_changed_run at the
+  # bottom has to be reached even when no package produced a report at all.
   for file in "$@"; do
     [ -e "$file" ] && present+=("$file")
   done
-  [ ${#present[@]} -gt 0 ] || return 0
 
-  for file in "${present[@]}"; do
+  for file in ${present[@]+"${present[@]}"}; do
     if pkg=$(ancestor_with "$file" _ts_has_config); then
       pairs+=("$pkg	$file")
     else
       echo "lint-changed: no ESLint config above $file — skipped" >&2
     fi
   done
-  [ ${#pairs[@]} -gt 0 ] || return 0
-
-  lint_changed=$(lint_changed_bin) || return 1
-  mkdir -p "$report_dir" || return 1
 
   case "$mode" in
     --staged) scope_args=(--staged) ;;
     --since)  scope_args=(--since "$ref") ;;
-    --files)  scope_args=(--files "$(IFS=,; echo "${present[*]}")") ;;
+    --files)  scope_args=(--files "$(IFS=,; echo "${present[*]-}")") ;;
   esac
+
+  # Fail fast, before a single ESLint run: a filter that will not build makes every report it
+  # would have produced unreadable anyway.
+  lint_changed_bin >/dev/null || return 1
+  mkdir -p "$report_dir" || return 1
 
   # Read line by line rather than word-split: an unquoted `$(...)` splits a package or file path on
   # every space it holds and then globs each piece, so ESLint would be handed two arguments naming
-  # nothing and fail the commit over a file that does not exist.
+  # nothing and fail the commit over a file that does not exist. With no package at all the loop
+  # reads one empty line and does nothing, which is the path that leaves the tail below to ask the
+  # divergence question on its own.
   while IFS= read -r pkg; do
     [ -n "$pkg" ] || continue
     # ancestor_with starts at the parent of the path it is given, so it takes a path *inside* the
@@ -95,7 +98,7 @@ ts_lint() {
       [ -n "$file" ] || continue
       rel=${file#"$pkg"/}
       batch+=("$rel")
-    done <<<"$(printf '%s\n' "${pairs[@]}" | awk -F'\t' -v p="$pkg" '$1 == p { print $2 }')"
+    done <<<"$(printf '%s\n' ${pairs[@]+"${pairs[@]}"} | awk -F'\t' -v p="$pkg" '$1 == p { print $2 }')"
     [ ${#batch[@]} -gt 0 ] || continue
 
     # One report per package, named by count rather than by the package path, which can hold any
@@ -124,29 +127,30 @@ ts_lint() {
       # 0 and 1 both mean ESLint ran: 1 is its code for having reported an error, and the verdict
       # over a finding is lint-changed's now, not ESLint's. Anything else — a fatal config error is
       # its 2 — is the gate breaking, and it wrote no report to read.
-      0|1) reports+=("$report") ;;
-      *) status=1; echo "=== $pkg — the lint run failed ===" ;;
+      #
+      # The subshell also returns 1 when `cd` fails or the binary cannot exec, and that writes no
+      # report either. Reading an empty file as a report would have lint-changed answer "eslint:
+      # malformed JSON: EOF", blaming the report format for a cd that failed, so an empty report
+      # is named for what it is instead.
+      0|1)
+        if [ -s "$report" ]; then
+          reports+=("$report")
+        else
+          status=1
+          echo "=== $pkg — eslint produced no report ===" >&2
+        fi
+        ;;
+      *) status=1; echo "=== $pkg — the lint run failed ===" >&2 ;;
     esac
-  done <<<"$(printf '%s\n' "${pairs[@]}" | cut -f1 | sort -u)"
+  done <<<"$(printf '%s\n' ${pairs[@]+"${pairs[@]}"} | cut -f1 | sort -u)"
 
-  # Every package's report goes into one lint-changed run, named with --report. A process per
-  # report was dotnet.sh's first shape and it was wrong: a waiver is one commit's worth of
-  # permission, and each process spent whatever matched its own report without knowing another
-  # report still blocked the commit, so the waiver was burnt on a commit that never went through.
-  #
-  # A broken run is reported as 1 whatever the filter said, because a filter that read only some
-  # of the packages proves nothing about the one that blew up. rank_status is that rule.
-  #
-  # The ${#reports[@]} guard is for bash 3.2, where expanding an empty array under `set -u` is an
-  # unbound-variable error rather than an empty expansion.
-  if [ ${#reports[@]} -gt 0 ]; then
-    for report in "${reports[@]}"; do
-      report_args+=(--report "$report")
-    done
-    "$lint_changed" --format eslint --language ts "${scope_args[@]}" "${report_args[@]}" </dev/null
-    filter_status=$?
-    status=$(rank_status "$status" "$filter_status")
-  fi
+  # Every package's report goes into one lint-changed run. A broken run is reported as 1 whatever
+  # the filter said, because a filter that read only some of the packages proves nothing about the
+  # one that blew up. rank_status is that rule.
+  lint_changed_run eslint ts '[]' \
+    ${scope_args[@]+"${scope_args[@]}"} -- ${reports[@]+"${reports[@]}"}
+  filter_status=$?
+  status=$(rank_status "$status" "$filter_status")
 
   return "$status"
 }

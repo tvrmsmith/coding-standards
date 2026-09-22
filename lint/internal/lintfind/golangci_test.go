@@ -168,7 +168,9 @@ func TestParseGolangCIEmptyFromLinterIsUnparsed(t *testing.T) {
 }
 
 // TestParseGolangCIZeroLineIsUnparsed pins G7: an issue with Pos.Line 0
-// parses to one UNPARSED Finding with no Locations.
+// parses to one UNPARSED Finding that still names the file it came from. The
+// path is what keys a waiver, so throwing it away would leave the reader a
+// finding at the repo root and only a path-less waiver to clear it.
 func TestParseGolangCIZeroLineIsUnparsed(t *testing.T) {
 	root := testRoot(t)
 	writeSource(t, root, "main.go")
@@ -182,8 +184,37 @@ func TestParseGolangCIZeroLineIsUnparsed(t *testing.T) {
 	if len(findings) != 1 || findings[0].Rule != "UNPARSED" || !findings[0].IgnoresScope {
 		t.Fatalf("findings = %#v, want one UNPARSED, IgnoresScope true", findings)
 	}
-	if len(findings[0].Locations) != 0 {
-		t.Errorf("Locations = %v, want none", findings[0].Locations)
+	want := Location{Path: srcpath.Path("main.go"), StartLine: 1, StartColumn: 1, EndLine: 1}
+	if len(findings[0].Locations) != 1 || findings[0].Locations[0] != want {
+		t.Errorf("Locations = %#v, want [%#v]", findings[0].Locations, want)
+	}
+}
+
+// TestParseGolangCILineRangeBelowPosIsRefused pins the floor on LineRange.To.
+// A To below Pos.Line spans no line at all, so the scope filter would match
+// it against nothing and the finding would vanish with neither a Dropped
+// entry nor an UNPARSED marker, which is the silent drop the whole design
+// refuses. The span falls back to the issue's own line instead.
+func TestParseGolangCILineRangeBelowPosIsRefused(t *testing.T) {
+	root := testRoot(t)
+	writeSource(t, root, "main.go")
+	filename := jsonEscape(root.Abs(srcpath.Path("main.go")))
+
+	for _, to := range []int{0, 3} {
+		doc := fmt.Sprintf(
+			`{"Issues":[{"FromLinter":"revive","Text":"a finding","Pos":{"Filename":"%s","Line":4,"Column":2},"LineRange":{"From":4,"To":%d}}]}`,
+			filename, to)
+		findings, _, err := ParseGolangCI(strings.NewReader(doc), root)
+		if err != nil {
+			t.Fatalf("ParseGolangCI(To %d) err = %v, want nil", to, err)
+		}
+		if len(findings) != 1 {
+			t.Fatalf("To %d: len(findings) = %d, want 1", to, len(findings))
+		}
+		got := findings[0].Locations[0]
+		if got.StartLine != 4 || got.EndLine != 4 {
+			t.Errorf("To %d: Location = %+v, want StartLine 4, EndLine 4", to, got)
+		}
 	}
 }
 

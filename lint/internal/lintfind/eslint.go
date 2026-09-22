@@ -23,11 +23,10 @@ type eslintMessage struct {
 	Message string  `json:"message"`
 	// Severity is 2 for an error and 1 for a warning. Both block, per ADR
 	// 0010, so the numbers are read once here and the string is reportage.
-	Severity int  `json:"severity"`
-	Line     int  `json:"line"`
-	Column   int  `json:"column"`
-	EndLine  int  `json:"endLine"`
-	Fatal    bool `json:"fatal"`
+	Severity int `json:"severity"`
+	Line     int `json:"line"`
+	Column   int `json:"column"`
+	EndLine  int `json:"endLine"`
 }
 
 // ParseESLint reads ESLint's own JSON report and returns every message it
@@ -84,7 +83,11 @@ func ruleName(ruleID *string) string {
 // becomes unparsed instead.
 func placeESLintMessage(msg eslintMessage, path srcpath.Path) Finding {
 	if msg.Line == 0 {
-		return unparsed("eslint", "message carries no usable line", msg.Message)
+		// Line 1 column 1, so the report still points at the file and a waiver
+		// for it stays keyed on that path. Only a file result with no filePath
+		// at all takes the path-less route.
+		return unparsed("eslint", "message carries no usable line", msg.Message,
+			Location{Path: path, StartLine: 1, StartColumn: 1, EndLine: 1})
 	}
 	loc := eslintLocation(msg, path)
 	if msg.RuleID == nil {

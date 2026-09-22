@@ -80,9 +80,9 @@ filter proves nothing, so the branch fails the commit rather than skipping.
 
 Output is one shape across all three, whatever the linter's own format was. `lint-changed` writes
 one line per surviving finding to stdout, `path:line:column: RULE: message`, repo-relative, and
-nothing else; every header, diagnostic and waive command goes to stderr. One regex reads all three
-languages, which is what no-mistakes' `lint.extra_linters` wants, and ADR 0005/0008 already
-settled that the machine document is the only output.
+nothing else; every header, diagnostic and waive command goes to stderr. One line per surviving
+finding is what lets one regex read all three languages, which is what no-mistakes'
+`lint.extra_linters` consumes.
 
 ### Linting a checkout that cannot say which repository it is
 

@@ -165,10 +165,10 @@ func (s survivor) waivePath() srcpath.Path {
 }
 
 // reportKept prints stdout's one machine-readable line per surviving
-// finding, at its first in-scope location, and nothing else: the consumer is
+// finding, at its first in-scope location, and nothing else. The consumer is
 // no-mistakes' lint.extra_linters, which reads this stream with one regex
-// across every language, and ADR 0005/0008 already settled that the machine
-// document is the only output. The waive command that would clear each one
+// across every language, so one line per finding and no second shape is what
+// makes that one regex possible. The waive command that would clear each one
 // goes to stderr instead, the stream everything that is not a finding
 // already lives on.
 func reportKept(stdout, stderr io.Writer, bin, language string, kept []survivor) {

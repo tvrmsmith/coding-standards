@@ -163,7 +163,7 @@ test('an ESLint error on a changed line blocks the commit', { skip }, () => {
     // bug, not noise.
     assert.match(stdout, /^src\/a\.js:\d+:\d+: no-unused-vars: .+$/m)
     assert.equal(stdout.trimEnd().split('\n').length, 1, `expected one line, got:\n${stdout}`)
-    // ADR 0005/0008: the waive command is not a finding, so it lives on stderr.
+    // The waive command is not a finding, so it lives on stderr.
     assert.doesNotMatch(stdout, /waive/)
     assert.match(stderr, /waive --language ts/)
   } finally {
@@ -265,6 +265,24 @@ test('a staged file whose disk copy differs stops the run and names it', { skip 
     // before any finding is judged, which is why this branch no longer feeds ESLint on stdin.
     writeFileSync(join(f.repo, 'src/a.js'), 'export const a = 1\nexport const b = 2\nconst x = 5\n')
 
+    const { status, stdout, stderr } = lint(f.repo, f, { args: ['--staged'] })
+    assert.equal(status, 1, `expected the gate to stop\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+    assert.match(stderr, /src\/a\.js/)
+  } finally {
+    f.cleanup()
+  }
+})
+
+test('a staged file deleted from the working tree stops the commit', { skip }, () => {
+  const f = fixture()
+  try {
+    touchLineThree(f.repo)
+    git(f.repo, 'add', 'src/a.js')
+    rmSync(join(f.repo, 'src/a.js'))
+
+    // ESLint reads disk and the commit carries the index, so no package reaches a report at all
+    // and the branch has nothing to hand the filter. ADR 0010's staged-versus-disk hard stop is
+    // asked anyway, across every staged path, or this commit would ship content nothing linted.
     const { status, stdout, stderr } = lint(f.repo, f, { args: ['--staged'] })
     assert.equal(status, 1, `expected the gate to stop\nstdout:\n${stdout}\nstderr:\n${stderr}`)
     assert.match(stderr, /src\/a\.js/)

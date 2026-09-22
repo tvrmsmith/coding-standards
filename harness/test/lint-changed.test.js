@@ -442,12 +442,13 @@ describe('one invocation, every language the repo is wired for', () => {
     try {
       const { status, stdout, stderr } = capture(f.repo, ['--since', 'HEAD'], env(f))
       assert.equal(status, 1, `stdout:\n${stdout}\nstderr:\n${stderr}`)
-      // The module and the linter's own words both survive. Piping the header and the output
-      // into an undefined function discarded exactly this, leaving a blocked commit with no
-      // stated cause. golangci's stderr is let through where it happens, so the two land on
-      // different streams.
-      assert.match(stdout, /^=== \. — the lint run failed ===$/m)
+      // The module and the linter's own words both survive, on stderr. Piping the header and the
+      // output into an undefined function discarded exactly this, leaving a blocked commit with
+      // no stated cause. stdout stays the porcelain stream alone, so the banner cannot be read as
+      // a finding by the one regex no-mistakes runs over it.
+      assert.match(stderr, /^=== \. — the lint run failed ===$/m)
       assert.match(stderr, /^the config is unreadable$/m)
+      assert.equal(stdout, "main.ts:1:7: no-unused-vars: 'a' is assigned a value but never used.\n")
     } finally {
       f.cleanup()
     }
@@ -603,6 +604,30 @@ describe('the C# branch in a repository wired for .NET', () => {
       })
       assert.equal(status, 1)
       assert.match(stderr, /no dotnet on PATH/)
+    } finally {
+      f.cleanup()
+    }
+  })
+})
+
+describe('the changed-line filter every branch shares', () => {
+  // The guard lives in common.sh now that all three branches build the same binary. No go means
+  // no filter, and an unrun filter proves nothing about the code it never read, so the branch
+  // fails the commit rather than reporting a clean run on unexamined TypeScript.
+  test('no go on PATH fails rather than passing the changed TypeScript unexamined', () => {
+    const f = repository('tvrmsmith-nogo-')
+    try {
+      writeFileSync(join(f.repo, 'eslint.config.js'), 'export default []\n')
+      writeFileSync(join(f.repo, 'main.ts'), 'export const a = 1\n')
+      executable(join(f.repo, 'node_modules/.bin/eslint'), eslintStub)
+      commitAll(f.repo)
+      writeFileSync(join(f.repo, 'main.ts'), 'export const a = 2\n')
+
+      const { status, stdout, stderr } = capture(f.repo, ['--only', 'ts', '--since', 'HEAD'], {
+        PATH: pathWithout(join(f.root, 'bin'), 'go'),
+      })
+      assert.equal(status, 1, `expected the gate to fail\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+      assert.match(stderr, /no go on PATH/)
     } finally {
       f.cleanup()
     }

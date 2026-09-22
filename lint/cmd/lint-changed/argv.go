@@ -48,7 +48,6 @@ type Command struct {
 
 // FilterArgs is argv for the filter form.
 type FilterArgs struct {
-	Format   string
 	Language string
 	Mode     ScopeMode
 	// Ref is the argument --since named. Set only when Mode is ScopeSince.
@@ -61,10 +60,12 @@ type FilterArgs struct {
 	// commit's worth of permission and a process per report would spend it on
 	// whichever report happened to come first.
 	Reports []string
-	// Parser is the lintfind.Parser --format resolved to. It is resolved at
-	// parse time, alongside every other usage mistake, rather than at read
-	// time, so an unknown --format is a usage error and not a report-reading
-	// failure blamed on whichever report happened to come first.
+	// Parser is the lintfind.Parser --format resolved to, and the only thing
+	// that survives --format. It is resolved at parse time, alongside every
+	// other usage mistake, rather than at read time, so an unknown --format is
+	// a usage error and not a report-reading failure blamed on whichever
+	// report happened to come first. Keeping the format string beside it would
+	// make a FilterArgs whose two halves disagree constructible.
 	Parser lintfind.Parser
 }
 
@@ -115,6 +116,7 @@ func Parse(args []string) (Command, error) {
 
 func parseFilter(args []string) (FilterArgs, error) {
 	var fa FilterArgs
+	format := ""
 	modeSet := false
 
 	for i := 0; i < len(args); i++ {
@@ -124,7 +126,7 @@ func parseFilter(args []string) (FilterArgs, error) {
 			if err != nil {
 				return FilterArgs{}, err
 			}
-			fa.Format, i = v, next
+			format, i = v, next
 		case "--language":
 			v, next, err := flagValue(args, i, "--language")
 			if err != nil {
@@ -165,10 +167,10 @@ func parseFilter(args []string) (FilterArgs, error) {
 		}
 	}
 
-	if fa.Format == "" {
+	if format == "" {
 		return FilterArgs{}, &UsageError{Problem: "--format is required"}
 	}
-	parser, err := formatParser(fa.Format)
+	parser, err := formatParser(format)
 	if err != nil {
 		return FilterArgs{}, err
 	}

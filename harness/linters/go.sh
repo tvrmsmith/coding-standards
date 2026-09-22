@@ -30,7 +30,7 @@ _go_has_mod() { [ -f "$1/go.mod" ]; }
 
 go_lint() {
   local file module dir rel status=0 present=() pairs=() packages=()
-  local report reports=() report_args=() scope_args=() lint_changed filter_status
+  local report reports=() scope_args=() filter_status
   local report_dir=$scratch/go-reports module_count=0
 
   # Which repos are adopted is state the Go side has nowhere else to keep: nothing is installed in
@@ -49,36 +49,39 @@ go_lint() {
   # Deleted in the change, or named by --files and never there. golangci-lint reads the disk, so
   # there is nothing here for it to lint. The staged-versus-disk question a missing file raises is
   # lint-changed's, and it asks it across every staged path under --staged rather than only the
-  # ones that reached a report.
+  # ones that reached a report, which is why nothing here returns early: lint_changed_run at the
+  # bottom has to be reached even when no module produced a report at all.
   for file in "$@"; do
     [ -e "$file" ] && present+=("$file")
   done
-  [ ${#present[@]} -gt 0 ] || return 0
 
   # The module a file belongs to: nearest ancestor holding a go.mod. golangci-lint has to run from
   # there — outside a module it reports "directory prefix does not contain main module" and finds
   # nothing — and a monorepo can hold several.
-  for file in "${present[@]}"; do
+  for file in ${present[@]+"${present[@]}"}; do
     if module=$(ancestor_with "$file" _go_has_mod); then
       pairs+=("$module	$(dirname "$file")	$repo_root/$file")
     else
       echo "lint-changed: no go.mod above $file — skipped" >&2
     fi
   done
-  [ ${#pairs[@]} -gt 0 ] || return 0
-
-  lint_changed=$(lint_changed_bin) || return 1
-  mkdir -p "$report_dir" || return 1
 
   case "$mode" in
     --staged) scope_args=(--staged) ;;
     --since)  scope_args=(--since "$ref") ;;
-    --files)  scope_args=(--files "$(IFS=,; echo "${present[*]}")") ;;
+    --files)  scope_args=(--files "$(IFS=,; echo "${present[*]-}")") ;;
   esac
+
+  # Fail fast, before a single golangci run: a filter that will not build makes every report it
+  # would have produced unreadable anyway.
+  lint_changed_bin >/dev/null || return 1
+  mkdir -p "$report_dir" || return 1
 
   # Read line by line rather than word-split: an unquoted `$(...)` splits a module or file path on
   # every space it holds and then globs each piece, which is the one thing the NUL-delimited
-  # changed set upstream exists to prevent.
+  # changed set upstream exists to prevent. With no module at all the loop reads one empty line
+  # and does nothing, which is the path that leaves the tail below to ask the divergence question
+  # on its own.
   while IFS= read -r module; do
     [ -n "$module" ] || continue
     packages=()
@@ -100,14 +103,14 @@ go_lint() {
         rel=${dir#"$module"/}
       fi
       packages+=("./$rel")
-    done <<<"$(printf '%s\n' "${pairs[@]}" | awk -F'\t' -v m="$module" '$1 == m { print $2 }' | sort -u)"
+    done <<<"$(printf '%s\n' ${pairs[@]+"${pairs[@]}"} | awk -F'\t' -v m="$module" '$1 == m { print $2 }' | sort -u)"
 
     # One report per module, named by count rather than by the module path, which can hold any
     # byte a directory name can.
     module_count=$((module_count + 1))
     report=$report_dir/$module_count.json
 
-    # Four of these flags are load-bearing, so each gets its reason.
+    # Every one of these flags is load-bearing, so each gets its reason.
     #
     # --path-mode abs so the reported paths resolve inside the repo whatever directory golangci
     # decided to make them relative to.
@@ -132,31 +135,22 @@ go_lint() {
       --show-stats=false --max-issues-per-linter 0 --max-same-issues 0 \
       --output.json.path "$report" "${packages[@]}") </dev/null; then
       status=1
-      echo "=== $module — the lint run failed ==="
+      # stderr, not stdout: stdout carries one porcelain finding line and nothing else, and a
+      # banner on it is a line no-mistakes' one regex can read.
+      echo "=== $module — the lint run failed ===" >&2
       continue
     fi
 
     reports+=("$report")
-  done <<<"$(printf '%s\n' "${pairs[@]}" | cut -f1 | sort -u)"
+  done <<<"$(printf '%s\n' ${pairs[@]+"${pairs[@]}"} | cut -f1 | sort -u)"
 
-  # Every module's report goes into one lint-changed run, named with --report. A process per
-  # report was dotnet.sh's first shape and it was wrong: a waiver is one commit's worth of
-  # permission, and each process spent whatever matched its own report without knowing another
-  # report still blocked the commit, so the waiver was burnt on a commit that never went through.
-  #
-  # A broken run is reported as 1 whatever the filter said, because a filter that read only some
-  # of the modules proves nothing about the one that blew up. rank_status is that rule.
-  #
-  # The ${#reports[@]} guard is for bash 3.2, where expanding an empty array under `set -u` is an
-  # unbound-variable error rather than an empty expansion.
-  if [ ${#reports[@]} -gt 0 ]; then
-    for report in "${reports[@]}"; do
-      report_args+=(--report "$report")
-    done
-    "$lint_changed" --format golangci --language go "${scope_args[@]}" "${report_args[@]}" </dev/null
-    filter_status=$?
-    status=$(rank_status "$status" "$filter_status")
-  fi
+  # Every module's report goes into one lint-changed run. A broken run is reported as 1 whatever
+  # the filter said, because a filter that read only some of the modules proves nothing about the
+  # one that blew up. rank_status is that rule.
+  lint_changed_run golangci go '{"Issues":[]}' \
+    ${scope_args[@]+"${scope_args[@]}"} -- ${reports[@]+"${reports[@]}"}
+  filter_status=$?
+  status=$(rank_status "$status" "$filter_status")
 
   return "$status"
 }

@@ -31,19 +31,34 @@ function git(cwd, ...args) {
  * Stands in for the personal golangci-lint binary. It writes one issue to the file named by
  * `--output.json.path`, at the line and column the case asks for, and exits `STUB_EXIT`.
  *
- * Reading that flag out of argv in the space-separated form is deliberate coupling: pinning the
- * spelling go.sh actually passes is half of what these cases are for. `--output.json.path=FILE`,
- * or the report going to stdout, leaves `out` empty and the stub fails loudly rather than letting
- * the branch report a clean run on a report nobody wrote.
+ * Reading the flags out of argv is deliberate coupling: pinning the spelling go.sh actually
+ * passes is half of what these cases are for, and every flag checked here is one whose loss is
+ * invisible to a case that reports a single issue.
+ *
+ * `--output.json.path FILE` in the space-separated form, because `--output.json.path=FILE` or the
+ * report going to stdout leaves `out` empty and would let the branch report a clean run on a
+ * report nobody wrote. `--show-stats=false`, because the stats summary real golangci prints
+ * otherwise lands straight in the porcelain stream. `--max-issues-per-linter 0` and
+ * `--max-same-issues 0`, because golangci's defaults of 50 and 3 truncate silently, which is the
+ * silent drop the design exists to prevent. `--path-mode abs`, because a relative path resolves
+ * against the wrong directory in a monorepo submodule.
  *
  * The filename is absolute under $PWD because go.sh runs the linter from inside the module, which
  * is also the directory --path-mode abs makes golangci's own paths absolute against.
  */
 const stubSource = `#!/bin/sh
 out=
+path_mode=
+show_stats=
+per_linter=
+same_issues=
 while [ $# -gt 0 ]; do
   case "$1" in
     --output.json.path) out=$2; shift 2 ;;
+    --path-mode) path_mode=$2; shift 2 ;;
+    --show-stats=*) show_stats=\${1#--show-stats=}; shift ;;
+    --max-issues-per-linter) per_linter=$2; shift 2 ;;
+    --max-same-issues) same_issues=$2; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -54,6 +69,16 @@ if [ -z "$out" ]; then
   echo "stub: no --output.json.path in argv" >&2
   exit 9
 fi
+
+require() {
+  [ "$2" = "$3" ] && return 0
+  echo "stub: wanted $1 $3 in argv, got '$2'" >&2
+  exit 9
+}
+require --path-mode "$path_mode" abs
+require --show-stats "$show_stats" false
+require --max-issues-per-linter "$per_linter" 0
+require --max-same-issues "$same_issues" 0
 
 cat >"$out" <<JSON
 {"Issues":[{"FromLinter":"stub","Text":"stub finding","Pos":{"Filename":"$PWD/main.go","Line":\${STUB_LINE:-3},"Column":\${STUB_COLUMN:-2}}}]}
@@ -97,8 +122,8 @@ function fixture() {
 const neutralised = { TVRMSMITH_REGISTRY_KEY: undefined, TVRMSMITH_GOLANGCI_CONFIG: undefined }
 
 /** @returns {{ status: number, stdout: string, stderr: string }} */
-function lint(cwd, { root, registry, stub }, env = {}) {
-  const result = spawnSync(script, ['--only', 'go', '--since', 'HEAD'], {
+function lint(cwd, { root, registry, stub }, env = {}, args = ['--since', 'HEAD']) {
+  const result = spawnSync(script, ['--only', 'go', ...args], {
     cwd,
     encoding: 'utf8',
     env: {
@@ -218,10 +243,43 @@ test('two modules report through one filter run', { skip }, () => {
   }
 })
 
+/**
+ * Asserts a clean pass that reported nothing. Both halves matter: without the changed file the
+ * changed set is empty and the branch reports nothing whatever the registry said, and without the
+ * status an exit 1 with empty stdout would read as a skip.
+ */
+function assertSkipped(result) {
+  const { status, stdout, stderr } = result
+  assert.equal(status, 0, `expected a clean skip\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+  assert.doesNotMatch(stdout, /stub finding/)
+}
+
+test('a staged file deleted from the working tree stops the commit', { skip }, () => {
+  const f = fixture()
+  try {
+    writeFileSync(f.registry, `${f.repo}\n`)
+    writeFileSync(join(f.repo, 'main.go'), 'package main\n\nfunc main() { _ = 1 }\n')
+    git(f.repo, 'add', 'main.go')
+    rmSync(join(f.repo, 'main.go'))
+
+    // golangci reads disk and the commit carries the index, so no module reaches a report at all
+    // and the branch has nothing to hand the filter. ADR 0010's staged-versus-disk hard stop is
+    // asked anyway, across every staged path, or this commit would ship content nothing linted.
+    const { status, stdout, stderr } = lint(f.repo, f, {}, ['--staged'])
+    assert.equal(status, 1, `expected the gate to stop\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+    assert.match(stderr, /main\.go/)
+  } finally {
+    f.cleanup()
+  }
+})
+
 test('an unregistered repository is skipped rather than linted', { skip }, () => {
   const f = fixture()
   try {
-    assert.doesNotMatch(lint(f.repo, f).stdout, /stub finding/)
+    // The change the sibling case below is linted for. Without it there is nothing for the
+    // registry lookup to gate, and the case would pass with the lookup deleted.
+    writeFileSync(join(f.repo, 'main.go'), 'package main\n\nfunc main() { _ = 1 }\n')
+    assertSkipped(lint(f.repo, f))
   } finally {
     f.cleanup()
   }
@@ -256,7 +314,7 @@ test('a worktree of an unregistered repository is still skipped', { skip }, () =
   const f = fixture()
   try {
     writeFileSync(join(f.worktree, 'main.go'), 'package main\n\nfunc main() { _ = 3 }\n')
-    assert.doesNotMatch(lint(f.worktree, f).stdout, /stub finding/)
+    assertSkipped(lint(f.worktree, f))
   } finally {
     f.cleanup()
   }
@@ -268,7 +326,7 @@ test('TVRMSMITH_REGISTRY_KEY names the checkout a detached worktree cannot resol
     writeFileSync(f.registry, `${f.repo}\n`)
     const gate = detachedCheckout(f)
     // Resolving for itself, this checkout is in no registry, and the skip reads as clean.
-    assert.doesNotMatch(lint(gate, f).stdout, /stub finding/)
+    assertSkipped(lint(gate, f))
     assert.match(lint(gate, f, { TVRMSMITH_REGISTRY_KEY: f.repo }).stdout, /stub finding/)
   } finally {
     f.cleanup()
@@ -282,7 +340,7 @@ test('an override naming an unregistered path still skips', { skip }, () => {
     // pinned, the variable is a door into linting any repo and nothing would notice the drift.
     writeFileSync(f.registry, `${f.repo}\n`)
     const gate = detachedCheckout(f)
-    assert.doesNotMatch(lint(gate, f, { TVRMSMITH_REGISTRY_KEY: gate }).stdout, /stub finding/)
+    assertSkipped(lint(gate, f, { TVRMSMITH_REGISTRY_KEY: gate }))
   } finally {
     f.cleanup()
   }

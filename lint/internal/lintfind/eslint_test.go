@@ -130,7 +130,7 @@ func TestParseESLintFatalMessageIsUnparsed(t *testing.T) {
 		Rule:         "UNPARSED",
 		Severity:     "error",
 		IgnoresScope: true,
-		Message:      findings[0].Message,
+		Message:      "eslint: message carries no ruleId: Parsing error: Unexpected token",
 		Locations:    []Location{{Path: srcpath.Path("bad.js"), StartLine: 2, StartColumn: 1, EndLine: 2}},
 	}
 	if !reflect.DeepEqual(findings[0], want) {
@@ -183,7 +183,9 @@ func TestParseESLintDropsMessageOutsideRoot(t *testing.T) {
 }
 
 // TestParseESLintNoLineIsUnparsed pins E6: a message with no line at all
-// parses to one UNPARSED Finding with no Locations.
+// parses to one UNPARSED Finding that still names the file it came from. The
+// path is what keys a waiver, so throwing it away would leave the reader a
+// finding at the repo root and only a path-less waiver to clear it.
 func TestParseESLintNoLineIsUnparsed(t *testing.T) {
 	root := testRoot(t)
 	writeSource(t, root, "a.js")
@@ -197,8 +199,9 @@ func TestParseESLintNoLineIsUnparsed(t *testing.T) {
 	if len(findings) != 1 || findings[0].Rule != "UNPARSED" || !findings[0].IgnoresScope {
 		t.Fatalf("findings = %#v, want one UNPARSED, IgnoresScope true", findings)
 	}
-	if len(findings[0].Locations) != 0 {
-		t.Errorf("Locations = %v, want none", findings[0].Locations)
+	want := Location{Path: srcpath.Path("a.js"), StartLine: 1, StartColumn: 1, EndLine: 1}
+	if len(findings[0].Locations) != 1 || findings[0].Locations[0] != want {
+		t.Errorf("Locations = %#v, want [%#v]", findings[0].Locations, want)
 	}
 }
 

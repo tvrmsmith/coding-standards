@@ -1,8 +1,11 @@
 package main
 
 import (
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/tvrmsmith/coding-standards/lint/internal/lintfind"
 )
 
 func TestParseFilterRequiresFormat(t *testing.T) {
@@ -151,12 +154,26 @@ func TestParseFilterRejectsUnknownFormat(t *testing.T) {
 	}
 }
 
-func TestParseFilterAcceptsGolangCIFormat(t *testing.T) {
-	cmd, err := Parse([]string{"--format", "golangci", "--language", "go", "--staged"})
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	if cmd.Filter.Parser == nil {
-		t.Fatal("got a nil Parser, want lintfind.ParseGolangCI")
+// Each --format resolves to its own parser, compared by function identity:
+// a non-nil check would pass just as well if --format golangci resolved to
+// the SARIF parser, and reading golangci JSON with the wrong parser is the
+// one mistake parse-time resolution exists to prevent.
+func TestParseFilterResolvesEachFormatToItsParser(t *testing.T) {
+	for _, tc := range []struct {
+		format string
+		want   lintfind.Parser
+	}{
+		{"sarif", lintfind.ParseSARIF},
+		{"golangci", lintfind.ParseGolangCI},
+		{"eslint", lintfind.ParseESLint},
+	} {
+		cmd, err := Parse([]string{"--format", tc.format, "--language", "go", "--staged"})
+		if err != nil {
+			t.Fatalf("Parse(--format %s): %v", tc.format, err)
+		}
+		got := reflect.ValueOf(cmd.Filter.Parser).Pointer()
+		if got != reflect.ValueOf(tc.want).Pointer() {
+			t.Errorf("--format %s resolved to another parser", tc.format)
+		}
 	}
 }

@@ -26,7 +26,8 @@ type Finding struct {
 
 // Location is a span in one file, inclusive of both lines. StartColumn is the
 // only column: nothing scopes on columns (ADR 0003/0007 scope on lines) and
-// the one output line this package prints carries a single column.
+// the one output line lint-changed prints per finding carries a single
+// column.
 type Location struct {
 	Path        srcpath.Path
 	StartLine   int

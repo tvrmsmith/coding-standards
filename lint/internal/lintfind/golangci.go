@@ -29,9 +29,11 @@ type golangciPos struct {
 	Column   int    `json:"Column"`
 }
 
+// golangciLineRange is read for To alone. From repeats Pos.Line on every
+// issue golangci attaches a range to, and a span starts where its issue is
+// reported.
 type golangciLineRange struct {
-	From int `json:"From"`
-	To   int `json:"To"`
+	To int `json:"To"`
 }
 
 // ParseGolangCI reads golangci-lint's own JSON report and returns every issue
@@ -75,7 +77,11 @@ func placeGolangCIIssue(issue golangciIssue, root srcpath.Root) (Finding, Droppe
 	}
 
 	if issue.Pos.Line == 0 {
-		return unparsed("golangci", "issue carries no usable line", issue.Text), Dropped{}, true
+		// Line 1 column 1, so the report still points at the file and a waiver
+		// for it stays keyed on that path. Only an entry with no path at all
+		// takes the path-less route.
+		return unparsed("golangci", "issue carries no usable line", issue.Text,
+			Location{Path: path, StartLine: 1, StartColumn: 1, EndLine: 1}), Dropped{}, true
 	}
 	if issue.FromLinter == "" {
 		return unparsed("golangci", "issue carries no linter", issue.Text, golangciLocation(issue, path)), Dropped{}, true
@@ -110,9 +116,14 @@ func ignoresGolangCIScope(linter string) bool {
 // otherwise, since golangci attaches a LineRange to some issues and not
 // others and ADR 0010 scopes on every line of a span. StartColumn falls back
 // to 1 when golangci writes 0, which the typecheck linter genuinely does.
+//
+// A To below Pos.Line is refused the same way, since the scope filter wants
+// line >= StartLine && line <= EndLine and such a span matches no line at
+// all, so the finding would vanish with neither a Dropped entry nor an
+// UNPARSED marker. Every sibling parser defends its span the same way.
 func golangciLocation(issue golangciIssue, path srcpath.Path) Location {
 	endLine := issue.Pos.Line
-	if issue.LineRange != nil {
+	if issue.LineRange != nil && issue.LineRange.To >= issue.Pos.Line {
 		endLine = issue.LineRange.To
 	}
 	startColumn := issue.Pos.Column

@@ -106,7 +106,7 @@ describe('lint-changed.sh --only dotnet', () => {
       assert.match(stdout, /CS0219/)
       assert.match(stdout, /src\/Foo\.cs/)
       // Decision 4: the printed waive command is the only route past a false positive. It goes to
-      // stderr, because stdout carries nothing but the one finding line per ADR 0005/0008.
+      // stderr, because stdout carries nothing but one porcelain line per surviving finding.
       assert.match(stderr, /waive/)
       assert.doesNotMatch(stdout, /waive/)
     } finally {

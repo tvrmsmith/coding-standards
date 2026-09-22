@@ -45,8 +45,8 @@ _dotnet_has_csproj() { ls "$1"/*.csproj >/dev/null 2>&1; }
 
 dotnet_lint() {
   local file proj dir out build_status status=0 pairs=() projects project_count
-  local files=() prefix sarif sarifs=() found filter_status filter_ran=0
-  local scope_args=() report_args=() lint_changed errorlog_props
+  local files=() prefix sarif sarifs=() found filter_status
+  local scope_args=() errorlog_props
   local sarif_dir=$scratch/dotnet-sarif
 
   # Whether this repo is adopted is a question the props file already answers: it carries one
@@ -120,8 +120,9 @@ dotnet_lint() {
 
   # The blocking half, built by common.sh now that the Go branch wants the same binary. It reads
   # the SARIF below, keeps only the findings touching a changed line, applies any waiver, and sets
-  # the exit status.
-  lint_changed=$(lint_changed_bin) || return 1
+  # the exit status. Built here, before a single build runs, because a filter that will not build
+  # makes every SARIF it would have produced unreadable anyway.
+  lint_changed_bin >/dev/null || return 1
 
   case "$mode" in
     --staged) scope_args=(--staged) ;;
@@ -212,40 +213,15 @@ dotnet_lint() {
     fi
   done <<<"$projects"
 
-  # Every report goes into one lint-changed run, named with --report. A process per report was the
-  # first shape and it was wrong: a waiver is one commit's worth of permission, and each process
-  # spent whatever matched its own report without knowing another report still blocked the commit,
-  # so the waiver was burnt on a commit that never went through. One process sees the whole
-  # commit's findings and makes one spend decision. Merging the SARIF here instead would mean this
+  # Every report goes into one lint-changed run. Merging the SARIF here instead would mean this
   # branch understanding SARIF, which is the one thing handing the job to lint-changed buys.
   #
   # A broken run is reported as 1 whatever else happened, because a filter that did not run proves
   # nothing; 2 only survives when nothing broke.
-  #
-  # The ${#sarifs[@]} guard is for bash 3.2, where expanding an empty array under `set -u` is an
-  # unbound-variable error rather than an empty expansion.
-  #
-  # With no report at all, a --staged run still goes through, on a SARIF carrying no results. The
-  # staged-versus-disk hard stop covers every staged path and lives in lint-changed, so skipping
-  # the run when nothing was built is how a commit whose every staged .cs was deleted from the
-  # working tree went through unexamined.
-  if [ ${#sarifs[@]} -gt 0 ]; then
-    for sarif in "${sarifs[@]}"; do
-      report_args+=(--report "$sarif")
-    done
-    "$lint_changed" --format sarif --language csharp "${scope_args[@]}" "${report_args[@]}" </dev/null
-    filter_status=$?
-    filter_ran=1
-  elif [ "$mode" = "--staged" ]; then
-    printf '%s' '{"version":"2.1.0","runs":[{"results":[]}]}' \
-      | "$lint_changed" --format sarif --language csharp --staged
-    filter_status=$?
-    filter_ran=1
-  fi
-
-  if [ $filter_ran -eq 1 ]; then
-    status=$(rank_status "$status" "$filter_status")
-  fi
+  lint_changed_run sarif csharp '{"version":"2.1.0","runs":[{"results":[]}]}' \
+    ${scope_args[@]+"${scope_args[@]}"} -- ${sarifs[@]+"${sarifs[@]}"}
+  filter_status=$?
+  status=$(rank_status "$status" "$filter_status")
 
   return "$status"
 }
