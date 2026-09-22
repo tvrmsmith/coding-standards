@@ -9,9 +9,10 @@ import (
 )
 
 // runSpend marks one or more already-matched waivers spent against the
-// current index tree. It is the dispatcher's call alone: the dispatcher is
-// the only thing that has seen every language branch's report and knows the
-// whole commit went through.
+// current index tree. It is the dispatcher's call alone, and only on a full
+// --staged run with no --only: that run is the only thing that has seen every
+// language branch's report for a commit and knows the whole commit went
+// through.
 //
 // This still runs from a pre-commit hook, before git has actually written the
 // commit: a developer who aborts the commit message editor after every branch

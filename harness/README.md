@@ -85,7 +85,9 @@ permission. With a filter per branch, a commit touching Go and TypeScript spent 
 Go's clean share, then TypeScript blocked the commit, and the waiver was gone with no commit behind
 it. The filter itself never spends: it writes the id of every waiver it matched to a file, and
 `lint-changed.sh` spends them only when the total status is 0, so a branch that broke or a finding
-that survived anywhere in the run leaves every waiver unspent.
+that survived anywhere in the run leaves every waiver unspent. It spends only on a full `--staged`
+run, the pre-commit hook's: a `--since` or `--files` run makes no commit, and an `--only` run lints
+one language of one, so those runs pass a waived finding and leave the waiver unspent.
 
 Under `--staged` that process runs even when no branch produced a report, as long as at least one
 branch reached the point of handing its reports up. ADR 0010's staged-versus-disk hard stop lives in
@@ -313,7 +315,8 @@ the symlink to this hub, and an audit log must not land inside a repo the gate g
 `lint-changed.sh` is the only thing that spends. A `lint-changed` filter run invoked directly
 reports each waiver it matched on stderr and leaves it unspent, however clean the run, because a
 direct run is not a commit. The dispatcher spends through `lint-changed spend --waiver <id>`, only
-after every branch and the filter came back clean.
+on a full `--staged` run with no `--only`, and only after every branch and the filter came back
+clean.
 
 The two skips below defeat every check at once, which is why the hook no longer offers them:
 

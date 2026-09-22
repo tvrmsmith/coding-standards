@@ -188,7 +188,9 @@ A waiver is **spent** only on a run that ends clean, because one use is one comm
 went through. The run is the whole commit's lint, every language it touches: one filter reads every
 branch's reports, and the dispatcher spends what it matched only once no branch broke and no finding
 survived. A waiver matched on a run something else blocked is reported as matched and left unspent.
-Only the dispatcher spends, so a filter run invoked directly spends nothing however clean it ends,
+Only a full `--staged` dispatcher run spends, the pre-commit hook's run. A `--since` or `--files`
+run makes no commit and an `--only` run lints one language of one, so each passes a waived finding
+and leaves the waiver unspent. A filter run invoked directly spends nothing however clean it ends,
 because a direct run is not a commit. A spend records the index tree it was spent against, so
 retrying the same commit reuses the waiver rather than burning a second.
 

@@ -27,7 +27,10 @@
 # one `lint-changed` run over every branch's reports decides what survives, after the last branch.
 # One run and not one per branch, because a waiver is one commit's worth of permission: a filter
 # per branch spent a waiver on its own language's clean share while another language still blocked
-# the commit. The filter never spends. This script does, once, when the whole run came back 0.
+# the commit. The filter never spends. This script does, once, and only on a full --staged run
+# that came back 0: that is the pre-commit hook, the one run whose clean result is a commit going
+# through. A --since or --files run is not a commit, and an --only run is one language's share of
+# one, so neither spends; a waiver they match still passes the finding and stays unspent.
 #
 # So a branch returns 0 or 1, and only the filter returns 2. The aggregate is not plain
 # highest-wins: a 1 from any branch dominates the filter's 2. A branch that could not run proves
@@ -121,10 +124,11 @@ run_filter
 filter_status=$?
 status=$(rank_status "$status" "$filter_status")
 
-# Spent here and nowhere else, and only on a clean total. A waiver is one commit's worth of
-# permission, and a commit goes through only when no branch broke and no finding survived, so
-# spending on any lesser verdict burns it on a commit git never makes.
-if [ "$status" -eq 0 ] && [ -s "$matched_waivers" ]; then
+# Spent here and nowhere else, and only on a clean total of a full --staged run. A waiver is one
+# commit's worth of permission, and a commit goes through only when no branch broke and no finding
+# survived, so spending on any lesser verdict burns it on a commit git never makes. --since and
+# --files make no commit, and --only sees one language of it.
+if [ "$status" -eq 0 ] && [ "$mode" = --staged ] && [ -z "$only" ] && [ -s "$matched_waivers" ]; then
   spend_waivers || status=1
 fi
 
