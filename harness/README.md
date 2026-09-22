@@ -45,7 +45,7 @@ plugins `base.js` imports.
 | --- | --- |
 | `eslint-layer.js` | Loads the package's own ESLint config, spreads the personal preset after it. The layering, and the typed-layer gate. |
 | `lint-changed.sh` | The one entrypoint. Resolves the repo, computes the changed set, runs every language branch that applies. `--only` runs a single one. |
-| `linters/common.sh` | What every branch shares: argument parsing, repo resolution, the changed set, the scratch directory, the ancestor walk each language owns a predicate for, `lint_changed_bin`, which builds the filter once per run and memoises the path to a file, and `rank_status`, the one place the ADR 0010 exit convention is folded. |
+| `linters/common.sh` | What every branch shares: argument parsing, repo resolution, the changed set, the scratch directory, the ancestor walk each language owns a predicate for, `lint_changed_bin`, which builds the filter once per run and memoises the path to a file, `lint_changed_run`, the one `lint-changed` call every branch ends on, and `rank_status`, the one place the ADR 0010 exit convention is folded. |
 | `linters/ts.sh` | Lints the changed JavaScript and TypeScript, each file through its own package's ESLint binary, to a JSON report, then hands every report to one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
 | `linters/dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then hands every report to one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
 | `errorlog.props` | Sets `ErrorLog` for that build, imported through `CustomAfterMicrosoftCommonTargets`. MSBuild owns the report name because it has to expand `$(TargetFramework)` per inner build and escape the comma before the version suffix; the branch passes only the prefix. |
@@ -72,6 +72,12 @@ into a machine-readable report, then hands every report from that run to one `li
 process, which keeps the findings touching a line the change wrote, spends any waiver and sets
 the status. Severity does not tier: an ESLint severity-1 warning blocks exactly as a severity-2
 error does.
+
+Under `--staged` that process runs even when the branch produced no report at all, on an empty
+document in the branch's own format. ADR 0010's staged-versus-disk hard stop lives in
+`lint-changed` and covers every staged path, so a branch that returned early because nothing
+reached a report is how a commit whose staged files were all deleted from the working tree used
+to go through unexamined.
 
 So every branch needs Go on `PATH`, even in a repo with no Go in it. `linters/common.sh` builds
 `lint-changed` from this hub into `${XDG_CACHE_HOME:-~/.cache}/coding-standards` once per run,
