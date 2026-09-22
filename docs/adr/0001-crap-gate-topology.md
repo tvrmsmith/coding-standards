@@ -47,7 +47,7 @@ Path normalization has to be deliberate. Coverlet reported `private/tmp/crapspan
 
 A method whose span contains no instrumentable lines is treated as fully covered rather than unknown, which is what makes the "trivial members exclude themselves arithmetically" assumption true. A method that cannot be attributed at all is excluded from scoring, reported with a typed reason, and fails the run if such methods exceed a fraction of the changed set, so a broken join can never pass as untested code.
 
-**Amended 2026-09-02.** "Exceed a fraction of the changed set" is superseded. **Any single `unknown` fails the run**, with no tolerated fraction and no tunable. A fraction needs a number, and no evidence sets one: the honest default is zero, at which point the fraction is a knob whose only safe position is off. Worse, a tolerance means the gate can pass while holding a method it could not measure, which is the same class of silent false pass the span join exists to prevent. The typed reason and the exclusion from scoring both stand, and [ADR 0005](0005-the-machine-document-is-the-only-output.md) keeps the table present on that failure so the reader sees which method broke.
+**Amended 2026-09-02.** "Exceed a fraction of the changed set" is superseded. **Any single `unknown` fails the run**, with no tolerated fraction and no tunable. A fraction needs a number, and no evidence sets one: the honest default is zero, at which point the fraction is a knob whose only safe position is off. Worse, a tolerance means the gate can pass while holding a method it could not measure, which is the same class of silent false pass the span join exists to prevent. The typed reason and the exclusion from scoring both stand, and [ADR 0005](https://github.com/tvrmsmith/coding-standards/blob/3fd48d4ad6c2a98d2332fb872ab319e80658bb91/docs/adr/0005-the-machine-document-is-the-only-output.md) keeps the table present on that failure so the reader sees which method broke.
 
 **Amended 2026-09-09.** "Treated as fully covered rather than unknown" needs one qualification.
 Structural n/a is earned rather than assumed. A file carrying no instrumentable line at all across
@@ -65,7 +65,7 @@ consulted, so every argument above stands. But two distinct methods can occupy o
 changed-method set on the span alone silently collapsed them into one row, and rejecting the pair as a duplicated
 report failed valid input. The gate therefore keys a method on `(file, name, startLine, endLine, signature)`, where
 `signature` is the parameter spelling
-[ADR 0006](0006-the-csharp-extractor-is-written-in-house.md) makes the extractor emit. The two overloads then score
+[ADR 0006](https://github.com/tvrmsmith/coding-standards/blob/3fd48d4ad6c2a98d2332fb872ab319e80658bb91/docs/adr/0006-the-csharp-extractor-is-written-in-house.md) makes the extractor emit. The two overloads then score
 as two rows against the same attributed lines, which is the honest answer, since line coverage cannot tell which
 overload a hit belongs to. Nothing about the async and state-machine reasoning changes, because a mangled
 identifier still never appears on either side. (This paragraph first spelled the tuple without `name`. That was a
