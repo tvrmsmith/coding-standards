@@ -130,7 +130,7 @@ func (f *fixture) installPreCommitHook(report string) {
 	if err := os.MkdirAll(hooks, 0o750); err != nil {
 		f.t.Fatal(err)
 	}
-	script := fmt.Sprintf("#!/bin/sh\nexport TVRMSMITH_WAIVERS=%q\nexec %q --format sarif --language csharp --staged --report %q\n",
+	script := fmt.Sprintf("#!/bin/sh\nexport TVRMSMITH_WAIVERS=%q\nexec %q --format sarif --staged --report %q\n",
 		f.waiverFile, filepath.Join(binDir, "lint-changed"), report)
 	if err := os.WriteFile(filepath.Join(hooks, "pre-commit"), []byte(script), 0o700); err != nil { //nolint:gosec // G306: a hook git will not run is no hook.
 		f.t.Fatal(err)
@@ -202,21 +202,27 @@ type runResult struct {
 	stderr   string
 }
 
-// run executes lint-changed in the fixture repo with sarif on stdin.
-func (f *fixture) run(sarif string, args ...string) runResult {
+// run executes lint-changed in the fixture repo. doc, when non-empty, is
+// written to its own report file and named with a trailing --report, so it
+// rides whichever --format the caller's own args already put in force: the
+// stdin form is gone, and this is what stands in for it at every call site
+// that used to hand doc to lint-changed on stdin.
+func (f *fixture) run(doc string, args ...string) runResult {
 	f.t.Helper()
-	return f.runInDir(f.root, sarif, args...)
+	return f.runInDir(f.root, doc, args...)
 }
 
 // runInDir is run started in dir rather than the fixture root, which is how
 // a case drives lint-changed outside any git repository at all.
-func (f *fixture) runInDir(dir, sarif string, args ...string) runResult {
+func (f *fixture) runInDir(dir, doc string, args ...string) runResult {
 	f.t.Helper()
+	if doc != "" {
+		args = append(args, "--report", writeReport(f.t, "report.sarif", doc))
+	}
 	//nolint:gosec // binDir holds the lint-changed TestMain built from this module's own source, so the executable is this package's build output rather than anything a case can name
 	cmd := exec.Command(filepath.Join(binDir, "lint-changed"), args...)
 	cmd.Dir = dir
 	cmd.Env = append(append(scrubbedEnv(), gitEnv...), "TVRMSMITH_WAIVERS="+f.waiverFile)
-	cmd.Stdin = strings.NewReader(sarif)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -141,16 +141,17 @@ threshold. It has a rule.
 ## Finding
 
 One diagnostic, as the linter reported it: a rule id, a message, a severity left as the tool said
-it, and one or more **locations**. A location is a span in one source file, inclusive of both lines,
+it, the language the parser for that report format stamps on it, and one or more **locations**. A location is a span in one source file, inclusive of both lines,
 carrying the column its first line starts at. Nothing scopes on the column, which is there so the
 reported line can point at the finding. Primary and related locations are the same kind of thing
 here, because the in-scope rule treats them alike.
 
-The rule, the message and the locations are the whole identity. Two reports carrying all three the
-same are one finding, not two, so a project built for several target frameworks and a file linked
-into two projects each report their warning once. Neither the framework nor the owning project is
-part of what the tool judges, and a duplicate would print twice and demand a second **waiver** for
-one line of code.
+The language, the rule, the message and the locations are the whole identity. The language is in it
+because one filter reads every language's reports, and the same rule id can mean unrelated things in
+two languages. Two reports carrying all four the same are one finding, not two, so a project built
+for several target frameworks and a file linked into two projects each report their warning once.
+Neither the framework nor the owning project is part of what the tool judges, and a duplicate would
+print twice and demand a second **waiver** for one line of code.
 
 ## In scope
 
@@ -184,9 +185,12 @@ no path keys on the language and the rule alone, which is the only route out of 
 finding, since that arrives with no location to name.
 
 A waiver is **spent** only on a run that ends clean, because one use is one commit that actually
-went through. A waiver matched on a run something else blocked is reported as matched and left
-unspent. A spend records the index tree it was spent against, so retrying the same commit reuses
-the waiver rather than burning a second.
+went through. The run is the whole commit's lint, every language it touches: one filter reads every
+branch's reports, and the dispatcher spends what it matched only once no branch broke and no finding
+survived. A waiver matched on a run something else blocked is reported as matched and left unspent.
+Only the dispatcher spends, so a filter run invoked directly spends nothing however clean it ends,
+because a direct run is not a commit. A spend records the index tree it was spent against, so
+retrying the same commit reuses the waiver rather than burning a second.
 
 Spending is what makes a waiver an escape hatch rather than a permanent exception. Nothing in the
 log is ever rewritten, so the file is the audit.

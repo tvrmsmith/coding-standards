@@ -15,9 +15,11 @@
 # share this process now, so an `exit 0` meaning "nothing here for me" would cancel the languages
 # that had not run yet.
 #
-# What it returns is the one convention all three share, ADR 0010's: 2 when a finding survived and
-# the gate says stop, 1 when the branch itself could not answer, 0 otherwise. `rank_status` below
-# is that convention as code, for every place two of these codes have to be folded into one.
+# A branch runs its linter and hands the reports to `add_reports` rather than judging them itself.
+# It returns 1 when it could not answer and 0 otherwise, never 2: whether a finding survived is the
+# one filter's call, made by the dispatcher over every branch's reports at once. ADR 0010's
+# convention, 2 for a finding and 1 for the gate breaking, is `rank_status` below, which folds
+# each branch's status and then the filter's into one.
 #
 # Written for bash 3.2 (the macOS system bash).
 
@@ -126,9 +128,9 @@ rank_status() {
   esac
 }
 
-# The blocking half every branch hands its reports to. `lint-changed` is language-neutral: it
-# reads a linter's own report, keeps the findings touching a changed line, applies any waiver and
-# sets the exit status. This echoes the binary's path, or returns 1 with the reason on stderr.
+# The blocking half every branch's reports go to. `lint-changed` is language-neutral: it reads a
+# linter's own report, keeps the findings touching a changed line, applies any waiver and sets the
+# exit status. This echoes the binary's path, or returns 1 with the reason on stderr.
 #
 # Built here rather than bootstrapped, because Go's build cache makes a rebuild of an unchanged
 # tree cost milliseconds against a dotnet build's seconds, and building every time is one less
@@ -169,48 +171,72 @@ lint_changed_bin() {
   printf '%s\n' "$bin"
 }
 
-# The tail every branch ends on: one `lint-changed` process over every report that branch's run
-# produced, whose exit status is the branch's verdict. One process and not one per report, because
-# a waiver is one commit's worth of permission, and a process per report spends it on whatever
-# matched its own report without knowing another report still blocks the commit.
-#
-# With no report at all a --staged run still goes through, on an empty document in the branch's
-# own format. ADR 0010's staged-versus-disk hard stop covers every staged path and lives in
-# lint-changed, so a branch that returned early because nothing reached a report is how a commit
-# whose every staged file was deleted from the working tree went through unexamined. Returning
-# early is safe only when there is no such stop to ask for, which is every mode but --staged.
-#
-# Called as: lint_changed_run <format> <language> <empty-document> <scope-arg>... -- <report>...
-# The status is returned rather than echoed, since lint-changed's own stdout is the porcelain the
-# caller must not swallow.
-lint_changed_run() {
-  local format=$1 language=$2 empty=$3 bin report
-  shift 3
+# Every report the branches produced, as `lint-changed` argv, and every changed file they own that
+# is on disk. The dispatcher runs one filter over the lot after the last branch, because a waiver
+# is one commit's worth of permission, and a filter per branch spent it on whatever matched its
+# own language's share without knowing another language still blocked the commit.
+filter_reports=()
+filter_files=()
 
-  local scope=() report_args=()
-  while [ $# -gt 0 ]; do
-    [ "$1" = "--" ] && { shift; break; }
-    scope+=("$1")
-    shift
-  done
+# Where the one filter run writes the id of every waiver it matched, one per line. The filter never
+# spends: the dispatcher does, and only once the whole commit has come back clean.
+matched_waivers=$scratch/matched-waivers
+
+# The tail every branch ends on, in place of running a filter of its own: `--format <format>` and a
+# `--report` per path onto filter_reports. The --format goes on even with no report at all, so a
+# non-empty filter_reports means at least one branch reached its tail, which is what tells
+# run_filter a --staged commit still needs its staged-versus-disk check.
+#
+# Called as: add_reports <format> [<report>...]
+add_reports() {
+  local report
+  filter_reports+=(--format "$1")
+  shift
   for report in "$@"; do
-    report_args+=(--report "$report")
+    filter_reports+=(--report "$report")
   done
+}
 
-  if [ ${#report_args[@]} -eq 0 ] && [ "$mode" != "--staged" ]; then
-    return 0
-  fi
+# The one `lint-changed` process over every report every branch handed in. The status is returned
+# rather than echoed, since lint-changed's own stdout is the porcelain the caller must not swallow.
+#
+# No branch reaching its tail runs nothing, the way an unadopted repo's commits stay unblocked.
+# With branches that reached it but produced no report, a --staged run still goes through, since
+# ADR 0010's staged-versus-disk hard stop covers every staged path and lives in lint-changed: a
+# commit whose every staged file was deleted from the working tree reaches no linter, and skipping
+# the filter is how it would pass unexamined. Every other mode has no such stop to ask for.
+run_filter() {
+  local bin arg scope=() has_report=0
+
+  [ ${#filter_reports[@]} -gt 0 ] || return 0
+  for arg in "${filter_reports[@]}"; do
+    [ "$arg" = "--report" ] && has_report=1
+  done
+  [ $has_report -eq 1 ] || [ "$mode" = "--staged" ] || return 0
+
+  # Built once here rather than per branch, so a new mode or a change to how --files joins its list
+  # cannot land in one branch and leave another scoping against the wrong base.
+  case "$mode" in
+    --staged) scope=(--staged) ;;
+    --since) scope=(--since "$ref") ;;
+    --files) scope=(--files "$(IFS=,; echo "${filter_files[*]-}")") ;;
+  esac
 
   bin=$(lint_changed_bin) || return 1
+  "$bin" "${scope[@]}" --matched-waivers "$matched_waivers" "${filter_reports[@]}" </dev/null
+}
 
-  # The ${#...[@]} guards are for bash 3.2, where expanding an empty array under `set -u` is an
-  # unbound-variable error rather than an empty expansion.
-  if [ ${#report_args[@]} -gt 0 ]; then
-    "$bin" --format "$format" --language "$language" \
-      ${scope[@]+"${scope[@]}"} "${report_args[@]}" </dev/null
-    return $?
-  fi
-  printf '%s' "$empty" | "$bin" --format "$format" --language "$language" --staged
+# Marks every waiver the filter matched as spent. The dispatcher calls it only on a clean total, so
+# a branch that broke, which git will not commit past, spends nothing.
+spend_waivers() {
+  local bin id waivers=()
+  while IFS= read -r id; do
+    [ -n "$id" ] && waivers+=(--waiver "$id")
+  done <"$matched_waivers"
+  [ ${#waivers[@]} -gt 0 ] || return 0
+
+  bin=$(lint_changed_bin) || return 1
+  "$bin" spend "${waivers[@]}" </dev/null
 }
 
 # Skip, don't fail. A repo bootstrapped for one language must not have its commits blocked by a

@@ -23,7 +23,7 @@ func stageEdit(f *fixture, rel string) {
 }
 
 func filterArgs(extra ...string) []string {
-	return append([]string{"--format", "sarif", "--language", "csharp"}, extra...)
+	return append([]string{"--format", "sarif"}, extra...)
 }
 
 // 1. A finding on a touched line survives, exit 2, and stdout carries
@@ -227,8 +227,21 @@ func TestEveryStdoutLineMatchesThePorcelainRegex(t *testing.T) {
 	}
 }
 
-// 7. A matching unspent waiver suppresses a survivor, exit 0, and the
-// waiver is spent against the index tree sha.
+// waiverID pulls the id out of the line runWaive prints: "recorded waiver
+// <id>: ...".
+func waiverID(t *testing.T, stdout string) string {
+	t.Helper()
+	fields := strings.Fields(stdout)
+	if len(fields) < 3 || fields[0] != "recorded" || fields[1] != "waiver" {
+		t.Fatalf("stdout does not start with 'recorded waiver <id>': %q", stdout)
+	}
+	return strings.TrimSuffix(fields[2], ":")
+}
+
+// 7. A matching unspent waiver suppresses a survivor, exit 0, and the filter
+// itself never spends it: spend is the dispatcher's own separate step, taken
+// only once every language branch has come back clean. --matched-waivers
+// records exactly the id that matched.
 func TestMatchingWaiverSuppresses(t *testing.T) {
 	f := newFixture(t)
 	stageEdit(f, "Foo.cs")
@@ -238,13 +251,31 @@ func TestMatchingWaiverSuppresses(t *testing.T) {
 	if waived.exitCode != 0 {
 		t.Fatalf("waive: exit code = %d, stderr: %s", waived.exitCode, waived.stderr)
 	}
+	id := waiverID(t, waived.stdout)
 
-	res := f.run(sarifDoc(sarifResult("TVRM0001", "msg", sarifLoc("Foo.cs", 3, 3))), filterArgs("--staged")...)
+	matchedFile := filepath.Join(t.TempDir(), "matched.txt")
+	res := f.run(sarifDoc(sarifResult("TVRM0001", "msg", sarifLoc("Foo.cs", 3, 3))),
+		filterArgs("--staged", "--matched-waivers", matchedFile)...)
 	if res.exitCode != 0 {
 		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
 	}
-	if !strings.Contains(res.stderr, "suppressed") {
-		t.Fatalf("stderr missing the suppression notice: %s", res.stderr)
+	if !strings.Contains(res.stderr, "waiver "+id+" matched TVRM0001 on Foo.cs") {
+		t.Fatalf("stderr missing the match notice: %s", res.stderr)
+	}
+	got, err := os.ReadFile(matchedFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(got)) != id {
+		t.Fatalf("matched-waivers file = %q, want exactly the matched id %q", got, id)
+	}
+	if lines := f.waiverLogLines(); len(lines) != 1 {
+		t.Fatalf("waiver log has %d lines, want 1: the filter alone must not spend", len(lines))
+	}
+
+	spent := f.run("", "spend", "--waiver", id)
+	if spent.exitCode != 0 {
+		t.Fatalf("spend: exit code = %d, stderr: %s", spent.exitCode, spent.stderr)
 	}
 
 	lines := f.waiverLogLines()
@@ -267,12 +298,17 @@ func TestCrossProcessWaiverRoundTrip(t *testing.T) {
 	if waived.exitCode != 0 {
 		t.Fatalf("waive: exit code = %d, stderr: %s", waived.exitCode, waived.stderr)
 	}
+	id := waiverID(t, waived.stdout)
 
 	doc := sarifDoc(sarifResult("TVRM0001", "msg", sarifLoc("Foo.cs", 3, 3)))
 
 	suppressed := f.run(doc, filterArgs("--staged")...)
 	if suppressed.exitCode != 0 {
 		t.Fatalf("second process: exit code = %d, want 0\nstdout: %s\nstderr: %s", suppressed.exitCode, suppressed.stdout, suppressed.stderr)
+	}
+	spent := f.run("", "spend", "--waiver", id)
+	if spent.exitCode != 0 {
+		t.Fatalf("spend: exit code = %d, stderr: %s", spent.exitCode, spent.stderr)
 	}
 
 	// A different index tree: stage a second file so write-tree changes.
@@ -285,17 +321,24 @@ func TestCrossProcessWaiverRoundTrip(t *testing.T) {
 	}
 }
 
-// 9. Two runs against the same index tree spend the waiver once, not
-// twice, so a retried commit does not burn a second waiver.
+// 9 (contract scenario 21). Spending the same waiver twice against the same
+// index tree is idempotent: a retried commit that calls spend again does not
+// burn a second waiver. This is the property that bounds the damage of
+// spend running before git has written the commit: a developer who aborts
+// the commit message editor after every branch already returned clean has
+// spent a waiver with no commit behind it, and the retry that follows must
+// reuse that spend rather than pay for it twice. A change to Store.Spend
+// that broke this would only show up as an extra waiver burned on a routine
+// retry, not as a crash.
 func TestSameTreeSpendsWaiverOnce(t *testing.T) {
 	f := newFixture(t)
 	stageEdit(f, "Foo.cs")
 
-	f.run("", "waive", "--language", "csharp", "--path", "Foo.cs", "--rule", "TVRM0001", "--reason", "known false positive")
-	doc := sarifDoc(sarifResult("TVRM0001", "msg", sarifLoc("Foo.cs", 3, 3)))
+	waived := f.run("", "waive", "--language", "csharp", "--path", "Foo.cs", "--rule", "TVRM0001", "--reason", "known false positive")
+	id := waiverID(t, waived.stdout)
 
-	first := f.run(doc, filterArgs("--staged")...)
-	second := f.run(doc, filterArgs("--staged")...)
+	first := f.run("", "spend", "--waiver", id)
+	second := f.run("", "spend", "--waiver", id)
 	if first.exitCode != 0 || second.exitCode != 0 {
 		t.Fatalf("exit codes = %d, %d, want 0, 0", first.exitCode, second.exitCode)
 	}
@@ -303,6 +346,47 @@ func TestSameTreeSpendsWaiverOnce(t *testing.T) {
 	lines := f.waiverLogLines()
 	if len(lines) != 2 {
 		t.Fatalf("waiver log has %d lines, want 2 (one record, one spend)", len(lines))
+	}
+}
+
+// Contract scenario 23. Names the window between the filter returning 0 and
+// the dispatcher calling spend: the dispatcher can die in that window
+// (crash, killed process, machine loses power) before the spend lands. The
+// safe direction is that nothing gets spent, the waiver survives untouched,
+// and the next run against the same index tree matches it again exactly as
+// before. That falls out of spend being a separate append that never
+// happened, which is exactly why this needs its own assertion: a future
+// change that moved the spend earlier, into the filter itself, would invert
+// the safe direction silently, and no test that only calls spend would
+// notice.
+func TestFilterAloneNeverSpendsAcrossRepeatedRuns(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "Foo.cs")
+
+	waived := f.run("", "waive", "--language", "csharp", "--path", "Foo.cs", "--rule", "TVRM0001", "--reason", "known false positive")
+	id := waiverID(t, waived.stdout)
+	doc := sarifDoc(sarifResult("TVRM0001", "msg", sarifLoc("Foo.cs", 3, 3)))
+
+	first := f.run(doc, filterArgs("--staged")...)
+	if first.exitCode != 0 {
+		t.Fatalf("first run: exit code = %d, want 0\nstdout: %s\nstderr: %s", first.exitCode, first.stdout, first.stderr)
+	}
+	if !strings.Contains(first.stderr, "waiver "+id+" matched") {
+		t.Fatalf("first run: stderr missing the match notice: %s", first.stderr)
+	}
+
+	// No spend call here: this is the dispatcher dying in the window between
+	// the filter returning 0 and the spend it would otherwise have issued.
+	second := f.run(doc, filterArgs("--staged")...)
+	if second.exitCode != 0 {
+		t.Fatalf("second run: exit code = %d, want 0\nstdout: %s\nstderr: %s", second.exitCode, second.stdout, second.stderr)
+	}
+	if !strings.Contains(second.stderr, "waiver "+id+" matched") {
+		t.Fatalf("second run: stderr missing the match notice: %s", second.stderr)
+	}
+
+	if lines := f.waiverLogLines(); len(lines) != 1 {
+		t.Fatalf("waiver log has %d line(s), want 1: the filter alone must never spend, however many times it runs", len(lines))
 	}
 }
 
@@ -324,8 +408,8 @@ func TestStagedFileDirtyIsHardStop(t *testing.T) {
 	}
 }
 
-// 11. Malformed stdin exits 1, not 2.
-func TestMalformedStdinExitsOne(t *testing.T) {
+// 11. A malformed report exits 1, not 2.
+func TestMalformedReportExitsOne(t *testing.T) {
 	f := newFixture(t)
 	stageEdit(f, "Foo.cs")
 
@@ -336,9 +420,9 @@ func TestMalformedStdinExitsOne(t *testing.T) {
 	}
 }
 
-// 12. Missing --format, missing --language, and two of
-// --staged/--since/--files together each exit 1 with a message naming what
-// is wrong.
+// 12. A --report with no --format before it, --language (deleted from the
+// filter form), and two of --staged/--since/--files together each exit 1
+// with a message naming what is wrong.
 func TestUsageErrorsExitOne(t *testing.T) {
 	f := newFixture(t)
 
@@ -351,9 +435,9 @@ func TestUsageErrorsExitOne(t *testing.T) {
 		// spellings also appears in the usage banner the error prints under
 		// itself, so asserting on the flag alone passes against a binary that
 		// diagnosed nothing and printed the banner.
-		{"missing format", []string{"--language", "csharp", "--staged"}, "lint-changed: --format is required"},
-		{"missing language", []string{"--format", "sarif", "--staged"}, "lint-changed: --language is required"},
-		{"two scopes", []string{"--format", "sarif", "--language", "csharp", "--staged", "--since", "main"},
+		{"report with no format", []string{"--staged", "--report", "a.json"}, "lint-changed: --report a.json has no --format before it"},
+		{"language is not a filter flag", []string{"--staged", "--language", "csharp"}, "lint-changed: unknown argument '--language'"},
+		{"two scopes", []string{"--format", "sarif", "--staged", "--since", "main"},
 			"lint-changed: only one of --staged, --since, --files may be given"},
 	}
 	for _, c := range cases {
@@ -397,7 +481,8 @@ func TestWaiversListsRecordedWaivers(t *testing.T) {
 		t.Fatalf("stdout = %q, want empty before any waiver is recorded", before.stdout)
 	}
 
-	f.run("", "waive", "--language", "csharp", "--path", "Foo.cs", "--rule", "TVRM0001", "--reason", "known false positive")
+	recorded := f.run("", "waive", "--language", "csharp", "--path", "Foo.cs", "--rule", "TVRM0001", "--reason", "known false positive")
+	id := waiverID(t, recorded.stdout)
 
 	afterRecord := f.run("", "waivers")
 	if afterRecord.exitCode != 0 || !strings.Contains(afterRecord.stdout, "unspent") {
@@ -405,6 +490,7 @@ func TestWaiversListsRecordedWaivers(t *testing.T) {
 	}
 
 	f.run(sarifDoc(sarifResult("TVRM0001", "msg", sarifLoc("Foo.cs", 3, 3))), filterArgs("--staged")...)
+	f.run("", "spend", "--waiver", id)
 
 	afterSpend := f.run("", "waivers")
 	if !strings.Contains(afterSpend.stdout, "spent against") {
@@ -472,7 +558,8 @@ func TestWaiverIsNotSpentOnABlockingRun(t *testing.T) {
 	f.write("Foo.cs", "line1\nCHANGED\nCHANGED\nline4\nline5\n")
 	f.stage("Foo.cs")
 
-	f.run("", "waive", "--language", "csharp", "--path", "Foo.cs", "--rule", "TVRM0001", "--reason", "a false positive")
+	recorded := f.run("", "waive", "--language", "csharp", "--path", "Foo.cs", "--rule", "TVRM0001", "--reason", "a false positive")
+	id := waiverID(t, recorded.stdout)
 	doc := sarifDoc(
 		sarifResult("TVRM0001", "the waived one", sarifLoc("Foo.cs", 2, 2)),
 		sarifResult("TVRM0002", "the real one", sarifLoc("Foo.cs", 3, 3)),
@@ -490,6 +577,10 @@ func TestWaiverIsNotSpentOnABlockingRun(t *testing.T) {
 	clean := f.run(sarifDoc(sarifResult("TVRM0001", "the waived one", sarifLoc("Foo.cs", 2, 2))), filterArgs("--staged")...)
 	if clean.exitCode != 0 {
 		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", clean.exitCode, clean.stdout, clean.stderr)
+	}
+	spent := f.run("", "spend", "--waiver", id)
+	if spent.exitCode != 0 {
+		t.Fatalf("spend: exit code = %d, stderr: %s", spent.exitCode, spent.stderr)
 	}
 	if lines := f.waiverLogLines(); len(lines) != 2 {
 		t.Fatalf("waiver log has %d lines, want 2 (record + spend)", len(lines))
@@ -664,6 +755,81 @@ func TestReportsAreFilteredInOneRun(t *testing.T) {
 	}
 }
 
+// 15. A waiver keyed on one language's rule does not leak into another
+// language's finding sharing that same rule string. This is the bug the
+// single filter process exists to fix: language joined the waiver match key
+// and the dedup key, so Go's TVRM0001 and C#'s TVRM0001 stay two distinct
+// things the log can waive independently.
+func TestWaiverDoesNotLeakAcrossLanguages(t *testing.T) {
+	f := newFixture(t)
+	// Both files' base content lands in one commit so that staging either
+	// edit below never drags the other's still-staged change into HEAD, the
+	// way commitAll after stageEdit would.
+	f.write("Foo.cs", baseFile)
+	f.write("main.go", baseFile)
+	f.commitAll("base")
+	f.write("Foo.cs", "line1\nline2\nCHANGED\nline4\nline5\n")
+	f.stage("Foo.cs")
+	f.write("main.go", "line1\nline2\nCHANGED\nline4\nline5\n")
+	f.stage("main.go")
+
+	waived := f.run("", "waive", "--language", "go", "--path", "main.go", "--rule", "TVRM0001", "--reason", "known false positive in the go linter")
+	if waived.exitCode != 0 {
+		t.Fatalf("waive: exit code = %d, stderr: %s", waived.exitCode, waived.stderr)
+	}
+
+	goReport := writeReport(t, "go.json", golangciDoc(f.absPath("main.go"), "TVRM0001", "go finding", 3, 1))
+	csReport := writeReport(t, "cs.sarif", sarifDoc(sarifResult("TVRM0001", "csharp finding", sarifLoc("Foo.cs", 3, 3))))
+
+	res := f.run("", "--format", "golangci", "--report", goReport, "--format", "sarif", "--report", csReport, "--staged")
+
+	if res.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2: the C# finding must still block\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if strings.Contains(res.stdout, "main.go") {
+		t.Fatalf("the go finding was not suppressed by its own waiver: %s", res.stdout)
+	}
+	if !strings.Contains(res.stdout, "Foo.cs:3") {
+		t.Fatalf("stdout does not report the surviving C# finding: %s", res.stdout)
+	}
+}
+
+// 18. A report that cannot even be opened does not swallow a finding another
+// report held: the unreadable report is named on stderr, and the run still
+// blocks at exit 2 on the finding the readable report carried.
+func TestUnreadableReportBesideARealFindingExitsTwo(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "Foo.cs")
+	missing := filepath.Join(t.TempDir(), "missing.sarif")
+	found := writeReport(t, "real.sarif", sarifDoc(sarifResult("TVRM0001", "no getter", sarifLoc("Foo.cs", 3, 3))))
+
+	res := f.run("", filterArgs("--staged", "--report", missing, "--report", found)...)
+
+	if res.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+	if !strings.Contains(res.stderr, "could not read report") || !strings.Contains(res.stderr, "missing.sarif") {
+		t.Fatalf("stderr does not name the unreadable report: %s", res.stderr)
+	}
+	if !strings.Contains(res.stdout, "TVRM0001") {
+		t.Fatalf("the real finding never reached stdout: %s", res.stdout)
+	}
+}
+
+// 22. Spending an id nothing recorded exits 1, naming the id.
+func TestSpendUnknownWaiverExitsOne(t *testing.T) {
+	f := newFixture(t)
+
+	res := f.run("", "spend", "--waiver", "does-not-exist")
+
+	if res.exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1\nstderr: %s", res.exitCode, res.stderr)
+	}
+	if !strings.Contains(res.stderr, "does-not-exist") {
+		t.Fatalf("stderr does not name the unknown id: %s", res.stderr)
+	}
+}
+
 // writeReport puts a SARIF document in its own file and returns the path, for
 // the cases that drive --report rather than stdin.
 func writeReport(t *testing.T, name, doc string) string {
@@ -813,7 +979,7 @@ func TestGolangCIFormatEndToEnd(t *testing.T) {
 	stageEdit(f, "main.go")
 	doc := golangciDoc(f.absPath("main.go"), "forbidigo", "use of `fmt.Println` forbidden", 3, 2)
 
-	res := f.run(doc, "--format", "golangci", "--language", "go", "--staged")
+	res := f.run(doc, "--format", "golangci", "--staged")
 
 	if res.exitCode != 2 {
 		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
@@ -832,7 +998,7 @@ func TestGolangCITypecheckIgnoresScope(t *testing.T) {
 	text := ": # gcltest\n./bad.go:1:28: syntax error: unexpected {, expected )"
 	doc := golangciDoc(f.absPath("bad.go"), "typecheck", text, 1, 0)
 
-	res := f.run(doc, "--format", "golangci", "--language", "go", "--staged")
+	res := f.run(doc, "--format", "golangci", "--staged")
 
 	if res.exitCode != 2 {
 		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
@@ -851,7 +1017,7 @@ func TestESLintFormatEndToEnd(t *testing.T) {
 	stageEdit(f, "a.js")
 	doc := eslintDoc(f.absPath("a.js"), "no-unused-vars", "'x' is assigned a value but never used.", 2, 3, 7)
 
-	res := f.run(doc, "--format", "eslint", "--language", "ts", "--staged")
+	res := f.run(doc, "--format", "eslint", "--staged")
 
 	if res.exitCode != 2 {
 		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
@@ -871,7 +1037,7 @@ func TestESLintSpanningATouchedLineSurvives(t *testing.T) {
 	stageEdit(f, "a.js")
 	doc := eslintDocSpan(f.absPath("a.js"), "no-unreachable", "Unreachable code.", 2, 1, 5, 4)
 
-	res := f.run(doc, "--format", "eslint", "--language", "ts", "--staged")
+	res := f.run(doc, "--format", "eslint", "--staged")
 
 	if res.exitCode != 2 {
 		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)
@@ -893,7 +1059,7 @@ func TestESLintNonFatalNullRuleIDOnAnUntouchedLineDoesNotBlock(t *testing.T) {
 		`[{"filePath":%q,"messages":[{"ruleId":null,"severity":1,"message":"Unused eslint-disable directive (no problems were reported).","line":1,"column":1}]}]`,
 		f.absPath("a.js"))
 
-	res := f.run(doc, "--format", "eslint", "--language", "ts", "--staged")
+	res := f.run(doc, "--format", "eslint", "--staged")
 
 	if res.exitCode != 0 {
 		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", res.exitCode, res.stdout, res.stderr)

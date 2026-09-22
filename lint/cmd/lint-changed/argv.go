@@ -1,7 +1,9 @@
-// Command lint-changed reads a linter report on stdin, keeps only the
+// Command lint-changed is the blocking half of a pre-commit lint gate. It
+// reads one or more linter reports named by --report, keeps only the
 // findings that touch lines the commit changed, lets a one-shot waiver
-// suppress one of them, and exits non-zero if any survive. It is the
-// blocking half of a pre-commit lint gate.
+// suppress one of them, and exits non-zero if any survive. A separate spend
+// form marks a matched waiver as used, once the dispatcher that called the
+// filter knows the whole commit went through.
 //
 // argv is parsed by hand rather than through the flag package, for the
 // reason gate/internal/scope gives: flag exits 2 on a usage mistake and lets
@@ -16,18 +18,23 @@ import (
 	"github.com/tvrmsmith/coding-standards/lint/internal/lintfind"
 )
 
-// Kind is which of lint-changed's three forms argv named.
+// Kind is which of lint-changed's four forms argv named.
 type Kind int
 
 const (
-	// KindFilter reads a report on stdin and scopes it to the diff. No word
-	// on the command line spells it; anything not "waive" or "waivers"
-	// means this.
+	// KindFilter reads every --report named, scopes the findings to the
+	// diff, and lets a waiver suppress a survivor. Anything not "waive",
+	// "waivers" or "spend" means this.
 	KindFilter Kind = iota
 	// KindWaive records a one-shot waiver.
 	KindWaive
 	// KindWaivers lists every recorded waiver.
 	KindWaivers
+	// KindSpend marks one or more already-matched waivers spent against the
+	// current index tree. Separate from the filter form because only the
+	// dispatcher, which sees every language branch, knows the commit was
+	// clean.
+	KindSpend
 )
 
 // ScopeMode is which base a filter run scopes its findings against.
@@ -44,29 +51,35 @@ type Command struct {
 	Kind   Kind
 	Filter FilterArgs
 	Waive  WaiveArgs
+	Spend  SpendArgs
+}
+
+// Report is one report path and the parser that reads it, paired at parse
+// time by the --format in force when the path was given.
+type Report struct {
+	Path   string
+	Parser lintfind.Parser
 }
 
 // FilterArgs is argv for the filter form.
 type FilterArgs struct {
-	Language string
-	Mode     ScopeMode
+	Mode ScopeMode
 	// Ref is the argument --since named. Set only when Mode is ScopeSince.
 	Ref string
 	// Files is --files' comma-separated list, split. Set only when Mode is
 	// ScopeFiles.
 	Files []string
-	// Reports is every --report the caller gave. Empty means the report comes
-	// in on stdin instead. One run reads them all, because a waiver is one
-	// commit's worth of permission and a process per report would spend it on
-	// whichever report happened to come first.
-	Reports []string
-	// Parser is the lintfind.Parser --format resolved to, and the only thing
-	// that survives --format. It is resolved at parse time, alongside every
-	// other usage mistake, rather than at read time, so an unknown --format is
-	// a usage error and not a report-reading failure blamed on whichever
-	// report happened to come first. Keeping the format string beside it would
-	// make a FilterArgs whose two halves disagree constructible.
-	Parser lintfind.Parser
+	// Reports is every --report the caller gave, each paired with the parser
+	// the --format in force named. Empty is legal: it means the branches ran
+	// and produced nothing. One run reads them all, because a waiver is one
+	// commit's worth of permission and a process per report would spend it
+	// on whichever report happened to come first.
+	Reports []Report
+	// MatchedWaivers is the path --matched-waivers named, where the run
+	// writes the id of every waiver that matched, one per line. Empty means
+	// write nowhere. The filter never spends: the dispatcher is the only
+	// caller that knows whether the whole commit went through.
+	MatchedWaivers string
 }
 
 // WaiveArgs is argv for the waive form.
@@ -77,6 +90,9 @@ type WaiveArgs struct {
 	Reason   string
 }
 
+// SpendArgs is argv for the spend form.
+type SpendArgs struct{ IDs []string }
+
 // UsageError is a command line lint-changed refuses to guess at. It always
 // exits 1: a usage mistake is the tool breaking before it ever reads a
 // report, never a finding surviving.
@@ -86,13 +102,14 @@ func (e *UsageError) Error() string {
 	return "lint-changed: " + e.Problem + "\n\n" + usage
 }
 
-const usage = `usage: lint-changed --format <fmt> --language <lang> [--staged | --since <ref> | --files <a,b,...>] [--report <file> ...]
+const usage = `usage: lint-changed [--staged | --since <ref> | --files <a,b,...>] [--format <fmt> --report <file> ...] [--matched-waivers <file>]
        lint-changed waive --language <lang> [--path <p>] --rule <r> --reason <why>
-       lint-changed waivers`
+       lint-changed waivers
+       lint-changed spend --waiver <id> [--waiver <id> ...]`
 
-// Parse reads argv without the program name. "waive" and "waivers" as the
-// first argument select those two forms; anything else, including no
-// arguments at all, is read as the filter form.
+// Parse reads argv without the program name. "waive", "waivers" and "spend"
+// as the first argument select those three forms; anything else, including
+// no arguments at all, is read as the filter form.
 func Parse(args []string) (Command, error) {
 	if len(args) > 0 && args[0] == "waive" {
 		wa, err := parseWaive(args[1:])
@@ -107,6 +124,13 @@ func Parse(args []string) (Command, error) {
 		}
 		return Command{Kind: KindWaivers}, nil
 	}
+	if len(args) > 0 && args[0] == "spend" {
+		sa, err := parseSpend(args[1:])
+		if err != nil {
+			return Command{}, err
+		}
+		return Command{Kind: KindSpend, Spend: sa}, nil
+	}
 	fa, err := parseFilter(args)
 	if err != nil {
 		return Command{}, err
@@ -116,8 +140,13 @@ func Parse(args []string) (Command, error) {
 
 func parseFilter(args []string) (FilterArgs, error) {
 	var fa FilterArgs
-	format := ""
 	modeSet := false
+	// parser is the lintfind.Parser the --format currently in force
+	// resolved to, nil until the first --format. --format is sticky: it
+	// scopes every --report that follows it, until the next --format, since
+	// dotnet emits one report per target framework and go one per module,
+	// so N reports under one format is the common case.
+	var parser lintfind.Parser
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -126,13 +155,11 @@ func parseFilter(args []string) (FilterArgs, error) {
 			if err != nil {
 				return FilterArgs{}, err
 			}
-			format, i = v, next
-		case "--language":
-			v, next, err := flagValue(args, i, "--language")
+			p, err := formatParser(v)
 			if err != nil {
 				return FilterArgs{}, err
 			}
-			fa.Language, i = v, next
+			parser, i = p, next
 		case "--staged":
 			if modeSet {
 				return FilterArgs{}, &UsageError{Problem: "only one of --staged, --since, --files may be given"}
@@ -161,23 +188,21 @@ func parseFilter(args []string) (FilterArgs, error) {
 			if err != nil {
 				return FilterArgs{}, err
 			}
-			fa.Reports, i = append(fa.Reports, v), next
+			if parser == nil {
+				return FilterArgs{}, &UsageError{Problem: "--report " + v + " has no --format before it"}
+			}
+			fa.Reports, i = append(fa.Reports, Report{Path: v, Parser: parser}), next
+		case "--matched-waivers":
+			v, next, err := flagValue(args, i, "--matched-waivers")
+			if err != nil {
+				return FilterArgs{}, err
+			}
+			fa.MatchedWaivers, i = v, next
 		default:
 			return FilterArgs{}, &UsageError{Problem: "unknown argument '" + args[i] + "'"}
 		}
 	}
 
-	if format == "" {
-		return FilterArgs{}, &UsageError{Problem: "--format is required"}
-	}
-	parser, err := formatParser(format)
-	if err != nil {
-		return FilterArgs{}, err
-	}
-	fa.Parser = parser
-	if fa.Language == "" {
-		return FilterArgs{}, &UsageError{Problem: "--language is required"}
-	}
 	if !modeSet {
 		return FilterArgs{}, &UsageError{Problem: "exactly one of --staged, --since, --files is required"}
 	}
@@ -245,6 +270,26 @@ func parseWaive(args []string) (WaiveArgs, error) {
 		return WaiveArgs{}, &UsageError{Problem: "waive: --reason is required"}
 	}
 	return wa, nil
+}
+
+func parseSpend(args []string) (SpendArgs, error) {
+	var sa SpendArgs
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--waiver":
+			v, next, err := flagValue(args, i, "--waiver")
+			if err != nil {
+				return SpendArgs{}, err
+			}
+			sa.IDs, i = append(sa.IDs, v), next
+		default:
+			return SpendArgs{}, &UsageError{Problem: "unknown argument '" + args[i] + "'"}
+		}
+	}
+	if len(sa.IDs) == 0 {
+		return SpendArgs{}, &UsageError{Problem: "spend: at least one --waiver is required"}
+	}
+	return sa, nil
 }
 
 // flagValue reads the value that follows a flag spelled as two argv

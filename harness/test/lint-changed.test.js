@@ -14,8 +14,8 @@
  * findings come from a Roslyn SARIF log — so lint-changed-dotnet.test.js covers that branch against
  * a real dotnet.
  *
- * `lint-changed` itself is not stubbed, because the verdict each branch reports is now its own.
- * That needs go on PATH, so every case that reaches a branch's filter skips without it.
+ * `lint-changed` itself is not stubbed, because the verdict over every branch's reports is its own.
+ * That needs go on PATH, so every case that reaches the filter skips without it.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
 import {
@@ -23,6 +23,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -425,9 +426,9 @@ describe('one invocation, every language the repo is wired for', () => {
     try {
       const { status, stdout, stderr } = capture(f.repo, ['--since', 'HEAD'], env(f))
       assert.equal(status, 2, `stdout:\n${stdout}\nstderr:\n${stderr}`)
-      // TypeScript reports first and returns 2. Go runs after it and its finding has to reach the
-      // same stdout, or a mixed commit hands back only whichever language blocked first and the
-      // next run surfaces the rest. Asserted as the whole of stdout, in dispatch order.
+      // TypeScript reports first and Go runs after it, and both findings have to reach the same
+      // stdout, or a mixed commit hands back only whichever language blocked first and the next
+      // run surfaces the rest. Asserted as the whole of stdout, in dispatch order.
       assert.equal(stdout, bothPorcelain)
     } finally {
       f.cleanup()
@@ -512,6 +513,91 @@ describe('one invocation, every language the repo is wired for', () => {
     } finally {
       f.cleanup()
     }
+  })
+
+  describe("a waiver is one commit's worth of permission", () => {
+    /**
+     * A waiver log of the fixture's own, rather than the file-wide one, because a waiver these
+     * cases leave unspent would still match the same finding in every later fixture.
+     */
+    function waivers(f, ...findings) {
+      const log = join(f.root, 'waivers.jsonl')
+      const lines = findings.map(({ language, path, rule }) =>
+        JSON.stringify({ kind: 'waiver', id: `${language}-waiver`, language, path, rule, reason: 'test' }),
+      )
+      writeFileSync(log, lines.map((line) => `${line}\n`).join(''))
+      return log
+    }
+
+    /** @returns {object[]} every record in the log, in the order they were written */
+    const records = (log) =>
+      readFileSync(log, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+
+    const tsFinding = { language: 'ts', path: 'main.ts', rule: 'no-unused-vars' }
+    const goFinding = { language: 'go', path: 'main.go', rule: 'gorule' }
+
+    test('a waiver per finding lets the whole commit through and is spent', { skip }, () => {
+      const f = fixture()
+      try {
+        const log = waivers(f, tsFinding, goFinding)
+        const { status, stdout, stderr } = capture(f.repo, ['--since', 'HEAD'], {
+          ...env(f),
+          TVRMSMITH_WAIVERS: log,
+        })
+        assert.equal(status, 0, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        assert.equal(stdout, '')
+        assert.deepEqual(
+          records(log).map(({ kind, id }) => ({ kind, id })),
+          [
+            { kind: 'waiver', id: 'ts-waiver' },
+            { kind: 'waiver', id: 'go-waiver' },
+            { kind: 'spend', id: 'ts-waiver' },
+            { kind: 'spend', id: 'go-waiver' },
+          ],
+        )
+      } finally {
+        f.cleanup()
+      }
+    })
+
+    test('a waiver is not spent while another language still blocks', { skip }, () => {
+      // One filter process per language spent the TypeScript waiver on TypeScript's clean share,
+      // then Go blocked the commit, so the waiver was gone and the commit it paid for never made.
+      const f = fixture()
+      try {
+        const log = waivers(f, tsFinding)
+        const { status, stdout, stderr } = capture(f.repo, ['--since', 'HEAD'], {
+          ...env(f),
+          TVRMSMITH_WAIVERS: log,
+        })
+        assert.equal(status, 2, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        assert.equal(stdout, 'main.go:3:1: gorule: go finding\n')
+        assert.equal(records(log).length, 1)
+      } finally {
+        f.cleanup()
+      }
+    })
+
+    test('a waiver is not spent while another branch is broken', { skip }, () => {
+      // The filter comes back clean, since the one finding it read is waived, but the Go run broke
+      // and git will not make the commit.
+      const f = fixture({ gclExit: 3 })
+      try {
+        const log = waivers(f, tsFinding)
+        const { status, stdout, stderr } = capture(f.repo, ['--since', 'HEAD'], {
+          ...env(f),
+          TVRMSMITH_WAIVERS: log,
+        })
+        assert.equal(status, 1, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        assert.equal(stdout, '')
+        assert.equal(records(log).length, 1)
+      } finally {
+        f.cleanup()
+      }
+    })
   })
 
   test('--files with no paths lints nothing and exits 0', () => {

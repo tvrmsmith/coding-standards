@@ -9,13 +9,14 @@
 # This blocks. A compile error is the build's own verdict and fails as it always did. A warning
 # now fails too, but only when it touches a line the change actually wrote, which is the
 # per-changed-line scoping an earlier version of this header named as the missing precondition.
-# `lint-changed` does that scoping: the build writes SARIF, this branch pipes it in, and its exit
-# status becomes the branch's. Exit 2 is "a finding survived", so a hook can tell that from the
-# gate breaking. ADR 0010 carries the rule and the reasoning.
+# `lint-changed` does that scoping: the build writes SARIF, this branch hands it up, and the
+# dispatcher's one filter run over every branch's reports sets the exit status. Exit 2 is "a
+# finding survived", so a hook can tell that from the gate breaking. ADR 0010 carries the rule and
+# the reasoning.
 #
 # Severity in `Descriptors` stays at Warning, since adoption is machine-local against code other
 # people wrote and no previously-succeeding build may start failing. The build's verdict is still
-# the build's; the blocking verdict is this branch's.
+# the build's; the blocking verdict is the filter's.
 #
 # Past a genuine false positive there is one route, and `lint-changed` prints the exact command
 # for it. Waivers are one-shot, carry a reason, and live in a log outside the repo.
@@ -45,8 +46,7 @@ _dotnet_has_csproj() { ls "$1"/*.csproj >/dev/null 2>&1; }
 
 dotnet_lint() {
   local file proj dir out build_status status=0 pairs=() projects project_count
-  local files=() prefix sarif sarifs=() found filter_status
-  local scope_args=() errorlog_props
+  local files=() prefix sarif sarifs=() found errorlog_props
   local sarif_dir=$scratch/dotnet-sarif
 
   # Whether this repo is adopted is a question the props file already answers: it carries one
@@ -95,9 +95,10 @@ dotnet_lint() {
   done
 
   # The dispatcher only calls a branch that owns something, so C# is in the change by definition.
-  # An empty build set still goes on under --staged, because the staged-versus-disk hard stop
-  # below has to be asked: every staged .cs being absent from disk is exactly the case where
-  # returning here would pass the commit unexamined.
+  # An empty build set still goes on under --staged, because the staged-versus-disk hard stop in
+  # the dispatcher's filter has to be asked, and it runs only once a branch reaches add_reports:
+  # every staged .cs being absent from disk is exactly the case where returning here would pass
+  # the commit unexamined.
   [ ${#files[@]} -gt 0 ] || [ "$mode" = "--staged" ] || return 0
 
   # The project that owns a file: nearest ancestor holding a .csproj. That is also the directory
@@ -118,17 +119,11 @@ dotnet_lint() {
     [ "$project_count" -gt 4 ] && echo "lint-changed: $project_count projects to build; this will take a moment" >&2
   fi
 
-  # The blocking half, built by common.sh now that the Go branch wants the same binary. It reads
-  # the SARIF below, keeps only the findings touching a changed line, applies any waiver, and sets
-  # the exit status. Built here, before a single build runs, because a filter that will not build
-  # makes every SARIF it would have produced unreadable anyway.
+  # The blocking half, built by common.sh since every branch's reports go to the same binary. The
+  # dispatcher runs it over the SARIF below, keeping only the findings touching a changed line and
+  # applying any waiver. Built here, before a single build runs, because a filter that will not
+  # build makes every SARIF it would have produced unreadable anyway.
   lint_changed_bin >/dev/null || return 1
-
-  case "$mode" in
-    --staged) scope_args=(--staged) ;;
-    --since)  scope_args=(--since "$ref") ;;
-    --files)  scope_args=(--files "$(IFS=,; echo "${files[*]}")") ;;
-  esac
 
   mkdir -p "$sarif_dir" || return 1
 
@@ -215,15 +210,13 @@ dotnet_lint() {
     fi
   done <<<"$projects"
 
-  # Every report goes into one lint-changed run. Merging the SARIF here instead would mean this
-  # branch understanding SARIF, which is the one thing handing the job to lint-changed buys.
+  # Every report goes to the dispatcher's one filter run. Merging the SARIF here instead would mean
+  # this branch understanding SARIF, which is the one thing handing the job to lint-changed buys.
   #
-  # A broken run is reported as 1 whatever else happened, because a filter that did not run proves
+  # A broken build still hands on the reports the others wrote, beside its 1. The dispatcher
+  # reports 1 whatever the filter says, because a filter that did not read every project proves
   # nothing; 2 only survives when nothing broke.
-  lint_changed_run sarif csharp '{"version":"2.1.0","runs":[{"results":[]}]}' \
-    ${scope_args[@]+"${scope_args[@]}"} -- ${sarifs[@]+"${sarifs[@]}"}
-  filter_status=$?
-  status=$(rank_status "$status" "$filter_status")
+  add_reports sarif ${sarifs[@]+"${sarifs[@]}"}
 
   return "$status"
 }

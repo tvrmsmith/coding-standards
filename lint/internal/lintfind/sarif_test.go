@@ -136,9 +136,34 @@ func TestParseSARIFRelativeURI(t *testing.T) {
 		Locations: []Location{
 			{Path: srcpath.Path("src/OrderService.cs"), StartLine: 12, StartColumn: 1, EndLine: 12},
 		},
+		Language: LanguageCSharp,
 	}}
 	if !reflect.DeepEqual(findings, want) {
 		t.Errorf("findings = %#v, want %#v", findings, want)
+	}
+}
+
+// TestParseSARIFStampsLanguage pins scenario 1: every Finding ParseSARIF
+// returns carries the "csharp" waiver-log key, stamped by the parser rather
+// than asserted by a caller.
+func TestParseSARIFStampsLanguage(t *testing.T) {
+	root := testRoot(t)
+	writeSource(t, root, "src/Foo.cs")
+
+	doc := `{"version": "2.1.0", "runs": [{"results": [{
+		"ruleId": "TVRM0001",
+		"message": {"text": "a finding"},
+		"locations": [{"physicalLocation": {
+			"artifactLocation": {"uri": "src/Foo.cs"},
+			"region": {"startLine": 3, "endLine": 3}}}]
+	}]}]}`
+
+	findings, _, err := ParseSARIF(strings.NewReader(doc), root)
+	if err != nil {
+		t.Fatalf("ParseSARIF() err = %v, want nil", err)
+	}
+	if len(findings) != 1 || findings[0].Language != LanguageCSharp {
+		t.Fatalf("findings = %#v, want one finding with Language %q", findings, LanguageCSharp)
 	}
 }
 
@@ -386,6 +411,7 @@ func TestParseSARIFSkeletonExample(t *testing.T) {
 			{Path: srcpath.Path("src/OrderService.cs"), StartLine: 12, StartColumn: 9, EndLine: 12},
 			{Path: srcpath.Path("src/OrderService.cs"), StartLine: 14, StartColumn: 9, EndLine: 14},
 		},
+		Language: LanguageCSharp,
 	}}
 	if !reflect.DeepEqual(findings, want) {
 		t.Errorf("findings = %#v, want %#v", findings, want)

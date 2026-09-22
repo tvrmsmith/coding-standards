@@ -48,12 +48,14 @@ func TestParseESLintTwoFiles(t *testing.T) {
 			Message:   "'x' is assigned a value but never used.",
 			Severity:  "error",
 			Locations: []Location{{Path: srcpath.Path("a.js"), StartLine: 1, StartColumn: 7, EndLine: 1}},
+			Language:  LanguageTS,
 		},
 		{
 			Rule:      "no-undef",
 			Message:   "'foo' is not defined.",
 			Severity:  "warning",
 			Locations: []Location{{Path: srcpath.Path("a.js"), StartLine: 2, StartColumn: 1, EndLine: 2}},
+			Language:  LanguageTS,
 		},
 	}
 	if !reflect.DeepEqual(findings[:2], want) {
@@ -133,6 +135,7 @@ func TestParseESLintFatalMessageIsUnparsed(t *testing.T) {
 		IgnoresScope: true,
 		Message:      "eslint: file did not parse: Parsing error: Unexpected token",
 		Locations:    []Location{{Path: srcpath.Path("bad.js"), StartLine: 2, StartColumn: 1, EndLine: 2}},
+		Language:     LanguageTS,
 	}
 	if !reflect.DeepEqual(findings[0], want) {
 		t.Errorf("findings[0] = %#v, want %#v", findings[0], want)
@@ -165,9 +168,29 @@ func TestParseESLintNonFatalNullRuleIDIsAnOrdinaryFinding(t *testing.T) {
 		Message:   "Unused eslint-disable directive (no problems were reported).",
 		Severity:  "warning",
 		Locations: []Location{{Path: srcpath.Path("a.js"), StartLine: 4, StartColumn: 1, EndLine: 4}},
+		Language:  LanguageTS,
 	}
 	if !reflect.DeepEqual(findings[0], want) {
 		t.Errorf("findings[0] = %#v, want %#v", findings[0], want)
+	}
+}
+
+// TestParseESLintStampsLanguage pins scenario 3: every Finding ParseESLint
+// returns carries the "ts" waiver-log key.
+func TestParseESLintStampsLanguage(t *testing.T) {
+	root := testRoot(t)
+	writeSource(t, root, "a.js")
+	path := jsonEscape(root.Abs(srcpath.Path("a.js")))
+
+	doc := `[{"filePath":"` + path + `","messages":[
+		{"ruleId":"no-unused-vars","severity":2,"message":"a finding","line":1,"column":1}
+	]}]`
+	findings, _, err := ParseESLint(strings.NewReader(doc), root)
+	if err != nil {
+		t.Fatalf("ParseESLint() err = %v, want nil", err)
+	}
+	if len(findings) != 1 || findings[0].Language != LanguageTS {
+		t.Fatalf("findings = %#v, want one finding with Language %q", findings, LanguageTS)
 	}
 }
 

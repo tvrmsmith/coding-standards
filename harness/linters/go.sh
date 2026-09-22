@@ -7,13 +7,13 @@
 # resolve.
 #
 # golangci-lint runs per package, not per file, so this lints the packages owning the changed
-# files and hands their JSON reports to `lint-changed`, which keeps the findings touching a line
-# the change actually wrote and drops the rest.
+# files and hands their JSON reports up for the dispatcher's one `lint-changed` run, which keeps
+# the findings touching a line the change actually wrote and drops the rest.
 #
-# This blocks, on ADR 0010's convention: 2 when a finding survived that filter, 1 when this branch
-# could not answer at all — a missing linter binary, a golangci run that blew up, a filter that
-# would not build. Past a genuine false positive there is one route, and `lint-changed` prints the
-# exact command for it.
+# This blocks, on ADR 0010's convention: the filter answers 2 when a finding survived it, and this
+# branch returns 1 when it could not answer at all — a missing linter binary, a golangci run that
+# blew up, a filter that would not build. Past a genuine false positive there is one route, and
+# `lint-changed` prints the exact command for it.
 
 gcl=${TVRMSMITH_GCL:-$hub/go/bin/tvrmsmith-gcl}
 golangci_config=${TVRMSMITH_GOLANGCI_CONFIG:-$hub/go/golangci.yml}
@@ -30,7 +30,7 @@ _go_has_mod() { [ -f "$1/go.mod" ]; }
 
 go_lint() {
   local file module dir rel status=0 present=() pairs=() packages=()
-  local report reports=() scope_args=() filter_status
+  local report reports=()
   local report_dir=$scratch/go-reports module_count=0
 
   # Which repos are adopted is state the Go side has nowhere else to keep: nothing is installed in
@@ -49,8 +49,9 @@ go_lint() {
   # Deleted in the change, or named by --files and never there. golangci-lint reads the disk, so
   # there is nothing here for it to lint. The staged-versus-disk question a missing file raises is
   # lint-changed's, and it asks it across every staged path under --staged rather than only the
-  # ones that reached a report, which is why nothing here returns early: lint_changed_run at the
-  # bottom has to be reached even when no module produced a report at all.
+  # ones that reached a report, which is why nothing here returns early: add_reports at the bottom
+  # has to be reached even when no module produced a report at all, or the dispatcher runs no
+  # filter to ask it.
   for file in "$@"; do
     [ -e "$file" ] && present+=("$file")
   done
@@ -66,12 +67,6 @@ go_lint() {
     fi
   done
 
-  case "$mode" in
-    --staged) scope_args=(--staged) ;;
-    --since)  scope_args=(--since "$ref") ;;
-    --files)  scope_args=(--files "$(IFS=,; echo "${present[*]-}")") ;;
-  esac
-
   # Fail fast, before a single golangci run: a filter that will not build makes every report it
   # would have produced unreadable anyway.
   lint_changed_bin >/dev/null || return 1
@@ -80,8 +75,8 @@ go_lint() {
   # Read line by line rather than word-split: an unquoted `$(...)` splits a module or file path on
   # every space it holds and then globs each piece, which is the one thing the NUL-delimited
   # changed set upstream exists to prevent. With no module at all the loop reads one empty line
-  # and does nothing, which is the path that leaves the tail below to ask the divergence question
-  # on its own.
+  # and does nothing, which is the path that leaves the dispatcher's filter to ask the divergence
+  # question on its own.
   while IFS= read -r module; do
     [ -n "$module" ] || continue
     packages=()
@@ -144,13 +139,10 @@ go_lint() {
     reports+=("$report")
   done <<<"$(printf '%s\n' ${pairs[@]+"${pairs[@]}"} | cut -f1 | sort -u)"
 
-  # Every module's report goes into one lint-changed run. A broken run is reported as 1 whatever
-  # the filter said, because a filter that read only some of the modules proves nothing about the
-  # one that blew up. rank_status is that rule.
-  lint_changed_run golangci go '{"Issues":[]}' \
-    ${scope_args[@]+"${scope_args[@]}"} -- ${reports[@]+"${reports[@]}"}
-  filter_status=$?
-  status=$(rank_status "$status" "$filter_status")
+  # Every module that did produce a report still hands it on, beside a 1 for the one that blew up:
+  # the dispatcher reports 1 whatever the filter says, because a filter that read only some of the
+  # modules proves nothing about the rest, but the findings it did read still reach stdout.
+  add_reports golangci ${reports[@]+"${reports[@]}"}
 
   return "$status"
 }

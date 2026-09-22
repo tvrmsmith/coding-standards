@@ -54,6 +54,13 @@ func ParseGolangCI(r io.Reader, root srcpath.Root) ([]Finding, []Dropped, error)
 		}
 		findings = append(findings, finding)
 	}
+	// Stamped here, the single success return, rather than at
+	// placeGolangCIIssue's construction sites (there are several, including
+	// the unparsed() calls), so a future construction site inside this
+	// parser cannot forget it.
+	for i := range findings {
+		findings[i].Language = LanguageGo
+	}
 	return findings, dropped, nil
 }
 
