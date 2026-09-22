@@ -186,11 +186,25 @@ func measure(name, text string) adr {
 	block, found := currentRule(text)
 	return adr{
 		name:       name,
-		superseded: strings.Contains(text, "\n**Superseded "),
+		superseded: strings.Contains(preamble(text), "\n**Superseded "),
 		hasBlock:   found,
 		blockWords: words(block),
 		fileWords:  words(text),
 	}
+}
+
+// preamble is the text above the first level-2 heading, which is where the
+// supersede convention puts the status paragraph. Reading the whole file
+// instead would exempt a live record that merely quotes the convention, and a
+// record skipped that way fails nothing while measuring nothing.
+func preamble(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "## ") {
+			return strings.Join(lines[:i], "\n")
+		}
+	}
+	return text
 }
 
 // words is wc -w: whitespace-separated fields, nothing stripped.
@@ -202,15 +216,22 @@ func words(text string) int { return len(strings.Fields(text)) }
 // A `### ` subheading does not close the block. It is a subsection of the
 // rule, and a reader told to read the block in full reads it too, so
 // counting it out would let a block grow without bound behind one subheading.
+//
+// A ``` fence is tracked, so a `## ` line inside a fenced example is markdown
+// the block shows rather than the heading that ends it. Closing on one would
+// drop the rest of the block from the count and take the ceiling off it.
 func currentRule(text string) (string, bool) {
 	var block []string
-	inside := false
+	inside, fenced := false, false
 	for _, line := range strings.Split(text, "\n") {
 		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			fenced = !fenced
+		}
 		switch {
-		case trimmed == currentRuleHeading:
+		case !fenced && trimmed == currentRuleHeading:
 			inside = true
-		case inside && strings.HasPrefix(trimmed, "## "):
+		case inside && !fenced && strings.HasPrefix(trimmed, "## "):
 			return strings.Join(block, "\n"), true
 		case inside:
 			block = append(block, line)
