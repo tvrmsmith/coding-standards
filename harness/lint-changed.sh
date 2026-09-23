@@ -74,6 +74,16 @@ if [ -n "$only" ]; then
   [ $match -eq 1 ] || { echo "lint-changed: --only takes one of: $LANGUAGES" >&2; exit 1; }
 fi
 
+# Decided once, here, and read by both the filter (common.sh's run_filter, --accept-spent when
+# this is 0) and the spend gate below, so the two cannot drift to different answers about the same
+# run. A waiver is one commit's worth of permission, and a commit goes through only when no branch
+# broke and no finding survived, so spending on any lesser verdict burns it on a commit git never
+# makes. --since and --files make no commit, and --only sees one language of it, so none of the
+# three spends; only a full --staged run does, and only such a run has to insist a waiver was spent
+# against this same tree rather than accepting one spent against any tree.
+spends=0
+[ "$mode" = --staged ] && [ -z "$only" ] && spends=1
+
 resolve_repo
 
 # Written to a file rather than read straight off a process substitution, whose exit status bash
@@ -124,11 +134,9 @@ run_filter
 filter_status=$?
 status=$(rank_status "$status" "$filter_status")
 
-# Spent here and nowhere else, and only on a clean total of a full --staged run. A waiver is one
-# commit's worth of permission, and a commit goes through only when no branch broke and no finding
-# survived, so spending on any lesser verdict burns it on a commit git never makes. --since and
-# --files make no commit, and --only sees one language of it.
-if [ "$status" -eq 0 ] && [ "$mode" = --staged ] && [ -z "$only" ] && [ -s "$matched_waivers" ]; then
+# Spent here and nowhere else, and only on a clean total of the one run that spends. See $spends
+# above for why that is a full --staged run and nothing else.
+if [ "$status" -eq 0 ] && [ "$spends" -eq 1 ] && [ -s "$matched_waivers" ]; then
   spend_waivers || status=1
 fi
 

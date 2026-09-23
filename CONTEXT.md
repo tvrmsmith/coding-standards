@@ -194,6 +194,12 @@ and leaves the waiver unspent. A filter run invoked directly spends nothing howe
 because a direct run is not a commit. A spend records the index tree it was spent against, so
 retrying the same commit reuses the waiver rather than burning a second.
 
+A waiver already spent still matches on any run that will spend nothing, whichever tree it was
+spent against, so a no-mistakes run relinting a rebased or fixed-up tree does not block on a
+finding its own commit already went through on. The pre-commit hook's run keeps the strict rule,
+unspent or spent against this same tree, because it is the one run that spends and the only guard
+a new commit gets.
+
 Spending is what makes a waiver an escape hatch rather than a permanent exception. Nothing in the
 log is ever rewritten, so the file is the audit.
 
