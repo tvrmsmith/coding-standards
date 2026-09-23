@@ -18,10 +18,9 @@ rest of the file only when you need the reasoning behind the rule or the history
 | [0013](0013-a-typed-path-resolves-against-the-working-directory.md) | typed paths | `--files` and `--coverage` resolve against the cwd. Only a repo-root prefix `os.SameFile` confirms folds case. |
 
 Deleted when superseded, and readable at their last commit: [0003](https://github.com/tvrmsmith/coding-standards/blob/3fd48d4ad6c2a98d2332fb872ab319e80658bb91/docs/adr/0003-changed-method-is-a-span-holding-a-touched-line.md)
-by 0007, [0005](https://github.com/tvrmsmith/coding-standards/blob/3fd48d4ad6c2a98d2332fb872ab319e80658bb91/docs/adr/0005-the-machine-document-is-the-only-output.md) by 0008,
+by 0007, [0004](https://github.com/tvrmsmith/coding-standards/blob/2a2bcc3a241dacf992f82c4f580c213bf8c719e0/docs/adr/0004-source-paths-are-repo-relative-and-resolved-deterministically.md)
+by 0011, 0012 and 0013, [0005](https://github.com/tvrmsmith/coding-standards/blob/3fd48d4ad6c2a98d2332fb872ab319e80658bb91/docs/adr/0005-the-machine-document-is-the-only-output.md) by 0008,
 [0006](https://github.com/tvrmsmith/coding-standards/blob/3fd48d4ad6c2a98d2332fb872ab319e80658bb91/docs/adr/0006-the-csharp-extractor-is-written-in-house.md) by 0009.
-Superseded and still in the tree: [0004](0004-source-paths-are-repo-relative-and-resolved-deterministically.md)
-by 0011, 0012 and 0013.
 
 ## Conventions
 
