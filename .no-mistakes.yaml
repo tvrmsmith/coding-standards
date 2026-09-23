@@ -1,0 +1,29 @@
+# The Test step runs only the units a change touches, each through tools/no-mistakes-unit.sh, which
+# writes the coverage profile and test report the step demands. A path no unit owns (docs, the
+# README, .github, tools) selects nothing, and the step's agent gathers evidence for it instead.
+test:
+  units:
+    - name: gate
+      path: gate
+      command: tools/no-mistakes-unit.sh root gate
+    - name: lint
+      path: lint
+      command: tools/no-mistakes-unit.sh root lint
+    - name: internal
+      path: internal
+      command: tools/no-mistakes-unit.sh root internal
+    - name: go
+      path: go
+      command: tools/no-mistakes-unit.sh go
+    - name: dotnet
+      path: dotnet
+      command: tools/no-mistakes-unit.sh dotnet
+    - name: eslint-plugin
+      path: packages/eslint-plugin-tvrmsmith
+      command: tools/no-mistakes-unit.sh node packages/eslint-plugin-tvrmsmith
+    - name: eslint-config
+      path: packages/eslint-config-tvrmsmith
+      command: tools/no-mistakes-unit.sh node packages/eslint-config-tvrmsmith
+    - name: harness
+      path: harness
+      command: tools/no-mistakes-unit.sh node harness
