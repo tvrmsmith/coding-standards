@@ -9,7 +9,7 @@
 // skipped as a report a fresher run has already superseded, since dotnet test
 // leaves every earlier run's TestResults directory on disk and the developer
 // never asked the gate to weigh it against the fresh one sitting beside it.
-// It resolves report paths by ADR 0004's one rule, and the rule cuts two
+// It resolves report paths by ADR 0012's one rule, and the rule cuts two
 // ways: one path it cannot place inside the repo is a silent ignore, while a
 // report with an erased source root, a class contradicting itself, or no class
 // placed inside the root fails the run with a typed code.
@@ -213,7 +213,7 @@ func walkedName(root srcpath.Root, path string) (rel string, name srcpath.Name, 
 }
 
 // Named resolves each developer-typed path against cwd when it is relative,
-// then relativizes it for the Name the document carries, which is ADR 0004's
+// then relativizes it for the Name the document carries, which is ADR 0013's
 // one rule for a human-typed path. A named path may live anywhere, inside the
 // repo or outside it, and one outside has no repo-relative form, so it is named
 // by its absolute path.
@@ -495,24 +495,24 @@ func parseCause(err error) string {
 var erasedSourceRootPlaceholder = regexp.MustCompile(`^/_[0-9]*/`)
 
 // sourceLinkScheme matches a filename UseSourceLink=true emits in place of a
-// path: the raw source-link document key, which ADR 0004 records as one that
+// path: the raw source-link document key, which ADR 0012 records as one that
 // can be a URL. A key carrying no scheme looks like an ordinary relative path,
 // so it is the empty <source> beside it that gives the shape away.
 var sourceLinkScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
 
 // mergeInto resolves each class to a source path and folds its lines into the
 // set. Resolution runs per report, with that report's own <sources>. ADR
-// 0004's 2026-09-04 amendment (issue 16) adds three checks ahead of the join,
+// 0012 (issue 16) adds three checks ahead of the join,
 // in precedence order: an erased source root voids the whole report before
 // any candidate is built, a class resolving to more than one path inside the
 // root contradicts itself, and a report that lands no class inside the root at
 // all was measured against other source than the source being gated. Any one
 // candidate resolving nowhere, or resolving outside the root, stays the silent
-// ignore ADR 0004 already decided; it is only a report with nothing left that
+// ignore ADR 0012 already decided; it is only a report with nothing left that
 // fails. A class the join can build no candidate from at all, a blank filename
 // or a relative one with no <source> to anchor it, counts as landing nowhere
 // like any other, so a report made only of those fails too. Only a report
-// carrying no <class> element is silent, which is ADR 0004's one carve-out.
+// carrying no <class> element is silent, which is ADR 0012's one carve-out.
 // The classes fold into a set of this report's own, unioned into the caller's
 // only once every check has passed, so a report that fails leaves nothing of
 // itself behind.
@@ -634,7 +634,7 @@ func (r coberturaReport) erasedSourceRoot(reportPath srcpath.Name) *report.Failu
 }
 
 // sourceLinked reports whether the classes carry source-link document keys
-// rather than paths. ADR 0004 names two halves of that shape and either one
+// rather than paths. ADR 0012 names two halves of that shape and either one
 // settles it: UseSourceLink=true writes the source root out as one blank
 // <source>, and the key it leaves in the filename can be a URL but need not
 // be, so a schemeless key is caught by the blank source beside it. A blank
@@ -658,7 +658,7 @@ func (r coberturaReport) sourceLinked() bool {
 	})
 }
 
-// candidates lists every path ADR 0004 derives from one class filename. A
+// candidates lists every path ADR 0012 derives from one class filename. A
 // filename that is already absolute carries its own root and is its own only
 // candidate: joining a <source> onto it would name a path no report ever
 // carried, /src/src/app/Order.cs off <source> /src, and the outside-repo
@@ -689,7 +689,7 @@ func (r coberturaReport) candidates(filename string) []string {
 // landed inside the root, sorted so a diagnostic quoting them does not depend
 // on <source> order, and the reading of the first candidate in document order,
 // whether it landed or not. More than one distinct path is what makes a class
-// ambiguous; ADR 0004 reasons this can only happen when the reasoning behind
+// ambiguous; ADR 0012 reasons this can only happen when the reasoning behind
 // "one repo root, one drive letter" is wrong. The first candidate is returned
 // because it is what the outside-repo diagnostic quotes, and a class that
 // placed nowhere still has a path worth showing the reader.

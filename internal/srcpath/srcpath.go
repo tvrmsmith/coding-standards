@@ -1,4 +1,4 @@
-// Package srcpath owns one path currency (ADR 0004) for every caller: a
+// Package srcpath owns one path currency (ADR 0011) for every caller: a
 // repo-relative, slash-separated path from `git rev-parse --show-toplevel`.
 // Every conversion that produces a Path lives here, so the invariant is
 // enforced once rather than separately in extract and coverage.
@@ -6,8 +6,8 @@
 // One function, relativize, computes containment, and Place, Name and named are
 // the three entry points onto it. All three read its placements the same way: a
 // candidate whose root prefix is spelled in another case is under the root, and
-// "outside" means one thing at every door (issue 36). ADR 0004's 2026-09-11
-// amendment is what authorizes that, on the ground that the folding it rejects
+// "outside" means one thing at every door (issue 36). ADR 0013 is what
+// authorizes that, on the ground that the folding it rejects
 // is folding by text, which on Linux merges two real files, and not a fold
 // os.SameFile has confirmed reaches one inode.
 //
@@ -100,7 +100,7 @@ func (r Root) Abs(p Path) string {
 
 // Placed is one candidate's resolution, kept whole so a caller that needs the
 // absolute path a candidate landed on does not resolve symlinks a second time.
-// Only landing inside the root is a distinction the gate acts on: ADR 0004
+// Only landing inside the root is a distinction the gate acts on: ADR 0012
 // ignores one candidate that does not, whatever the reason, and fails a whole
 // report that never lands.
 // The fields are unexported because a repo-relative path only means anything
@@ -134,7 +134,7 @@ func (p Placed) Resolved() string { return p.resolved }
 // worth of classes that placed nothing.
 //
 // A candidate whose root prefix is spelled in another case places where it
-// really sits, per ADR 0004's 2026-09-11 amendment. The prefix is confirmed with
+// really sits, per ADR 0013. The prefix is confirmed with
 // os.SameFile, so the two names reach one directory and the candidate is one
 // file, not two merged by text. The components below the root come back as the
 // candidate spells them, which is the same thing filepath.Rel already hands back
@@ -143,7 +143,7 @@ func (p Placed) Resolved() string { return p.resolved }
 //
 // A filesystem that will not say whether that prefix is the root lands nowhere,
 // the same as a candidate genuinely outside. Placed carries a bool and no reason,
-// and ADR 0004 already ignores one candidate that does not land whatever the
+// and ADR 0012 already ignores one candidate that does not land whatever the
 // reason, so the class goes unmeasured rather than the run failing on a fault
 // only named has the words for. It is narrow: EvalSymlinks and os.Stat on the
 // candidate have both succeeded by then, so what is left is the root itself
@@ -241,7 +241,7 @@ func (r Root) relativize(resolved string) (Path, placement, error) {
 // against `/private/tmp/cf_test`, confirms with os.SameFile that the two names
 // reach one directory, and answers folded with `sub/a.txt`.
 //
-// os.SameFile is what keeps this from being the text folding ADR 0004 rejects.
+// os.SameFile is what keeps this from being the text folding ADR 0012 rejects.
 // Two directories that differ only in case are two inodes on a case-sensitive
 // filesystem, so `/tmp/REPO` beside a real `/tmp/repo` still reads as outside
 // on Linux, which is the property the rejection protects. EqualFold runs first
@@ -512,7 +512,7 @@ func (r Root) NamedFiles(names []string, cwd string) ([]Path, error) {
 	return paths, nil
 }
 
-// named resolves a path a human typed on --files. ADR 0004 resolves a
+// named resolves a path a human typed on --files. ADR 0013 resolves a
 // relative name against the process working directory and then relativizes
 // it to the root, and makes a path the gate cannot place inside the repo exit
 // 1 rather than be matched approximately. An absolute name already says where
@@ -547,7 +547,7 @@ func (r Root) NamedFiles(names []string, cwd string) ([]Path, error) {
 // refuses on that reading. Place and Name place and name the same path where it
 // really sits, because a coverage candidate is not one a developer typed and
 // there is nobody to send back to the keyboard; the fold is confirmed by
-// os.SameFile, so it merges no two files (ADR 0004, amended 2026-09-11).
+// os.SameFile, so it merges no two files (ADR 0013).
 //
 // Naming the root is the test, not typing an absolute path. A relative name
 // names it too once it climbs above the root and descends back in, since
@@ -636,7 +636,7 @@ func (r Root) named(name, cwd string, dirs dirNames) (Path, error) {
 // what makes the mis-spelling theirs to retype. The root prefix is the whole
 // run of directories that names the root, not its last word alone, so
 // --files /u/t/DEV/repo/src/a.cs against a root of /u/t/dev/repo is blamed on
-// DEV (ADR 0004).
+// DEV (ADR 0013).
 //
 // It walks the prefixes of candidate, the lexical path named already built and
 // placed the file by, shallowest first, and resolves each one. Walking that
@@ -786,7 +786,7 @@ func errnoText(err error) string {
 // disk. The gate would then hand the extractor `src/ordering/Order.cs` while
 // coverage, placed through Place, carries the tracked `src/Ordering/Order.cs`,
 // join would match neither against the other, and every method in a fully
-// covered file would come back unknown and fail the run. ADR 0004 fails a path
+// covered file would come back unknown and fail the run. ADR 0013 fails a path
 // the gate cannot place rather than matching it approximately, so a spelling the
 // tree does not use is refused instead.
 //

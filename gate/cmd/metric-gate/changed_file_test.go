@@ -14,7 +14,7 @@ import (
 // back as a report.Failure coded changed_file_unreadable, so measure lands it
 // in the document instead of exiting 1 with empty stdout. It also pins what
 // cause strips, the operating system's words without the absolute path
-// os.PathError carries, since ADR 0004 names the source path already.
+// os.PathError carries, since ADR 0011 names the source path already.
 func TestDatingAnUnreadableChangedFileIsTyped(t *testing.T) {
 	dir := t.TempDir()
 	root, err := srcpath.NewRoot(dir)

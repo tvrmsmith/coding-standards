@@ -255,7 +255,7 @@ func spanCoverage(start, count, covered int) []coverageLine {
 
 // cobertura renders a coverage report in coverlet's shape, with the source
 // root in <sources> and each class's filename relative to it, which is the
-// pairing ADR 0004 resolves paths from. It stamps the report at the moment the
+// pairing ADR 0012 resolves paths from. It stamps the report at the moment the
 // case builds it, which is the moment coverlet would have written it, leaving
 // coberturaStamped as the way a case asks for a stale one.
 func cobertura(sourceRoot string, classes ...coverageClass) string {
