@@ -260,6 +260,12 @@ func parseWaive(args []string) (WaiveArgs, error) {
 	if wa.Language == "" {
 		return WaiveArgs{}, &UsageError{Problem: "waive: --language is required"}
 	}
+	switch wa.Language {
+	case lintfind.LanguageCSharp, lintfind.LanguageGo, lintfind.LanguageTS:
+	default:
+		return WaiveArgs{}, &UsageError{Problem: "waive: unknown --language '" + wa.Language + "', want one of " +
+			lintfind.LanguageCSharp + ", " + lintfind.LanguageGo + ", " + lintfind.LanguageTS}
+	}
 	// --path is optional, and omitting it is the only route out of a finding
 	// that has no location to name: Roslyn reports an analyzer that failed to
 	// load at Location.None, so a waiver for it keys on language and rule alone.
