@@ -39,16 +39,55 @@ func TestParseGolangCITwoIssues(t *testing.T) {
 			Message:   "use of fmt.Println forbidden",
 			Severity:  "warning",
 			Locations: []Location{{Path: srcpath.Path("main.go"), StartLine: 6, StartColumn: 2, EndLine: 6}},
+			Language:  LanguageGo,
 		},
 		{
 			Rule:      "revive",
 			Message:   "package-comments: should have a package comment",
 			Severity:  "warning",
 			Locations: []Location{{Path: srcpath.Path("main.go"), StartLine: 1, StartColumn: 1, EndLine: 1}},
+			Language:  LanguageGo,
 		},
 	}
 	if !reflect.DeepEqual(findings, want) {
 		t.Errorf("findings = %#v, want %#v", findings, want)
+	}
+}
+
+// TestParseGolangCIStampsLanguage pins scenario 2: every Finding
+// ParseGolangCI returns carries the "go" waiver-log key.
+func TestParseGolangCIStampsLanguage(t *testing.T) {
+	root := testRoot(t)
+	writeSource(t, root, "main.go")
+	filename := jsonEscape(root.Abs(srcpath.Path("main.go")))
+
+	doc := `{"Issues":[{"FromLinter":"forbidigo","Text":"a finding","Pos":{"Filename":"` + filename + `","Line":6,"Column":2}}]}`
+	findings, _, err := ParseGolangCI(strings.NewReader(doc), root)
+	if err != nil {
+		t.Fatalf("ParseGolangCI() err = %v, want nil", err)
+	}
+	if len(findings) != 1 || findings[0].Language != LanguageGo {
+		t.Fatalf("findings = %#v, want one finding with Language %q", findings, LanguageGo)
+	}
+}
+
+// TestParseGolangCIUnparsedStampsLanguage pins scenario 4: an UNPARSED
+// finding also carries "go". It must, or an unreadable golangci entry
+// becomes unwaivable: Store.Match keys on Language and a pathless waiver for
+// an entry stamped with no language could never match.
+func TestParseGolangCIUnparsedStampsLanguage(t *testing.T) {
+	root := testRoot(t)
+
+	doc := `{"Issues":[{"FromLinter":"revive","Text":"a finding","Pos":{"Filename":"","Line":0,"Column":0}}]}`
+	findings, _, err := ParseGolangCI(strings.NewReader(doc), root)
+	if err != nil {
+		t.Fatalf("ParseGolangCI() err = %v, want nil", err)
+	}
+	if len(findings) != 1 || findings[0].Rule != "UNPARSED" {
+		t.Fatalf("findings = %#v, want one UNPARSED finding", findings)
+	}
+	if findings[0].Language != LanguageGo {
+		t.Errorf("Language = %q, want %q", findings[0].Language, LanguageGo)
 	}
 }
 
@@ -314,6 +353,7 @@ func TestParseGolangCITypecheckIgnoresScope(t *testing.T) {
 			Severity:     "warning",
 			IgnoresScope: true,
 			Locations:    []Location{{Path: srcpath.Path("bad.go"), StartLine: 1, StartColumn: 1, EndLine: 1}},
+			Language:     LanguageGo,
 		},
 	}
 	if !reflect.DeepEqual(findings, want) {

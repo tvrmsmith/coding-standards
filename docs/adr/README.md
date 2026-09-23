@@ -9,14 +9,17 @@ rest of the file only when you need the reasoning behind the rule or the history
 |---|---|---|
 | [0001](0001-crap-gate-topology.md) | crap-gate topology | Complexity from a source-level walker, coverage from coverlet, joined by source span. Any single `unknown` fails the run. |
 | [0002](0002-metrics-declare-their-inputs.md) | metrics declare their inputs | The gate demands an input only when a selected metric asked for it. |
-| [0004](0004-source-paths-are-repo-relative-and-resolved-deterministically.md) | source paths | One repo-relative path currency, one deterministic rule per path space. A path that will not resolve refuses the run. |
 | [0007](0007-changed-method-is-a-span-holding-a-touched-line.md) | changed method | A changed method is a working-tree span holding a touched line. A pure move measures nothing. |
 | [0008](0008-the-machine-document-is-the-only-output.md) | machine document | Stdout is one TOON document on every exit path but two, a malformed command line and a failed stdout write. Every other exit-1 cause carries a typed code, registered in `gate/internal/report`. |
 | [0009](0009-the-csharp-extractor-is-written-in-house.md) | csharp extractor | Roslyn syntax parser only, paths on stdin, spans plus per-file parse status on stdout. |
 | [0010](0010-lint-blocks-on-any-warning-touching-a-changed-line.md) | lint blocks | Every warning the tool reports blocks the commit when any of its locations holds a touched line. One-shot waivers in an append-only log outside the repo are the only way past. |
+| [0011](0011-a-source-path-is-repo-relative.md) | source paths | One repo-relative path currency, one deterministic rule per path space. A path that will not resolve refuses the run. |
+| [0012](0012-a-coverage-path-resolves-by-the-cobertura-join.md) | coverage paths | `<source>` joined to `filename`. One path that will not resolve is ignored; a report that places nothing refuses the run. |
+| [0013](0013-a-typed-path-resolves-against-the-working-directory.md) | typed paths | `--files` and `--coverage` resolve against the cwd. Only a repo-root prefix `os.SameFile` confirms folds case. |
 
 Superseded, kept for their history and not for their rules: [0003](0003-changed-method-is-a-span-holding-a-touched-line.md)
-by 0007, [0005](0005-the-machine-document-is-the-only-output.md) by 0008,
+by 0007, [0004](0004-source-paths-are-repo-relative-and-resolved-deterministically.md) by 0011, 0012
+and 0013, [0005](0005-the-machine-document-is-the-only-output.md) by 0008,
 [0006](0006-the-csharp-extractor-is-written-in-house.md) by 0009.
 
 ## Conventions
@@ -59,18 +62,10 @@ The block is what a reader is expected to read in full, so it has to be readable
 file is what they scroll when the block is not enough. A decision that will not fit is more than one
 decision.
 
-`docs/test/adr_ceiling_test.go` measures both, on every `go test ./...`, counting the way `wc -w`
-does. A superseded record is exempt by its status rather than by a list. A record already over a
-ceiling when that check landed carries a raised limit there, which it may shrink under and may not
-grow past, and the entry has to go once the record meets the real ceiling. No word count is written
-into this file, because a hand-kept count goes stale on the first edit, which is what
-[issue 87](https://github.com/tvrmsmith/coding-standards/issues/87) was.
-
-0004 was consolidated in place on 2026-09-11, and that pass dropped three clauses it should have
-kept. Two later passes put them back, so the record is still over the file ceiling and carries a
-raised limit for it. The remaining excess is reasoning rather than restatement, so trimming it
-again buys little. The next move on it is a split, superseded by one new ADR per decision, under
-the mechanics above. Its live measurement is the raised limit in `docs/test/adr_ceiling_test.go`,
-which is the only place a number for it is written down.
+CI checks neither ceiling. `.claude/settings.json` sets both as the limits for an `adr-size`
+Claude Code hook, which reports an overrun at the edit and never blocks it. No word count is
+written into this file, because a hand-kept count goes stale on the first edit, which is what
+[issue 87](https://github.com/tvrmsmith/coding-standards/issues/87) was. Run `wc -w` when you need
+one.
 
 If an ADR looks wrong, that is a decision to escalate to the user, not an edit to make.

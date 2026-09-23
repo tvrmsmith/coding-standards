@@ -23,9 +23,19 @@
 # returns 1, a failed build, a golangci-lint run that blew up, a missing layering wrapper, a bad
 # argument. All three branches block; none of them reports advisory findings any more.
 #
-# So the aggregate is not plain highest-wins: a 1 from any branch dominates a 2 from another. A
-# filter that did not run proves nothing, and a surviving finding reported next to a broken branch
-# would say the gate answered when half of it never did.
+# The branches do not judge their own findings. Each runs its linter and hands the reports up, and
+# one `lint-changed` run over every branch's reports decides what survives, after the last branch.
+# One run and not one per branch, because a waiver is one commit's worth of permission: a filter
+# per branch spent a waiver on its own language's clean share while another language still blocked
+# the commit. The filter never spends. This script does, once, and only on a full --staged run
+# that came back 0: that is the pre-commit hook, the one run whose clean result is a commit going
+# through. A --since or --files run is not a commit, and an --only run is one language's share of
+# one, so neither spends; a waiver they match still passes the finding and stays unspent.
+#
+# So a branch returns 0 or 1, and only the filter returns 2. The aggregate is not plain
+# highest-wins: a 1 from any branch dominates the filter's 2. A branch that could not run proves
+# nothing, and a surviving finding reported next to it would say the gate answered when half of it
+# never did. The findings the filter did read still reach stdout, and no waiver is spent.
 #
 # --only runs a single branch. That is for no-mistakes `lint.extra_linters`, which wants one entry
 # per language so each gets its own identity, finding ids, budget and exit-code isolation.
@@ -34,8 +44,9 @@
 set -uo pipefail
 
 # Every branch this script knows, in the order they report. The order is fixed rather than
-# meaningful: all three run whatever the earlier ones found, so a mixed commit reports every
-# language, and pinning the sequence is what keeps two runs over the same change byte-identical.
+# meaningful: every branch runs whatever the earlier ones found, so a mixed commit reports every
+# language, and the filter prints survivors in the order the reports were handed to it, so pinning
+# the sequence is what keeps two runs over the same change byte-identical.
 LANGUAGES="ts dotnet go"
 
 # The header down to the first line that is not a comment. A hardcoded last line drifts on the
@@ -92,13 +103,33 @@ for lang in $LANGUAGES; do
 
   [ ${#owned[@]} -gt 0 ] || continue
 
+  # The --files scope the one filter run is given. Only what is on disk: lint-changed refuses a
+  # --files path that is not a regular file, and a file absent from disk reached no linter anyway.
+  for file in "${owned[@]}"; do
+    [ -f "$file" ] && filter_files+=("$file")
+  done
+
   # Ranked, not merely zero and non-zero, and not whichever branch happened to run last. The rule
-  # lives in common.sh, next to the branch contract that states it. Anything that is neither 0 nor
-  # 2 is a branch breaking, including a 127 from a function that was never defined, so it reports
-  # as 1 rather than as some richer code the hook cannot read.
+  # lives in common.sh, next to the branch contract that states it. A branch returns 0 or 1, and
+  # anything else is it breaking, including a 127 from a function that was never defined, so it
+  # reports as 1 rather than as some richer code the hook cannot read.
   "${lang}_lint" "${owned[@]}"
   branch_status=$?
   status=$(rank_status "$status" "$branch_status")
 done
+
+# One filter over every branch's reports, folded the same way, so a broken branch's 1 still
+# outranks a finding the filter found.
+run_filter
+filter_status=$?
+status=$(rank_status "$status" "$filter_status")
+
+# Spent here and nowhere else, and only on a clean total of a full --staged run. A waiver is one
+# commit's worth of permission, and a commit goes through only when no branch broke and no finding
+# survived, so spending on any lesser verdict burns it on a commit git never makes. --since and
+# --files make no commit, and --only sees one language of it.
+if [ "$status" -eq 0 ] && [ "$mode" = --staged ] && [ -z "$only" ] && [ -s "$matched_waivers" ]; then
+  spend_waivers || status=1
+fi
 
 exit "$status"

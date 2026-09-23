@@ -1457,7 +1457,7 @@ func (e *gitError) Unwrap() error { return e.err }
 //
 // A filesystem failure carries the operating system's own words without the
 // fs.PathError around them, which quotes an absolute path the document is not
-// allowed to print (ADR 0004) and which reads differently on every machine.
+// allowed to print (ADR 0011) and which reads differently on every machine.
 // The sentence naming what the gate was doing supplies the rest.
 func cause(err error) string {
 	var gitErr *gitError

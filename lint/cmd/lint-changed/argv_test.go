@@ -1,41 +1,27 @@
 package main
 
 import (
+	"errors"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/tvrmsmith/coding-standards/lint/internal/lintfind"
 )
 
-func TestParseFilterRequiresFormat(t *testing.T) {
-	_, err := Parse([]string{"--language", "csharp", "--staged"})
-	if err == nil || !strings.Contains(err.Error(), "--format") {
-		t.Fatalf("got %v, want an error naming --format", err)
-	}
-}
-
-func TestParseFilterRequiresLanguage(t *testing.T) {
-	_, err := Parse([]string{"--format", "sarif", "--staged"})
-	if err == nil || !strings.Contains(err.Error(), "--language") {
-		t.Fatalf("got %v, want an error naming --language", err)
-	}
-}
-
 func TestParseFilterRequiresExactlyOneScope(t *testing.T) {
-	_, err := Parse([]string{"--format", "sarif", "--language", "csharp"})
+	_, err := Parse([]string{"--format", "sarif"})
 	if err == nil {
 		t.Fatal("got nil, want an error naming the missing scope")
 	}
 
-	_, err = Parse([]string{"--format", "sarif", "--language", "csharp", "--staged", "--since", "main"})
+	_, err = Parse([]string{"--format", "sarif", "--staged", "--since", "main"})
 	if err == nil {
 		t.Fatal("got nil, want an error naming two scopes")
 	}
 }
 
 func TestParseFilterStaged(t *testing.T) {
-	cmd, err := Parse([]string{"--format", "sarif", "--language", "csharp", "--staged"})
+	cmd, err := Parse([]string{"--format", "sarif", "--staged"})
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -45,7 +31,7 @@ func TestParseFilterStaged(t *testing.T) {
 }
 
 func TestParseFilterSince(t *testing.T) {
-	cmd, err := Parse([]string{"--format", "sarif", "--language", "csharp", "--since", "main"})
+	cmd, err := Parse([]string{"--format", "sarif", "--since", "main"})
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -55,7 +41,7 @@ func TestParseFilterSince(t *testing.T) {
 }
 
 func TestParseFilterFilesSplitsOnComma(t *testing.T) {
-	cmd, err := Parse([]string{"--format", "sarif", "--language", "csharp", "--files", "a.cs,b.cs"})
+	cmd, err := Parse([]string{"--format", "sarif", "--files", "a.cs,b.cs"})
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -94,20 +80,6 @@ func TestParseWaiveWithoutAPath(t *testing.T) {
 	}
 }
 
-// --report is repeatable, so one process reads every report a build wrote and
-// makes one waiver-spend decision across all of them.
-func TestParseFilterCollectsEveryReport(t *testing.T) {
-	cmd, err := Parse([]string{"--format", "sarif", "--language", "csharp", "--staged",
-		"--report", "one.sarif", "--report", "two.sarif"})
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	want := []string{"one.sarif", "two.sarif"}
-	if len(cmd.Filter.Reports) != len(want) || cmd.Filter.Reports[0] != want[0] || cmd.Filter.Reports[1] != want[1] {
-		t.Fatalf("got %v, want %v", cmd.Filter.Reports, want)
-	}
-}
-
 func TestParseWaive(t *testing.T) {
 	cmd, err := Parse([]string{"waive", "--language", "csharp", "--path", "Foo.cs", "--rule", "CA1822", "--reason", "known false positive"})
 	if err != nil {
@@ -119,6 +91,33 @@ func TestParseWaive(t *testing.T) {
 	want := WaiveArgs{Language: "csharp", Path: "Foo.cs", Rule: "CA1822", Reason: "known false positive"}
 	if cmd.Waive != want {
 		t.Fatalf("got %+v, want %+v", cmd.Waive, want)
+	}
+}
+
+// A waiver keys on the language a finding carries, and findings only ever
+// carry csharp, go or ts. Any other --language records a waiver that can
+// never match, so waive refuses it instead.
+func TestParseWaiveRejectsUnknownLanguage(t *testing.T) {
+	_, err := Parse([]string{"waive", "--language", "typescript", "--path", "a.ts", "--rule", "no-console", "--reason", "why"})
+	var ue *UsageError
+	if !errors.As(err, &ue) {
+		t.Fatalf("got %v, want *UsageError", err)
+	}
+	want := "waive: unknown --language 'typescript', want one of csharp, go, ts"
+	if ue.Problem != want {
+		t.Fatalf("Problem = %q, want %q", ue.Problem, want)
+	}
+}
+
+func TestParseWaiveAcceptsGoAndTS(t *testing.T) {
+	for _, language := range []string{"go", "ts"} {
+		cmd, err := Parse([]string{"waive", "--language", language, "--path", "a", "--rule", "r", "--reason", "why"})
+		if err != nil {
+			t.Fatalf("Parse --language %s: %v", language, err)
+		}
+		if cmd.Waive.Language != language {
+			t.Fatalf("Language = %q, want %q", cmd.Waive.Language, language)
+		}
 	}
 }
 
@@ -139,41 +138,167 @@ func TestParseWaiversRejectsArguments(t *testing.T) {
 }
 
 func TestParseUnknownFlag(t *testing.T) {
-	if _, err := Parse([]string{"--format", "sarif", "--language", "csharp", "--staged", "--bogus"}); err == nil {
+	if _, err := Parse([]string{"--format", "sarif", "--staged", "--bogus"}); err == nil {
 		t.Fatal("got nil, want a usage error")
 	}
 }
 
-// An unknown --format is refused at parse time, the same way an absent
-// --language is, rather than reaching readReports and failing against
-// whatever the first report happens to look like.
+// An unknown --format is refused at parse time, the same way a --report with
+// no --format before it is, rather than reaching readReports and failing
+// against whatever the first report happens to look like.
+//
+// Scenario 8.
 func TestParseFilterRejectsUnknownFormat(t *testing.T) {
-	_, err := Parse([]string{"--format", "bogus", "--language", "csharp", "--staged"})
-	if err == nil || !strings.Contains(err.Error(), "unknown --format 'bogus'") || !strings.Contains(err.Error(), "sarif, golangci, eslint") {
-		t.Fatalf("got %v, want an error naming the unknown format and the valid ones", err)
+	_, err := Parse([]string{"--format", "bogus", "--staged", "--report", "a.json"})
+	if err == nil {
+		t.Fatalf("got nil, want an error")
+	}
+	var ue *UsageError
+	if !errors.As(err, &ue) {
+		t.Fatalf("got %T, want *UsageError", err)
+	}
+	want := "unknown --format 'bogus', want one of sarif, golangci, eslint"
+	if ue.Problem != want {
+		t.Fatalf("Problem = %q, want %q", ue.Problem, want)
 	}
 }
 
-// Each --format resolves to its own parser, compared by function identity:
-// a non-nil check would pass just as well if --format golangci resolved to
-// the SARIF parser, and reading golangci JSON with the wrong parser is the
-// one mistake parse-time resolution exists to prevent.
-func TestParseFilterResolvesEachFormatToItsParser(t *testing.T) {
-	for _, tc := range []struct {
-		format string
-		want   lintfind.Parser
-	}{
-		{"sarif", lintfind.ParseSARIF},
-		{"golangci", lintfind.ParseGolangCI},
-		{"eslint", lintfind.ParseESLint},
-	} {
-		cmd, err := Parse([]string{"--format", tc.format, "--language", "go", "--staged"})
-		if err != nil {
-			t.Fatalf("Parse(--format %s): %v", tc.format, err)
-		}
-		got := reflect.ValueOf(cmd.Filter.Parser).Pointer()
-		if got != reflect.ValueOf(tc.want).Pointer() {
-			t.Errorf("--format %s resolved to another parser", tc.format)
+// Scenario 5: --format is repeatable and scopes every --report that follows
+// it, so a mixed run of two formats parses to two reports paired with their
+// own parser.
+func TestParseFilterEachFormatScopesItsOwnReports(t *testing.T) {
+	cmd, err := Parse([]string{"--staged", "--format", "eslint", "--report", "a.json", "--format", "sarif", "--report", "b.sarif"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(cmd.Filter.Reports) != 2 {
+		t.Fatalf("got %d reports, want 2: %+v", len(cmd.Filter.Reports), cmd.Filter.Reports)
+	}
+	if cmd.Filter.Reports[0].Path != "a.json" || funcPointer(cmd.Filter.Reports[0].Parser) != funcPointer(lintfind.ParseESLint) {
+		t.Errorf("Reports[0] = %+v, want a.json parsed as eslint", cmd.Filter.Reports[0])
+	}
+	if cmd.Filter.Reports[1].Path != "b.sarif" || funcPointer(cmd.Filter.Reports[1].Parser) != funcPointer(lintfind.ParseSARIF) {
+		t.Errorf("Reports[1] = %+v, want b.sarif parsed as sarif", cmd.Filter.Reports[1])
+	}
+}
+
+// Scenario 6: --format is sticky. Two --report flags after one --format both
+// take that format's parser.
+func TestParseFilterFormatIsSticky(t *testing.T) {
+	cmd, err := Parse([]string{"--staged", "--format", "eslint", "--report", "a.json", "--report", "b.json"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(cmd.Filter.Reports) != 2 {
+		t.Fatalf("got %d reports, want 2: %+v", len(cmd.Filter.Reports), cmd.Filter.Reports)
+	}
+	for i, r := range cmd.Filter.Reports {
+		if funcPointer(r.Parser) != funcPointer(lintfind.ParseESLint) {
+			t.Errorf("Reports[%d].Parser is not ParseESLint", i)
 		}
 	}
+}
+
+// Scenario 7: a --report with no --format before it is a usage error, since
+// a report no longer has to exist and "--format is required" no longer
+// applies to a run with zero reports.
+func TestParseFilterReportWithNoFormatIsUsageError(t *testing.T) {
+	_, err := Parse([]string{"--staged", "--report", "a.json"})
+	var ue *UsageError
+	if !errors.As(err, &ue) {
+		t.Fatalf("got %T (%v), want *UsageError", err, err)
+	}
+	want := "--report a.json has no --format before it"
+	if ue.Problem != want {
+		t.Fatalf("Problem = %q, want %q", ue.Problem, want)
+	}
+}
+
+// Scenario 9: --language is no longer a filter flag. The parser supplies the
+// language now, so asserting it from the command line is gone.
+func TestParseFilterLanguageIsUnknownArgument(t *testing.T) {
+	_, err := Parse([]string{"--staged", "--language", "csharp"})
+	var ue *UsageError
+	if !errors.As(err, &ue) {
+		t.Fatalf("got %T (%v), want *UsageError", err, err)
+	}
+	want := "unknown argument '--language'"
+	if ue.Problem != want {
+		t.Fatalf("Problem = %q, want %q", ue.Problem, want)
+	}
+}
+
+// Scenario 10: --staged alone parses cleanly to zero reports. A report no
+// longer has to exist for a run to be legal.
+func TestParseFilterStagedAloneIsZeroReports(t *testing.T) {
+	cmd, err := Parse([]string{"--staged"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cmd.Kind != KindFilter || cmd.Filter.Mode != ScopeStaged {
+		t.Fatalf("got %+v, want a staged filter command", cmd)
+	}
+	if len(cmd.Filter.Reports) != 0 {
+		t.Fatalf("got %d reports, want 0", len(cmd.Filter.Reports))
+	}
+}
+
+// Scenario 11: a bare --format with no --report after it parses cleanly too.
+// It legally means "this branch ran and found nothing".
+func TestParseFilterFormatWithNoReportIsZeroReports(t *testing.T) {
+	cmd, err := Parse([]string{"--staged", "--format", "eslint"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(cmd.Filter.Reports) != 0 {
+		t.Fatalf("got %d reports, want 0", len(cmd.Filter.Reports))
+	}
+}
+
+// Scenario 12: spend parses its repeated --waiver flags in order.
+func TestParseSpend(t *testing.T) {
+	cmd, err := Parse([]string{"spend", "--waiver", "abc", "--waiver", "def"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cmd.Kind != KindSpend {
+		t.Fatalf("got kind %v, want KindSpend", cmd.Kind)
+	}
+	want := []string{"abc", "def"}
+	if !reflect.DeepEqual(cmd.Spend.IDs, want) {
+		t.Fatalf("got %v, want %v", cmd.Spend.IDs, want)
+	}
+}
+
+// Scenario 13: spend with no --waiver at all is a usage error.
+func TestParseSpendRequiresAtLeastOneWaiver(t *testing.T) {
+	_, err := Parse([]string{"spend"})
+	var ue *UsageError
+	if !errors.As(err, &ue) {
+		t.Fatalf("got %T (%v), want *UsageError", err, err)
+	}
+	want := "spend: at least one --waiver is required"
+	if ue.Problem != want {
+		t.Fatalf("Problem = %q, want %q", ue.Problem, want)
+	}
+}
+
+// Scenario 14: waive is unchanged by any of this.
+func TestParseWaiveUnchanged(t *testing.T) {
+	cmd, err := Parse([]string{"waive", "--language", "csharp", "--rule", "CS0219", "--reason", "why"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	want := WaiveArgs{Language: "csharp", Rule: "CS0219", Reason: "why"}
+	if cmd.Kind != KindWaive || cmd.Waive != want {
+		t.Fatalf("got %+v, want KindWaive %+v", cmd, want)
+	}
+}
+
+// funcPointer compares two lintfind.Parser values by function identity: a
+// non-nil check would pass just as well if --format golangci resolved to the
+// SARIF parser, and reading golangci JSON with the wrong parser is the one
+// mistake parse-time resolution exists to prevent.
+func funcPointer(p lintfind.Parser) uintptr {
+	return reflect.ValueOf(p).Pointer()
 }
