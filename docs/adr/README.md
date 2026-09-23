@@ -45,7 +45,8 @@ own.
 decision. Write a new numbered ADR stating the rule in one pass, one ADR per decision when you are
 splitting, and delete the old file. Point every inbound link at the old file's last commit, add each
 new ADR to the table above, and name the old number on the deleted line with the ADR that replaced
-it. Git keeps the old file's reasoning.
+it. Correct in place any sentence in another ADR that says the old file is still in the tree. Git
+keeps the old file's reasoning.
 
 **Trim** only when the word ceiling below binds and the text to be cut already stands in another ADR
 or in a deleted ADR's last commit. Ask the user first. Leave a paragraph opening with
