@@ -20,7 +20,7 @@ func TestRelativizeReadsACandidateUnderTheRootAsInside(t *testing.T) {
 }
 
 // This is the case that has to hold on a case-sensitive filesystem, which is
-// every Linux runner and the one CI gates merges on. ADR 0004 rejects folding
+// every Linux runner and the one CI gates merges on. ADR 0012 rejects folding
 // case by text precisely because two spellings there are two real directories,
 // and the fold rule is only allowed to relax that where os.SameFile says the
 // two names reach one inode.
@@ -60,7 +60,7 @@ func TestRelativizeReadsAMisCasedRootPrefixAsFolded(t *testing.T) {
 
 	// Mis-cased below the root as well as at it. Only the root prefix folds, so
 	// the components below come back as the candidate spells them, upper case
-	// and all. ADR 0004 still refuses that case-only difference one layer up, in
+	// and all. ADR 0013 still refuses that case-only difference one layer up, in
 	// named's spelling walk and in the join, which is what this asserts by
 	// holding "SRC/a.txt" rather than the tree's "src/a.txt".
 	rel, place, err := root.relativize(filepath.Join(miscased, "SRC", "a.txt"))
@@ -1096,10 +1096,10 @@ func TestNamedStillRefusesAPathGenuinelyOutsideTheRoot(t *testing.T) {
 }
 
 // Place reads a folded root prefix as landing where the candidate really sits
-// (ADR 0004, amended 2026-09-11). named still refuses the same shape, because a
+// (ADR 0013). named still refuses the same shape, because a
 // --files path is one a developer typed and can retype; a coverage candidate is
 // not, nobody typed it, and refusing it would drop a class the report really
-// measured. os.SameFile is what separates this from the folding ADR 0004
+// measured. os.SameFile is what separates this from the folding ADR 0012
 // rejects, so no two files are merged.
 func TestPlaceLandsACandidateWhoseRootPrefixIsMisCased(t *testing.T) {
 	root := containmentRoot(t)

@@ -93,7 +93,7 @@ func TestADeclaredRunScoresEveryMetricOffTheOneSet(t *testing.T) {
 func TestOneUnattributableMethodCountsOnceWhateverIsSelected(t *testing.T) {
 	selected := []metric.Selection{declaresCoverage, declaresCoverageToo}
 	// The set names some other file, so cancelSpan's file matched no report
-	// path at all, which is ADR 0004's file_unmatched.
+	// path at all, which is ADR 0011's file_unmatched.
 	elsewhere := coverage.Set{"src/Billing/InvoiceService.cs": coverage.Lines{1: true}}
 
 	metrics, unknown := attribute(selected, extract.Result{Spans: []extract.Span{cancelSpan}}, []extract.Span{cancelSpan}, elsewhere, true)

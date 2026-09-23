@@ -62,7 +62,7 @@ var (
 	// CodeRepoRootUnresolvable is git naming a toplevel the gate cannot
 	// resolve to a real directory. The repository exists and the filesystem is
 	// what failed, so it is none of the three above. The message carries the
-	// operating system's words alone, since ADR 0004 keeps absolute paths out
+	// operating system's words alone, since ADR 0011 keeps absolute paths out
 	// of the document.
 	CodeRepoRootUnresolvable          = register("repo_root_unresolvable")
 	CodeNoDiffBase                    = register("no_diff_base")
@@ -99,9 +99,9 @@ var (
 	// one of them lands here, so no refusal about a named path escapes the
 	// document.
 	CodeFileUnresolved = register("file_unresolved")
-	// The three coverage-path causes ADR 0004's 2026-09-03 amendment defers to
-	// issue 16: a source root MSBuild erased, a class resolving to two paths
-	// inside the repo root, and a report resolving only outside it.
+	// The three coverage-path causes ADR 0012 names, which landed with issue
+	// 16: a source root MSBuild erased, a class resolving to two paths inside the
+	// repo root, and a report resolving only outside it.
 	// coverage.mergeInto owns the order they are checked in.
 	CodeCoverageSourceRootErased = register("coverage_source_root_erased")
 	CodeFileAmbiguous            = register("file_ambiguous")
@@ -128,7 +128,7 @@ var (
 )
 
 // ReasonFileUnmatched is the typed reason on an unknown row: the changed
-// method's file matched no report path. ADR 0004 narrows it to that one
+// method's file matched no report path. ADR 0011 narrows it to that one
 // meaning.
 const ReasonFileUnmatched = "file_unmatched"
 

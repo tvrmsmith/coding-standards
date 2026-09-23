@@ -96,7 +96,7 @@ func TestFullStackScoresAReportCoverletWrote(t *testing.T) {
 
 // sourcePathPins are the two MSBuild properties both fixture projects state
 // rather than inherit from the environment. Either one on erases the source
-// root, which is ADR 0004's coverage_source_root_erased case and is covered by
+// root, which is ADR 0012's coverage_source_root_erased case and is covered by
 // the hand-built helper instead. Inherited, they would make this case emit a
 // different document on CI than on a laptop, since MSBuild reads an environment
 // variable as a property and a runner exporting either name then decides for a

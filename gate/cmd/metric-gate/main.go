@@ -536,7 +536,7 @@ func displayNames(selected []metric.Selection) string {
 
 // cause unwraps an *os.PathError to its syscall error, so the message names
 // only what actually went wrong rather than the absolute path os.Stat's own
-// Error() carries. ADR 0004 names the source path already in span.File, and
+// Error() carries. ADR 0011 names the source path already in span.File, and
 // a document naming an absolute path defeats that.
 func cause(err error) error {
 	var pathErr *os.PathError
