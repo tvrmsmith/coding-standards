@@ -352,8 +352,8 @@ func (n Name) String() string { return string(n) }
 // it would print one report under two strings. A path genuinely outside the repo
 // is named by the resolved absolute path the containment test just weighed, not
 // by the developer's own spelling, because the document carries no working
-// directory (ADR 0005) and a relative name reaches a consumer that cannot
-// resolve it.
+// directory (ADR 0008's fixed document shape) and a relative name reaches a
+// consumer that cannot resolve it.
 //
 // The third shape is an input that is not absolute, which comes back as its own
 // slash-separated text. That is a caller which has not joined its working
@@ -367,8 +367,8 @@ func (n Name) String() string { return string(n) }
 // genuinely outside. That is a known limitation and not an oversight. Name
 // answers one display string and has no channel to carry a reason, and the two
 // ways out both cost more than the fault is worth here: erroring would exit the
-// run with no document at all, which ADR 0005's 2026-09-02 amendment rejects for
-// a coverage-side filesystem failure, and a new code saying the gate could not
+// run with no document at all, which ADR 0008's skipped_paths rule rejects for a
+// coverage-side filesystem failure, and a new code saying the gate could not
 // weigh the path is a contract change, registering it in gate/internal/report
 // and pinning it with a golden. named is the one door that
 // words the fault distinctly, "could not be weighed against the repo root",

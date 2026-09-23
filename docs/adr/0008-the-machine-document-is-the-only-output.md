@@ -1,8 +1,8 @@
 # The machine document is the only output
 
 **Status:** accepted 2026-09-09. Consolidates
-[ADR 0005](0005-the-machine-document-is-the-only-output.md) and its seventeen amendments. The
-decision is unchanged; 0005 holds the reasoning that got here.
+[ADR 0005](https://github.com/tvrmsmith/coding-standards/blob/3fd48d4ad6c2a98d2332fb872ab319e80658bb91/docs/adr/0005-the-machine-document-is-the-only-output.md) and its seventeen amendments. The
+decision is unchanged; 0005's last commit holds the reasoning.
 
 **Consolidated 2026-09-17.** This folds the five dated amendments this file carried back into the
 body and adds the stdout write carve-out the code has implemented since
@@ -61,7 +61,7 @@ Adding a token is a contract change and edits this paragraph on the same commit,
 a cause registers its `error.code` in `gate/internal/report`.
 
 **Amended 2026-09-22.** Two things consolidating
-[ADR 0005](0005-the-machine-document-is-the-only-output.md) into this file lost, both restored here
+[ADR 0005](https://github.com/tvrmsmith/coding-standards/blob/3fd48d4ad6c2a98d2332fb872ab319e80658bb91/docs/adr/0005-the-machine-document-is-the-only-output.md) into this file lost, both restored here
 (issue 89). The first is how a typed float cell is rendered. A column's precision is a rounding rule
 and not a padding rule: the cell is rounded half up to that precision and then written in the spec's
 §2 canonical decimal form, no exponent, no padded trailing zeros, and no fraction at all once it is

@@ -608,9 +608,9 @@ func TestEmptyChangedSetStillReportsTheThresholdItWasGiven(t *testing.T) {
 	f.write("docs/notes.md", "first\nsecond\n")
 
 	// The bar reaches the summary row even though nothing scored, and ADR
-	// 0003's exit 0 before resolving any input still holds with one named:
-	// there is no coverage report here and naming a threshold does not go
-	// looking for one.
+	// 0007's rule that an empty changed-method set exits 0 before resolving any
+	// input still holds with one named: there is no coverage report here and
+	// naming a threshold does not go looking for one.
 	f.runWithArgs("--threshold", "crap=12").assertMatches(t, "empty_changed_set_threshold", 0, f.baseLabel("main"),
 		"no changed methods, nothing to measure\n")
 }
