@@ -109,6 +109,18 @@ func TestParseWaiveRejectsUnknownLanguage(t *testing.T) {
 	}
 }
 
+func TestParseWaiveAcceptsGoAndTS(t *testing.T) {
+	for _, language := range []string{"go", "ts"} {
+		cmd, err := Parse([]string{"waive", "--language", language, "--path", "a", "--rule", "r", "--reason", "why"})
+		if err != nil {
+			t.Fatalf("Parse --language %s: %v", language, err)
+		}
+		if cmd.Waive.Language != language {
+			t.Fatalf("Language = %q, want %q", cmd.Waive.Language, language)
+		}
+	}
+}
+
 func TestParseWaivers(t *testing.T) {
 	cmd, err := Parse([]string{"waivers"})
 	if err != nil {
