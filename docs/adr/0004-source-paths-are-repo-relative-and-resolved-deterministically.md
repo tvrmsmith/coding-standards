@@ -1,5 +1,11 @@
 # A source path is repo-relative, and every other path form is resolved to it by one deterministic rule
 
+**Superseded 2026-09-22 by [ADR 0011](0011-a-source-path-is-repo-relative.md),
+[ADR 0012](0012-a-coverage-path-resolves-by-the-cobertura-join.md) and
+[ADR 0013](0013-a-typed-path-resolves-against-the-working-directory.md).** The decision is unchanged.
+This file held three decisions: the source-path currency, coverage-report resolution, and typed
+paths. Each now has its own ADR.
+
 **Consolidated 2026-09-11.** Six dated amendments folded into the body; the 2606 words were what
 forced the pass. The decision is unchanged. Three clauses were dropped that should have been kept and
 two later passes put them back, so the prose is new but the rules are all here. `git log -p` on this

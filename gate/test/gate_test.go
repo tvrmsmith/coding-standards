@@ -2032,7 +2032,7 @@ func TestCoverageReportOutsideAResultsDirectoryIsNotFound(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// ADR 0004 anchors discovery on a TestResults directory. A report at the
+	// Discovery anchors on a TestResults directory. A report at the
 	// repo root is not one, and quietly reading it would make the gate's idea
 	// of coverage depend on stray files.
 	f.write("coverage.cobertura.xml", cobertura(f.root,
@@ -3062,7 +3062,7 @@ func TestAbsoluteNamedReportIsNamedRepoRelativeInTheDocument(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// ADR 0004: a human-typed path resolves against the process cwd, then
+	// ADR 0013: a human-typed path resolves against the process cwd, then
 	// relativizes for the name the document carries.
 	f.runWithArgs("--coverage", filepath.Join(f.root, "artifacts", "coverage.xml")).assertMatches(
 		t, "named_coverage_stale", 1, f.baseLabel("main"),
@@ -3084,7 +3084,7 @@ func TestRelativeNamedReportResolvesAgainstTheWorkingDirectory(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// ADR 0004: the path resolves against the process cwd, which here is a
+	// ADR 0013: the path resolves against the process cwd, which here is a
 	// subdirectory rather than the repo root. Joining against the root instead
 	// lands outside the repo, where there is no report to read at all.
 	f.runFromWithArgs("tests", "--coverage", "../artifacts/from-subdir.xml").assertMatches(
@@ -3126,7 +3126,7 @@ func TestAbsentNamedReportUnderASymlinkedRootIsStillNamedRepoRelative(t *testing
 	// symlinks through, and it reaches the repo through one: /tmp and /var are
 	// symlinks on macOS, so this is the ordinary shape of an absolute path a
 	// developer types there. Relativizing it unresolved against the resolved
-	// root escapes for the indirection alone, and ADR 0004 has the document
+	// root escapes for the indirection alone, and ADR 0011 has the document
 	// naming paths repo-relative whenever they have that form.
 	link := symlinkedDir(t, f.root, filepath.Join(t.TempDir(), "link"))
 	f.runWithArgs("--coverage", filepath.Join(link, "artifacts", "typo.xml")).assertMatches(
@@ -3151,7 +3151,7 @@ func TestNamedReportThroughAFileComponentIsStillNamedRepoRelative(t *testing.T) 
 	// the repo through a symlink, as an absolute path typed on macOS does, so a
 	// resolution that stops at the first component naming no directory leaves
 	// the link unresolved, the document escapes the repo for the indirection
-	// alone and quotes a machine-specific absolute path where ADR 0004 asks for
+	// alone and quotes a machine-specific absolute path where ADR 0011 asks for
 	// a repo-relative one.
 	link := symlinkedDir(t, f.root, filepath.Join(t.TempDir(), "link"))
 	f.runWithArgs("--coverage", filepath.Join(link, "artifacts", "coverage.xml", "typo.xml")).assertMatches(
@@ -3187,7 +3187,7 @@ func TestAChangedFileMissingFromTheWorkingTreeFailsInsideTheDocument(t *testing.
 	// Issue 31: the base resolved and the changed method is counted, so the
 	// document is establishable and the failure belongs inside it. The message
 	// names the source path rather than the absolute one os.Stat's own error
-	// carries, which is what ADR 0004 asks of every path the document prints.
+	// carries, which is what ADR 0011 asks of every path the document prints.
 	f.runWithArgs().assertMatches(t, "changed_file_unreadable", 1, f.baseLabel("main"),
 		"could not read "+orderService+" to date it against the coverage report: no such file or directory\n")
 }
@@ -3226,9 +3226,9 @@ func assertUsageError(t *testing.T, result runResult, stderr string) {
 		result.exitCode, result.stdout, "", result.stderr, stderr)
 }
 
-// The cases below are issue 16: the three exit-1 diagnostics ADR 0004's
-// 2026-09-03 amendment defers there, plus regression coverage for the
-// resolution rules the tracer already satisfied before this issue landed.
+// The cases below are issue 16: the three exit-1 diagnostics ADR 0012
+// names, plus regression coverage for the resolution rules the tracer already
+// satisfied before this issue landed.
 
 func TestNestedSolutionLayoutScoresCorrectly(t *testing.T) {
 	const nested = "src/Services/Ordering/Api/OrderService.cs"
@@ -3561,7 +3561,7 @@ func TestRelativeSourceIsRefusedRatherThanResolvedAgainstTheWorkingDirectory(t *
 	f.touchLine(orderService, 62)
 	// A <source> that is not absolute, joined onto a relative filename, names
 	// exactly the file the gate would score if it resolved candidates against
-	// its own working directory, which is the repo root. ADR 0004 resolves
+	// its own working directory, which is the repo root. ADR 0012 resolves
 	// nothing that way, because the report would then be scored from a path it
 	// never named, so the report places nothing and is named instead.
 	f.write("TestResults/coverage.cobertura.xml", cobertura("src",
@@ -3762,7 +3762,7 @@ func TestBlankSourceWithAnAbsoluteFilenameScores(t *testing.T) {
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 	// One blank <source> beside a filename that is already an absolute path.
-	// The filename carries its own root, so this is the coverlet shape ADR 0004
+	// The filename carries its own root, so this is the coverlet shape ADR 0012
 	// names and not UseSourceLink=true: joining the blank source onto it leaves
 	// it unchanged, and it places inside the repo root.
 	f.write("TestResults/coverage.cobertura.xml", cobertura("",
@@ -3994,7 +3994,7 @@ func TestReportPathNoLongerOnDiskIsIgnoredRatherThanFatal(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.write(deletedFile, csharpFile(10))
 	f.commitAll("initial")
-	// A report describes a moment in the past (ADR 0004): a class naming a
+	// A report describes a moment in the past (ADR 0012): a class naming a
 	// file removed since the test run must stay a silent ignore now that the
 	// report is checked for more than the join alone.
 	f.git("rm", "--quiet", deletedFile)
@@ -4021,7 +4021,7 @@ func TestReportWhoseEveryClassIsGoneFromDiskFailsNamingTheMismatch(t *testing.T)
 	f.write(deletedFile, csharpFile(10))
 	f.commitAll("initial")
 	// Every class the report names is gone, which is the shape a report left
-	// behind in a gitignored TestResults/ takes after a branch switch. ADR 0004
+	// behind in a gitignored TestResults/ takes after a branch switch. ADR 0012
 	// fails a report that places no class inside the root whatever became of
 	// the candidates, and the message hands the reader the path to look at, so
 	// a stale report is diagnosed as one rather than as a wall of methods
@@ -4091,7 +4091,7 @@ func TestAbsoluteClassFilenameWithNoSourcesScores(t *testing.T) {
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 	// Coverlet emits an absolute filename and no source root when no computed
-	// source root prefixes the document (ADR 0004). The filename alone is the
+	// source root prefixes the document (ADR 0012). The filename alone is the
 	// candidate, and it lands inside the root.
 	f.write("TestResults/coverage.cobertura.xml", coberturaNoSources(
 		coverageClass{
