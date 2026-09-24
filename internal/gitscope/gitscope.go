@@ -544,8 +544,8 @@ func (r Repo) objectType(oid string) (string, error) {
 //
 // A link arriving as status A does pass ACM, so linkedPaths drops any changed
 // path whose new side is a link, which is the same reading of "a link holds no
-// source to measure" on the route the letters cannot reach. That drop owes ADR
-// 0014 an amendment.
+// source to measure" on the route the letters cannot reach. See the ADR 0014
+// amendment beginning "A changed path whose new side is a symlink".
 //
 // Nothing gets out of here untyped. Every cause below this line, a git
 // invocation that failed as much as a patch the parser refused, comes back as

@@ -34,6 +34,13 @@ either direction. A source file replaced by a symlink is the wanted answer, sinc
 source to measure. A symlink replaced by a real source file is an accepted gap. Its methods stay
 unmeasured until an edit touches each of them, because the file never arrives as status `A`.
 
+**Amended 2026-09-24.** A changed path whose new side is a symlink contributes no touched lines,
+including one arriving as status `A`, which `--diff-filter=ACM` lets through. A link holds no source
+to measure on that route either, and left in, the extractor follows it and can fail the run on an
+unknown changed method that no edit clears. [Issue 160](https://github.com/tvrmsmith/coding-standards/issues/160)
+carries the argument, and [issue 109](https://github.com/tvrmsmith/coding-standards/issues/109) the
+failure.
+
 Widening to `ACMT` is not the remedy. git renders a typechange as a delete plus an add, so in the
 first direction the new side is the link's own blob, one line holding the path it points at, under a
 name still claiming `.cs`. That line falls inside no span, so the guaranteed effect is
