@@ -182,6 +182,69 @@ func linkAndMoveFixture(t *testing.T) (Repo, string) {
 	return repo, fixtureHead(t, repo)
 }
 
+// Skipping an added link is not the same answer as digesting the link's own
+// text, and the fixtures above cannot tell the two apart: no deleted blob in
+// them holds the path a link points at (issue 145). Here Origin.cs holds
+// exactly that path, "Target.cs", and moves to Moved.cs beside a link to
+// Target.cs. A digest of the link's text, os.Readlink on disk or `cat-file` on
+// the link's blob under --staged, makes the link a second claimant of the one
+// deleted blob, so counting drops neither add and Moved.cs comes back measured
+// as a whole-file add. The skip leaves the move with its one claimant. The
+// content carries no trailing newline because a link's text has none, and
+// squashedDigest keeps line structure, so "Target.cs\n" would never collide.
+func TestTouchedLinesKeepsTheMoveWhenAnAddedLinkCouldClaimTheSameDeletedBlob(t *testing.T) {
+	cases := []struct {
+		name   string
+		staged bool
+	}{
+		{"working tree", false},
+		{"staged", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo, head := linkClaimsMovedBlobFixture(t)
+
+			touched, err := repo.TouchedLines(Base{Ref: "HEAD", Commit: head, Staged: c.staged})
+
+			if err != nil {
+				t.Fatalf("TouchedLines over an added link naming the same content as a deleted blob errored %v, want an empty changed set", err)
+			}
+			if len(touched) != 0 {
+				t.Errorf("TouchedLines named %v, want %s dropped as a pure move and the link dropped for holding no source", touchedPaths(touched), fixtureMoved)
+			}
+		})
+	}
+}
+
+// linkClaimsMovedBlobFixture stages a pure move of a file whose whole content
+// is the text a link to Target.cs holds, beside such a link, with the index and
+// the working tree holding the same state.
+func linkClaimsMovedBlobFixture(t *testing.T) (Repo, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	fixtureGit(t, dir, "init", "--quiet")
+	writeFixtureFile(t, dir, fixtureTarget, "// target\n")
+	writeFixtureFile(t, dir, fixtureOrigin, "Target.cs")
+	fixtureGit(t, dir, "add", "--all")
+	fixtureGit(t, dir, "commit", "--quiet", "-m", "initial")
+	if err := os.Remove(filepath.Join(dir, filepath.FromSlash(fixtureOrigin))); err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureFile(t, dir, fixtureMoved, "Target.cs")
+	if err := os.Symlink("Target.cs", filepath.Join(dir, filepath.FromSlash(fixtureLink))); err != nil {
+		t.Fatal(err)
+	}
+	fixtureGit(t, dir, "add", "--all")
+
+	root, err := srcpath.NewRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := Repo{root: root}
+	return repo, fixtureHead(t, repo)
+}
+
 // touchedPaths is the changed set's paths in a fixed order, so a failure reads
 // the same whichever order the map ranges in.
 func touchedPaths(touched map[srcpath.Path][]int) []string {
