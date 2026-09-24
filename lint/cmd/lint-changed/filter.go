@@ -46,6 +46,10 @@ func scopeFinding(f lintfind.Finding, scope scopeSet) (survivor, bool) {
 // It never spends a matched waiver. Only the dispatcher that calls this
 // filter across every language branch of one commit knows whether the whole
 // commit went through, so spending is the separate KindSpend form.
+//
+// Under fa.AcceptSpent, a run the dispatcher will spend nothing on, a waiver
+// spent against any tree still matches. So a waiver spent at commit time
+// still covers its finding when no-mistakes lints a rebased or fixed-up tree.
 func runFilter(fa FilterArgs, stdout, stderr io.Writer) int {
 	// OpenHook rather than Open, because git runs this filter from a pre-commit
 	// hook and the index it names there is the index the commit will write.
@@ -80,21 +84,29 @@ func runFilter(fa FilterArgs, stdout, stderr io.Writer) int {
 	kept := make([]survivor, 0, len(survivors))
 	var matched []matchedWaiver
 	claimed := map[string]bool{}
-	// An empty log can match nothing, so the index tree is never computed on the
-	// overwhelmingly common run that has no waiver recorded at all.
-	waivable := len(store.List()) > 0
+	// An empty log can match nothing, and a run with no survivor has nothing to
+	// match, so the index tree is never computed on either.
+	waivable := len(store.List()) > 0 && len(survivors) > 0
+	var spent waiver.Spent
+	if waivable {
+		if fa.AcceptSpent {
+			spent = waiver.SpentAnywhere()
+		} else {
+			tree, err := trees.sha()
+			if err != nil {
+				_, _ = fmt.Fprintln(stderr, err)
+				return 1
+			}
+			spent = waiver.SpentAgainst(tree)
+		}
+	}
 	for _, s := range survivors {
 		if !waivable {
 			kept = append(kept, s)
 			continue
 		}
-		tree, err := trees.sha()
-		if err != nil {
-			_, _ = fmt.Fprintln(stderr, err)
-			return 1
-		}
 		path := s.waivePath()
-		w, ok := store.Match(s.finding.Language, path, s.finding.Rule, tree, claimed)
+		w, ok := store.Match(s.finding.Language, path, s.finding.Rule, spent, claimed)
 		if !ok {
 			kept = append(kept, s)
 			continue
@@ -234,11 +246,12 @@ func waiveBinary() string {
 	return exe
 }
 
-// indexTree is the index tree sha every waiver is matched and spent against,
-// so a waiver recorded against one staged state never silently covers
-// another. It is read on first use rather than up front: a run with no waiver
-// to look up, including any --files run in a tree whose index git refuses to
-// write, never needs it.
+// indexTree is the index tree sha a spending run matches and spends waivers
+// against, so a waiver recorded against one staged state never silently
+// covers another. It is read on first use rather than up front: a run with
+// no waiver to look up, including any --files run in a tree whose index git
+// refuses to write, never needs it, and neither does a run under
+// --accept-spent, which matches with waiver.SpentAnywhere() instead.
 type indexTree struct {
 	repo gitscope.Repo
 	sum  string

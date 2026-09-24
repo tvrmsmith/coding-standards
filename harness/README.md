@@ -89,6 +89,11 @@ that survived anywhere in the run leaves every waiver unspent. It spends only on
 run, the pre-commit hook's: a `--since` or `--files` run makes no commit, and an `--only` run lints
 one language of one, so those runs pass a waived finding and leave the waiver unspent.
 
+A non-spending run also accepts a waiver already spent against any tree, not only this one, so a
+no-mistakes run relinting a rebased or fixed-up tree does not block on a finding its commit already
+went through on. The full `--staged` run keeps the strict rule, unspent or spent against this same
+tree, since the pre-commit hook is the only guard a new commit gets.
+
 Under `--staged` that process runs even when no branch produced a report, as long as at least one
 branch reached the point of handing its reports up. ADR 0010's staged-versus-disk hard stop lives in
 `lint-changed` and covers every staged path, so skipping the filter for want of a report is how a

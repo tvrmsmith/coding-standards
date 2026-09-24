@@ -80,6 +80,9 @@ type FilterArgs struct {
 	// write nowhere. The filter never spends: the dispatcher is the only
 	// caller that knows whether the whole commit went through.
 	MatchedWaivers string
+	// AcceptSpent marks a run that will spend nothing, so a waiver already
+	// spent against any tree still covers its finding.
+	AcceptSpent bool
 }
 
 // WaiveArgs is argv for the waive form.
@@ -102,7 +105,7 @@ func (e *UsageError) Error() string {
 	return "lint-changed: " + e.Problem + "\n\n" + usage
 }
 
-const usage = `usage: lint-changed [--staged | --since <ref> | --files <a,b,...>] [--format <fmt> --report <file> ...] [--matched-waivers <file>]
+const usage = `usage: lint-changed [--staged | --since <ref> | --files <a,b,...>] [--format <fmt> --report <file> ...] [--matched-waivers <file>] [--accept-spent]
        lint-changed waive --language <lang> [--path <p>] --rule <r> --reason <why>
        lint-changed waivers
        lint-changed spend --waiver <id> [--waiver <id> ...]`
@@ -198,6 +201,8 @@ func parseFilter(args []string) (FilterArgs, error) {
 				return FilterArgs{}, err
 			}
 			fa.MatchedWaivers, i = v, next
+		case "--accept-spent":
+			fa.AcceptSpent = true
 		default:
 			return FilterArgs{}, &UsageError{Problem: "unknown argument '" + args[i] + "'"}
 		}

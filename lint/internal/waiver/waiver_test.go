@@ -45,7 +45,7 @@ func TestRecord_thenMatch_findsIt(t *testing.T) {
 		t.Fatalf("Record did not assign an ID")
 	}
 
-	got, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123", nil)
+	got, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", waiver.SpentAgainst("abc123"), nil)
 	if !ok {
 		t.Fatalf("Match: not found")
 	}
@@ -71,14 +71,14 @@ func TestRecordAndMatch_pathlessWaiver(t *testing.T) {
 		t.Fatalf("Record: %v", err)
 	}
 
-	got, ok := store.Match("csharp", "", "AD0001", "abc123", nil)
+	got, ok := store.Match("csharp", "", "AD0001", waiver.SpentAgainst("abc123"), nil)
 	if !ok {
 		t.Fatalf("Match found no waiver for a pathless finding")
 	}
 	if got.ID != w.ID {
 		t.Fatalf("Match returned %s, want %s", got.ID, w.ID)
 	}
-	if _, ok := store.Match("csharp", srcpath.FromSlash("src/Order.cs"), "AD0001", "abc123", nil); ok {
+	if _, ok := store.Match("csharp", srcpath.FromSlash("src/Order.cs"), "AD0001", waiver.SpentAgainst("abc123"), nil); ok {
 		t.Fatalf("a pathless waiver matched a finding that named a path")
 	}
 }
@@ -97,13 +97,13 @@ func TestMatch_requiresLanguagePathAndRule(t *testing.T) {
 		t.Fatalf("Record: %v", err)
 	}
 
-	if _, ok := store.Match("csharp", srcpath.FromSlash("src/Other.cs"), "TVRM0001", "abc123", nil); ok {
+	if _, ok := store.Match("csharp", srcpath.FromSlash("src/Other.cs"), "TVRM0001", waiver.SpentAgainst("abc123"), nil); ok {
 		t.Fatalf("Match matched on a different path")
 	}
-	if _, ok := store.Match("go", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123", nil); ok {
+	if _, ok := store.Match("go", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", waiver.SpentAgainst("abc123"), nil); ok {
 		t.Fatalf("Match matched on a different language")
 	}
-	if _, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0002", "abc123", nil); ok {
+	if _, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0002", waiver.SpentAgainst("abc123"), nil); ok {
 		t.Fatalf("Match matched on a different rule")
 	}
 }
@@ -218,13 +218,148 @@ func TestSpend_wornExampleFromAssignment(t *testing.T) {
 
 	// Same tree: the waiver is still usable, since a retried commit against
 	// the same tree must not burn a second waiver.
-	if _, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123", nil); !ok {
+	if _, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", waiver.SpentAgainst("abc123"), nil); !ok {
 		t.Fatalf("Match after same-tree spend: not found")
 	}
 
 	// A different tree: the waiver is used up.
-	if _, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "def456", nil); ok {
+	if _, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", waiver.SpentAgainst("def456"), nil); ok {
 		t.Fatalf("Match after spend matched a different tree")
+	}
+}
+
+// A run that spends nothing, SpentAnywhere, accepts a waiver already spent
+// against any tree: a no-mistakes run lints a detached worktree whose index
+// tree differs from the commit-time tree, and it must not block on a finding
+// the commit already went through on.
+func TestMatch_spentAnywhere_acceptsWaiverSpentAgainstAnyTree(t *testing.T) {
+	store, err := waiver.Open(filepath.Join(t.TempDir(), "waivers.jsonl"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	w, err := store.Record(waiver.Waiver{
+		Language: "csharp",
+		Path:     srcpath.FromSlash("src/OrderService.cs"),
+		Rule:     "TVRM0001",
+		Reason:   "analyzer misreads the builder chain",
+	})
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	if err := store.Spend(w, "tree-a"); err != nil {
+		t.Fatalf("Spend: %v", err)
+	}
+
+	got, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", waiver.SpentAnywhere(), nil)
+	if !ok {
+		t.Fatalf("Match(SpentAnywhere) after spend against another tree: not found")
+	}
+	if got.ID != w.ID {
+		t.Fatalf("Match(SpentAnywhere) = %q, want %q", got.ID, w.ID)
+	}
+}
+
+// An unspent waiver matches under SpentAnywhere too: nothing spent is still
+// nothing that blocks it.
+func TestMatch_spentAnywhere_matchesUnspentWaiver(t *testing.T) {
+	store, err := waiver.Open(filepath.Join(t.TempDir(), "waivers.jsonl"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	w, err := store.Record(waiver.Waiver{
+		Language: "csharp",
+		Path:     srcpath.FromSlash("src/OrderService.cs"),
+		Rule:     "TVRM0001",
+		Reason:   "analyzer misreads the builder chain",
+	})
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	got, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", waiver.SpentAnywhere(), nil)
+	if !ok {
+		t.Fatalf("Match(SpentAnywhere) on unspent waiver: not found")
+	}
+	if got.ID != w.ID {
+		t.Fatalf("Match(SpentAnywhere) = %q, want %q", got.ID, w.ID)
+	}
+}
+
+// Under SpentAnywhere, claimed still skips a waiver already taken by another
+// finding in the same run, oldest-first order otherwise unchanged.
+func TestMatch_spentAnywhere_skipsClaimedWaivers(t *testing.T) {
+	store, err := waiver.Open(filepath.Join(t.TempDir(), "waivers.jsonl"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	first, err := store.Record(waiver.Waiver{
+		Language: "csharp",
+		Path:     srcpath.FromSlash("src/OrderService.cs"),
+		Rule:     "TVRM0001",
+		Reason:   "the claimed one",
+	})
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	second, err := store.Record(waiver.Waiver{
+		Language: "csharp",
+		Path:     srcpath.FromSlash("src/OrderService.cs"),
+		Rule:     "TVRM0001",
+		Reason:   "the one left",
+	})
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	if err := store.Spend(first, "tree-a"); err != nil {
+		t.Fatalf("Spend: %v", err)
+	}
+
+	got, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", waiver.SpentAnywhere(), nil)
+	if !ok {
+		t.Fatalf("Match(SpentAnywhere) with no claims: not found")
+	}
+	if got.ID != first.ID {
+		t.Fatalf("Match(SpentAnywhere) with no claims = %q, want the oldest %q", got.ID, first.ID)
+	}
+
+	claimed := map[string]bool{first.ID: true}
+	got, ok = store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", waiver.SpentAnywhere(), claimed)
+	if !ok {
+		t.Fatalf("Match(SpentAnywhere) with first claimed: not found")
+	}
+	if got.ID != second.ID {
+		t.Fatalf("Match(SpentAnywhere) with first claimed = %q, want %q", got.ID, second.ID)
+	}
+}
+
+// Under SpentAnywhere, a waiver whose language, path or rule differs still
+// does not match: SpentAnywhere widens which spend state is acceptable, not
+// which waiver covers the finding.
+func TestMatch_spentAnywhere_requiresLanguagePathAndRule(t *testing.T) {
+	store, err := waiver.Open(filepath.Join(t.TempDir(), "waivers.jsonl"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := store.Record(waiver.Waiver{
+		Language: "csharp",
+		Path:     srcpath.FromSlash("src/OrderService.cs"),
+		Rule:     "TVRM0001",
+		Reason:   "analyzer misreads the builder chain",
+	}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	if _, ok := store.Match("csharp", srcpath.FromSlash("src/Other.cs"), "TVRM0001", waiver.SpentAnywhere(), nil); ok {
+		t.Fatalf("Match(SpentAnywhere) matched on a different path")
+	}
+	if _, ok := store.Match("go", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", waiver.SpentAnywhere(), nil); ok {
+		t.Fatalf("Match(SpentAnywhere) matched on a different language")
+	}
+	if _, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0002", waiver.SpentAnywhere(), nil); ok {
+		t.Fatalf("Match(SpentAnywhere) matched on a different rule")
 	}
 }
 
@@ -323,7 +458,7 @@ func TestMatch_skipsClaimedWaivers(t *testing.T) {
 	}
 
 	claimed := map[string]bool{first.ID: true}
-	got, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123", claimed)
+	got, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", waiver.SpentAgainst("abc123"), claimed)
 	if !ok {
 		t.Fatalf("Match returned nothing, so a claimed waiver blocked the unclaimed one behind it")
 	}
@@ -357,7 +492,7 @@ func TestMatch_returnsOldestUsable(t *testing.T) {
 		t.Fatalf("Record: %v", err)
 	}
 
-	got, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123", nil)
+	got, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", waiver.SpentAgainst("abc123"), nil)
 	if !ok {
 		t.Fatalf("Match: not found")
 	}
@@ -370,7 +505,7 @@ func TestMatch_returnsOldestUsable(t *testing.T) {
 	if err := store.Spend(first, "def456"); err != nil {
 		t.Fatalf("Spend: %v", err)
 	}
-	got, ok = store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "abc123", nil)
+	got, ok = store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", waiver.SpentAgainst("abc123"), nil)
 	if !ok {
 		t.Fatalf("Match: not found")
 	}
@@ -453,7 +588,7 @@ func TestOpen_readsExistingLog(t *testing.T) {
 		t.Fatalf("Entry.SpentAt is zero, want non-zero")
 	}
 
-	if _, ok := reopened.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", "def456", nil); ok {
+	if _, ok := reopened.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", waiver.SpentAgainst("def456"), nil); ok {
 		t.Fatalf("Match after reopen matched a different tree, the waiver should be used up")
 	}
 }

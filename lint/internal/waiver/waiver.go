@@ -211,17 +211,35 @@ func (s *Store) Record(w Waiver) (Waiver, error) {
 	return w, nil
 }
 
-// Match finds a waiver covering this rule on this path that is still
-// usable: either never spent, or already spent against this same tree. It
-// returns the oldest usable waiver when several match, so the store drains
-// in recording order.
+// Spent is which already-spent waivers a Match still hands back.
+type Spent struct {
+	tree string
+	any  bool
+}
+
+// SpentAgainst is for a run that spends what it matches: a waiver still
+// matches when it is unspent, or when it was spent against this same tree.
+func SpentAgainst(tree string) Spent {
+	return Spent{tree: tree}
+}
+
+// SpentAnywhere is for a run that spends nothing: any waiver matches,
+// spent or not, since a run that never calls Spend cannot burn one twice
+// no matter which tree it was first spent against.
+func SpentAnywhere() Spent {
+	return Spent{any: true}
+}
+
+// Match finds a waiver covering this rule on this path that is still usable
+// under spent, oldest first when several match, so the store drains in
+// recording order.
 //
 // claimed holds the ids the caller has already taken for other findings in
 // this run, and none of them match again: one waiver covers one finding, so
 // two findings under the same rule on the same path cost two waivers. A
 // retried commit against the same tree claims the same waivers in the same
 // order, which is what keeps the retry from burning a second one.
-func (s *Store) Match(language string, path srcpath.Path, rule, tree string, claimed map[string]bool) (Waiver, bool) {
+func (s *Store) Match(language string, path srcpath.Path, rule string, spent Spent, claimed map[string]bool) (Waiver, bool) {
 	for _, entry := range s.entries {
 		if entry.Language != language || entry.Path != path || entry.Rule != rule {
 			continue
@@ -229,7 +247,7 @@ func (s *Store) Match(language string, path srcpath.Path, rule, tree string, cla
 		if claimed[entry.ID] {
 			continue
 		}
-		if entry.SpentTree == "" || entry.SpentTree == tree {
+		if entry.SpentTree == "" || spent.any || entry.SpentTree == spent.tree {
 			return entry.Waiver, true
 		}
 	}
@@ -240,9 +258,10 @@ func (s *Store) Match(language string, path srcpath.Path, rule, tree string, cla
 // tree is a no-op, so a retried commit does not burn a second waiver.
 //
 // Spending a waiver already spent against a different tree is an error.
-// Match already refuses to hand that waiver back for any tree but the one it
-// was first spent against, so a caller that reaches Spend on it anyway has a
-// bug worth hearing about rather than a silent no-op to mask it.
+// Under SpentAgainst, Match already refuses to hand that waiver back for any
+// tree but the one it was first spent against, so a caller that reaches
+// Spend on it anyway has a bug worth hearing about rather than a silent
+// no-op to mask it.
 func (s *Store) Spend(w Waiver, tree string) error {
 	idx, ok := s.index(w.ID)
 	if !ok {

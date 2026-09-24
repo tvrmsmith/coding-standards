@@ -30,6 +30,41 @@ func TestParseFilterStaged(t *testing.T) {
 	}
 }
 
+// --accept-spent takes no value and sets FilterArgs.AcceptSpent, so a run
+// that spends nothing can still accept a waiver spent against another tree.
+func TestParseFilterAcceptSpent(t *testing.T) {
+	cmd, err := Parse([]string{"--since", "HEAD", "--accept-spent"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cmd.Kind != KindFilter || cmd.Filter.Mode != ScopeSince || cmd.Filter.Ref != "HEAD" || !cmd.Filter.AcceptSpent {
+		t.Fatalf("got %+v, want a since HEAD filter command with AcceptSpent true", cmd)
+	}
+}
+
+// --accept-spent defaults to false when not given.
+func TestParseFilterAcceptSpentDefaultsFalse(t *testing.T) {
+	cmd, err := Parse([]string{"--staged"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cmd.Filter.AcceptSpent {
+		t.Fatalf("got AcceptSpent true, want false")
+	}
+}
+
+// --accept-spent's position does not matter, and it consumes no value: the
+// scope flag that follows it still parses as its own flag.
+func TestParseFilterAcceptSpentPositionDoesNotMatter(t *testing.T) {
+	cmd, err := Parse([]string{"--accept-spent", "--staged"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !cmd.Filter.AcceptSpent || cmd.Filter.Mode != ScopeStaged {
+		t.Fatalf("got %+v, want AcceptSpent true and Mode ScopeStaged", cmd.Filter)
+	}
+}
+
 func TestParseFilterSince(t *testing.T) {
 	cmd, err := Parse([]string{"--format", "sarif", "--since", "main"})
 	if err != nil {

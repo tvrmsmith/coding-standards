@@ -206,7 +206,7 @@ add_reports() {
 # commit whose every staged file was deleted from the working tree reaches no linter, and skipping
 # the filter is how it would pass unexamined. Every other mode has no such stop to ask for.
 run_filter() {
-  local bin arg scope=() has_report=0
+  local bin arg scope=() accept_spent=() has_report=0
 
   [ ${#filter_reports[@]} -gt 0 ] || return 0
   for arg in "${filter_reports[@]}"; do
@@ -222,8 +222,12 @@ run_filter() {
     --files) scope=(--files "$(IFS=,; echo "${filter_files[*]-}")") ;;
   esac
 
+  # A run that spends nothing accepts a waiver spent against any tree. lint-changed.sh decides
+  # $spends, next to the spend gate that reads it too.
+  [ "$spends" -eq 1 ] || accept_spent=(--accept-spent)
+
   bin=$(lint_changed_bin) || return 1
-  "$bin" "${scope[@]}" --matched-waivers "$matched_waivers" "${filter_reports[@]}" </dev/null
+  "$bin" "${scope[@]}" --matched-waivers "$matched_waivers" ${accept_spent[@]+"${accept_spent[@]}"} "${filter_reports[@]}" </dev/null
 }
 
 # Marks every waiver the filter matched as spent. The dispatcher calls it only on a clean total of a

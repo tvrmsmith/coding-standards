@@ -532,6 +532,24 @@ describe('one invocation, every language the repo is wired for', () => {
       return log
     }
 
+    /**
+     * Like `waivers`, but every waiver is already spent against a tree that is never the
+     * fixture's own: the shape a no-mistakes run sees in a detached worktree whose index tree
+     * differs from the tree the commit spent the waiver against.
+     */
+    function waiversSpentElsewhere(f, ...findings) {
+      const log = join(f.root, 'waivers.jsonl')
+      const ids = findings.map(({ language }) => `${language}-waiver`)
+      const waiverLines = findings.map(({ language, path, rule }, i) =>
+        JSON.stringify({ kind: 'waiver', id: ids[i], language, path, rule, reason: 'test' }),
+      )
+      const spendLines = ids.map((id) =>
+        JSON.stringify({ kind: 'spend', id, tree: '0'.repeat(40), spent: '2026-01-01T00:00:00Z' }),
+      )
+      writeFileSync(log, [...waiverLines, ...spendLines].map((line) => `${line}\n`).join(''))
+      return log
+    }
+
     /** @returns {object[]} every record in the log, in the order they were written */
     const records = (log) =>
       readFileSync(log, 'utf8')
@@ -667,6 +685,86 @@ describe('one invocation, every language the repo is wired for', () => {
         assert.equal(status, 1, `stdout:\n${stdout}\nstderr:\n${stderr}`)
         assert.equal(stdout, '')
         assert.equal(records(log).length, 2)
+      } finally {
+        f.cleanup()
+      }
+    })
+
+    test('a clean --since run accepts a waiver spent against another tree', { skip }, () => {
+      // A no-mistakes run lints a detached worktree whose index tree is never the tree the
+      // commit spent the waiver against, so a non-spending run has to accept it anyway.
+      const f = fixture()
+      try {
+        const log = waiversSpentElsewhere(f, tsFinding, goFinding)
+        const { status, stdout, stderr } = capture(f.repo, ['--since', 'HEAD'], {
+          ...env(f),
+          TVRMSMITH_WAIVERS: log,
+        })
+        assert.equal(status, 0, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        assert.equal(stdout, '')
+        assert.match(stderr, /waiver ts-waiver matched/)
+        assert.match(stderr, /waiver go-waiver matched/)
+        assert.deepEqual(
+          records(log).map(({ kind }) => kind),
+          ['waiver', 'waiver', 'spend', 'spend'],
+        )
+      } finally {
+        f.cleanup()
+      }
+    })
+
+    test('a clean --files run accepts a waiver spent against another tree', { skip }, () => {
+      const f = fixture()
+      try {
+        const log = waiversSpentElsewhere(f, tsFinding, goFinding)
+        const { status, stdout, stderr } = capture(f.repo, ['--files', 'main.ts', 'main.go'], {
+          ...env(f),
+          TVRMSMITH_WAIVERS: log,
+        })
+        assert.equal(status, 0, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        assert.equal(stdout, '')
+        assert.deepEqual(
+          records(log).map(({ kind }) => kind),
+          ['waiver', 'waiver', 'spend', 'spend'],
+        )
+      } finally {
+        f.cleanup()
+      }
+    })
+
+    test('a clean --only --staged run accepts a waiver spent against another tree', { skip }, () => {
+      // --only sees one language's share of the commit, never the whole of it, so it does not
+      // spend either and gets the same latitude as --since and --files.
+      const f = staged(fixture())
+      try {
+        const log = waiversSpentElsewhere(f, goFinding)
+        const { status, stdout, stderr } = capture(f.repo, ['--only', 'go', '--staged'], {
+          ...env(f),
+          TVRMSMITH_WAIVERS: log,
+        })
+        assert.equal(status, 0, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        assert.equal(stdout, '')
+        assert.match(stderr, /waiver go-waiver matched/)
+        assert.equal(records(log).length, 2)
+      } finally {
+        f.cleanup()
+      }
+    })
+
+    test('a full --staged run still blocks on a waiver spent against another tree', { skip }, () => {
+      // The pre-commit hook is the one run that spends, so it keeps today's rule: unspent, or
+      // spent against this same tree. A waiver spent elsewhere does not cover it.
+      const f = staged(fixture())
+      try {
+        const log = waiversSpentElsewhere(f, tsFinding, goFinding)
+        const { status, stdout, stderr } = capture(f.repo, ['--staged'], {
+          ...env(f),
+          TVRMSMITH_WAIVERS: log,
+        })
+        assert.equal(status, 2, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        assert.match(stdout, /^main\.ts:1:7: no-unused-vars: /m)
+        assert.match(stdout, /^main\.go:3:1: gorule: go finding$/m)
+        assert.equal(records(log).length, 4)
       } finally {
         f.cleanup()
       }
