@@ -13,7 +13,6 @@
 package main
 
 import (
-
 	"github.com/tvrmsmith/coding-standards/lint/internal/lintfind"
 )
 
