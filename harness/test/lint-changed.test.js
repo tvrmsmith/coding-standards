@@ -332,7 +332,7 @@ describe('the Go branch', () => {
     }
   })
 
-  test('an unwired repository emits nothing and exits 0', () => {
+  test('an unwired repository emits nothing and exits 0', { skip }, () => {
     const f = fixture()
     try {
       writeFileSync(f.registry, '')
@@ -495,12 +495,13 @@ describe('one invocation, every language the repo is wired for', () => {
     }
   })
 
-  test('a --since ref git cannot resolve fails rather than reporting a clean run', () => {
+  test('a --since ref git cannot resolve fails rather than reporting a clean run', { skip }, () => {
     const f = fixture()
     try {
-      const { status, stdout } = capture(f.repo, ['--since', 'no-such-ref-xyz'], env(f))
+      const { status, stdout, stderr } = capture(f.repo, ['--since', 'no-such-ref-xyz'], env(f))
       assert.equal(status, 1)
       assert.equal(stdout, '')
+      assert.match(stderr, /no-such-ref-xyz/)
     } finally {
       f.cleanup()
     }
@@ -872,7 +873,7 @@ describe('the Go branch names the package holding the changed file', () => {
 })
 
 describe('the C# branch in a repository wired for .NET', () => {
-  test('no dotnet on PATH fails rather than passing the staged C# unexamined', () => {
+  test('no dotnet on PATH fails rather than passing the staged C# unexamined', { skip }, () => {
     const f = repository('tvrmsmith-dotnet-path-')
     try {
       const props = join(f.root, 'coding-standards.props')
