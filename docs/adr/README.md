@@ -9,18 +9,22 @@ rest of the file only when you need the reasoning behind the rule or the history
 |---|---|---|
 | [0001](0001-crap-gate-topology.md) | crap-gate topology | Complexity from a source-level walker, coverage from coverlet, joined by source span. Any single `unknown` fails the run. |
 | [0002](0002-metrics-declare-their-inputs.md) | metrics declare their inputs | The gate demands an input only when a selected metric asked for it. |
-| [0007](0007-changed-method-is-a-span-holding-a-touched-line.md) | changed method | A changed method is a working-tree span holding a touched line. A pure move measures nothing. |
 | [0008](0008-the-machine-document-is-the-only-output.md) | machine document | Stdout is one TOON document on every exit path but two, a malformed command line and a failed stdout write. Every other exit-1 cause carries a typed code, registered in `gate/internal/report`. |
 | [0009](0009-the-csharp-extractor-is-written-in-house.md) | csharp extractor | Roslyn syntax parser only, paths on stdin, spans plus per-file parse status on stdout. |
 | [0010](0010-lint-blocks-on-any-warning-touching-a-changed-line.md) | lint blocks | Every warning the tool reports blocks the commit when any of its locations holds a touched line. One-shot waivers in an append-only log outside the repo are the only way past. |
 | [0011](0011-a-source-path-is-repo-relative.md) | source paths | One repo-relative path currency, one deterministic rule per path space. A path that will not resolve refuses the run. |
 | [0012](0012-a-coverage-path-resolves-by-the-cobertura-join.md) | coverage paths | `<source>` joined to `filename`. One path that will not resolve is ignored; a report that places nothing refuses the run. |
 | [0013](0013-a-typed-path-resolves-against-the-working-directory.md) | typed paths | `--files` and `--coverage` resolve against the cwd. Only a repo-root prefix `os.SameFile` confirms folds case. |
+| [0014](0014-a-changed-method-is-a-span-holding-a-touched-line.md) | changed method | A changed method is a working-tree span holding a touched line. |
+| [0015](0015-a-pure-move-is-dropped-by-counting-digests.md) | pure moves | Rename detection off. An add whose whitespace-blind digest the deletes account for, counted per digest, drops. A pure move measures nothing. |
+| [0016](0016-the-gate-pins-every-git-setting-its-parsers-depend-on.md) | git settings | The gate pins every git setting its parsers depend on. Repo-controlled text is never read as syntax. |
+| [0017](0017-the-diff-scopes-agree-except-at-two-points.md) | diff scopes | The default base walks five refs, then exits 1. `--files` changes every method in a file. `--staged` refuses a file dirty on disk. |
 
 Deleted when superseded, and readable at their last commit: [0003](https://github.com/tvrmsmith/coding-standards/blob/3fd48d4ad6c2a98d2332fb872ab319e80658bb91/docs/adr/0003-changed-method-is-a-span-holding-a-touched-line.md)
 by 0007, [0004](https://github.com/tvrmsmith/coding-standards/blob/2a2bcc3a241dacf992f82c4f580c213bf8c719e0/docs/adr/0004-source-paths-are-repo-relative-and-resolved-deterministically.md)
 by 0011, 0012 and 0013, [0005](https://github.com/tvrmsmith/coding-standards/blob/3fd48d4ad6c2a98d2332fb872ab319e80658bb91/docs/adr/0005-the-machine-document-is-the-only-output.md) by 0008,
-[0006](https://github.com/tvrmsmith/coding-standards/blob/3fd48d4ad6c2a98d2332fb872ab319e80658bb91/docs/adr/0006-the-csharp-extractor-is-written-in-house.md) by 0009.
+[0006](https://github.com/tvrmsmith/coding-standards/blob/3fd48d4ad6c2a98d2332fb872ab319e80658bb91/docs/adr/0006-the-csharp-extractor-is-written-in-house.md) by 0009,
+[0007](https://github.com/tvrmsmith/coding-standards/blob/7ff6abedb4b8992e075c5db9a352a2940419070f/docs/adr/0007-changed-method-is-a-span-holding-a-touched-line.md) by 0014, 0015, 0016 and 0017.
 
 ## Conventions
 

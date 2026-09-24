@@ -1,5 +1,5 @@
 // Package join runs the smallest-containing-span rule in both directions: it
-// scopes the extractor's spans to the touched lines (ADR 0007), and it
+// scopes the extractor's spans to the touched lines (ADR 0014), and it
 // attributes coverage lines to those spans (ADR 0001).
 package join
 
@@ -51,7 +51,7 @@ func Changed(extracted extract.Result, touched map[srcpath.Path][]int) (changed 
 }
 
 // AllSpans returns every span extracted holds, in ascending order. This is the
-// --files rule: the flag carries no line information, so ADR 0007 makes every
+// --files rule: the flag carries no line information, so ADR 0017 makes every
 // method in a listed file changed, nested spans included, since with no touched
 // line there is nothing to attribute to the smallest container the way Changed's
 // narrowing would.

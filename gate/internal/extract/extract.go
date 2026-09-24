@@ -420,7 +420,7 @@ func (e extractor) collect(parsed extraction, handed []srcpath.Path) ([]Span, er
 	for _, file := range parsed.Files {
 		status[file.File] = file.Status
 	}
-	// ADR 0007 makes per-file status an obligation so the gate can tell
+	// ADR 0014 makes per-file status an obligation so the gate can tell
 	// "nothing here" from "I failed". A path the gate handed in and the
 	// extractor never reported on is neither, and silently scoring its file
 	// with zero spans would let every method in it go unmeasured under a
