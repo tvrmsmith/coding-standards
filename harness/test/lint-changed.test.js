@@ -238,6 +238,20 @@ describe('the TypeScript branch', () => {
       f.cleanup()
     }
   })
+
+  test('a --files path holding a comma reaches the filter as one path', { skip }, () => {
+    // Joined into one comma-separated --files value, a,b.ts reached lint-changed as a and b.ts,
+    // neither of which exists, and the run broke with exit 1 instead of reporting the finding.
+    const f = fixture()
+    try {
+      writeFileSync(join(f.repo, 'a,b.ts'), 'export const b = 1\n')
+      const { status, stdout, stderr } = capture(f.repo, ['--only', 'ts', '--files', 'a,b.ts'])
+      assert.equal(status, 2, `expected the blocking exit code\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+      assert.equal(stdout, eslintPorcelain('a,b.ts'))
+    } finally {
+      f.cleanup()
+    }
+  })
 })
 
 /**

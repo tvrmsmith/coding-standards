@@ -13,7 +13,6 @@
 package main
 
 import (
-	"strings"
 
 	"github.com/tvrmsmith/coding-standards/lint/internal/lintfind"
 )
@@ -66,8 +65,8 @@ type FilterArgs struct {
 	Mode ScopeMode
 	// Ref is the argument --since named. Set only when Mode is ScopeSince.
 	Ref string
-	// Files is --files' comma-separated list, split. Set only when Mode is
-	// ScopeFiles.
+	// Files is every --files path, one per flag, since a comma is legal in a
+	// filename. Set only when Mode is ScopeFiles.
 	Files []string
 	// Reports is every --report the caller gave, each paired with the parser
 	// the --format in force named. Empty is legal: it means the branches ran
@@ -105,7 +104,7 @@ func (e *UsageError) Error() string {
 	return "lint-changed: " + e.Problem + "\n\n" + usage
 }
 
-const usage = `usage: lint-changed [--staged | --since <ref> | --files <a,b,...>] [--format <fmt> --report <file> ...] [--matched-waivers <file>] [--accept-spent]
+const usage = `usage: lint-changed [--staged | --since <ref> | --files <path> ...] [--format <fmt> --report <file> ...] [--matched-waivers <file>] [--accept-spent]
        lint-changed waive --language <lang> [--path <p>] --rule <r> --reason <why>
        lint-changed waivers
        lint-changed spend --waiver <id> [--waiver <id> ...]`
@@ -182,10 +181,10 @@ func parseFilter(args []string) (FilterArgs, error) {
 			if err != nil {
 				return FilterArgs{}, err
 			}
-			if modeSet {
+			if modeSet && fa.Mode != ScopeFiles {
 				return FilterArgs{}, &UsageError{Problem: "only one of --staged, --since, --files may be given"}
 			}
-			modeSet, fa.Mode, fa.Files, i = true, ScopeFiles, strings.Split(v, ","), next
+			modeSet, fa.Mode, fa.Files, i = true, ScopeFiles, append(fa.Files, v), next
 		case "--report":
 			v, next, err := flagValue(args, i, "--report")
 			if err != nil {

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/tvrmsmith/coding-standards/lint/internal/lintfind"
@@ -75,14 +76,28 @@ func TestParseFilterSince(t *testing.T) {
 	}
 }
 
-func TestParseFilterFilesSplitsOnComma(t *testing.T) {
-	cmd, err := Parse([]string{"--format", "sarif", "--files", "a.cs,b.cs"})
+func TestParseFilterFilesRepeatsOnePathPerFlag(t *testing.T) {
+	// A comma is legal in a filename, so the path a,b.cs stays one path.
+	cmd, err := Parse([]string{"--format", "sarif", "--files", "a,b.cs", "--files", "c.cs"})
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	want := []string{"a.cs", "b.cs"}
-	if len(cmd.Filter.Files) != len(want) || cmd.Filter.Files[0] != want[0] || cmd.Filter.Files[1] != want[1] {
-		t.Fatalf("got %v, want %v", cmd.Filter.Files, want)
+	want := []string{"a,b.cs", "c.cs"}
+	if cmd.Filter.Mode != ScopeFiles || !slices.Equal(cmd.Filter.Files, want) {
+		t.Fatalf("got %+v, want files %v", cmd.Filter, want)
+	}
+}
+
+func TestParseFilterFilesStillExcludesOtherModes(t *testing.T) {
+	cases := [][]string{
+		{"--files", "a.cs", "--staged"},
+		{"--staged", "--files", "a.cs"},
+		{"--since", "main", "--files", "a.cs", "--files", "b.cs"},
+	}
+	for _, args := range cases {
+		if _, err := Parse(args); err == nil {
+			t.Errorf("Parse(%v): got nil error, want a usage error", args)
+		}
 	}
 }
 
