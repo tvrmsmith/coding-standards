@@ -45,7 +45,7 @@ plugins `base.js` imports.
 | --- | --- |
 | `eslint-layer.js` | Loads the package's own ESLint config, spreads the personal preset after it. The layering, and the typed-layer gate. |
 | `lint-changed.sh` | The one entrypoint. Resolves the repo, computes the changed set, runs every language branch that applies, then runs one `lint-changed` over every report the branches produced and, on a full `--staged` run, spends the waivers it matched once the whole run is clean. `--only` runs a single branch. |
-| `linters/common.sh` | What every branch shares: argument parsing, repo resolution, the changed set, the scratch directory, the ancestor walk each language owns a predicate for, `lint_changed_bin`, which builds the filter once per run and memoises the path to a file, `add_reports`, the call every branch ends on to hand its reports up, `run_filter`, the one `lint-changed` call that reads them, `spend_waivers`, and `rank_status`, the one place the ADR 0010 exit convention is folded. |
+| `linters/common.sh` | What every branch shares: argument parsing, repo resolution, the changed set from `lint-changed changed-paths`, the scratch directory, the ancestor walk each language owns a predicate for, `lint_changed_bin`, which builds the filter once per run and memoises the path to a file, `add_reports`, the call every branch ends on to hand its reports up, `run_filter`, the one `lint-changed` call that reads them, `spend_waivers`, and `rank_status`, the one place the ADR 0010 exit convention is folded. |
 | `linters/ts.sh` | Lints the changed JavaScript and TypeScript, each file through its own package's ESLint binary, to a JSON report, then hands every report up to the dispatcher's one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
 | `linters/dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then hands every report up to the dispatcher's one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
 | `errorlog.props` | Sets `ErrorLog` for that build, imported through `CustomAfterMicrosoftCommonTargets`. MSBuild owns the report name because it has to expand `$(TargetFramework)` per inner build and escape the comma before the version suffix; the branch passes only the prefix. |
@@ -101,10 +101,15 @@ commit whose staged files were all deleted from the working tree used to go thro
 When every branch skipped, as in a repo adopted for none of the languages in the change, no filter
 runs and the commit goes through, as it always did.
 
-So every branch needs Go on `PATH`, even in a repo with no Go in it. `linters/common.sh` builds
-`lint-changed` from this hub into `${XDG_CACHE_HOME:-~/.cache}/coding-standards` once per run,
-which Go's build cache makes free after the first. No Go means the filter cannot run, and an unrun
-filter proves nothing, so the branch fails the commit rather than skipping.
+So every run needs Go on `PATH`, even in a repo with no Go in it. `lint-changed changed-paths` also
+computes the changed set each run starts from. `linters/common.sh` builds `lint-changed` from this
+hub into `${XDG_CACHE_HOME:-~/.cache}/coding-standards` once per run, which Go's build cache makes
+free after the first. No Go means neither the changed set nor the filter can run, and an unexamined
+change proves nothing, so the run fails the commit rather than skipping.
+
+The changed set is the files the change adds, copies or modifies. A rename counts as a delete plus
+an add, so an edit made while renaming reaches its linter. `--since <ref>` diffs the working tree
+against the merge base of `HEAD` and the ref, the base the filter scopes findings against.
 
 During an uncommitted merge, when `MERGE_HEAD` exists, `--staged` lints only the staged files that
 differ from both `HEAD` and `MERGE_HEAD`: conflict resolutions and edits made while merging. Against

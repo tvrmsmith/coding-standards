@@ -94,46 +94,24 @@ resolve_repo() {
 # drops exactly the filenames a developer is most likely to get wrong. Callers read this with
 # `read -r -d ''` through a process substitution, never `$(...)`, which strips NUL bytes.
 #
-# --staged during an uncommitted merge is merge_written_paths. Not `git diff --cached HEAD` outside
-# a merge, since that fails on an unborn HEAD where the bare form diffs against the empty tree.
+# Which files a mode covers, the merge rule under --staged included, is `lint-changed
+# changed-paths`, which a Go test can reach and a bash function cannot. One --files per path, since
+# a comma is legal in a filename. The guard is bash 3.2's: expanding an empty array under `set -u`
+# is an error, and an empty --files list is nothing to lint rather than a mode missing its paths.
 changed_paths() {
+  local bin file scope=()
   case "$mode" in
-    --staged)
-      if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
-        merge_written_paths
-      else
-        git diff --cached --name-only -z --diff-filter=ACM
-      fi
+    --staged) scope=(--staged) ;;
+    --since) scope=(--since "$ref") ;;
+    --files)
+      [ ${#explicit_files[@]} -gt 0 ] || return 0
+      for file in "${explicit_files[@]}"; do
+        scope+=(--files "$file")
+      done
       ;;
-    --since) git diff --name-only -z --diff-filter=ACM "$ref" ;;
-    # The guard is bash 3.2's: expanding an empty array under `set -u` is an error. It must not
-    # become the function's status, which the caller checks.
-    --files) [ ${#explicit_files[@]} -eq 0 ] || printf '%s\0' "${explicit_files[@]}" ;;
   esac
-}
-
-# The staged paths of an uncommitted merge that differ from both parents: a conflict resolution, or
-# an edit made while merging. Against HEAD alone the index holds everything the incoming side
-# brought, thousands of files and dozens of .NET builds on a long-lived branch. Against MERGE_HEAD
-# alone it holds everything the branch already committed, whose lines all match HEAD, so the filter
-# would drop every finding in them after paying for the builds. Only a path in both can carry a
-# finding the filter keeps.
-#
-# One `git diff --quiet` per path in the MERGE_HEAD list rather than intersecting two lists, since
-# bash 3.2 has no associative array and macOS comm cannot read NUL-delimited input. :(literal) keeps
-# a path holding a glob character from matching more than itself. --no-renames keeps a path the
-# branch renamed, which reads as a rename against MERGE_HEAD and would fall outside ACM.
-merge_written_paths() {
-  local list=$scratch/merge-candidates path
-  git diff --cached --name-only -z --no-renames --diff-filter=ACM MERGE_HEAD >"$list" || return 1
-  while IFS= read -r -d '' path; do
-    git diff --cached --quiet HEAD -- ":(literal)$path"
-    case $? in
-      0) ;;
-      1) printf '%s\0' "$path" ;;
-      *) return 1 ;;
-    esac
-  done <"$list"
+  bin=$(lint_changed_bin) || return 1
+  "$bin" changed-paths "${scope[@]}" </dev/null
 }
 
 # The nearest ancestor of $1 that satisfies the predicate named in $2, which is called with a
@@ -161,9 +139,10 @@ rank_status() {
   esac
 }
 
-# The blocking half every branch's reports go to. `lint-changed` is language-neutral: it reads a
-# linter's own report, keeps the findings touching a changed line, applies any waiver and sets the
-# exit status. This echoes the binary's path, or returns 1 with the reason on stderr.
+# The blocking half every branch's reports go to, and the source of the changed set every run
+# starts from. `lint-changed` is language-neutral: it reads a linter's own report, keeps the
+# findings touching a changed line, applies any waiver and sets the exit status. This echoes the
+# binary's path, or returns 1 with the reason on stderr.
 #
 # Built here rather than bootstrapped, because Go's build cache makes a rebuild of an unchanged
 # tree cost milliseconds against a dotnet build's seconds, and building every time is one less
@@ -172,7 +151,7 @@ rank_status() {
 #
 # The memo is a file and not a variable because every caller reads the path through `$(...)`,
 # which runs the function in a subshell, so an assignment it made would die with that subshell and
-# all three branches would rebuild. $scratch is per-process and removed at exit, which is exactly
+# every later call would rebuild. $scratch is per-process and removed at exit, which is exactly
 # the lifetime the memo wants.
 lint_changed_bin() {
   local cache_home bin build_out memo=$scratch/lint-changed-path
@@ -183,9 +162,8 @@ lint_changed_bin() {
   fi
 
   command -v go >/dev/null 2>&1 || {
-    echo "lint-changed: no go on PATH, so the changed-line filter cannot run" >&2
-    echo "  Findings would go unchecked and the commit would pass unexamined, so this is a failure" >&2
-    echo "  rather than a skip. Install Go, or unstage the changes." >&2
+    echo "lint-changed: no go on PATH, so neither the changed set nor the changed-line filter can run" >&2
+    echo "  The change would pass unexamined, so this is a failure rather than a skip. Install Go." >&2
     return 1
   }
 

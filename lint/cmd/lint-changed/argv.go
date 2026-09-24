@@ -3,7 +3,8 @@
 // findings that touch lines the commit changed, lets a one-shot waiver
 // suppress one of them, and exits non-zero if any survive. A separate spend
 // form marks a matched waiver as used, once the dispatcher that called the
-// filter knows the whole commit went through.
+// filter knows the whole commit went through, and a changed-paths form lists
+// the files a run covers, which the dispatcher hands to each language branch.
 //
 // argv is parsed by hand rather than through the flag package, for the
 // reason gate/internal/scope gives: flag exits 2 on a usage mistake and lets
@@ -16,13 +17,13 @@ import (
 	"github.com/tvrmsmith/coding-standards/lint/internal/lintfind"
 )
 
-// Kind is which of lint-changed's four forms argv named.
+// Kind is which of lint-changed's five forms argv named.
 type Kind int
 
 const (
 	// KindFilter reads every --report named, scopes the findings to the
 	// diff, and lets a waiver suppress a survivor. Anything not "waive",
-	// "waivers" or "spend" means this.
+	// "waivers", "spend" or "changed-paths" means this.
 	KindFilter Kind = iota
 	// KindWaive records a one-shot waiver.
 	KindWaive
@@ -33,6 +34,9 @@ const (
 	// dispatcher, which sees every language branch, knows the commit was
 	// clean.
 	KindSpend
+	// KindChangedPaths prints the files a run under one scope covers,
+	// NUL-terminated.
+	KindChangedPaths
 )
 
 // ScopeMode is which base a filter run scopes its findings against.
@@ -44,12 +48,24 @@ const (
 	ScopeFiles
 )
 
+// Scope is the three mutually exclusive flags that say which change a run is
+// about.
+type Scope struct {
+	Mode ScopeMode
+	// Ref is the argument --since named. Set only when Mode is ScopeSince.
+	Ref string
+	// Files is every --files path, one per flag, since a comma is legal in a
+	// filename. Set only when Mode is ScopeFiles.
+	Files []string
+}
+
 // Command is one parsed invocation.
 type Command struct {
-	Kind   Kind
-	Filter FilterArgs
-	Waive  WaiveArgs
-	Spend  SpendArgs
+	Kind         Kind
+	Filter       FilterArgs
+	Waive        WaiveArgs
+	Spend        SpendArgs
+	ChangedPaths Scope
 }
 
 // Report is one report path and the parser that reads it, paired at parse
@@ -61,12 +77,7 @@ type Report struct {
 
 // FilterArgs is argv for the filter form.
 type FilterArgs struct {
-	Mode ScopeMode
-	// Ref is the argument --since named. Set only when Mode is ScopeSince.
-	Ref string
-	// Files is every --files path, one per flag, since a comma is legal in a
-	// filename. Set only when Mode is ScopeFiles.
-	Files []string
+	Scope
 	// Reports is every --report the caller gave, each paired with the parser
 	// the --format in force named. Empty is legal: it means the branches ran
 	// and produced nothing. One run reads them all, because a waiver is one
@@ -106,11 +117,12 @@ func (e *UsageError) Error() string {
 const usage = `usage: lint-changed [--staged | --since <ref> | --files <path> ...] [--format <fmt> --report <file> ...] [--matched-waivers <file>] [--accept-spent]
        lint-changed waive --language <lang> [--path <p>] --rule <r> --reason <why>
        lint-changed waivers
-       lint-changed spend --waiver <id> [--waiver <id> ...]`
+       lint-changed spend --waiver <id> [--waiver <id> ...]
+       lint-changed changed-paths (--staged | --since <ref> | --files <path> ...)`
 
-// Parse reads argv without the program name. "waive", "waivers" and "spend"
-// as the first argument select those three forms; anything else, including
-// no arguments at all, is read as the filter form.
+// Parse reads argv without the program name. "waive", "waivers", "spend" and
+// "changed-paths" as the first argument select those four forms; anything
+// else, including no arguments at all, is read as the filter form.
 func Parse(args []string) (Command, error) {
 	if len(args) > 0 && args[0] == "waive" {
 		wa, err := parseWaive(args[1:])
@@ -132,6 +144,13 @@ func Parse(args []string) (Command, error) {
 		}
 		return Command{Kind: KindSpend, Spend: sa}, nil
 	}
+	if len(args) > 0 && args[0] == "changed-paths" {
+		scope, err := parseChangedPaths(args[1:])
+		if err != nil {
+			return Command{}, err
+		}
+		return Command{Kind: KindChangedPaths, ChangedPaths: scope}, nil
+	}
 	fa, err := parseFilter(args)
 	if err != nil {
 		return Command{}, err
@@ -141,7 +160,7 @@ func Parse(args []string) (Command, error) {
 
 func parseFilter(args []string) (FilterArgs, error) {
 	var fa FilterArgs
-	modeSet := false
+	var scope scopeParser
 	// parser is the lintfind.Parser the --format currently in force
 	// resolved to, nil until the first --format. --format is sticky: it
 	// scopes every --report that follows it, until the next --format, since
@@ -150,6 +169,14 @@ func parseFilter(args []string) (FilterArgs, error) {
 	var parser lintfind.Parser
 
 	for i := 0; i < len(args); i++ {
+		next, ok, err := scope.flag(args, i)
+		if err != nil {
+			return FilterArgs{}, err
+		}
+		if ok {
+			i = next
+			continue
+		}
 		switch args[i] {
 		case "--format":
 			v, next, err := flagValue(args, i, "--format")
@@ -161,29 +188,6 @@ func parseFilter(args []string) (FilterArgs, error) {
 				return FilterArgs{}, err
 			}
 			parser, i = p, next
-		case "--staged":
-			if modeSet {
-				return FilterArgs{}, &UsageError{Problem: "only one of --staged, --since, --files may be given"}
-			}
-			modeSet, fa.Mode = true, ScopeStaged
-		case "--since":
-			v, next, err := flagValue(args, i, "--since")
-			if err != nil {
-				return FilterArgs{}, err
-			}
-			if modeSet {
-				return FilterArgs{}, &UsageError{Problem: "only one of --staged, --since, --files may be given"}
-			}
-			modeSet, fa.Mode, fa.Ref, i = true, ScopeSince, v, next
-		case "--files":
-			v, next, err := flagValue(args, i, "--files")
-			if err != nil {
-				return FilterArgs{}, err
-			}
-			if modeSet && fa.Mode != ScopeFiles {
-				return FilterArgs{}, &UsageError{Problem: "only one of --staged, --since, --files may be given"}
-			}
-			modeSet, fa.Mode, fa.Files, i = true, ScopeFiles, append(fa.Files, v), next
 		case "--report":
 			v, next, err := flagValue(args, i, "--report")
 			if err != nil {
@@ -206,10 +210,77 @@ func parseFilter(args []string) (FilterArgs, error) {
 		}
 	}
 
-	if !modeSet {
-		return FilterArgs{}, &UsageError{Problem: "exactly one of --staged, --since, --files is required"}
+	s, err := scope.result()
+	if err != nil {
+		return FilterArgs{}, err
 	}
+	fa.Scope = s
 	return fa, nil
+}
+
+func parseChangedPaths(args []string) (Scope, error) {
+	var scope scopeParser
+	for i := 0; i < len(args); i++ {
+		next, ok, err := scope.flag(args, i)
+		if err != nil {
+			return Scope{}, err
+		}
+		if !ok {
+			return Scope{}, &UsageError{Problem: "changed-paths: unknown argument '" + args[i] + "'"}
+		}
+		i = next
+	}
+	return scope.result()
+}
+
+// scopeParser reads the scope flags for both forms that take them, so the
+// filter and changed-paths cannot disagree about what one run's scope is.
+type scopeParser struct {
+	scope Scope
+	set   bool
+}
+
+// flag consumes args[i] when it is a scope flag, returning the index the
+// caller's loop resumes at and whether args[i] was one.
+func (p *scopeParser) flag(args []string, i int) (int, bool, error) {
+	const oneScope = "only one of --staged, --since, --files may be given"
+	switch args[i] {
+	case "--staged":
+		if p.set {
+			return i, true, &UsageError{Problem: oneScope}
+		}
+		p.set, p.scope.Mode = true, ScopeStaged
+		return i, true, nil
+	case "--since":
+		v, next, err := flagValue(args, i, "--since")
+		if err != nil {
+			return i, true, err
+		}
+		if p.set {
+			return i, true, &UsageError{Problem: oneScope}
+		}
+		p.set, p.scope.Mode, p.scope.Ref = true, ScopeSince, v
+		return next, true, nil
+	case "--files":
+		v, next, err := flagValue(args, i, "--files")
+		if err != nil {
+			return i, true, err
+		}
+		if p.set && p.scope.Mode != ScopeFiles {
+			return i, true, &UsageError{Problem: oneScope}
+		}
+		p.set, p.scope.Mode, p.scope.Files = true, ScopeFiles, append(p.scope.Files, v)
+		return next, true, nil
+	default:
+		return i, false, nil
+	}
+}
+
+func (p *scopeParser) result() (Scope, error) {
+	if !p.set {
+		return Scope{}, &UsageError{Problem: "exactly one of --staged, --since, --files is required"}
+	}
+	return p.scope, nil
 }
 
 // formatParser resolves --format to the lintfind.Parser that reads it. An
