@@ -918,3 +918,43 @@ describe('the changed-line filter every branch shares', () => {
     }
   })
 })
+
+describe('--staged during an uncommitted merge', () => {
+  // Against HEAD, a merge commit's index holds everything the incoming side brought, which on a
+  // long-lived branch meant thousands of files and dozens of .NET builds per commit, none of it
+  // written by this branch. What this commit adds over the incoming side is what it holds that
+  // MERGE_HEAD does not.
+  test('lints the files that differ from MERGE_HEAD, not everything the incoming side brought', { skip }, () => {
+    const f = repository('tvrmsmith-merge-')
+    try {
+      writeFileSync(join(f.repo, 'eslint.config.js'), 'export default []\n')
+      writeFileSync(join(f.repo, '.gitignore'), 'node_modules\n')
+      writeFileSync(join(f.repo, 'base.ts'), 'export const base = 1\n')
+      // Reports its argv on stderr, the way the space-in-path case above does, so the case can see
+      // which files reached the linter. The empty report keeps the verdict clean.
+      executable(
+        join(f.repo, 'node_modules/.bin/eslint'),
+        [
+          '#!/usr/bin/env node',
+          'for (const a of process.argv.slice(2)) console.error(`arg: ${a}`)',
+          "process.stdout.write('[]')",
+        ].join('\n') + '\n',
+      )
+      commitAll(f.repo)
+      git(f.repo, 'checkout', '--quiet', '-b', 'incoming')
+      writeFileSync(join(f.repo, 'incoming.ts'), 'export const theirs = 1\n')
+      commitAll(f.repo)
+      git(f.repo, 'checkout', '--quiet', 'main')
+      writeFileSync(join(f.repo, 'mine.ts'), 'export const mine = 1\n')
+      commitAll(f.repo)
+      git(f.repo, 'merge', '--quiet', '--no-commit', '--no-ff', 'incoming')
+
+      const { status, stdout, stderr } = capture(f.repo, ['--staged'])
+      assert.equal(status, 0, `expected a clean pass\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+      assert.match(stderr, /^arg: mine\.ts$/m)
+      assert.doesNotMatch(stderr, /^arg: incoming\.ts$/m)
+    } finally {
+      f.cleanup()
+    }
+  })
+})

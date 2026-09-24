@@ -101,6 +101,12 @@ commit whose staged files were all deleted from the working tree used to go thro
 When every branch skipped, as in a repo adopted for none of the languages in the change, no filter
 runs and the commit goes through, as it always did.
 
+During an uncommitted merge, when `MERGE_HEAD` exists, `--staged` lints only the files whose staged
+content differs from `MERGE_HEAD`, not every file staged against `HEAD`. Against `HEAD` a merge
+commit's index holds everything the incoming side brought, which on a long-lived branch meant
+thousands of files and dozens of .NET builds per commit, none of it written by the branch.
+The staged-versus-disk hard stop still covers every staged path.
+
 So every branch needs Go on `PATH`, even in a repo with no Go in it. `linters/common.sh` builds
 `lint-changed` from this hub into `${XDG_CACHE_HOME:-~/.cache}/coding-standards` once per run,
 which Go's build cache makes free after the first. No Go means the filter cannot run, and an unrun

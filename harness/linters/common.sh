@@ -93,9 +93,21 @@ resolve_repo() {
 # newline-delimited output, and `read -r` splits the quoted form on whitespace, so a newline list
 # drops exactly the filenames a developer is most likely to get wrong. Callers read this with
 # `read -r -d ''` through a process substitution, never `$(...)`, which strips NUL bytes.
+#
+# --staged during an uncommitted merge diffs against MERGE_HEAD rather than HEAD. Against HEAD the
+# index holds everything the incoming side brought, thousands of files and dozens of .NET builds on
+# a long-lived branch, none of it written by this branch. What this commit contributes over the
+# incoming side is what differs from MERGE_HEAD. Not `git diff --cached HEAD` outside a merge,
+# since that fails on an unborn HEAD where the bare form diffs against the empty tree.
 changed_paths() {
   case "$mode" in
-    --staged) git diff --cached --name-only -z --diff-filter=ACM ;;
+    --staged)
+      if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+        git diff --cached --name-only -z --diff-filter=ACM MERGE_HEAD
+      else
+        git diff --cached --name-only -z --diff-filter=ACM
+      fi
+      ;;
     --since) git diff --name-only -z --diff-filter=ACM "$ref" ;;
     # The guard is bash 3.2's: expanding an empty array under `set -u` is an error. It must not
     # become the function's status, which the caller checks.
