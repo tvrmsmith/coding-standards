@@ -12,6 +12,12 @@ The pre-commit lint blocks the commit on any finding with a location, primary or
 holds a line the change touched. Every other finding is dropped silently. A path whose new side is a
 symbolic link contributes no touched line.
 
+**Amended 2026-09-24.** During an uncommitted merge, `--staged` lints only the staged paths that
+differ from both `HEAD` and `MERGE_HEAD`, so a path only the incoming side changed goes unjudged. A
+path differing only from `MERGE_HEAD` matches `HEAD` and could carry no touched line, and linting
+every incoming path built dozens of projects per merge. See
+[PR 161](https://github.com/tvrmsmith/coding-standards/pull/161).
+
 The warning set is everything the tool reports: every C# compiler and analyzer warning in the SARIF
 (CS, CA, TVRM, FAA), every golangci-lint issue, and ESLint severity 1 and 2 alike. A SARIF result
 carrying an `inSource` suppression is dropped. A finding is its rule, message and locations
