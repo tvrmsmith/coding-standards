@@ -206,7 +206,7 @@ add_reports() {
 # commit whose every staged file was deleted from the working tree reaches no linter, and skipping
 # the filter is how it would pass unexamined. Every other mode has no such stop to ask for.
 run_filter() {
-  local bin arg scope=() accept_spent=() has_report=0
+  local bin arg file scope=() accept_spent=() has_report=0
 
   [ ${#filter_reports[@]} -gt 0 ] || return 0
   for arg in "${filter_reports[@]}"; do
@@ -214,12 +214,17 @@ run_filter() {
   done
   [ $has_report -eq 1 ] || [ "$mode" = "--staged" ] || return 0
 
-  # Built once here rather than per branch, so a new mode or a change to how --files joins its list
-  # cannot land in one branch and leave another scoping against the wrong base.
+  # Built once here rather than per branch, so a new mode or a change to how --files passes its
+  # paths cannot land in one branch and leave another scoping against the wrong base. One --files
+  # per path, since a comma is legal in a filename.
   case "$mode" in
     --staged) scope=(--staged) ;;
     --since) scope=(--since "$ref") ;;
-    --files) scope=(--files "$(IFS=,; echo "${filter_files[*]-}")") ;;
+    --files)
+      for file in ${filter_files[@]+"${filter_files[@]}"}; do
+        scope+=(--files "$file")
+      done
+      ;;
   esac
 
   # A run that spends nothing accepts a waiver spent against any tree. lint-changed.sh decides
@@ -227,7 +232,7 @@ run_filter() {
   [ "$spends" -eq 1 ] || accept_spent=(--accept-spent)
 
   bin=$(lint_changed_bin) || return 1
-  "$bin" "${scope[@]}" --matched-waivers "$matched_waivers" ${accept_spent[@]+"${accept_spent[@]}"} "${filter_reports[@]}" </dev/null
+  "$bin" ${scope[@]+"${scope[@]}"} --matched-waivers "$matched_waivers" ${accept_spent[@]+"${accept_spent[@]}"} "${filter_reports[@]}" </dev/null
 }
 
 # Marks every waiver the filter matched as spent. The dispatcher calls it only on a clean total of a
