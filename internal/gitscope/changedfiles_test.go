@@ -86,7 +86,7 @@ func TestStagedFilesDuringAMergeListsOnlyWhatDiffersFromBothParents(t *testing.T
 	}
 }
 
-// Main.cs changes only on main after the branch point. Against main's tip it
+// Edited.cs changes only on main after the branch point. Against main's tip it
 // would differ, against the merge base it does not.
 func TestFilesSinceDiffsTheWorkingTreeAgainstTheMergeBase(t *testing.T) {
 	repo, dir := changedFilesRepo(t)
