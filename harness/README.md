@@ -45,9 +45,9 @@ plugins `base.js` imports.
 | --- | --- |
 | `eslint-layer.js` | Loads the package's own ESLint config, spreads the personal preset after it. The layering, and the typed-layer gate. |
 | `lint-changed.sh` | The one entrypoint. Resolves the repo, computes the changed set, runs every language branch that applies, then runs one `lint-changed` over every report the branches produced and, on a full `--staged` run, spends the waivers it matched once the whole run is clean. `--only` runs a single branch. |
-| `linters/common.sh` | What every branch shares: argument parsing, repo resolution, the changed set from `lint-changed changed-paths`, the scratch directory, the ancestor walk each language owns a predicate for, `lint_changed_bin`, which builds the filter once per run and memoises the path to a file, `add_reports`, the call every branch ends on to hand its reports up, `run_filter`, the one `lint-changed` call that reads them, `spend_waivers`, and `rank_status`, the one place the ADR 0010 exit convention is folded. |
+| `linters/common.sh` | What every branch shares: argument parsing, repo resolution, the changed set from `lint-changed changed-paths`, the scratch directory, `owner_groups`, which asks `lint-changed owners` for the build unit owning each changed file, `lint_changed_bin`, which builds the filter once per run and memoises the path to a file, `add_reports`, the call every branch ends on to hand its reports up, `run_filter`, the one `lint-changed` call that reads them, `spend_waivers`, and `rank_status`, the one place the ADR 0010 exit convention is folded. |
 | `linters/ts.sh` | Lints the changed JavaScript and TypeScript, each file through its own package's ESLint binary, to a JSON report, then hands every report up to the dispatcher's one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
-| `linters/dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then hands every report up to the dispatcher's one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
+| `linters/dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then hands every report up to the dispatcher's one `lint-changed` run, which blocks the commit on any finding touching a changed line. A directory holding several `.csproj` builds every one, since each compiles every `.cs` below it. |
 | `errorlog.props` | Sets `ErrorLog` for that build, imported through `CustomAfterMicrosoftCommonTargets`. MSBuild owns the report name because it has to expand `$(TargetFramework)` per inner build and escape the comma before the version suffix; the branch passes only the prefix. |
 | `linters/go.sh` | The Go counterpart: runs the personal golangci-lint binary over the packages owning the changed `.go` to a JSON report per module, then hands every report up to the dispatcher's one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
 | `hooks/pre-commit` | Template for the installed hook. The enforcement gate. One template, one `lint-changed.sh --staged` call, whatever the repo is adopted for. |
@@ -102,7 +102,8 @@ When every branch skipped, as in a repo adopted for none of the languages in the
 runs and the commit goes through, as it always did.
 
 So every run needs Go on `PATH`, even in a repo with no Go in it. `lint-changed changed-paths` also
-computes the changed set each run starts from. `linters/common.sh` builds `lint-changed` from this
+computes the changed set each run starts from, and `lint-changed owners` maps each branch's files to
+the module, project or package that lints them. `linters/common.sh` builds `lint-changed` from this
 hub into `${XDG_CACHE_HOME:-~/.cache}/coding-standards` once per run, which Go's build cache makes
 free after the first. No Go means neither the changed set nor the filter can run, and an unexamined
 change proves nothing, so the run fails the commit rather than skipping.

@@ -3,8 +3,9 @@
 // findings that touch lines the commit changed, lets a one-shot waiver
 // suppress one of them, and exits non-zero if any survive. A separate spend
 // form marks a matched waiver as used, once the dispatcher that called the
-// filter knows the whole commit went through, and a changed-paths form lists
-// the files a run covers, which the dispatcher hands to each language branch.
+// filter knows the whole commit went through, a changed-paths form lists the
+// files a run covers, which the dispatcher hands to each language branch, and
+// an owners form groups a branch's files by the build unit that lints them.
 //
 // argv is parsed by hand rather than through the flag package, for the
 // reason gate/internal/scope gives: flag exits 2 on a usage mistake and lets
@@ -17,13 +18,13 @@ import (
 	"github.com/tvrmsmith/coding-standards/lint/internal/lintfind"
 )
 
-// Kind is which of lint-changed's five forms argv named.
+// Kind is which of lint-changed's six forms argv named.
 type Kind int
 
 const (
 	// KindFilter reads every --report named, scopes the findings to the
-	// diff, and lets a waiver suppress a survivor. Anything not "waive",
-	// "waivers", "spend" or "changed-paths" means this.
+	// diff, and lets a waiver suppress a survivor. Anything not naming
+	// another form means this.
 	KindFilter Kind = iota
 	// KindWaive records a one-shot waiver.
 	KindWaive
@@ -37,6 +38,9 @@ const (
 	// KindChangedPaths prints the files a run under one scope covers,
 	// NUL-terminated.
 	KindChangedPaths
+	// KindOwners groups one language's changed files by the build unit that
+	// owns each, NUL-terminated.
+	KindOwners
 )
 
 // ScopeMode is which base a filter run scopes its findings against.
@@ -66,6 +70,7 @@ type Command struct {
 	Waive        WaiveArgs
 	Spend        SpendArgs
 	ChangedPaths Scope
+	Owners       OwnersArgs
 }
 
 // Report is one report path and the parser that reads it, paired at parse
@@ -118,11 +123,12 @@ const usage = `usage: lint-changed [--staged | --since <ref> | --files <path> ..
        lint-changed waive --language <lang> [--path <p>] --rule <r> --reason <why>
        lint-changed waivers
        lint-changed spend --waiver <id> [--waiver <id> ...]
-       lint-changed changed-paths (--staged | --since <ref> | --files <path> ...)`
+       lint-changed changed-paths (--staged | --since <ref> | --files <path> ...)
+       lint-changed owners --language <lang> [--files <path> ...]`
 
-// Parse reads argv without the program name. "waive", "waivers", "spend" and
-// "changed-paths" as the first argument select those four forms; anything
-// else, including no arguments at all, is read as the filter form.
+// Parse reads argv without the program name. "waive", "waivers", "spend",
+// "changed-paths" and "owners" as the first argument select those five forms;
+// anything else, including no arguments at all, is read as the filter form.
 func Parse(args []string) (Command, error) {
 	if len(args) > 0 && args[0] == "waive" {
 		wa, err := parseWaive(args[1:])
@@ -150,6 +156,13 @@ func Parse(args []string) (Command, error) {
 			return Command{}, err
 		}
 		return Command{Kind: KindChangedPaths, ChangedPaths: scope}, nil
+	}
+	if len(args) > 0 && args[0] == "owners" {
+		oa, err := parseOwners(args[1:])
+		if err != nil {
+			return Command{}, err
+		}
+		return Command{Kind: KindOwners, Owners: oa}, nil
 	}
 	fa, err := parseFilter(args)
 	if err != nil {
@@ -350,6 +363,37 @@ func parseWaive(args []string) (WaiveArgs, error) {
 		return WaiveArgs{}, &UsageError{Problem: "waive: --reason is required"}
 	}
 	return wa, nil
+}
+
+// parseOwners takes no --files at all as legal, since every changed file of a
+// language can be absent from disk and the branch still has to reach its tail.
+func parseOwners(args []string) (OwnersArgs, error) {
+	var oa OwnersArgs
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--language":
+			v, next, err := flagValue(args, i, "--language")
+			if err != nil {
+				return OwnersArgs{}, err
+			}
+			oa.Language, i = v, next
+		case "--files":
+			v, next, err := flagValue(args, i, "--files")
+			if err != nil {
+				return OwnersArgs{}, err
+			}
+			oa.Files, i = append(oa.Files, v), next
+		default:
+			return OwnersArgs{}, &UsageError{Problem: "owners: unknown argument '" + args[i] + "'"}
+		}
+	}
+	switch oa.Language {
+	case lintfind.LanguageCSharp, lintfind.LanguageGo, lintfind.LanguageTS:
+		return oa, nil
+	default:
+		return OwnersArgs{}, &UsageError{Problem: "owners: --language '" + oa.Language + "' is not one of " +
+			lintfind.LanguageCSharp + ", " + lintfind.LanguageGo + ", " + lintfind.LanguageTS}
+	}
 }
 
 func parseSpend(args []string) (SpendArgs, error) {
