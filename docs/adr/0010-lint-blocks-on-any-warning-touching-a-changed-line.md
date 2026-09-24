@@ -2,69 +2,33 @@
 
 Accepted 2026-09-17.
 
+**Consolidated 2026-09-23.** The seven amendments of 2026-09-18 to 2026-09-23 are folded into the
+body, and their reasons moved into the sections below the rule. No rule was dropped and no decision
+changed; `git log -p` on this file keeps the amendments as written.
+
 ## Current rule
 
-The pre-commit lint blocks the commit. A finding survives to block it when any of its locations,
-primary or related, has a span holding a line the change touched. A finding whose locations all fall
-outside the touched set is dropped silently.
+The pre-commit lint blocks the commit on any finding with a location, primary or related, whose span
+holds a line the change touched. Every other finding is dropped silently. A path whose new side is a
+symbolic link contributes no touched line.
 
-**Amended 2026-09-23.** The touched set holds no line from a path whose new side is a symbolic link,
-so a finding reported at a symlinked `.cs`, `.go` or `.ts` path touches nothing and does not block.
-A link holds no source of its own, and the gate and this lint share one changed set, so the drop
-made for the gate applies here too. See [issue 144](https://github.com/tvrmsmith/coding-standards/issues/144)
-and [PR 143](https://github.com/tvrmsmith/coding-standards/pull/143).
+The warning set is everything the tool reports: every C# compiler and analyzer warning in the SARIF
+(CS, CA, TVRM, FAA), every golangci-lint issue, and ESLint severity 1 and 2 alike. A SARIF result
+carrying an `inSource` suppression is dropped. A finding is its rule, message and locations
+together, so identical reports count once.
 
-The warning set is everything the tool reports. C# takes every
-compiler and analyzer warning in the SARIF, CS and CA alongside TVRM and FAA. Go takes every
-golangci-lint issue. TypeScript takes ESLint severity 1 and 2 alike.
+An entry meaning the analysis never ran blocks whatever the diff says: C# `AD0001`, `CS8032`,
+`CS8034` and `CS9057`, golangci-lint's `typecheck`, and a parser's `UNPARSED` fallback.
 
-**Amended 2026-09-18.** One exclusion: a SARIF result carrying an `inSource` suppression is dropped.
-The section below rejects in-source suppression as this tool's own escape hatch, never as a veto
-over what a target repo already decided with `#pragma warning disable` or `[SuppressMessage]`. The
-console path this replaced never saw a suppressed diagnostic, so honouring them keeps adoption
-invisible rather than making the C# half louder than the repo's own build.
+Under `--staged`, any staged path whose disk copy differs from the index stops the run before a
+finding is judged.
 
-**Amended 2026-09-18.** A finding is identified by its rule, its message and its locations together.
-Two reports carrying all three the same are one finding, so a project built for several target
-frameworks and a file linked into two projects each report their warning once. Without that, one
-line of code would print twice and cost two waivers.
-
-Four C# ids ignore scope and block whatever the diff says: `AD0001`, `CS8032`, `CS8034`, `CS9057`.
-Each means an analyzer failed to load, so a clean result under it proves nothing.
-
-**Amended 2026-09-18.** Roslyn reports all four at `Location.None`, so they carry no path. A waiver
-is keyed on a path, so a waiver for one of these carries no path either and keys on the language and
-the rule alone. That is the only route past them.
-
-**Amended 2026-09-21.** The general rule is that an entry means the analysis never ran, so a clean
-scope result under it proves nothing. Three routes satisfy it. The four C# ids above, each an
-analyzer that failed to load. golangci-lint's `typecheck` issue, which is how it reports a package
-that will not compile, at line 1 column 0 and at exit 0, so scoping it would pass a commit whose Go
-does not build whenever line 1 is untouched. The `UNPARSED` fallback rule a parser reports an entry
-it cannot read under, since an entry it could not read is one it could not scope either, and
-dropping it silently would look the same as a clean file. These differ from the C# four in one way.
-`typecheck` and most `UNPARSED` entries carry a real location, so their waivers stay keyed on a
-path. Only an entry with no usable location at all takes the path-less route the paragraph above
-describes.
-
-Under `--staged`, a staged path whose disk copy differs from the index stops the run before any
-finding is judged. The linter reads disk and the commit carries the index, so a divergent file makes
-the whole report describe code that is not being committed. The check covers every staged path, not
-the paths the report mentions.
-
-The one way past a finding is a waiver: one rule, one path, one use, a mandatory reason, recorded in
-an append-only JSONL log outside the repo. `lint-changed` prints the exact command to record one.
-A spend is keyed on the index tree sha, so retrying a commit against the same tree reuses the waiver
-rather than burning a second.
-
-**Amended 2026-09-18.** The log is `${XDG_STATE_HOME:-~/.local/state}/coding-standards/waivers.jsonl`.
-State, not config, because `bootstrap` symlinks `$XDG_CONFIG_HOME/coding-standards` at the hub
-checkout, so a config-directory default would write the audit log into a repository the gate guards.
-One waiver covers exactly one finding, so two findings under the same rule and path cost two
-waivers. A waiver is spent only on a run that ends clean, because one use is one commit that
-actually went through; a match on a run that still blocks is reported and left unspent, so an agent
-that waives a false positive and then fixes a real finding does not lose the waiver to the changed
-index tree.
+The one way past a finding is a waiver: one rule, one path, one finding, one use, a mandatory
+reason. `lint-changed` prints the command to record one. A finding with no location takes a waiver
+keyed on language and rule alone. Waivers live in an append-only JSONL log at
+`${XDG_STATE_HOME:-~/.local/state}/coding-standards/waivers.jsonl`. A waiver is spent only on a run
+that ends clean, keyed on the index tree sha, so a retry against the same tree reuses it and a match
+on a run that still blocks stays unspent.
 
 Exit 0 means nothing survived, 1 means the tool broke, 2 means a finding survived.
 
@@ -88,6 +52,43 @@ shape reports the collection access as primary, which often predates the diff, a
 just written as a related location. Keying on primary would drop exactly the finding the rule exists
 to catch. The same rule settles comment blocks, where a block can start above the diff and extend
 into it.
+
+## What the scope leaves out
+
+A symbolic link holds no source of its own, only the path it points at. The gate and this lint share
+one changed set, so the drop made for the gate applies here too, and a finding at a symlinked `.cs`,
+`.go` or `.ts` path does not block. See [issue 144](https://github.com/tvrmsmith/coding-standards/issues/144)
+and [PR 143](https://github.com/tvrmsmith/coding-standards/pull/143).
+
+An `inSource` suppression is a target repo's own `#pragma warning disable` or `[SuppressMessage]`.
+The section on waivers rejects in-source suppression as this tool's escape hatch, never as a veto
+over what a target repo already decided. The console path this replaced never saw a suppressed
+diagnostic, so honouring them keeps adoption invisible rather than making the C# half louder than
+the repo's own build.
+
+Identity covers rule, message and locations because a project built for several target frameworks,
+or a file linked into two projects, reports the same warning more than once. Without it one line of
+code would print twice and cost two waivers.
+
+## Why some entries ignore scope
+
+Each of these entries means the analysis never ran, so a clean scope result under it proves nothing.
+The four C# ids are an analyzer that failed to load. golangci-lint reports a package that will not
+compile as `typecheck`, at line 1 column 0 and at exit 0, so scoping it would pass a commit whose Go
+does not build whenever line 1 is untouched. `UNPARSED` is the rule a parser reports an entry under
+when it cannot read it, and an entry it could not read is one it could not scope, so dropping it
+would look the same as a clean file.
+
+Roslyn reports the four C# ids at `Location.None`, so they carry no path, and their waivers key on
+language and rule alone. `typecheck` and most `UNPARSED` entries carry a real location, so their
+waivers stay keyed on a path. Only an entry with no usable location at all takes the path-less
+route.
+
+## Why a divergent staged file stops the run
+
+The linter reads disk and the commit carries the index, so one divergent file makes the whole report
+describe code that is not being committed. The check covers every staged path, not only the paths
+the report mentions.
 
 ## Why every warning, no tiering
 
@@ -116,6 +117,14 @@ and every one spent, with its reason.
 
 The threat model is an instruction-following agent, not an adversary. A log outside the repo is
 enough. The store attempts no tamper-proofing.
+
+The log sits under state, not config, because `bootstrap` symlinks `$XDG_CONFIG_HOME/coding-standards`
+at the hub checkout, so a config-directory default would write the audit log into a repository the
+gate guards.
+
+A waiver is spent only on a clean run because one use is one commit that actually went through. An
+agent that waives a false positive and then fixes a real finding changes the index tree, and a
+waiver spent on the blocking run would no longer match.
 
 ## Why exit 2 and not 1
 
