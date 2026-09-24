@@ -121,10 +121,11 @@ changed_paths() {
 #
 # One `git diff --quiet` per path in the MERGE_HEAD list rather than intersecting two lists, since
 # bash 3.2 has no associative array and macOS comm cannot read NUL-delimited input. :(literal) keeps
-# a path holding a glob character from matching more than itself.
+# a path holding a glob character from matching more than itself. --no-renames keeps a path the
+# branch renamed, which reads as a rename against MERGE_HEAD and would fall outside ACM.
 merge_written_paths() {
   local list=$scratch/merge-candidates path
-  git diff --cached --name-only -z --diff-filter=ACM MERGE_HEAD >"$list" || return 1
+  git diff --cached --name-only -z --no-renames --diff-filter=ACM MERGE_HEAD >"$list" || return 1
   while IFS= read -r -d '' path; do
     git diff --cached --quiet HEAD -- ":(literal)$path"
     case $? in

@@ -920,26 +920,41 @@ describe('the changed-line filter every branch shares', () => {
 })
 
 describe('--staged during an uncommitted merge', () => {
+  /** An ESLint stand-in that reports its argv on stderr, so a case can see which files reached it. */
+  function mergeRepository(prefix) {
+    const f = repository(prefix)
+    writeFileSync(join(f.repo, 'eslint.config.js'), 'export default []\n')
+    writeFileSync(join(f.repo, '.gitignore'), 'node_modules\n')
+    // The empty report keeps the verdict clean.
+    executable(
+      join(f.repo, 'node_modules/.bin/eslint'),
+      [
+        '#!/usr/bin/env node',
+        'for (const a of process.argv.slice(2)) console.error(`arg: ${a}`)',
+        "process.stdout.write('[]')",
+      ].join('\n') + '\n',
+    )
+    return f
+  }
+
+  /** Starts the merge of `incoming` and proves it stopped on a conflict with MERGE_HEAD in place. */
+  function mergeIncoming(repo) {
+    const merge = spawnSync('git', ['merge', '--quiet', '--no-commit', '--no-ff', 'incoming'], {
+      cwd: repo,
+      encoding: 'utf8',
+    })
+    assert.equal(merge.status, 1, `expected a conflict\nstdout:\n${merge.stdout}\nstderr:\n${merge.stderr}`)
+    git(repo, 'rev-parse', '--quiet', '--verify', 'MERGE_HEAD')
+  }
+
   // Against HEAD, a merge commit's index holds everything the incoming side brought, which on a
   // long-lived branch meant thousands of files and dozens of .NET builds per commit. Against
   // MERGE_HEAD it holds everything the branch already committed, whose lines all match HEAD, so the
   // filter drops every finding in them. Only a file differing from both can carry one.
   test('lints only the files the merge writes, not either side\'s own changes', { skip }, () => {
-    const f = repository('tvrmsmith-merge-')
+    const f = mergeRepository('tvrmsmith-merge-')
     try {
-      writeFileSync(join(f.repo, 'eslint.config.js'), 'export default []\n')
-      writeFileSync(join(f.repo, '.gitignore'), 'node_modules\n')
       writeFileSync(join(f.repo, 'shared.ts'), 'export const shared = 1\n')
-      // Reports its argv on stderr, the way the space-in-path case above does, so the case can see
-      // which files reached the linter. The empty report keeps the verdict clean.
-      executable(
-        join(f.repo, 'node_modules/.bin/eslint'),
-        [
-          '#!/usr/bin/env node',
-          'for (const a of process.argv.slice(2)) console.error(`arg: ${a}`)',
-          "process.stdout.write('[]')",
-        ].join('\n') + '\n',
-      )
       commitAll(f.repo)
       git(f.repo, 'checkout', '--quiet', '-b', 'incoming')
       writeFileSync(join(f.repo, 'incoming.ts'), 'export const theirs = 1\n')
@@ -949,9 +964,8 @@ describe('--staged during an uncommitted merge', () => {
       writeFileSync(join(f.repo, 'mine.ts'), 'export const mine = 1\n')
       writeFileSync(join(f.repo, 'shared.ts'), 'export const shared = 3\n')
       commitAll(f.repo)
-      // Conflicts on shared.ts by design, so its status is not checked. The resolution below is
-      // the content neither side had.
-      spawnSync('git', ['merge', '--quiet', '--no-commit', '--no-ff', 'incoming'], { cwd: f.repo })
+      mergeIncoming(f.repo)
+      // The resolution is the content neither side had.
       writeFileSync(join(f.repo, 'shared.ts'), 'export const shared = 4\n')
       git(f.repo, 'add', 'shared.ts')
 
@@ -960,6 +974,34 @@ describe('--staged during an uncommitted merge', () => {
       assert.match(stderr, /^arg: shared\.ts$/m)
       assert.doesNotMatch(stderr, /^arg: incoming\.ts$/m)
       assert.doesNotMatch(stderr, /^arg: mine\.ts$/m)
+    } finally {
+      f.cleanup()
+    }
+  })
+
+  // Against MERGE_HEAD a path the branch renamed reads as a rename, which the ACM filter drops
+  // unless rename detection is off.
+  test('lints a conflict resolved in a file the branch renamed', { skip }, () => {
+    const f = mergeRepository('tvrmsmith-merge-rename-')
+    const body = (value) =>
+      ['export const a = 1', 'export const b = 2', 'export const c = 3', `export const d = ${value}`, ''].join('\n')
+    try {
+      writeFileSync(join(f.repo, 'before.ts'), body(1))
+      commitAll(f.repo)
+      git(f.repo, 'checkout', '--quiet', '-b', 'incoming')
+      writeFileSync(join(f.repo, 'before.ts'), body(2))
+      commitAll(f.repo)
+      git(f.repo, 'checkout', '--quiet', 'main')
+      git(f.repo, 'mv', 'before.ts', 'after.ts')
+      writeFileSync(join(f.repo, 'after.ts'), body(3))
+      commitAll(f.repo)
+      mergeIncoming(f.repo)
+      writeFileSync(join(f.repo, 'after.ts'), body(4))
+      git(f.repo, 'add', 'after.ts')
+
+      const { status, stdout, stderr } = capture(f.repo, ['--staged'])
+      assert.equal(status, 0, `expected a clean pass\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+      assert.match(stderr, /^arg: after\.ts$/m)
     } finally {
       f.cleanup()
     }
