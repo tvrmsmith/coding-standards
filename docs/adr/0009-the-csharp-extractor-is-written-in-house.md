@@ -93,7 +93,7 @@ That asymmetry is why a new extension is added to the row before the extractor l
 
 The end line is load-bearing in two places. `cov(m)` is the fraction of instrumentable lines inside
 the span that were hit, so the span is the denominator, and
-[ADR 0007](0007-changed-method-is-a-span-holding-a-touched-line.md) defines a changed method as a
+[ADR 0007](https://github.com/tvrmsmith/coding-standards/blob/7ff6abedb4b8992e075c5db9a352a2940419070f/docs/adr/0007-changed-method-is-a-span-holding-a-touched-line.md) defines a changed method as a
 span holding a touched line, so without an end there is no containment test. Both errors feed the
 same formula, and this gate blocks, so a wrong span fails the wrong method with a wrong number.
 

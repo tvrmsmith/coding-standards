@@ -76,7 +76,7 @@ func TestFileMovedWithNoContentChangeReportsNoChangedMethods(t *testing.T) {
 	f.write(origin, csharpFile(20))
 	f.commitAll("initial")
 	// `--no-renames` splits this into a delete plus an add carrying the whole
-	// file, and ADR 0007 says a rename with no content change touches nothing.
+	// file, and ADR 0015 says a rename with no content change touches nothing.
 	f.git("mv", origin, moved)
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
@@ -608,7 +608,7 @@ func TestEmptyChangedSetStillReportsTheThresholdItWasGiven(t *testing.T) {
 	f.write("docs/notes.md", "first\nsecond\n")
 
 	// The bar reaches the summary row even though nothing scored, and ADR
-	// 0007's rule that an empty changed-method set exits 0 before resolving any
+	// 0014's rule that an empty changed-method set exits 0 before resolving any
 	// input still holds with one named: there is no coverage report here and
 	// naming a threshold does not go looking for one.
 	f.runWithArgs("--threshold", "crap=12").assertMatches(t, "empty_changed_set_threshold", 0, f.baseLabel("main"),
@@ -715,7 +715,7 @@ func TestMethodMovedToANewPathAndEditedIsScoredAtItsNewLocation(t *testing.T) {
 	f.write(origin, csharpFile(20))
 	f.commitAll("initial")
 	// git scores this as a rename, which status R would drop from an
-	// ACM-filtered diff; ADR 0007 says the method appears as added lines at
+	// ACM-filtered diff; ADR 0015 says the method appears as added lines at
 	// its new location instead.
 	f.git("mv", origin, moved)
 	f.touchLine(moved, 7)
@@ -884,7 +884,7 @@ func TestATypechangeIsWithheldWhileTheRestOfTheDiffIsMeasured(t *testing.T) {
 // `.cs` symlink replaced in the working tree by a real source file full of
 // methods. The gate drops it, same as the other direction, and this case
 // exists so that drop stays a decision rather than an accident. The blind
-// spot it accepts is not one commit wide. Under ADR 0007 a changed method is
+// spot it accepts is not one commit wide. Under ADR 0014 a changed method is
 // a working-tree span holding a touched line, so a later status M edit to the
 // now-real file measures only the methods holding the edited lines, and every
 // other method in the file stays unmeasured until something touches it. The
@@ -970,7 +970,7 @@ func TestASymlinkAddedOutrightIsWithheldFromTheChangedSet(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.symlinkTo(filepath.Base(orderService), orderFile)
-	// `git add` is required, not incidental. ADR 0007's tracked-paths-only
+	// `git add` is required, not incidental. ADR 0014's tracked-paths-only
 	// rule means an unstaged new file contributes nothing, exactly as
 	// TestANewFileNeverAddedToTheIndexContributesNoChangedMethods records.
 	f.git("add", orderFile)
@@ -1111,7 +1111,7 @@ func TestEveryMethodInANewlyAddedFileIsMeasured(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.write(fresh, csharpFile(20))
-	// `git add` is required, not incidental. ADR 0007's tracked-paths-only
+	// `git add` is required, not incidental. ADR 0014's tracked-paths-only
 	// rule says touched lines come from tracked paths only, so an unstaged
 	// new file contributes nothing.
 	// TestANewFileNeverAddedToTheIndexContributesNoChangedMethods is the
@@ -1133,7 +1133,7 @@ func TestEveryMethodInANewlyAddedFileIsMeasured(t *testing.T) {
 
 // TestANewFileNeverAddedToTheIndexContributesNoChangedMethods is the other
 // half of the pair above: Scratch.cs is written but never `git add`ed, so
-// ADR 0007's tracked-paths-only rule says it contributes nothing, and the
+// ADR 0014's tracked-paths-only rule says it contributes nothing, and the
 // changed set is OrderService.cs alone.
 //
 // The stub's stdout is canned and stays silent about Scratch.cs on purpose.
