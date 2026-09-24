@@ -27,6 +27,10 @@ location, unless its file moved with no content change, which ADR 0015 drops. A 
 no working-tree span, so there is nothing to measure. A run whose changed-method set is empty exits
 0 before resolving any input.
 
+**Amended 2026-09-24.** A changed path whose new side is a symlink contributes no touched lines,
+including one arriving as status `A`, which `--diff-filter=ACM` lets through. A link holds no source
+to measure. [Issue 160](https://github.com/tvrmsmith/coding-standards/issues/160) carries the argument.
+
 ## Decision
 
 **Typechanges.** `--diff-filter=ACM` excludes `T`, so a typechange contributes no touched lines in
