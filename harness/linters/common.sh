@@ -94,16 +94,13 @@ resolve_repo() {
 # drops exactly the filenames a developer is most likely to get wrong. Callers read this with
 # `read -r -d ''` through a process substitution, never `$(...)`, which strips NUL bytes.
 #
-# --staged during an uncommitted merge diffs against MERGE_HEAD rather than HEAD. Against HEAD the
-# index holds everything the incoming side brought, thousands of files and dozens of .NET builds on
-# a long-lived branch, none of it written by this branch. What this commit contributes over the
-# incoming side is what differs from MERGE_HEAD. Not `git diff --cached HEAD` outside a merge,
-# since that fails on an unborn HEAD where the bare form diffs against the empty tree.
+# --staged during an uncommitted merge is merge_written_paths. Not `git diff --cached HEAD` outside
+# a merge, since that fails on an unborn HEAD where the bare form diffs against the empty tree.
 changed_paths() {
   case "$mode" in
     --staged)
       if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
-        git diff --cached --name-only -z --diff-filter=ACM MERGE_HEAD
+        merge_written_paths
       else
         git diff --cached --name-only -z --diff-filter=ACM
       fi
@@ -113,6 +110,29 @@ changed_paths() {
     # become the function's status, which the caller checks.
     --files) [ ${#explicit_files[@]} -eq 0 ] || printf '%s\0' "${explicit_files[@]}" ;;
   esac
+}
+
+# The staged paths of an uncommitted merge that differ from both parents: a conflict resolution, or
+# an edit made while merging. Against HEAD alone the index holds everything the incoming side
+# brought, thousands of files and dozens of .NET builds on a long-lived branch. Against MERGE_HEAD
+# alone it holds everything the branch already committed, whose lines all match HEAD, so the filter
+# would drop every finding in them after paying for the builds. Only a path in both can carry a
+# finding the filter keeps.
+#
+# One `git diff --quiet` per path in the MERGE_HEAD list rather than intersecting two lists, since
+# bash 3.2 has no associative array and macOS comm cannot read NUL-delimited input. :(literal) keeps
+# a path holding a glob character from matching more than itself.
+merge_written_paths() {
+  local list=$scratch/merge-candidates path
+  git diff --cached --name-only -z --diff-filter=ACM MERGE_HEAD >"$list" || return 1
+  while IFS= read -r -d '' path; do
+    git diff --cached --quiet HEAD -- ":(literal)$path"
+    case $? in
+      0) ;;
+      1) printf '%s\0' "$path" ;;
+      *) return 1 ;;
+    esac
+  done <"$list"
 }
 
 # The nearest ancestor of $1 that satisfies the predicate named in $2, which is called with a

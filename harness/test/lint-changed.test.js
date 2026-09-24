@@ -921,15 +921,15 @@ describe('the changed-line filter every branch shares', () => {
 
 describe('--staged during an uncommitted merge', () => {
   // Against HEAD, a merge commit's index holds everything the incoming side brought, which on a
-  // long-lived branch meant thousands of files and dozens of .NET builds per commit, none of it
-  // written by this branch. What this commit adds over the incoming side is what it holds that
-  // MERGE_HEAD does not.
-  test('lints the files that differ from MERGE_HEAD, not everything the incoming side brought', { skip }, () => {
+  // long-lived branch meant thousands of files and dozens of .NET builds per commit. Against
+  // MERGE_HEAD it holds everything the branch already committed, whose lines all match HEAD, so the
+  // filter drops every finding in them. Only a file differing from both can carry one.
+  test('lints only the files the merge writes, not either side\'s own changes', { skip }, () => {
     const f = repository('tvrmsmith-merge-')
     try {
       writeFileSync(join(f.repo, 'eslint.config.js'), 'export default []\n')
       writeFileSync(join(f.repo, '.gitignore'), 'node_modules\n')
-      writeFileSync(join(f.repo, 'base.ts'), 'export const base = 1\n')
+      writeFileSync(join(f.repo, 'shared.ts'), 'export const shared = 1\n')
       // Reports its argv on stderr, the way the space-in-path case above does, so the case can see
       // which files reached the linter. The empty report keeps the verdict clean.
       executable(
@@ -943,16 +943,23 @@ describe('--staged during an uncommitted merge', () => {
       commitAll(f.repo)
       git(f.repo, 'checkout', '--quiet', '-b', 'incoming')
       writeFileSync(join(f.repo, 'incoming.ts'), 'export const theirs = 1\n')
+      writeFileSync(join(f.repo, 'shared.ts'), 'export const shared = 2\n')
       commitAll(f.repo)
       git(f.repo, 'checkout', '--quiet', 'main')
       writeFileSync(join(f.repo, 'mine.ts'), 'export const mine = 1\n')
+      writeFileSync(join(f.repo, 'shared.ts'), 'export const shared = 3\n')
       commitAll(f.repo)
-      git(f.repo, 'merge', '--quiet', '--no-commit', '--no-ff', 'incoming')
+      // Conflicts on shared.ts by design, so its status is not checked. The resolution below is
+      // the content neither side had.
+      spawnSync('git', ['merge', '--quiet', '--no-commit', '--no-ff', 'incoming'], { cwd: f.repo })
+      writeFileSync(join(f.repo, 'shared.ts'), 'export const shared = 4\n')
+      git(f.repo, 'add', 'shared.ts')
 
       const { status, stdout, stderr } = capture(f.repo, ['--staged'])
       assert.equal(status, 0, `expected a clean pass\nstdout:\n${stdout}\nstderr:\n${stderr}`)
-      assert.match(stderr, /^arg: mine\.ts$/m)
+      assert.match(stderr, /^arg: shared\.ts$/m)
       assert.doesNotMatch(stderr, /^arg: incoming\.ts$/m)
+      assert.doesNotMatch(stderr, /^arg: mine\.ts$/m)
     } finally {
       f.cleanup()
     }
