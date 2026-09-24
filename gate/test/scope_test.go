@@ -686,7 +686,7 @@ func TestStagedMeasuresNothingForAPureMoveStagedOnItsOwn(t *testing.T) {
 	f.write(origin, csharpFile(20))
 	f.commitAll("initial")
 	f.git("mv", origin, moved)
-	// ADR 0007's rule that a rename with no content change touches nothing
+	// ADR 0015's rule that a rename with no content change touches nothing
 	// holds over the index too, so the pre-commit hook this scope exists for
 	// does not demand coverage for every method in a file the developer only
 	// moved. The tree is clean, so the cached and uncached listings agree here
@@ -1376,7 +1376,7 @@ func TestFilesNamingOnlyUnhandledPathsPassesWithoutReachingCoverage(t *testing.T
 	f.stub = stubConfig{Extensions: []string{".cs"}}
 
 	// No extractor claims the one named path, so the changed set is empty and
-	// ADR 0007 exits 0 pass before any input is resolved. The locked directory
+	// ADR 0014 exits 0 pass before any input is resolved. The locked directory
 	// is what makes that visible: coverage discovery would list it in
 	// skipped_paths, so a document carrying only the named path proves the
 	// early exit ran ahead of discovery.

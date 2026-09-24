@@ -1,5 +1,5 @@
-// Package gitscope answers the two questions ADR 0007 puts to git: which
-// commit the run diffs against, and which lines that diff touched. This
+// Package gitscope answers the two questions ADRs 0017 and 0014 put to git:
+// which commit the run diffs against, and which lines that diff touched. This
 // package runs git itself rather than taking hunks from a wrapper, so `-w` and
 // `--diff-filter` are fixed in one place and no caller can get them wrong.
 //
@@ -37,7 +37,7 @@
 //
 // The diff covers tracked paths only. A brand-new source file the developer
 // has not yet `git add`ed contributes no touched lines and therefore no
-// changed methods. ADR 0007 states this as a flat rule for every diff scope:
+// changed methods. ADR 0014 states this as a flat rule for every diff scope:
 // touched lines come from tracked paths only, and a file never added to the
 // index contributes nothing.
 package gitscope
@@ -58,7 +58,7 @@ import (
 	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
-// BaseCandidates is ADR 0007's base resolution order. There is no HEAD~1
+// BaseCandidates is ADR 0017's base resolution order. There is no HEAD~1
 // fallback: a silently different base is the failure the caller cannot
 // detect.
 var BaseCandidates = []string{"origin/HEAD", "origin/main", "origin/master", "main", "master"}
@@ -225,10 +225,10 @@ type Base struct {
 func (b Base) Label() string { return b.Ref + "@" + b.Commit[:7] }
 
 // NoBaseError reports that the run has no commit to diff against: none of
-// ADR 0007's candidates resolved, --since named a ref that does not resolve to
+// ADR 0017's candidates resolved, --since named a ref that does not resolve to
 // a commit or resolves to one sharing no history with HEAD, or the branch
 // carries no commit for a resolver's HEAD check to find. The message points at
-// --since, issue 14's flag, per ADR 0007, except when the branch has no commit
+// --since, issue 14's flag, per ADR 0017, except when the branch has no commit
 // or --since is itself what failed, whether the ref did not resolve, resolved to
 // something other than a commit, or resolved to a commit sharing no history with
 // HEAD. Naming the flag again in any of those tells the caller nothing new.
@@ -305,7 +305,7 @@ var errNoSuchRev = errors.New("rev does not resolve")
 // the first candidate that both exists and shares history with HEAD.
 //
 // It draws the line ResolveRef and ResolveStaged draw. Exit 1 is git answering
-// no, either an absent rung or two histories sharing no commit, and ADR 0007's
+// no, either an absent rung or two histories sharing no commit, and ADR 0017's
 // walk answers both by trying the next candidate. Every other exit code is git
 // failing to answer, a ref store it cannot read or an object the walk needs and
 // the store does not hold, and it comes back typed as an unreadable diff
@@ -524,14 +524,13 @@ func (r Repo) objectType(oid string) (string, error) {
 // file git scores as a rename carries status R, `--diff-filter=ACM` drops it
 // entirely, and a method that gained a decision point on the way to its new
 // path is never scored. Decomposing the rename into a delete plus an add
-// gives the add side every line, which is what ADR 0007 means by a method
-// moved between files being "measured at its new location rather than dropped
-// by `--diff-filter=ACM`".
+// gives the add side every line, which is what ADR 0015 means by a
+// renamed-and-edited file being "measured at its new location".
 //
 // Decomposition alone would leave a pure `git mv` marking every method in the
-// moved file changed, because the add side is the whole file. So ADR 0007 also
-// says "the gate drops an added file whose content matches a deleted one" in
-// the same diff. An added path whose content, whitespace ignored, matches a
+// moved file changed, because the add side is the whole file. So ADR 0015 also
+// says "the gate then drops an added file whose content matches a deleted one
+// in the same diff". An added path whose content, whitespace ignored, matches a
 // path the same diff deleted is dropped afterwards, provided the diff deletes
 // at least as many blobs with that content as it adds, and only a move that
 // also edited the file is measured.
@@ -541,12 +540,12 @@ func (r Repo) objectType(oid string) (string, error) {
 // symlink is the wanted answer, since a link holds no source to measure. A
 // symlink replaced by a real source file is an accepted gap, and measuring it
 // needs a wider letter set kept apart from the link direction, which is issue
-// 84. See the ADR 0007 amendment beginning "`--diff-filter=ACM` excludes `T`,".
+// 84. See the typechange paragraph of ADR 0014.
 //
 // A link arriving as status A does pass ACM, so linkedPaths drops any changed
 // path whose new side is a link, which is the same reading of "a link holds no
 // source to measure" on the route the letters cannot reach. That drop owes ADR
-// 0007 an amendment.
+// 0014 an amendment.
 //
 // Nothing gets out of here untyped. Every cause below this line, a git
 // invocation that failed as much as a patch the parser refused, comes back as
@@ -615,7 +614,7 @@ func (r Repo) rawChanges(base Base, drivers []string) ([]rawRecord, error) {
 // linkedPaths lists the changed paths whose new side is a symbolic link, which
 // the changed set drops.
 //
-// A link holds no source to measure, which is the reading ADR 0007 already
+// A link holds no source to measure, which is the reading ADR 0014 already
 // takes of the typechange `--diff-filter=ACM` excludes: a source file replaced
 // by a link is the wanted answer. A link arriving as status A passes that
 // filter, and dropping it here is the same reading on the route the letters
@@ -645,7 +644,7 @@ func linkedPaths(records []rawRecord) []srcpath.Path {
 
 // cachedFlag is `--cached` when base.Staged, which is what turns a diff's
 // working-tree comparison into an index comparison. One diff code path
-// serves both ADR 0007's default scope and --staged this way, rather than a
+// serves both ADR 0017's default scope and --staged this way, rather than a
 // second near-copy of TouchedLines and pureMoves.
 func cachedFlag(base Base) []string {
 	if base.Staged {
@@ -1001,7 +1000,7 @@ func noMatch(err error) bool {
 // and one rule cannot hold two definitions of "changed". Comparing raw bytes
 // would leave a `git mv` combined with a reindent looking like a whole-file
 // add, and every method in it would demand coverage attribution, which is the
-// wall of failures ADR 0007 gives `-w` to prevent.
+// wall of failures ADR 0015 gives `-w` to prevent.
 //
 // Every unreadable side resolves towards measuring, which is the conservative
 // direction. An added path the gate cannot read stays measured, and it counts
@@ -1044,7 +1043,7 @@ func (r Repo) pureMoves(base Base, records []rawRecord) []srcpath.Path {
 	for _, add := range added {
 		body, err := r.addedContent(base, add)
 		if err != nil {
-			// ADR 0007's 2026-09-16 amendment. An add the gate cannot
+			// ADR 0015's unreadable-add rule. An add the gate cannot
 			// digest could be carrying any deleted
 			// blob's content, so it is counted as a claimant of every digest
 			// rather than of none. It can never be proven a move itself, and
