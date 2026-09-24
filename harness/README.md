@@ -101,6 +101,11 @@ commit whose staged files were all deleted from the working tree used to go thro
 When every branch skipped, as in a repo adopted for none of the languages in the change, no filter
 runs and the commit goes through, as it always did.
 
+So every branch needs Go on `PATH`, even in a repo with no Go in it. `linters/common.sh` builds
+`lint-changed` from this hub into `${XDG_CACHE_HOME:-~/.cache}/coding-standards` once per run,
+which Go's build cache makes free after the first. No Go means the filter cannot run, and an unrun
+filter proves nothing, so the branch fails the commit rather than skipping.
+
 During an uncommitted merge, when `MERGE_HEAD` exists, `--staged` lints only the staged files that
 differ from both `HEAD` and `MERGE_HEAD`: conflict resolutions and edits made while merging. Against
 `HEAD` alone a merge commit's index holds everything the incoming side brought, which on a
@@ -108,11 +113,6 @@ long-lived branch meant thousands of files and dozens of .NET builds per commit.
 `MERGE_HEAD` alone it holds everything the branch already committed, whose lines all match `HEAD`,
 so the filter would drop every finding in them after paying for the builds. The staged-versus-disk
 hard stop still covers every staged path.
-
-So every branch needs Go on `PATH`, even in a repo with no Go in it. `linters/common.sh` builds
-`lint-changed` from this hub into `${XDG_CACHE_HOME:-~/.cache}/coding-standards` once per run,
-which Go's build cache makes free after the first. No Go means the filter cannot run, and an unrun
-filter proves nothing, so the branch fails the commit rather than skipping.
 
 Output is one shape across all three, whatever the linter's own format was. `lint-changed` writes
 one line per surviving finding to stdout, `path:line:column: RULE: message`, repo-relative, and
