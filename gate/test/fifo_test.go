@@ -9,6 +9,7 @@ import (
 )
 
 func TestFilesNamingAFifoRefusesItWithoutCallingItADirectory(t *testing.T) {
+	t.Parallel()
 	const pipe = "src/Ordering/Pipe.cs"
 
 	f := newFixture(t, "main")
