@@ -65,28 +65,13 @@ resolve_repo() {
   repo_root=$(cd "$repo_root" && pwd -P)
   cd "$repo_root" || exit 1
 
-  # A linked worktree is the same adoption as the checkout it was made from, so adoption is keyed
-  # on the main checkout rather than on where the commit happens to be taken. The hook is shared
-  # anyway — it lives in the common git dir — so keying on $repo_root would install a hook in
-  # every worktree that then skipped, which reads exactly like the layer being broken. The common
-  # git dir is <main>/.git in both cases, so its parent is the main checkout.
-  #
-  # TVRMSMITH_REGISTRY_KEY names the checkout directly, for a caller that already knows it and
-  # whose worktree cannot say. A no-mistakes run is that caller: it lints in a detached worktree
-  # of the daemon's own bare gate repo, so the common git dir resolves to the gate, the gate is in
-  # no registry, and the skip is indistinguishable from a clean result.
-  registry_key=$repo_root
-  if [ -n "${TVRMSMITH_REGISTRY_KEY:-}" ]; then
-    # No fallback to the unresolved value. It would match neither the props condition nor a Go
-    # registry line, so both branches would take not_wired and a typo in the variable would turn
-    # the gate into a silent no-op. A caller that names a checkout is asserting one exists.
-    registry_key=$(cd "$TVRMSMITH_REGISTRY_KEY" 2>/dev/null && pwd -P) || {
-      echo "lint-changed: TVRMSMITH_REGISTRY_KEY names '$TVRMSMITH_REGISTRY_KEY', which is not a directory" >&2
-      exit 1
-    }
-  elif common_git_dir=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P); then
-    registry_key=$(cd "$common_git_dir/.." && pwd -P)
-  fi
+  # Which path adoption is looked up under is `lint-changed registry-key`, which a Go test can
+  # reach and a bash function cannot: the env override, the worktree-to-main-checkout rule and the
+  # symlink resolution all live there. A wrong key matches no registry and every branch skips, so
+  # a failure here stops the run rather than falling back to $repo_root.
+  local bin
+  bin=$(lint_changed_bin) || exit 1
+  registry_key=$("$bin" registry-key </dev/null) || exit 1
 }
 
 # NUL-delimited throughout. git quotes a path holding a space or a non-ASCII byte in its

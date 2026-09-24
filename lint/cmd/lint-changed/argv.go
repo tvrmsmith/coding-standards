@@ -3,8 +3,9 @@
 // findings that touch lines the commit changed, lets a one-shot waiver
 // suppress one of them, and exits non-zero if any survive. A separate spend
 // form marks a matched waiver as used, once the dispatcher that called the
-// filter knows the whole commit went through, and a changed-paths form lists
-// the files a run covers, which the dispatcher hands to each language branch.
+// filter knows the whole commit went through, a changed-paths form lists the
+// files a run covers, which the dispatcher hands to each language branch, and a
+// registry-key form prints the path the branches look adoption up under.
 //
 // argv is parsed by hand rather than through the flag package, for the
 // reason gate/internal/scope gives: flag exits 2 on a usage mistake and lets
@@ -17,13 +18,13 @@ import (
 	"github.com/tvrmsmith/coding-standards/lint/internal/lintfind"
 )
 
-// Kind is which of lint-changed's five forms argv named.
+// Kind is which of lint-changed's six forms argv named.
 type Kind int
 
 const (
 	// KindFilter reads every --report named, scopes the findings to the
-	// diff, and lets a waiver suppress a survivor. Anything not "waive",
-	// "waivers", "spend" or "changed-paths" means this.
+	// diff, and lets a waiver suppress a survivor. Anything not naming one
+	// of the other forms means this.
 	KindFilter Kind = iota
 	// KindWaive records a one-shot waiver.
 	KindWaive
@@ -37,6 +38,8 @@ const (
 	// KindChangedPaths prints the files a run under one scope covers,
 	// NUL-terminated.
 	KindChangedPaths
+	// KindRegistryKey prints the path adoption is looked up under.
+	KindRegistryKey
 )
 
 // ScopeMode is which base a filter run scopes its findings against.
@@ -118,11 +121,13 @@ const usage = `usage: lint-changed [--staged | --since <ref> | --files <path> ..
        lint-changed waive --language <lang> [--path <p>] --rule <r> --reason <why>
        lint-changed waivers
        lint-changed spend --waiver <id> [--waiver <id> ...]
-       lint-changed changed-paths (--staged | --since <ref> | --files <path> ...)`
+       lint-changed changed-paths (--staged | --since <ref> | --files <path> ...)
+       lint-changed registry-key`
 
-// Parse reads argv without the program name. "waive", "waivers", "spend" and
-// "changed-paths" as the first argument select those four forms; anything
-// else, including no arguments at all, is read as the filter form.
+// Parse reads argv without the program name. "waive", "waivers", "spend",
+// "changed-paths" and "registry-key" as the first argument select those five
+// forms; anything else, including no arguments at all, is read as the filter
+// form.
 func Parse(args []string) (Command, error) {
 	if len(args) > 0 && args[0] == "waive" {
 		wa, err := parseWaive(args[1:])
@@ -150,6 +155,12 @@ func Parse(args []string) (Command, error) {
 			return Command{}, err
 		}
 		return Command{Kind: KindChangedPaths, ChangedPaths: scope}, nil
+	}
+	if len(args) > 0 && args[0] == "registry-key" {
+		if len(args) > 1 {
+			return Command{}, &UsageError{Problem: "registry-key takes no arguments"}
+		}
+		return Command{Kind: KindRegistryKey}, nil
 	}
 	fa, err := parseFilter(args)
 	if err != nil {
