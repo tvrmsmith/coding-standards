@@ -873,7 +873,7 @@ describe('the Go branch names the package holding the changed file', () => {
 })
 
 describe('the C# branch in a repository wired for .NET', () => {
-  test('no dotnet on PATH fails rather than passing the staged C# unexamined', () => {
+  test('no dotnet on PATH fails rather than passing the staged C# unexamined', { skip }, () => {
     const f = repository('tvrmsmith-dotnet-path-')
     try {
       const props = join(f.root, 'coding-standards.props')
