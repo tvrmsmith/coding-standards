@@ -1,5 +1,6 @@
 // Package gitscope answers the two questions ADRs 0017 and 0014 put to git:
-// which commit the run diffs against, and which lines that diff touched. This
+// which commit the run diffs against, and which lines that diff touched. It
+// also lists the files a harness run lints, in changedfiles.go. This
 // package runs git itself rather than taking hunks from a wrapper, so `-w` and
 // `--diff-filter` are fixed in one place and no caller can get them wrong.
 //
