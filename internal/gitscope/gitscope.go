@@ -529,8 +529,8 @@ func (r Repo) objectType(oid string) (string, error) {
 //
 // Decomposition alone would leave a pure `git mv` marking every method in the
 // moved file changed, because the add side is the whole file. So ADR 0015 also
-// says "the gate drops an added file whose content matches a deleted one" in
-// the same diff. An added path whose content, whitespace ignored, matches a
+// says "the gate then drops an added file whose content matches a deleted one
+// in the same diff". An added path whose content, whitespace ignored, matches a
 // path the same diff deleted is dropped afterwards, provided the diff deletes
 // at least as many blobs with that content as it adds, and only a move that
 // also edited the file is measured.
