@@ -8,6 +8,12 @@ The pre-commit lint blocks the commit. A finding survives to block it when any o
 primary or related, has a span holding a line the change touched. A finding whose locations all fall
 outside the touched set is dropped silently.
 
+**Amended 2026-09-23.** The touched set holds no line from a path whose new side is a symbolic link,
+so a finding reported at a symlinked `.cs`, `.go` or `.ts` path touches nothing and does not block.
+A link holds no source of its own, and the gate and this lint share one changed set, so the drop
+made for the gate applies here too. See [issue 144](https://github.com/tvrmsmith/coding-standards/issues/144)
+and [PR 143](https://github.com/tvrmsmith/coding-standards/pull/143).
+
 The warning set is everything the tool reports. C# takes every
 compiler and analyzer warning in the SARIF, CS and CA alongside TVRM and FAA. Go takes every
 golangci-lint issue. TypeScript takes ESLint severity 1 and 2 alike.
