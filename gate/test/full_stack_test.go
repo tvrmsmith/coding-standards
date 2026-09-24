@@ -1,6 +1,7 @@
 package gate_test
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -36,6 +37,12 @@ const envRequireDotnet = "METRIC_GATE_REQUIRE_DOTNET"
 // reasonShort is why the cases in realExtractorCases fail under -short once
 // METRIC_GATE_REQUIRE_DOTNET forbids every skip route.
 const reasonShort = "full-stack cases pack and install a dotnet tool, skipped with -short"
+
+// reasonOffline is why dotnetFailure prepends its own paragraph when a dotnet
+// step's output shows NU1301. The step that failed needed a package feed it
+// could not reach, and naming that here keeps the paragraph identical at every
+// dotnet step that reports it.
+const reasonOffline = "NuGet could not reach a package feed (NU1301), which is a missing network rather than a broken gate. The full-stack cases restore packages from a feed and " + envRequireDotnet + "=1 forbids skipping them, so run them online or unset " + envRequireDotnet + "."
 
 // reasonUnset is why those cases skip when nothing enforces it. It states the
 // one thing a reader has to do to make them run, because they ask nothing of
@@ -115,6 +122,51 @@ func TestRequireDotnetAcceptsOnlyTheDocumentedValues(t *testing.T) {
 	}
 }
 
+// TestDotnetFailureNamesAnOfflineRestore pins dotnetFailure against literal
+// expected strings rather than against its own formatting, so a change to the
+// function has to keep matching text a reader chose by hand.
+func TestDotnetFailureNamesAnOfflineRestore(t *testing.T) {
+	cases := []struct {
+		name string
+		step string
+		err  error
+		out  string
+		want string
+	}{
+		{
+			name: "NU1301 output gets the offline reason prepended",
+			step: "dotnet pack",
+			err:  errors.New("exit status 1"),
+			out:  "error NU1301: Unable to load the service index for source https://api.nuget.org/v3/index.json.\n",
+			want: "NuGet could not reach a package feed (NU1301), which is a missing network rather than a broken gate. The full-stack cases restore packages from a feed and METRIC_GATE_REQUIRE_DOTNET=1 forbids skipping them, so run them online or unset METRIC_GATE_REQUIRE_DOTNET.\n" +
+				"dotnet pack: exit status 1\nerror NU1301: Unable to load the service index for source https://api.nuget.org/v3/index.json.\n",
+		},
+		{
+			name: "a compile error passes through unchanged",
+			step: "dotnet pack",
+			err:  errors.New("exit status 1"),
+			out:  "error CS1002: ; expected\n",
+			want: "dotnet pack: exit status 1\nerror CS1002: ; expected\n",
+		},
+		{
+			name: "empty output passes through unchanged",
+			step: "dotnet tool install Tvrmsmith.MetricGate.CSharp 0.1.0",
+			err:  errors.New("exit status 1"),
+			out:  "",
+			want: "dotnet tool install Tvrmsmith.MetricGate.CSharp 0.1.0: exit status 1\n",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := dotnetFailure(c.step, c.err, []byte(c.out))
+			if got != c.want {
+				t.Errorf("dotnetFailure(%q, %v, %q) = %q, want %q", c.step, c.err, c.out, got, c.want)
+			}
+		})
+	}
+}
+
 // realExtractorCases names every case that drives the real dotnet toolchain
 // and so decides on METRIC_GATE_REQUIRE_DOTNET. The child selection and the
 // per-case outcome lines the enforcement rows assert are both derived from it,
@@ -170,6 +222,19 @@ func dotnetCmd(t *testing.T, dir string, args ...string) *exec.Cmd {
 	cmd := exec.Command("dotnet", args...)
 	cmd.Dir = dir
 	return cmd
+}
+
+// dotnetFailure renders a dotnet step's failure as step, its error and the
+// combined output on the next line, matching what a bare t.Fatalf already
+// printed. When out contains NU1301, it prepends reasonOffline first, so the
+// offline cause reads before the raw failure text instead of being mistaken
+// for a broken gate.
+func dotnetFailure(step string, err error, out []byte) string {
+	msg := fmt.Sprintf("%s: %v\n%s", step, err, out)
+	if strings.Contains(string(out), "NU1301") {
+		return reasonOffline + "\n" + msg
+	}
+	return msg
 }
 
 // childCase selects those cases in a child and nothing else. Widening this
@@ -439,6 +504,9 @@ func installRealExtractor(t *testing.T) string {
 	// the csproj pins one version forever. Sharing the machine's folder would
 	// install run 1's build on every later run, so this case would verify a
 	// stale extractor and keep passing after a real regression in the tool.
+	// The tradeoff is that this fresh folder makes dotnet pack restore from a
+	// feed on every run, and dotnetFailure names that cause when it fails
+	// offline instead of leaving NU1301 to read as a broken gate.
 	nugetPackages := t.TempDir()
 	// Both commands run under dotnet/, so dotnet/global.json is an ancestor
 	// and the muxer resolves the SDK pin the same way here as it does for a
@@ -458,7 +526,7 @@ func installRealExtractor(t *testing.T) string {
 	packDir := t.TempDir()
 	pack := dotnet("pack", project, "-c", "Release", "-o", packDir)
 	if out, err := pack.CombinedOutput(); err != nil {
-		t.Fatalf("dotnet pack: %v\n%s", err, out)
+		t.Fatal(dotnetFailure("dotnet pack", err, out))
 	}
 
 	// The install names the version the pack just produced and reads a config
@@ -474,7 +542,7 @@ func installRealExtractor(t *testing.T) string {
 		"--version", version,
 		extractorPackage)
 	if out, err := install.CombinedOutput(); err != nil {
-		t.Fatalf("dotnet tool install %s %s: %v\n%s", extractorPackage, version, err, out)
+		t.Fatal(dotnetFailure(fmt.Sprintf("dotnet tool install %s %s", extractorPackage, version), err, out))
 	}
 	return dir
 }

@@ -6,6 +6,16 @@
 // Nothing here reaches inside the gate. The golden files are the expected
 // values; a case that disagrees with one is a bug in the gate.
 //
+// Cases open with t.Parallel(). A case costs its process spawns, git and the
+// gate, not CPU, so running the cases one at a time put the package at two
+// minutes on an idle machine and past Go's default 10-minute timeout on a busy
+// one. Each case owns its t.TempDir and shares only the read-only binDir, so
+// cases can run side by side. The cases in full_stack_test.go and
+// coverlet_test.go stay serial: the two full-stack cases both pack the one
+// project under dotnet/src, and two packs at once race on its obj directory.
+// A new case adds t.Parallel() unless it writes somewhere outside its own temp
+// directories.
+//
 // One golden has no case here: golden/internal_error.toon, which no run of the
 // real binary can produce, because reaching it needs a gitscope.OpenKind no
 // version of gitscope declares. TestTheUnmappedOpenKindDocumentMatchesTheInternalErrorGolden

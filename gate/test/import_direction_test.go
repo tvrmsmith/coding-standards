@@ -20,6 +20,7 @@ const gatePrefix = "github.com/tvrmsmith/coding-standards/gate/"
 // rather than grepping import lines, which an alias or a blank import could
 // dodge.
 func TestInternalDoesNotDependOnGate(t *testing.T) {
+	t.Parallel()
 	// -test brings each internal/ package's test-augmented variant into the
 	// graph alongside the package itself, so a _test.go file under
 	// internal/ importing gate/ reds here too. Without it, an import
