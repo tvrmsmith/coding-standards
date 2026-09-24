@@ -153,7 +153,7 @@ func TestAnUnreadableDirectoryFailsTheMapping(t *testing.T) {
 	if err := os.Chmod("locked", 0o000); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod("locked", 0o700) })
+	t.Cleanup(func() { _ = os.Chmod("locked", 0o700) }) //nolint:gosec // G302: a directory needs its execute bit back for t.TempDir to remove it
 
 	_, _, err := owners("go", []string{"locked/inner/a.go"})
 
