@@ -50,7 +50,7 @@ func TestChangedReturnsSpansInAscendingOrder(t *testing.T) {
 }
 
 // TestAllSpansMeasuresEveryExtractedSpanInAscendingOrder pins --files' half of
-// the ADR 0007 rule: with no touched line to narrow against, every span the
+// the ADR 0017 rule: with no touched line to narrow against, every span the
 // extractor found is changed, nested spans included, in the same ascending
 // order Changed promises.
 //

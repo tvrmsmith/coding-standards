@@ -179,7 +179,7 @@ func measure(sc scope.Scope, getwd func() (string, error)) (report.Document, err
 
 	extracted, changed := selected.Extracted, selected.Changed
 	doc.ChangedMethods = len(changed)
-	// ADR 0007: an empty changed-method set exits 0 before resolving any
+	// ADR 0014: an empty changed-method set exits 0 before resolving any
 	// input, because a metric with nothing to compute is not asking for one.
 	// Every selected metric is still emitted, with no rows, so the document
 	// carries the same keys it would have carried had there been work.
@@ -315,7 +315,7 @@ func dirtyBehindExtraction(repo gitscope.Repo, base gitscope.Base, files []srcpa
 }
 
 // selectFiles resolves names, --files' argument list, into a selection. This
-// is the shape ADR 0007 gives --files instead of a diff: every method in a
+// is the shape ADR 0017 gives --files instead of a diff: every method in a
 // listed file is changed, there is no base to record, and
 // touched_lines_outside_spans has nothing to count.
 func selectFiles(repo gitscope.Repo, names []string, cwd string) (selection, error) {
