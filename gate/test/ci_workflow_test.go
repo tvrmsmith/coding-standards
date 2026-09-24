@@ -159,6 +159,7 @@ const (
 // toolchain install ahead of the build reds this case instead of quietly
 // disarming the gosec sweep this branch cleared.
 func TestCIDeclaresTheBlockingLintStep(t *testing.T) {
+	t.Parallel()
 	job := gateJobSpec(t)
 	assertFailureIsFatal(t, job.ContinueOnError, fmt.Sprintf("the %q job", gateJob))
 
@@ -290,6 +291,7 @@ fi
 // drift without any Go test noticing, because the step runs on the runner
 // rather than here.
 func TestCIDeclaresTheSuiteStep(t *testing.T) {
+	t.Parallel()
 	job := gateJobSpec(t).Steps
 
 	if len(realExtractorCases) == 0 {

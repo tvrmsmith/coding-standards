@@ -275,6 +275,7 @@ func decodePreset(body []byte) (preset, error) {
 // presetDisarms enumerates would leave the CI lint step running, green, and
 // reporting less than it does today.
 func TestThePresetStillReportsTheRulesThisRepoJustified(t *testing.T) {
+	t.Parallel()
 	body, err := os.ReadFile(presetConfig)
 	if err != nil {
 		t.Fatalf("reading the preset the CI lint step runs with, at %s: %v", presetConfig, err)
@@ -302,6 +303,7 @@ func TestThePresetStillReportsTheRulesThisRepoJustified(t *testing.T) {
 // the tree. The first case is the block PR #127 shipped, which this branch
 // removed.
 func TestEveryDisarmingKeyIsReported(t *testing.T) {
+	t.Parallel()
 	// armed is the shape of the committed preset, which each case edits one
 	// key at a time so the reported disarm is the one the case introduced.
 	const armed = `
@@ -479,6 +481,7 @@ linters:
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			p, err := decodePreset([]byte(tc.config))
 			if err != nil {
 				t.Fatalf("parsing the case config: %v", err)
@@ -498,6 +501,7 @@ linters:
 // TestAnExclusionRuleLeavingGosecArmedIsNotReported holds the check to the keys
 // that reach gosec, so it does not grow into a ban on exclusions.
 func TestAnExclusionRuleLeavingGosecArmedIsNotReported(t *testing.T) {
+	t.Parallel()
 	p, err := decodePreset([]byte(`
 linters:
   enable:

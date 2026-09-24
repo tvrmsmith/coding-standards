@@ -92,10 +92,10 @@ jobs:
       # the case it was asked for even starts; on top of that each full-stack
       # case packs the tool and installs it against an empty NUGET_PACKAGES
       # directory, and the coverlet case then runs dotnet test over a generated
-      # fixture solution. The gate/test package alone measured 109s locally with
-      # a warm build cache and a populated NuGet cache, so 12m leaves room for a
-      # cold restore on a slower runner. Under the default a slow restore
-      # surfaces as an opaque panic instead.
+      # fixture solution. The gate/test package alone measured 32s locally with
+      # its cases in parallel, a warm build cache and a populated NuGet cache, so
+      # 12m leaves room for a cold restore on a slower runner. Under the default
+      # a slow restore surfaces as an opaque panic instead.
       - name: Run the gate suite and prove the full-stack cases ran
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         env:

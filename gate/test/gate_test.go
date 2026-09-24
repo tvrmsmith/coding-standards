@@ -43,6 +43,7 @@ const pricingFile = "src/Pricing/Pricing.cs"
 var pricingQuote = span{File: pricingFile, Name: "Pricing.Quote", StartLine: 60, EndLine: 64, Complexity: 3}
 
 func TestDocsOnlyChangePassesWithNoCoverageReportPresent(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.stub = stubConfig{Extensions: []string{".cs"}}
 	f.write("docs/notes.md", "first\n")
@@ -55,6 +56,7 @@ func TestDocsOnlyChangePassesWithNoCoverageReportPresent(t *testing.T) {
 }
 
 func TestDocsOnlyChangePassesWithNoExtractorInstalledAtAll(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write("docs/notes.md", "first\n")
 	f.write(orderService, csharpFile(80))
@@ -68,6 +70,7 @@ func TestDocsOnlyChangePassesWithNoExtractorInstalledAtAll(t *testing.T) {
 }
 
 func TestFileMovedWithNoContentChangeReportsNoChangedMethods(t *testing.T) {
+	t.Parallel()
 	const origin = "src/Ordering/Origin.cs"
 	const moved = "src/Ordering/Moved.cs"
 	vanish := span{File: moved, Name: "Moved.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
@@ -88,6 +91,7 @@ func TestFileMovedWithNoContentChangeReportsNoChangedMethods(t *testing.T) {
 }
 
 func TestFileMovedAndReindentedReportsNoChangedMethods(t *testing.T) {
+	t.Parallel()
 	const origin = "src/Ordering/Origin.cs"
 	const moved = "src/Ordering/Moved.cs"
 	vanish := span{File: moved, Name: "Moved.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
@@ -109,6 +113,7 @@ func TestFileMovedAndReindentedReportsNoChangedMethods(t *testing.T) {
 }
 
 func TestTwoIdenticalFilesMovedTogetherReportNoChangedMethods(t *testing.T) {
+	t.Parallel()
 	const firstOrigin = "src/Ordering/First.cs"
 	const secondOrigin = "src/Ordering/Second.cs"
 	const firstMoved = "src/Ordering/FirstMoved.cs"
@@ -138,6 +143,7 @@ func TestTwoIdenticalFilesMovedTogetherReportNoChangedMethods(t *testing.T) {
 }
 
 func TestAnAddNobodyCanReadLeavesEveryOtherAddMeasured(t *testing.T) {
+	t.Parallel()
 	const origin = "src/Ordering/Origin.cs"
 	const moved = "src/Ordering/Moved.cs"
 	vanish := span{File: moved, Name: "Moved.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
@@ -165,6 +171,7 @@ func TestAnAddNobodyCanReadLeavesEveryOtherAddMeasured(t *testing.T) {
 }
 
 func TestAnAddNobodyCanReadStillLeavesTheMovesTheDeletesExplainDropped(t *testing.T) {
+	t.Parallel()
 	const firstOrigin = "src/Ordering/First.cs"
 	const secondOrigin = "src/Ordering/Second.cs"
 	const moved = "src/Ordering/Moved.cs"
@@ -191,6 +198,7 @@ func TestAnAddNobodyCanReadStillLeavesTheMovesTheDeletesExplainDropped(t *testin
 }
 
 func TestMethodScoringExactlyAtTheThresholdPasses(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	boundaryFixture(t, f, 30)
 
@@ -201,6 +209,7 @@ func TestMethodScoringExactlyAtTheThresholdPasses(t *testing.T) {
 }
 
 func TestMethodScoringJustOverTheThresholdFails(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	boundaryFixture(t, f, 29)
 
@@ -211,6 +220,7 @@ func TestMethodScoringJustOverTheThresholdFails(t *testing.T) {
 }
 
 func TestMethodWhoseRawScoreRoundsDownOntoTheThresholdPasses(t *testing.T) {
+	t.Parallel()
 	const boundary = "src/Ordering/Boundary.cs"
 	knot := span{File: boundary, Name: "Boundary.Knot", StartLine: 10, EndLine: 80, Complexity: 30}
 
@@ -234,6 +244,7 @@ func TestMethodWhoseRawScoreRoundsDownOntoTheThresholdPasses(t *testing.T) {
 }
 
 func TestTwoSameRangeMethodsScoringTheSameAreOrderedByName(t *testing.T) {
+	t.Parallel()
 	const pair = "src/Ordering/Pair.cs"
 	// Same file, same range, same complexity and the same coverage, so the two
 	// rows tie on every cell the table sorts by. Only the name settles the order,
@@ -264,6 +275,7 @@ func TestTwoSameRangeMethodsScoringTheSameAreOrderedByName(t *testing.T) {
 }
 
 func TestExtractorReportingADifferentLanguageThanItWasLocatedUnderFails(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -275,6 +287,7 @@ func TestExtractorReportingADifferentLanguageThanItWasLocatedUnderFails(t *testi
 }
 
 func TestExtractorClaimingNoneOfTheFilesItWasLocatedForFails(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -288,6 +301,7 @@ func TestExtractorClaimingNoneOfTheFilesItWasLocatedForFails(t *testing.T) {
 }
 
 func TestExtractorReturningTheSameSpanTwiceFails(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -305,6 +319,7 @@ func TestExtractorReturningTheSameSpanTwiceFails(t *testing.T) {
 }
 
 func TestExtractorReturningTheSameSpanWithTwoComplexitiesFails(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -325,6 +340,7 @@ func TestExtractorReturningTheSameSpanWithTwoComplexitiesFails(t *testing.T) {
 }
 
 func TestExtractorReportingAComplexityBelowTheMcCabeBaseFails(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -343,6 +359,7 @@ func TestExtractorReportingAComplexityBelowTheMcCabeBaseFails(t *testing.T) {
 }
 
 func TestExtractorReportingAStartLineBelowOneFails(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -359,6 +376,7 @@ func TestExtractorReportingAStartLineBelowOneFails(t *testing.T) {
 }
 
 func TestExtractorReportingAnEndLineBelowItsStartFails(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -377,6 +395,7 @@ func TestExtractorReportingAnEndLineBelowItsStartFails(t *testing.T) {
 }
 
 func TestChangedFileWhoseExtensionIsSpeltInAnotherCaseIsStillMeasured(t *testing.T) {
+	t.Parallel()
 	// macOS and Windows both carry case-insensitive filesystems, so this is an
 	// ordinary file a developer creates without noticing. Routed by an exact
 	// match it reaches no extractor, and the run passes with the method unscored.
@@ -399,6 +418,7 @@ func TestChangedFileWhoseExtensionIsSpeltInAnotherCaseIsStillMeasured(t *testing
 }
 
 func TestTwoMethodsDeclaredOnOneLineAreBothScored(t *testing.T) {
+	t.Parallel()
 	const twins = "src/Ordering/Twins.cs"
 	// `public class C { public int A() => 1; public int B() => 2; }` is valid
 	// C#, and the real Roslyn extractor reports both methods over line 14. Two
@@ -424,6 +444,7 @@ func TestTwoMethodsDeclaredOnOneLineAreBothScored(t *testing.T) {
 }
 
 func TestChangedSourceFileWithNoExtractorInstalledFails(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -436,6 +457,7 @@ func TestChangedSourceFileWithNoExtractorInstalledFails(t *testing.T) {
 }
 
 func TestExtractorThatIsPresentButNotExecutableFails(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -449,6 +471,7 @@ func TestExtractorThatIsPresentButNotExecutableFails(t *testing.T) {
 }
 
 func TestExtractorEmittingSomethingOtherThanJSONFails(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -460,6 +483,7 @@ func TestExtractorEmittingSomethingOtherThanJSONFails(t *testing.T) {
 }
 
 func TestExtractorEmittingCapabilitiesThatAreNotJSONFails(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -471,6 +495,7 @@ func TestExtractorEmittingCapabilitiesThatAreNotJSONFails(t *testing.T) {
 }
 
 func TestExtractorSilentAboutAFileItWasGivenFails(t *testing.T) {
+	t.Parallel()
 	const ghost = "src/Ordering/Ghost.cs"
 
 	f := newFixture(t, "main")
@@ -491,6 +516,7 @@ func TestExtractorSilentAboutAFileItWasGivenFails(t *testing.T) {
 }
 
 func TestCoverageWalkRecordsAPathItCouldNotRead(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -510,6 +536,7 @@ func TestCoverageWalkRecordsAPathItCouldNotRead(t *testing.T) {
 }
 
 func TestWellTestedMethodForItsComplexityPasses(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	cancelFixture(t, f)
 
@@ -524,6 +551,7 @@ func TestWellTestedMethodForItsComplexityPasses(t *testing.T) {
 // that was already in force, so both documents are pass_single_method byte for
 // byte.
 func TestSelectingTheOnlyHostedMetricAtItsDefaultBarChangesNothing(t *testing.T) {
+	t.Parallel()
 	cases := map[string][]string{
 		"naming the only hosted metric": {"--metric", "crap"},
 		"naming the default bar":        {"--threshold", "crap=30"},
@@ -531,6 +559,7 @@ func TestSelectingTheOnlyHostedMetricAtItsDefaultBarChangesNothing(t *testing.T)
 
 	for name, argv := range cases {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			f := newFixture(t, "main")
 			cancelFixture(t, f)
 
@@ -541,6 +570,7 @@ func TestSelectingTheOnlyHostedMetricAtItsDefaultBarChangesNothing(t *testing.T)
 }
 
 func TestMethodWithTooLittleCoverageForItsComplexityFails(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -563,6 +593,7 @@ func TestMethodWithTooLittleCoverageForItsComplexityFails(t *testing.T) {
 // of what --threshold is for (issue 19).
 
 func TestChangedMethodUnderTheDefaultThresholdPasses(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	retryFixture(t, f)
 
@@ -571,6 +602,7 @@ func TestChangedMethodUnderTheDefaultThresholdPasses(t *testing.T) {
 }
 
 func TestTheSameMethodFailsOnceTheThresholdIsLoweredUnderItsScore(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	retryFixture(t, f)
 
@@ -579,6 +611,7 @@ func TestTheSameMethodFailsOnceTheThresholdIsLoweredUnderItsScore(t *testing.T) 
 }
 
 func TestThresholdBelowAMethodsComplexityAsksForASplitRatherThanCoverage(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -600,6 +633,7 @@ func TestThresholdBelowAMethodsComplexityAsksForASplitRatherThanCoverage(t *test
 }
 
 func TestEmptyChangedSetStillReportsTheThresholdItWasGiven(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.stub = stubConfig{Extensions: []string{".cs"}}
 	f.write("docs/notes.md", "first\n")
@@ -616,6 +650,7 @@ func TestEmptyChangedSetStillReportsTheThresholdItWasGiven(t *testing.T) {
 }
 
 func TestFourChangedMethodsEachGetTheFixThatApplies(t *testing.T) {
+	t.Parallel()
 	const pricing = "src/Ordering/Pricing.cs"
 	const order = "src/Ordering/Order.cs"
 	quote := span{File: pricing, Name: "Pricing.Quote", StartLine: 18, EndLine: 71, Complexity: 34}
@@ -649,6 +684,7 @@ func TestFourChangedMethodsEachGetTheFixThatApplies(t *testing.T) {
 }
 
 func TestBranchIsScoredAgainstTheMergeBaseAndNotTheTipOfMain(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -682,6 +718,7 @@ func TestBranchIsScoredAgainstTheMergeBaseAndNotTheTipOfMain(t *testing.T) {
 }
 
 func TestWholeFileReformatWithNoLogicChangeMeasuresNothing(t *testing.T) {
+	t.Parallel()
 	const legacy = "src/Ordering/Legacy.cs"
 	knot := span{File: legacy, Name: "Legacy.Knot", StartLine: 10, EndLine: 40, Complexity: 34}
 	tangle := span{File: legacy, Name: "Legacy.Tangle", StartLine: 42, EndLine: 58, Complexity: 20}
@@ -707,6 +744,7 @@ func TestWholeFileReformatWithNoLogicChangeMeasuresNothing(t *testing.T) {
 }
 
 func TestMethodMovedToANewPathAndEditedIsScoredAtItsNewLocation(t *testing.T) {
+	t.Parallel()
 	const origin = "src/Ordering/Origin.cs"
 	const moved = "src/Ordering/Moved.cs"
 	vanish := span{File: moved, Name: "Moved.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
@@ -731,6 +769,7 @@ func TestMethodMovedToANewPathAndEditedIsScoredAtItsNewLocation(t *testing.T) {
 }
 
 func TestMethodMovedBetweenFilesWithItsBodyUnchangedIsMeasuredAtItsNewLocation(t *testing.T) {
+	t.Parallel()
 	const origin = "src/Ordering/Origin.cs"
 	const destination = "src/Ordering/Destination.cs"
 	// Does not contain line 9, the line Origin's own touch lands on, so
@@ -762,6 +801,7 @@ func TestMethodMovedBetweenFilesWithItsBodyUnchangedIsMeasuredAtItsNewLocation(t
 }
 
 func TestMethodMovedWithinOneFileIsMeasuredAtItsNewLocation(t *testing.T) {
+	t.Parallel()
 	const shuffle = "src/Ordering/Shuffle.cs"
 	// Holds neither the vacated position nor the moved block, so it stays out
 	// of the table and shows the gate measures the move alone.
@@ -803,6 +843,7 @@ func TestMethodMovedWithinOneFileIsMeasuredAtItsNewLocation(t *testing.T) {
 // TestASymlinkReplacedByASourceFileContributesNoChangedMethods
 // pins the opposite direction of the same typechange.
 func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderFile, csharpFile(80))
 	f.write(orderService, csharpFile(80))
@@ -854,6 +895,7 @@ func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) 
 // points at OrderService.cs, so an extractor handed Order.cs would follow it
 // and report OrderService.Cancel a second time under Order.cs.
 func TestATypechangeIsWithheldWhileTheRestOfTheDiffIsMeasured(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderFile, csharpFile(80))
 	f.write(orderService, csharpFile(80))
@@ -908,6 +950,7 @@ func TestATypechangeIsWithheldWhileTheRestOfTheDiffIsMeasured(t *testing.T) {
 // typechange at all, and the two have to land together, which is issue 84.
 // Until then the gap above is accepted rather than closed.
 func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.symlinkTo(filepath.Base(orderService), orderFile)
@@ -961,6 +1004,7 @@ func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) 
 // The symlink points at OrderService.cs, its sibling in the same directory,
 // so the link is not dangling.
 func TestASymlinkAddedOutrightIsWithheldFromTheChangedSet(t *testing.T) {
+	t.Parallel()
 	// The span starts at line 1, the link's only line, so an extractor that
 	// followed the link would put a measured method on a path holding nothing
 	// but the target's name.
@@ -1009,6 +1053,7 @@ func TestASymlinkAddedOutrightIsWithheldFromTheChangedSet(t *testing.T) {
 // above pins, not a guard of its own, so nothing in the changed-set path reads
 // the target at all.
 func TestAnAddedSymlinkOutOfTheRepoIsWithheldRatherThanRefused(t *testing.T) {
+	t.Parallel()
 	const outsideLink = "src/Ordering/Outside.cs"
 	outside := filepath.Join(t.TempDir(), "outside.cs")
 	writeAbsolute(t, outside, csharpFile(10))
@@ -1043,6 +1088,7 @@ func TestAnAddedSymlinkOutOfTheRepoIsWithheldRatherThanRefused(t *testing.T) {
 // ordinary edit, the document is non-empty, and the drop becomes a live
 // extractor handed one path and not the other.
 func TestAnAddedSymlinkIsWithheldWhileTheRestOfTheDiffIsMeasured(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1073,6 +1119,7 @@ func TestAnAddedSymlinkIsWithheldWhileTheRestOfTheDiffIsMeasured(t *testing.T) {
 // Move the touch to line 8 and the table names Legacy.Before over 5-8 at
 // coverage 1 and score 3 instead, and the golden stops matching.
 func TestDeletingAMethodAttributesTheZeroLengthHunkToTheLineBeforeIt(t *testing.T) {
+	t.Parallel()
 	const legacy = "src/Ordering/Legacy.cs"
 	before := span{File: legacy, Name: "Legacy.Before", StartLine: 5, EndLine: 8, Complexity: 3}
 	boundary := span{File: legacy, Name: "Legacy.Boundary", StartLine: 9, EndLine: 9, Complexity: 3}
@@ -1102,6 +1149,7 @@ func TestDeletingAMethodAttributesTheZeroLengthHunkToTheLineBeforeIt(t *testing.
 }
 
 func TestEveryMethodInANewlyAddedFileIsMeasured(t *testing.T) {
+	t.Parallel()
 	const fresh = "src/Ordering/Fresh.cs"
 	first := span{File: fresh, Name: "Fresh.First", StartLine: 3, EndLine: 8, Complexity: 4}
 	second := span{File: fresh, Name: "Fresh.Second", StartLine: 10, EndLine: 16, Complexity: 9}
@@ -1148,6 +1196,7 @@ func TestEveryMethodInANewlyAddedFileIsMeasured(t *testing.T) {
 // place of this golden. The StdinLog assertion below states the same rule
 // directly, by naming exactly what the extractor was handed.
 func TestANewFileNeverAddedToTheIndexContributesNoChangedMethods(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1197,6 +1246,7 @@ func TestANewFileNeverAddedToTheIndexContributesNoChangedMethods(t *testing.T) {
 //   - notes.md is touched but no extractor claims .md files, so its line
 //     counts toward nothing, not even the outside-spans diagnostic.
 func TestRealCommitMixingEditMoveDeletionAdditionRenameAndReflow(t *testing.T) {
+	t.Parallel()
 	const legacy = "src/Ordering/Legacy.cs"
 	const origin = "src/Ordering/Origin.cs"
 	const destination = "src/Ordering/Destination.cs"
@@ -1246,6 +1296,7 @@ func TestRealCommitMixingEditMoveDeletionAdditionRenameAndReflow(t *testing.T) {
 }
 
 func TestANestedSpanTakesTheTouchedLineAndItsOwnCoverageFromItsContainer(t *testing.T) {
+	t.Parallel()
 	const outer = "src/Ordering/Outer.cs"
 	container := span{File: outer, Name: "Outer.Run", StartLine: 10, EndLine: 60, Complexity: 5}
 	local := span{File: outer, Name: "Outer.Run.Local", StartLine: 30, EndLine: 40, Complexity: 2}
@@ -1272,6 +1323,7 @@ func TestANestedSpanTakesTheTouchedLineAndItsOwnCoverageFromItsContainer(t *test
 }
 
 func TestChangedMethodWithNoCoverageReportAnywhereFails(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1293,6 +1345,7 @@ func TestChangedMethodWithNoCoverageReportAnywhereFails(t *testing.T) {
 // unconditional rule among them, would satisfy this case by accident; the
 // reads-implies-declares half, in cmd/metric-gate, is what catches that.
 func TestExplicitlySelectingCRAPStillDemandsTheCoverageItDeclares(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1307,6 +1360,7 @@ func TestExplicitlySelectingCRAPStillDemandsTheCoverageItDeclares(t *testing.T) 
 }
 
 func TestRepoWithNoResolvableDiffBaseNamesEveryRefAndPointsAtTheFlag(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "trunk")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1326,6 +1380,7 @@ func TestRepoWithNoResolvableDiffBaseNamesEveryRefAndPointsAtTheFlag(t *testing.
 }
 
 func TestChangedMethodInAFileNoReportPathMatchedFails(t *testing.T) {
+	t.Parallel()
 	const ghost = "src/Ordering/Ghost.cs"
 	vanish := span{File: ghost, Name: "Ghost.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
 
@@ -1354,6 +1409,7 @@ func TestChangedMethodInAFileNoReportPathMatchedFails(t *testing.T) {
 // so its changed method comes back unknown with the typed reason rather
 // than structural_na treated as fully covered.
 func TestFileInAReportCarryingNoInstrumentableLinesIsUnknownRatherThanCovered(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1381,6 +1437,7 @@ func TestFileInAReportCarryingNoInstrumentableLinesIsUnknownRatherThanCovered(t 
 // coverage 0. A change that turned this unknown, or read it as structural_na
 // treated as fully covered, would fail here.
 func TestFileWhoseOnlyInstrumentedLineWasNeverHitIsMeasuredAtZero(t *testing.T) {
+	t.Parallel()
 	const money = "src/Ordering/Money.cs"
 	amount := span{File: money, Name: "Money.Amount", StartLine: 7, EndLine: 7, Complexity: 1}
 
@@ -1415,6 +1472,7 @@ func TestFileWhoseOnlyInstrumentedLineWasNeverHitIsMeasuredAtZero(t *testing.T) 
 // so the empty report sorts first would leave the case passing while quietly
 // losing that discrimination.
 func TestFileWithNoLinesInOneReportIsStillMeasuredFromAnother(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1440,6 +1498,7 @@ func TestFileWithNoLinesInOneReportIsStillMeasuredFromAnother(t *testing.T) {
 // arm makes load-bearing: an entry left empty here turns a covered method
 // into exit 1.
 func TestFileWithNoLinesInTheFirstReportIsStillMeasuredFromALaterOne(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1463,6 +1522,7 @@ func TestFileWithNoLinesInTheFirstReportIsStillMeasuredFromALaterOne(t *testing.
 // unknowns of different reasons across two files; this one pins that a single
 // empty entry disqualifies every span in its file rather than the first.
 func TestTwoUnknownChangedMethodsAreCountedInThePlural(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1486,6 +1546,7 @@ func TestTwoUnknownChangedMethodsAreCountedInThePlural(t *testing.T) {
 // OrderService.cs is listed with no instrumentable line and comes back
 // file_uninstrumented, both counted by the one plural message.
 func TestTwoUnknownChangedMethodsCarryTheirOwnReasons(t *testing.T) {
+	t.Parallel()
 	const ghost = "src/Ordering/Ghost.cs"
 	vanish := span{File: ghost, Name: "Ghost.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
 
@@ -1508,6 +1569,7 @@ func TestTwoUnknownChangedMethodsCarryTheirOwnReasons(t *testing.T) {
 }
 
 func TestFileTheExtractorCouldNotParseFails(t *testing.T) {
+	t.Parallel()
 	const broken = "src/Ordering/Broken.cs"
 
 	f := newFixture(t, "main")
@@ -1524,6 +1586,7 @@ func TestFileTheExtractorCouldNotParseFails(t *testing.T) {
 }
 
 func TestExtractorEchoingAPathItWasNotGivenFails(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1545,6 +1608,7 @@ func TestExtractorEchoingAPathItWasNotGivenFails(t *testing.T) {
 // otherwise have that method measured and folded into the score. Every
 // file-status entry here is legitimate, so only the span walk can catch it.
 func TestExtractorVolunteeringASpanInAPathItWasNotGivenFails(t *testing.T) {
+	t.Parallel()
 	imposter := span{File: "src/Ordering/Imposter.cs", Name: "Imposter.Run", StartLine: 5, EndLine: 9, Complexity: 4}
 
 	f := newFixture(t, "main")
@@ -1561,6 +1625,7 @@ func TestExtractorVolunteeringASpanInAPathItWasNotGivenFails(t *testing.T) {
 }
 
 func TestExtractorExitingNonZeroFails(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1572,6 +1637,7 @@ func TestExtractorExitingNonZeroFails(t *testing.T) {
 }
 
 func TestCoverageReportThatIsNotValidXMLFails(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1594,6 +1660,7 @@ func TestCoverageReportThatIsNotValidXMLFails(t *testing.T) {
 }
 
 func TestCoverageReportTheGateCannotReadFailsNamingTheCauseOnly(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1618,6 +1685,7 @@ func TestCoverageReportTheGateCannotReadFailsNamingTheCauseOnly(t *testing.T) {
 }
 
 func TestMoveWithAnExtraCopyMeasuresBothAddedPaths(t *testing.T) {
+	t.Parallel()
 	const origin = "src/Ordering/Origin.cs"
 	const moved = "src/Ordering/Moved.cs"
 	const copied = "src/Ordering/Copy.cs"
@@ -1646,6 +1714,7 @@ func TestMoveWithAnExtraCopyMeasuresBothAddedPaths(t *testing.T) {
 }
 
 func TestADeletedObjectTheGateCannotReadStillEmitsADocument(t *testing.T) {
+	t.Parallel()
 	const gone = "src/Ordering/Gone.cs"
 
 	f := newFixture(t, "main")
@@ -1676,6 +1745,7 @@ func TestADeletedObjectTheGateCannotReadStillEmitsADocument(t *testing.T) {
 }
 
 func TestRemovingASubmoduleStillEmitsADocument(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1701,6 +1771,7 @@ func TestRemovingASubmoduleStillEmitsADocument(t *testing.T) {
 }
 
 func TestRemovedGitlinkNamingABlobDoesNotDropTheAddedFile(t *testing.T) {
+	t.Parallel()
 	const origin = "src/Ordering/Origin.cs"
 	const copied = "src/Ordering/Copy.cs"
 	vanish := span{File: copied, Name: "Copy.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
@@ -1730,6 +1801,7 @@ func TestRemovedGitlinkNamingABlobDoesNotDropTheAddedFile(t *testing.T) {
 }
 
 func TestACleanFilterInTheRepositorysOwnConfigDoesNotHideTheChange(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1752,6 +1824,7 @@ func TestACleanFilterInTheRepositorysOwnConfigDoesNotHideTheChange(t *testing.T)
 }
 
 func TestAProcessFilterInTheRepositorysOwnConfigIsNeverLaunched(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1773,6 +1846,7 @@ func TestAProcessFilterInTheRepositorysOwnConfigIsNeverLaunched(t *testing.T) {
 }
 
 func TestARequiredCleanFilterInTheRepositorysOwnConfigStillMeasuresTheChange(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1794,6 +1868,7 @@ func TestARequiredCleanFilterInTheRepositorysOwnConfigStillMeasuresTheChange(t *
 }
 
 func TestAFilterNamedWithATrailingSpaceDoesNotBreakTheRun(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1814,6 +1889,7 @@ func TestAFilterNamedWithATrailingSpaceDoesNotBreakTheRun(t *testing.T) {
 }
 
 func TestAFilterNamedWithAnEqualsIsStillBlanked(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1835,6 +1911,7 @@ func TestAFilterNamedWithAnEqualsIsStillBlanked(t *testing.T) {
 }
 
 func TestAnFsmonitorHookInTheRepositorysOwnConfigIsNeverRun(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1859,6 +1936,7 @@ func TestAnFsmonitorHookInTheRepositorysOwnConfigIsNeverRun(t *testing.T) {
 }
 
 func TestADiffGitRefusesToPrintIsATypedDocumentNotAnEmptyStdout(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1877,6 +1955,7 @@ func TestADiffGitRefusesToPrintIsATypedDocumentNotAnEmptyStdout(t *testing.T) {
 }
 
 func TestHostileGitConfigAndEnvironmentDoNotHideTheChange(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1915,6 +1994,7 @@ func TestHostileGitConfigAndEnvironmentDoNotHideTheChange(t *testing.T) {
 }
 
 func TestGitDirPointedAtAnotherRepositoryDoesNotHideTheChange(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1947,6 +2027,7 @@ func TestGitDirPointedAtAnotherRepositoryDoesNotHideTheChange(t *testing.T) {
 }
 
 func TestATextconvDriverDoesNotHideTheChange(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	// A textconv driver replaces both sides of the diff with whatever it prints,
@@ -1969,6 +2050,7 @@ func TestATextconvDriverDoesNotHideTheChange(t *testing.T) {
 }
 
 func TestLinesDeletedFromInsideAMethodChangeIt(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -1987,6 +2069,7 @@ func TestLinesDeletedFromInsideAMethodChangeIt(t *testing.T) {
 }
 
 func TestFirstLineOfAFileDeletedChangesTheMethodThatStartsThere(t *testing.T) {
+	t.Parallel()
 	const head = "src/Ordering/Head.cs"
 	first := span{File: head, Name: "Head.First", StartLine: 1, EndLine: 5, Complexity: 2}
 
@@ -2008,6 +2091,7 @@ func TestFirstLineOfAFileDeletedChangesTheMethodThatStartsThere(t *testing.T) {
 }
 
 func TestAnAddedLineThatLooksLikeAFileHeaderDoesNotStealLaterHunks(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2028,6 +2112,7 @@ func TestAnAddedLineThatLooksLikeAFileHeaderDoesNotStealLaterHunks(t *testing.T)
 }
 
 func TestCoverageReportOutsideAResultsDirectoryIsNotFound(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2047,6 +2132,7 @@ func TestCoverageReportOutsideAResultsDirectoryIsNotFound(t *testing.T) {
 }
 
 func TestTwoOverloadsDeclaredOnOneLineAreBothScored(t *testing.T) {
+	t.Parallel()
 	const calc = "src/Ordering/Calc.cs"
 	// `public class C { public int F(int x) => 1; public int F(string x) => 2; }`
 	// is valid C#. The two overloads share a file, a name and a line range, and
@@ -2073,6 +2159,7 @@ func TestTwoOverloadsDeclaredOnOneLineAreBothScored(t *testing.T) {
 }
 
 func TestChangedMethodInAUTF16SourceFileIsStillMeasured(t *testing.T) {
+	t.Parallel()
 	const wide = "src/Ordering/Wide.cs"
 	vanish := span{File: wide, Name: "Wide.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
 
@@ -2095,6 +2182,7 @@ func TestChangedMethodInAUTF16SourceFileIsStillMeasured(t *testing.T) {
 }
 
 func TestGitattributesMarkingSourceUndiffableDoesNotHideTheChange(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	// `-diff` lives in the repository, ahead of anything the run can pass on the
@@ -2114,6 +2202,7 @@ func TestGitattributesMarkingSourceUndiffableDoesNotHideTheChange(t *testing.T) 
 }
 
 func TestCleanFilterInjectedThroughTheEnvironmentDoesNotHideTheChange(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2137,6 +2226,7 @@ func TestCleanFilterInjectedThroughTheEnvironmentDoesNotHideTheChange(t *testing
 }
 
 func TestGlobalGitConfigTheRunCannotParseDoesNotStopTheMeasurement(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2159,6 +2249,7 @@ func TestGlobalGitConfigTheRunCannotParseDoesNotStopTheMeasurement(t *testing.T)
 }
 
 func TestChangedMethodInADirectoryWhoseNameHoldsASpaceIsStillMeasured(t *testing.T) {
+	t.Parallel()
 	const spaced = "My Project/A.cs"
 	vanish := span{File: spaced, Name: "A.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
 
@@ -2182,6 +2273,7 @@ func TestChangedMethodInADirectoryWhoseNameHoldsASpaceIsStillMeasured(t *testing
 }
 
 func TestChangedMethodInAQuotedPathHoldingASpaceIsStillMeasured(t *testing.T) {
+	t.Parallel()
 	const awkward = `src/a "b" c.cs`
 	vanish := span{File: awkward, Name: "Awkward.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
 
@@ -2205,6 +2297,7 @@ func TestChangedMethodInAQuotedPathHoldingASpaceIsStillMeasured(t *testing.T) {
 }
 
 func TestChangedMethodInAPathGitQuotesIsStillMeasured(t *testing.T) {
+	t.Parallel()
 	const weird = `src/Ordering/we"ird.cs`
 	vanish := span{File: weird, Name: "Weird.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
 
@@ -2227,6 +2320,7 @@ func TestChangedMethodInAPathGitQuotesIsStillMeasured(t *testing.T) {
 }
 
 func TestMissingCoverageFailureStillReportsThePathsTheWalkCouldNotRead(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2245,6 +2339,7 @@ func TestMissingCoverageFailureStillReportsThePathsTheWalkCouldNotRead(t *testin
 }
 
 func TestLibraryCoveredByTwoTestProjectsIsScoredOnTheUnion(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2273,6 +2368,7 @@ func TestLibraryCoveredByTwoTestProjectsIsScoredOnTheUnion(t *testing.T) {
 }
 
 func TestCoverageReportStampedInEpochMillisecondsIsRefused(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2296,6 +2392,7 @@ func TestCoverageReportStampedInEpochMillisecondsIsRefused(t *testing.T) {
 }
 
 func TestCoverageReportStampedJustBeyondToleranceIsRefused(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2318,6 +2415,7 @@ func TestCoverageReportStampedJustBeyondToleranceIsRefused(t *testing.T) {
 }
 
 func TestCoverageReportStampedInsideToleranceIsScored(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2337,6 +2435,7 @@ func TestCoverageReportStampedInsideToleranceIsScored(t *testing.T) {
 }
 
 func TestNamedCoverageReportStampedFarAheadIsRefusedToo(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2371,8 +2470,10 @@ func TestNamedCoverageReportStampedFarAheadIsRefusedToo(t *testing.T) {
 // different code, and the case would hold whether the floor guard existed
 // or not.
 func TestCoverageReportStampedBeforeTheFloorIsRefusedNotSkipped(t *testing.T) {
+	t.Parallel()
 	for _, stamp := range []string{"0", "-9223372036854775808"} {
 		t.Run(stamp, func(t *testing.T) {
+			t.Parallel()
 			f := newFixture(t, "main")
 			f.write(orderService, csharpFile(80))
 			f.commitAll("initial")
@@ -2395,6 +2496,7 @@ func TestCoverageReportStampedBeforeTheFloorIsRefusedNotSkipped(t *testing.T) {
 }
 
 func TestCoverageReportStampedExactlyAtTheFloorIsScored(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2418,6 +2520,7 @@ func TestCoverageReportStampedExactlyAtTheFloorIsScored(t *testing.T) {
 }
 
 func TestFutureStampedReportBesideAFreshOneStillRefuses(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2439,6 +2542,7 @@ func TestFutureStampedReportBesideAFreshOneStillRefuses(t *testing.T) {
 }
 
 func TestCoverageReportOlderThanTheCodeItDescribesIsRefused(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2459,6 +2563,7 @@ func TestCoverageReportOlderThanTheCodeItDescribesIsRefused(t *testing.T) {
 }
 
 func TestNamedCoverageReportIsUsedAndDiscoveryIsIgnored(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2484,6 +2589,7 @@ func TestNamedCoverageReportIsUsedAndDiscoveryIsIgnored(t *testing.T) {
 }
 
 func TestNamingAReportSkipsDiscoveryEntirely(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2509,6 +2615,7 @@ func TestNamingAReportSkipsDiscoveryEntirely(t *testing.T) {
 }
 
 func TestNamedReportReachedThroughASymlinkIsNamedRepoRelative(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2533,6 +2640,7 @@ func TestNamedReportReachedThroughASymlinkIsNamedRepoRelative(t *testing.T) {
 }
 
 func TestStaleReportIsRefusedAheadOfItsErasedSourceRoot(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2554,6 +2662,7 @@ func TestStaleReportIsRefusedAheadOfItsErasedSourceRoot(t *testing.T) {
 }
 
 func TestCoverageReportWithNoTimestampIsRefused(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2585,6 +2694,7 @@ func TestCoverageReportWithNoTimestampIsRefused(t *testing.T) {
 // with the wording that fits it, so it belongs to the floor case below
 // rather than here.
 func TestCoverageReportWithAnUnreadableTimestampIsRefused(t *testing.T) {
+	t.Parallel()
 	stamps := map[string]string{
 		"ISO-8601 instant":   "2026-01-01T00:00:00Z",
 		"fractional seconds": "1767225600.123",
@@ -2592,6 +2702,7 @@ func TestCoverageReportWithAnUnreadableTimestampIsRefused(t *testing.T) {
 	}
 	for name, stamp := range stamps {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			f := newFixture(t, "main")
 			f.write(orderService, csharpFile(80))
 			f.commitAll("initial")
@@ -2624,6 +2735,7 @@ func TestCoverageReportWithAnUnreadableTimestampIsRefused(t *testing.T) {
 // rather than skipping it outright before the merge, scores Cancel over
 // four lines instead of three: 0.5 and 4.13, not 0.667 and 3.33.
 func TestSupersededDiscoveredReportIsSkippedAndTheFreshOneScores(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2644,6 +2756,7 @@ func TestSupersededDiscoveredReportIsSkippedAndTheFreshOneScores(t *testing.T) {
 }
 
 func TestMethodWhoseOnlyCoverageWasSupersededIsUnknownNotMisscored(t *testing.T) {
+	t.Parallel()
 	const ghost = "src/Ordering/Ghost.cs"
 	vanish := span{File: ghost, Name: "Ghost.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
 
@@ -2681,6 +2794,7 @@ func TestMethodWhoseOnlyCoverageWasSupersededIsUnknownNotMisscored(t *testing.T)
 }
 
 func TestSupersededNameIsNotCarriedIntoALaterReportFailure(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2712,6 +2826,7 @@ func TestSupersededNameIsNotCarriedIntoALaterReportFailure(t *testing.T) {
 }
 
 func TestSupersededReportAndUnreadablePathAreOneSortedSkippedList(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2739,6 +2854,7 @@ func TestSupersededReportAndUnreadablePathAreOneSortedSkippedList(t *testing.T) 
 }
 
 func TestEveryDiscoveredReportStaleRefusesNamingThemAll(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2779,6 +2895,7 @@ func TestEveryDiscoveredReportStaleRefusesNamingThemAll(t *testing.T) {
 // two_projects_union already holds for two reports found under separate
 // results directories.
 func TestTwoProjectsSharingOneResultsDirectoryKeepBothReports(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2797,6 +2914,7 @@ func TestTwoProjectsSharingOneResultsDirectoryKeepBothReports(t *testing.T) {
 }
 
 func TestStalenessIsJudgedOnEveryNamedReportNotJustTheFirst(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2819,6 +2937,7 @@ func TestStalenessIsJudgedOnEveryNamedReportNotJustTheFirst(t *testing.T) {
 }
 
 func TestNamedReportOutsideTheRepoIsRead(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2840,6 +2959,7 @@ func TestNamedReportOutsideTheRepoIsRead(t *testing.T) {
 }
 
 func TestStaleNamedReportOutsideTheRepoIsNamedAbsolutely(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2865,6 +2985,7 @@ func TestStaleNamedReportOutsideTheRepoIsNamedAbsolutely(t *testing.T) {
 }
 
 func TestRelativeNamedReportOutsideTheRepoIsNamedAbsolutely(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2896,6 +3017,7 @@ func TestRelativeNamedReportOutsideTheRepoIsNamedAbsolutely(t *testing.T) {
 }
 
 func TestNamedReportOutsideTheRepoIsNamedPastItsSymlink(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2924,6 +3046,7 @@ func TestNamedReportOutsideTheRepoIsNamedPastItsSymlink(t *testing.T) {
 }
 
 func TestReportStampedAtTheSecondTheSourceWasEditedIsFresh(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2949,6 +3072,7 @@ func TestReportStampedAtTheSecondTheSourceWasEditedIsFresh(t *testing.T) {
 }
 
 func TestReportStampedOneSecondBeforeTheEditIsStale(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -2967,6 +3091,7 @@ func TestReportStampedOneSecondBeforeTheEditIsStale(t *testing.T) {
 }
 
 func TestStalenessJudgesTheReportAgainstTheNewestChangedFile(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.write(orderFile, csharpFile(80))
@@ -2995,6 +3120,7 @@ func TestStalenessJudgesTheReportAgainstTheNewestChangedFile(t *testing.T) {
 }
 
 func TestChangedFilesEditedInTheSameSecondNameTheSmallestPath(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.write(orderFile, csharpFile(80))
@@ -3028,6 +3154,7 @@ func TestChangedFilesEditedInTheSameSecondNameTheSmallestPath(t *testing.T) {
 }
 
 func TestCoverageFlagRepeatedUnionsEveryNamedReport(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3050,6 +3177,7 @@ func TestCoverageFlagRepeatedUnionsEveryNamedReport(t *testing.T) {
 }
 
 func TestAbsoluteNamedReportIsNamedRepoRelativeInTheDocument(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3071,6 +3199,7 @@ func TestAbsoluteNamedReportIsNamedRepoRelativeInTheDocument(t *testing.T) {
 }
 
 func TestRelativeNamedReportResolvesAgainstTheWorkingDirectory(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.write("tests/placeholder.txt", "")
@@ -3094,6 +3223,7 @@ func TestRelativeNamedReportResolvesAgainstTheWorkingDirectory(t *testing.T) {
 }
 
 func TestNamedReportThatIsNotOnDiskIsRefusedAsUnparseable(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3113,6 +3243,7 @@ func TestNamedReportThatIsNotOnDiskIsRefusedAsUnparseable(t *testing.T) {
 }
 
 func TestAbsentNamedReportUnderASymlinkedRootIsStillNamedRepoRelative(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3135,6 +3266,7 @@ func TestAbsentNamedReportUnderASymlinkedRootIsStillNamedRepoRelative(t *testing
 }
 
 func TestNamedReportThroughAFileComponentIsStillNamedRepoRelative(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.write("artifacts/coverage.xml", cobertura(f.root,
@@ -3160,6 +3292,7 @@ func TestNamedReportThroughAFileComponentIsStillNamedRepoRelative(t *testing.T) 
 }
 
 func TestAChangedFileMissingFromTheWorkingTreeFailsInsideTheDocument(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3193,6 +3326,7 @@ func TestAChangedFileMissingFromTheWorkingTreeFailsInsideTheDocument(t *testing.
 }
 
 func TestCoverageFlagTakesAValueBeginningWithOneDashAsAPath(t *testing.T) {
+	t.Parallel()
 	// TestScopeUsageErrors refuses the two-dash spelling alone. The gate's own
 	// flags are all long ones, so a single dash names no flag it could be
 	// confused with, and a report really can be written under a name like this.
@@ -3231,6 +3365,7 @@ func assertUsageError(t *testing.T, result runResult, stderr string) {
 // satisfied before this issue landed.
 
 func TestNestedSolutionLayoutScoresCorrectly(t *testing.T) {
+	t.Parallel()
 	const nested = "src/Services/Ordering/Api/OrderService.cs"
 	place := span{File: nested, Name: "OrderService.PlaceAsync", StartLine: 41, EndLine: 58, Complexity: 9}
 	cancelNested := span{File: nested, Name: "OrderService.Cancel", StartLine: 60, EndLine: 64, Complexity: 3}
@@ -3254,6 +3389,7 @@ func TestNestedSolutionLayoutScoresCorrectly(t *testing.T) {
 }
 
 func TestReportBuiltInAnotherCheckoutFailsNamingTheMismatch(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3283,6 +3419,7 @@ func TestReportBuiltInAnotherCheckoutFailsNamingTheMismatch(t *testing.T) {
 }
 
 func TestReportSourceMisCasingTheRepoRootPrefixIsMeasuredInside(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3309,6 +3446,7 @@ func TestReportSourceMisCasingTheRepoRootPrefixIsMeasuredInside(t *testing.T) {
 }
 
 func TestNamedReportBuiltInAnotherCheckoutIsQuotedAbsolutely(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3353,6 +3491,7 @@ func TestNamedReportBuiltInAnotherCheckoutIsQuotedAbsolutely(t *testing.T) {
 // coverage is discarded rather than merged in alongside the report that
 // failed.
 func TestForeignReportBesideAHealthyOneFailsNamingTheForeignOne(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3384,6 +3523,7 @@ func TestForeignReportBesideAHealthyOneFailsNamingTheForeignOne(t *testing.T) {
 }
 
 func TestClassWithNoFilenameDoesNotSuppressTheOutsideRepoDiagnostic(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3415,6 +3555,7 @@ func TestClassWithNoFilenameDoesNotSuppressTheOutsideRepoDiagnostic(t *testing.T
 }
 
 func TestReportReachedThroughASymlinkQuotesThePathItResolvedTo(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3446,6 +3587,7 @@ func TestReportReachedThroughASymlinkQuotesThePathItResolvedTo(t *testing.T) {
 }
 
 func TestClassFilenameNamingNoFileDoesNotSuppressTheOutsideRepoDiagnostic(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3483,6 +3625,7 @@ func TestClassFilenameNamingNoFileDoesNotSuppressTheOutsideRepoDiagnostic(t *tes
 }
 
 func TestClassFilenameClimbingBackIntoTheRootScores(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3504,6 +3647,7 @@ func TestClassFilenameClimbingBackIntoTheRootScores(t *testing.T) {
 }
 
 func TestTwoClassesOnOneFileInOneReportAreUnioned(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3526,6 +3670,7 @@ func TestTwoClassesOnOneFileInOneReportAreUnioned(t *testing.T) {
 }
 
 func TestReportMeasuredAgainstAContainerMountFailsNamingTheMismatch(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3555,6 +3700,7 @@ func TestReportMeasuredAgainstAContainerMountFailsNamingTheMismatch(t *testing.T
 }
 
 func TestRelativeSourceIsRefusedRatherThanResolvedAgainstTheWorkingDirectory(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3582,6 +3728,7 @@ func TestRelativeSourceIsRefusedRatherThanResolvedAgainstTheWorkingDirectory(t *
 }
 
 func TestReportWithNoSourcesAndRelativeFilenamesFailsNamingTheMismatch(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3605,6 +3752,7 @@ func TestReportWithNoSourcesAndRelativeFilenamesFailsNamingTheMismatch(t *testin
 }
 
 func TestReportWhoseEveryClassCarriesNoFilenameFailsSayingSo(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3628,6 +3776,7 @@ func TestReportWhoseEveryClassCarriesNoFilenameFailsSayingSo(t *testing.T) {
 }
 
 func TestDeterministicReportEmptyingSourcesFailsNamingTheProperty(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3648,6 +3797,7 @@ func TestDeterministicReportEmptyingSourcesFailsNamingTheProperty(t *testing.T) 
 }
 
 func TestUseSourceLinkFailsNamingTheProperty(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3670,6 +3820,7 @@ func TestUseSourceLinkFailsNamingTheProperty(t *testing.T) {
 }
 
 func TestUseSourceLinkWithASchemelessDocumentKeyFailsNamingTheProperty(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3691,6 +3842,7 @@ func TestUseSourceLinkWithASchemelessDocumentKeyFailsNamingTheProperty(t *testin
 }
 
 func TestUseSourceLinkDocumentKeyBesideARealSourceRootFailsNamingTheProperty(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3714,6 +3866,7 @@ func TestUseSourceLinkDocumentKeyBesideARealSourceRootFailsNamingTheProperty(t *
 }
 
 func TestWhitespaceOnlySourceReadsAsBlankAndNamesTheProperty(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3737,6 +3890,7 @@ func TestWhitespaceOnlySourceReadsAsBlankAndNamesTheProperty(t *testing.T) {
 }
 
 func TestWhitespacePaddedSourceRootStillAnchorsTheJoin(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3757,6 +3911,7 @@ func TestWhitespacePaddedSourceRootStillAnchorsTheJoin(t *testing.T) {
 }
 
 func TestBlankSourceWithAnAbsoluteFilenameScores(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3780,6 +3935,7 @@ func TestBlankSourceWithAnAbsoluteFilenameScores(t *testing.T) {
 }
 
 func TestReportCarryingBothErasedShapesNamesDeterministicReport(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3804,6 +3960,7 @@ func TestReportCarryingBothErasedShapesNamesDeterministicReport(t *testing.T) {
 }
 
 func TestNumberedDeterministicPlaceholderFailsNamingTheProperty(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3826,6 +3983,7 @@ func TestNumberedDeterministicPlaceholderFailsNamingTheProperty(t *testing.T) {
 }
 
 func TestErasedSourceRootIsNamedAheadOfAnAmbiguousClass(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	// Order.cs exists under both sources, so on its own it is ambiguous.
@@ -3852,6 +4010,7 @@ func TestErasedSourceRootIsNamedAheadOfAnAmbiguousClass(t *testing.T) {
 }
 
 func TestAmbiguousClassIsNamedAheadOfTheReportPlacingNothingInside(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.write("src/a/Order.cs", csharpFile(20))
@@ -3878,6 +4037,7 @@ func TestAmbiguousClassIsNamedAheadOfTheReportPlacingNothingInside(t *testing.T)
 }
 
 func TestCaseOnlyPathDifferenceIsRefusedRatherThanGuessed(t *testing.T) {
+	t.Parallel()
 	const other = "src/Ordering/Other.cs"
 	vanish := span{File: other, Name: "Other.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
 
@@ -3908,6 +4068,7 @@ func TestCaseOnlyPathDifferenceIsRefusedRatherThanGuessed(t *testing.T) {
 }
 
 func TestClassYieldingTwoCandidatesInsideRepoRootFailsNamingBoth(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	// Order.cs exists twice inside the repo root, under the two <source>
@@ -3934,6 +4095,7 @@ func TestClassYieldingTwoCandidatesInsideRepoRootFailsNamingBoth(t *testing.T) {
 }
 
 func TestClassYieldingThreeCandidatesInsideRepoRootFailsNamingAllOfThem(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	// Order.cs exists three times inside the repo root, one copy per <source>.
@@ -3963,6 +4125,7 @@ func TestClassYieldingThreeCandidatesInsideRepoRootFailsNamingAllOfThem(t *testi
 }
 
 func TestReportPathOutsideRepoIsIgnoredInSilence(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3988,6 +4151,7 @@ func TestReportPathOutsideRepoIsIgnoredInSilence(t *testing.T) {
 }
 
 func TestReportPathNoLongerOnDiskIsIgnoredRatherThanFatal(t *testing.T) {
+	t.Parallel()
 	const deletedFile = "src/Ordering/Deleted.cs"
 
 	f := newFixture(t, "main")
@@ -4014,6 +4178,7 @@ func TestReportPathNoLongerOnDiskIsIgnoredRatherThanFatal(t *testing.T) {
 }
 
 func TestReportWhoseEveryClassIsGoneFromDiskFailsNamingTheMismatch(t *testing.T) {
+	t.Parallel()
 	const deletedFile = "src/Ordering/Deleted.cs"
 
 	f := newFixture(t, "main")
@@ -4047,6 +4212,7 @@ func TestReportWhoseEveryClassIsGoneFromDiskFailsNamingTheMismatch(t *testing.T)
 }
 
 func TestReportCarryingNoClassesDoesNotTripTheOutsideRepoDiagnostic(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -4067,6 +4233,7 @@ func TestReportCarryingNoClassesDoesNotTripTheOutsideRepoDiagnostic(t *testing.T
 }
 
 func TestReportListingTheSameSourceTwiceIsNotAmbiguous(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -4086,6 +4253,7 @@ func TestReportListingTheSameSourceTwiceIsNotAmbiguous(t *testing.T) {
 }
 
 func TestAbsoluteClassFilenameWithNoSourcesScores(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -4113,6 +4281,7 @@ func TestAbsoluteClassFilenameWithNoSourcesScores(t *testing.T) {
 // argv, which parsed fine, and base is null, the shape no_diff_base already
 // pins for a branch with no commit.
 func TestRunOutsideAGitRepoFailsWithATypedCodeAndADocument(t *testing.T) {
+	t.Parallel()
 	f := &fixture{t: t, root: t.TempDir()}
 	if inRepo(t, f.root) {
 		t.Skip("the temp directory is itself inside a git repo")
@@ -4132,6 +4301,7 @@ func TestRunOutsideAGitRepoFailsWithATypedCodeAndADocument(t *testing.T) {
 // A runner with no git on PATH. Told to init a repository it would go looking
 // for one it already has.
 func TestRunWithNoGitOnPathFailsWithItsOwnCodeRatherThanNoGitRepo(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 
 	f.runWithEnv("PATH=").assertMatches(t, "git_unavailable", 1, "",
@@ -4142,6 +4312,7 @@ func TestRunWithNoGitOnPathFailsWithItsOwnCodeRatherThanNoGitRepo(t *testing.T) 
 // since there is no work tree to measure. git found the repository, so
 // no_git_repo would be the wrong answer.
 func TestRunInABareRepositoryFailsWithItsOwnCodeRatherThanNoGitRepo(t *testing.T) {
+	t.Parallel()
 	f := &fixture{t: t, root: t.TempDir()}
 	f.git("init", "--bare", "--quiet")
 
@@ -4154,6 +4325,7 @@ func TestRunInABareRepositoryFailsWithItsOwnCodeRatherThanNoGitRepo(t *testing.T
 // case stands a git of its own on PATH. The arm still has to answer for the
 // filesystem losing the root between the two calls.
 func TestRunWhereTheRootGitNamesDoesNotResolveFailsInsideTheDocument(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	bin := t.TempDir()
 	script := "#!/bin/sh\necho " + filepath.Join(t.TempDir(), "gone") + "\n"
@@ -4182,6 +4354,7 @@ func inRepo(t *testing.T, dir string) bool {
 // would otherwise pass, but the write that was supposed to deliver it never
 // lands. A run reading exit 0 back would have approved a change nobody saw.
 func TestStdoutRefusingTheWriteExitsOneRatherThanTheDocumentsOwnCode(t *testing.T) {
+	t.Parallel()
 	// The only tolerated reason to skip is a platform without /dev/full at
 	// all. Any other stat failure, and any failure to open it, is a broken
 	// environment, and a silent skip there would leave the one end-to-end
@@ -4225,6 +4398,7 @@ func TestStdoutRefusingTheWriteExitsOneRatherThanTheDocumentsOwnCode(t *testing.
 }
 
 func TestOriginHeadOutranksLocalMainAsTheDiffBase(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -4250,6 +4424,7 @@ func TestOriginHeadOutranksLocalMainAsTheDiffBase(t *testing.T) {
 }
 
 func TestOriginMainOutranksLocalMainWhenNoOriginHeadExists(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -4271,6 +4446,7 @@ func TestOriginMainOutranksLocalMainWhenNoOriginHeadExists(t *testing.T) {
 }
 
 func TestOriginHeadOutranksOriginMainWhenTheRemoteDefaultBranchIsNotMain(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -4298,6 +4474,7 @@ func TestOriginHeadOutranksOriginMainWhenTheRemoteDefaultBranchIsNotMain(t *test
 }
 
 func TestOriginMainOutranksOriginMasterWhenBothRemoteBranchesExist(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -4326,6 +4503,7 @@ func TestOriginMainOutranksOriginMasterWhenBothRemoteBranchesExist(t *testing.T)
 }
 
 func TestOriginMasterOutranksLocalMainWhenBothExist(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -4354,6 +4532,7 @@ func TestOriginMasterOutranksLocalMainWhenBothExist(t *testing.T) {
 }
 
 func TestLocalMainOutranksLocalMasterWhenBothBranchesExist(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -4380,6 +4559,7 @@ func TestLocalMainOutranksLocalMasterWhenBothBranchesExist(t *testing.T) {
 }
 
 func TestOriginMasterResolvesOnAMasterDefaultBranch(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "master")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -4407,6 +4587,7 @@ func TestOriginMasterResolvesOnAMasterDefaultBranch(t *testing.T) {
 }
 
 func TestLocalMasterResolvesWhenNoRemoteExists(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "master")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -4425,6 +4606,7 @@ func TestLocalMasterResolvesWhenNoRemoteExists(t *testing.T) {
 }
 
 func TestRemoteMainWithUnrelatedHistoryFallsThroughToLocalMain(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -4458,6 +4640,7 @@ func TestRemoteMainWithUnrelatedHistoryFallsThroughToLocalMain(t *testing.T) {
 }
 
 func TestBranchWithNoCommitInARepoHoldingHistorySaysSoRatherThanNamingEveryRef(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -4479,6 +4662,7 @@ func TestBranchWithNoCommitInARepoHoldingHistorySaysSoRatherThanNamingEveryRef(t
 }
 
 func TestARefStoreGitCannotReadReportsAnUnreadableDiffRatherThanNamingEveryRef(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -4495,6 +4679,7 @@ func TestARefStoreGitCannotReadReportsAnUnreadableDiffRatherThanNamingEveryRef(t
 }
 
 func TestAMergeBaseGitCannotWalkReportsAnUnreadableDiffRatherThanTryingTheNextRef(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -4520,6 +4705,7 @@ func TestAMergeBaseGitCannotWalkReportsAnUnreadableDiffRatherThanTryingTheNextRe
 }
 
 func TestBeforeTheFirstCommitTheDefaultScopeSaysSoRatherThanNamingEveryRef(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 
@@ -4532,6 +4718,7 @@ func TestBeforeTheFirstCommitTheDefaultScopeSaysSoRatherThanNamingEveryRef(t *te
 }
 
 func TestACandidateWhoseCommitObjectIsGoneReportsAnUnreadableDiffRatherThanNamingEveryRef(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -4555,6 +4742,7 @@ func TestACandidateWhoseCommitObjectIsGoneReportsAnUnreadableDiffRatherThanNamin
 }
 
 func TestATagShadowingACandidateWithANonCommitReportsAnUnreadableDiffRatherThanSkippingTheRung(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -4579,6 +4767,7 @@ func TestATagShadowingACandidateWithANonCommitReportsAnUnreadableDiffRatherThanS
 }
 
 func TestAnUnreadableRungStopsTheRunRatherThanResolvingABaseThroughALaterOne(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
