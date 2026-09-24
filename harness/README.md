@@ -106,6 +106,14 @@ So every branch needs Go on `PATH`, even in a repo with no Go in it. `linters/co
 which Go's build cache makes free after the first. No Go means the filter cannot run, and an unrun
 filter proves nothing, so the branch fails the commit rather than skipping.
 
+During an uncommitted merge, when `MERGE_HEAD` exists, `--staged` lints only the staged files that
+differ from both `HEAD` and `MERGE_HEAD`: conflict resolutions and edits made while merging. Against
+`HEAD` alone a merge commit's index holds everything the incoming side brought, which on a
+long-lived branch meant thousands of files and dozens of .NET builds per commit. Against
+`MERGE_HEAD` alone it holds everything the branch already committed, whose lines all match `HEAD`,
+so the filter would drop every finding in them after paying for the builds. The staged-versus-disk
+hard stop still covers every staged path.
+
 Output is one shape across all three, whatever the linter's own format was. `lint-changed` writes
 one line per surviving finding to stdout, `path:line:column: RULE: message`, repo-relative, and
 nothing else; every header, diagnostic and waive command goes to stderr. One line per surviving
