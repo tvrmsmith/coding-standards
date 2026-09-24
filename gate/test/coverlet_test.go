@@ -210,7 +210,7 @@ func (f *fixture) collectCoverage() {
 	// nothing.
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		f.t.Fatalf("dotnet test --collect:\"XPlat Code Coverage\": %v\n%s", err, out)
+		f.t.Fatal(dotnetFailure(`dotnet test --collect:"XPlat Code Coverage"`, err, out))
 	}
 
 	// The exit status says the tests passed, not that the collector wrote
