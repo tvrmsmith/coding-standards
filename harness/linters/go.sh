@@ -29,12 +29,13 @@ go_owns() {
 go_lint() {
   local file module package status=0 present=() packages=()
   local report reports=() groups=$scratch/go-owners
-  local report_dir=$scratch/go-reports module_count=0
+  local report_dir=$scratch/go-reports module_count=0 adopted
 
   # Which repos are adopted is state the Go side has nowhere else to keep: nothing is installed in
   # the target and the binary is machine-wide, so without this file bootstrapping one repo would
   # silently start linting every other repo the hook guards.
-  if [ ! -f "$go_registry" ] || ! grep -qxF "$registry_key" "$go_registry"; then
+  adopted=$(adoption go "$go_registry") || return 1
+  if [ "$adopted" != adopted ]; then
     not_wired Go go
     return 0
   fi

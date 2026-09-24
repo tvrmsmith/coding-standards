@@ -45,7 +45,7 @@ plugins `base.js` imports.
 | --- | --- |
 | `eslint-layer.js` | Loads the package's own ESLint config, spreads the personal preset after it. The layering, and the typed-layer gate. |
 | `lint-changed.sh` | The one entrypoint. Resolves the repo, computes the changed set, runs every language branch that applies, then runs one `lint-changed` over every report the branches produced and, on a full `--staged` run, spends the waivers it matched once the whole run is clean. `--only` runs a single branch. |
-| `linters/common.sh` | What every branch shares: argument parsing, repo resolution, the changed set from `lint-changed changed-paths`, the scratch directory, `owner_groups`, which asks `lint-changed owners` for the build unit owning each changed file, the ancestor walk `ts.sh` uses to find a package's installed ESLint, `lint_changed_bin`, which builds the filter once per run and memoises the path to a file, `add_reports`, the call every branch ends on to hand its reports up, `run_filter`, the one `lint-changed` call that reads them, `spend_waivers`, and `rank_status`, the one place the ADR 0010 exit convention is folded. |
+| `linters/common.sh` | What every branch shares: argument parsing, repo resolution, the changed set from `lint-changed changed-paths`, the scratch directory, `owner_groups`, which asks `lint-changed owners` for the build unit owning each changed file, `adoption`, which asks `lint-changed adopted` whether a registry names the repo, the ancestor walk `ts.sh` uses to find a package's installed ESLint, `lint_changed_bin`, which builds the filter once per run and memoises the path to a file, `add_reports`, the call every branch ends on to hand its reports up, `run_filter`, the one `lint-changed` call that reads them, `spend_waivers`, and `rank_status`, the one place the ADR 0010 exit convention is folded. |
 | `linters/ts.sh` | Lints the changed JavaScript and TypeScript, each file through its own package's ESLint binary, to a JSON report, then hands every report up to the dispatcher's one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
 | `linters/dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then hands every report up to the dispatcher's one `lint-changed` run, which blocks the commit on any finding touching a changed line. A directory holding several `.csproj` builds every one, since each compiles every `.cs` below it. |
 | `errorlog.props` | Sets `ErrorLog` for that build, imported through `CustomAfterMicrosoftCommonTargets`. MSBuild owns the report name because it has to expand `$(TargetFramework)` per inner build and escape the comma before the version suffix; the branch passes only the prefix. |
@@ -186,10 +186,12 @@ Four things about it that are not obvious:
   in builds and in the IDE. `-p:TvrmsmithAnalyzersScopeToChanged=false` shows the whole backlog;
   `dotnet/README.md` covers the mechanism. `linters/dotnet.sh` turns it off and applies its
   own filter, because that one is keyed on what is staged rather than on the working tree.
-- **The scoping condition doubles as the registry.** `linters/dotnet.sh` decides whether
-  a repo is adopted by looking for its own `StartsWith('<repo>/')` in the props file, which is
-  why the hook template needs no per-language state and skips rather than fails in a repo that
-  was only bootstrapped for TypeScript.
+- **The scoping condition doubles as the registry.** `linters/dotnet.sh` asks `lint-changed
+  adopted` whether a repo is adopted, which parses the props file for an `Import` whose
+  condition carries the repo's own `StartsWith('<repo>/')`. That is why the hook template needs
+  no per-language state and skips rather than fails in a repo that was only bootstrapped for
+  TypeScript. A props file that is not well-formed XML fails the commit, since MSBuild cannot
+  load it either.
 - **The IDE needs `launchctl`, not a shell profile.** A GUI-launched Rider or VS Code inherits
   from launchd and never reads `~/.zshenv.local`, so `bootstrap dotnet` also runs
   `launchctl setenv` and installs a `RunAtLoad` LaunchAgent so the variable survives a reboot.

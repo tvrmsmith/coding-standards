@@ -31,6 +31,8 @@ func run(cmd Command, stdout, stderr io.Writer) int {
 		return runChangedPaths(cmd.ChangedPaths, stdout, stderr)
 	case KindOwners:
 		return runOwners(cmd.Owners, stdout, stderr)
+	case KindAdopted:
+		return runAdopted(cmd.Adopted, stdout, stderr)
 	default:
 		_, _ = fmt.Fprintln(stderr, "lint-changed: internal error: unknown command kind")
 		return 1

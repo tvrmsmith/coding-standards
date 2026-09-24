@@ -882,7 +882,7 @@ describe('the C# branch in a repository wired for .NET', () => {
       writeFileSync(join(f.repo, 'Program.cs'), 'class Program { void M() { } }\n')
       git(f.repo, 'add', 'Program.cs')
       // The props file's path-scoped condition is the .NET registry, so this repo is adopted.
-      writeFileSync(props, `<Project>\n  <!-- StartsWith('${realpathSync(f.repo)}/') -->\n</Project>\n`)
+      writeFileSync(props, `<Project>\n  <Import Project="x" Condition="$(MSBuildProjectDirectory.StartsWith('${realpathSync(f.repo)}/'))" />\n</Project>\n`)
 
       const { status, stderr } = capture(f.repo, ['--only', 'dotnet', '--staged'], {
         PATH: pathWithout(join(f.root, 'bin'), 'dotnet'),

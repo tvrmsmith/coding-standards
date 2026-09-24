@@ -277,6 +277,19 @@ spend_waivers() {
   "$bin" spend "${waivers[@]}" </dev/null
 }
 
+# Whether this repo is adopted for one language, as `lint-changed adopted` answers it for
+# $registry_key in the registry file $2: echoes "adopted" or "not-adopted", or returns 1 with the
+# reason on stderr when the registry exists and cannot be read. Asked in Go rather than grepped
+# here, because a registry the match misread came back as not wired, which --staged skips in
+# silence, so the commit passed unlinted.
+#
+# Called as: adoption <go|csharp> <registry>
+adoption() {
+  local bin
+  bin=$(lint_changed_bin) || return 1
+  "$bin" adopted --language "$1" --registry-key "$registry_key" --registry "$2" </dev/null
+}
+
 # Skip, don't fail. A repo bootstrapped for one language must not have its commits blocked by a
 # branch that was never wired up. Silent under --staged, because the hook runs on every commit.
 not_wired() {

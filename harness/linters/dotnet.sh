@@ -45,12 +45,13 @@ dotnet_owns() {
 dotnet_lint() {
   local file proj member out build_status status=0 projects=()
   local files=() prefix sarif sarifs=() found errorlog_props groups=$scratch/dotnet-owners
-  local sarif_dir=$scratch/dotnet-sarif
+  local sarif_dir=$scratch/dotnet-sarif adopted
 
   # Whether this repo is adopted is a question the props file already answers: it carries one
   # path-scoped Import per adopted repo, so the scoping condition doubles as the registry. That
   # keeps the pre-commit hook free of per-language state.
-  if [ ! -f "$props" ] || ! grep -qF "StartsWith('$registry_key/')" "$props"; then
+  adopted=$(adoption csharp "$props") || return 1
+  if [ "$adopted" != adopted ]; then
     not_wired .NET dotnet
     return 0
   fi

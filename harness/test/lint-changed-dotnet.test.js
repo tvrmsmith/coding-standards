@@ -59,7 +59,7 @@ function fixture() {
   git(repo, 'commit', '--quiet', '-m', 'initial')
 
   // The script's registry is the path-scoped Import in the props file, matched by its condition.
-  writeFileSync(registry, `<Project>\n  <!-- StartsWith('${realpathSync(repo)}/') -->\n</Project>\n`)
+  writeFileSync(registry, `<Project>\n  <Import Project="x" Condition="$(MSBuildProjectDirectory.StartsWith('${realpathSync(repo)}/'))" />\n</Project>\n`)
 
   // The real props are read where bootstrap has written them, so a machine that has them runs
   // against the analyzers the hook really loads. Where it has not, an empty import is enough:
