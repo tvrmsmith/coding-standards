@@ -30,6 +30,12 @@ keyed on language and rule alone. Waivers live in an append-only JSONL log at
 that ends clean, keyed on the index tree sha, so a retry against the same tree reuses it and a match
 on a run that still blocks stays unspent.
 
+**Amended 2026-09-23.** Only a full `--staged` run spends; `--since`, `--files` and `--only` never
+do, and they accept a waiver already spent against any tree. Only a full `--staged` run is a commit,
+and a no-mistakes run lints a rebased tree the waiver was never spent against. See
+[PR 151](https://github.com/tvrmsmith/coding-standards/pull/151) and
+[PR 156](https://github.com/tvrmsmith/coding-standards/pull/156).
+
 Exit 0 means nothing survived, 1 means the tool broke, 2 means a finding survived.
 
 ## Why blocking, and why now
