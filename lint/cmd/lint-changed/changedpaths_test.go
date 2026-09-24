@@ -77,6 +77,37 @@ func TestChangedPathsListsTheStagedFiles(t *testing.T) {
 	}
 }
 
+// Under git commit -a the pre-commit hook names a temporary index in
+// GIT_INDEX_FILE and .git/index still matches HEAD, so reading the default
+// index would list nothing and lint nothing.
+func TestChangedPathsListsTheIndexTheHookNames(t *testing.T) {
+	dir := t.TempDir()
+	repoGit(t, dir, "init", "--quiet")
+	writeRepoFile(t, dir, "one.go")
+	repoGit(t, dir, "add", "--all")
+	repoGit(t, dir, "commit", "--quiet", "-m", "base")
+	writeRepoFile(t, dir, "hooked.go")
+	repoGit(t, dir, "add", "hooked.go")
+	hookIndex := filepath.Join(t.TempDir(), "index")
+	staged, err := os.ReadFile(filepath.Join(dir, ".git", "index"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hookIndex, staged, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repoGit(t, dir, "reset", "--quiet")
+	chdirOutsideAnyHook(t, dir)
+	t.Setenv("GIT_INDEX_FILE", hookIndex)
+	var stdout, stderr strings.Builder
+
+	code := run(Command{Kind: KindChangedPaths, ChangedPaths: Scope{Mode: ScopeStaged}}, &stdout, &stderr)
+
+	if code != 0 || stdout.String() != "hooked.go\x00" {
+		t.Errorf("exit %d, stdout %q, stderr %q, want exit 0 and the file staged only in the hook's index", code, stdout.String(), stderr.String())
+	}
+}
+
 // An empty stdout would read to the dispatcher as nothing changed, so a ref
 // that names nothing has to fail the run.
 func TestChangedPathsFailsOnASinceRefThatDoesNotResolve(t *testing.T) {
