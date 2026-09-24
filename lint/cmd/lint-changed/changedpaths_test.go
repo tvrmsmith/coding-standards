@@ -89,10 +89,12 @@ func TestChangedPathsListsTheIndexTheHookNames(t *testing.T) {
 	writeRepoFile(t, dir, "hooked.go")
 	repoGit(t, dir, "add", "hooked.go")
 	hookIndex := filepath.Join(t.TempDir(), "index")
+	//nolint:gosec // G304: the index of the fixture repo this case just built under t.TempDir
 	staged, err := os.ReadFile(filepath.Join(dir, ".git", "index"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	//nolint:gosec // G703: hookIndex is a fixed name under this case's own t.TempDir
 	if err := os.WriteFile(hookIndex, staged, 0o600); err != nil {
 		t.Fatal(err)
 	}
