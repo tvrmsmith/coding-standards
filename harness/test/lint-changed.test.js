@@ -341,6 +341,22 @@ describe('the Go branch', () => {
       f.cleanup()
     }
   })
+
+  test('a registry that cannot be read fails rather than skipping as not wired', { skip }, () => {
+    const f = fixture()
+    try {
+      rmSync(f.registry)
+      mkdirSync(f.registry)
+      git(f.repo, 'add', 'main.go')
+      const { status, stdout, stderr } = capture(f.repo, ['--only', 'go', '--staged'], env(f))
+      assert.equal(status, 1, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+      assert.equal(stdout, '')
+      assert.ok(stderr.includes(f.registry), stderr)
+      assert.doesNotMatch(stderr, /is not wired for Go/)
+    } finally {
+      f.cleanup()
+    }
+  })
 })
 
 describe('one invocation, every language the repo is wired for', () => {
@@ -890,6 +906,29 @@ describe('the C# branch in a repository wired for .NET', () => {
       })
       assert.equal(status, 1)
       assert.match(stderr, /no dotnet on PATH/)
+    } finally {
+      f.cleanup()
+    }
+  })
+
+  test('a props file MSBuild cannot load fails rather than skipping as not wired', { skip }, () => {
+    const f = repository('tvrmsmith-dotnet-props-')
+    try {
+      const props = join(f.root, 'coding-standards.props')
+      writeFileSync(join(f.repo, 'Program.cs'), 'class Program {}\n')
+      commitAll(f.repo)
+      writeFileSync(join(f.repo, 'Program.cs'), 'class Program { void M() { } }\n')
+      git(f.repo, 'add', 'Program.cs')
+      // A raw ampersand, the write bootstrap makes for a path holding one.
+      writeFileSync(props, `<Project>\n  <Import Project="x" Condition="$(MSBuildProjectDirectory.StartsWith('${realpathSync(f.repo)}/R&D/'))" />\n</Project>\n`)
+
+      const { status, stdout, stderr } = capture(f.repo, ['--only', 'dotnet', '--staged'], {
+        TVRMSMITH_ANALYZER_PROPS: props,
+      })
+      assert.equal(status, 1, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+      assert.equal(stdout, '')
+      assert.match(stderr, /is not well-formed XML/)
+      assert.doesNotMatch(stderr, /is not wired for \.NET/)
     } finally {
       f.cleanup()
     }

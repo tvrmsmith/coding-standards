@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -71,8 +72,8 @@ func TestGoRegistryAdoption(t *testing.T) {
 	}
 }
 
-// bootstrap's own condition, reproduced so a change to what it writes shows up
-// here as a repo it no longer recognises.
+// A hand copy of the condition bootstrap writes. A change to bootstrap does not
+// update it, so this pins the shape as it stands rather than tracking bootstrap.
 const bootstrapImport = `  <Import Project="/hub/Tvrmsmith.Analyzers.Local.props"
           Condition="$(MSBuildProjectDirectory.StartsWith('` + repoKey + `/')) or '$(MSBuildProjectDirectory)' == '` + repoKey + `'" />`
 
@@ -86,7 +87,7 @@ func TestPropsAdoption(t *testing.T) {
 		{"a condition from before the root-project branch", `<Project><Import Project="x" Condition="$(MSBuildProjectDirectory.StartsWith('` + repoKey + `/'))" /></Project>`, true},
 		{"an MSBuild namespace", `<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">` + bootstrapImport + `</Project>`, true},
 		{"an Import inside an ImportGroup", "<Project><ImportGroup>" + bootstrapImport + "</ImportGroup></Project>", true},
-		// grep -F missed each of these two.
+		// grep -F missed this one.
 		{"quotes as entities", `<Project><Import Project="x" Condition="$(MSBuildProjectDirectory.StartsWith(&apos;` + repoKey + `/&apos;))" /></Project>`, true},
 		// grep -F took each of these three for an adopted repo.
 		{"the condition in a comment", "<Project>\n  <!-- StartsWith('" + repoKey + "/') -->\n</Project>\n", false},
@@ -128,6 +129,22 @@ func TestPropsMSBuildCannotLoadIsBroken(t *testing.T) {
 
 	if code != 1 || stdout.String() != "" || !strings.Contains(stderr.String(), "is not well-formed XML") {
 		t.Errorf("exit %d, stdout %q, stderr %q, want exit 1 naming the malformed file", code, stdout.String(), stderr.String())
+	}
+}
+
+// A write cut off before any content landed leaves a props file with no root
+// element, which MSBuild cannot load any more than a malformed one.
+func TestPropsWithNoRootElementIsBroken(t *testing.T) {
+	for _, props := range []string{"", " \n\t\n", "<?xml version=\"1.0\"?>\n", "<!-- nothing yet -->\n"} {
+		t.Run(fmt.Sprintf("%q", props), func(t *testing.T) {
+			var stdout, stderr strings.Builder
+
+			code := run(Command{Kind: KindAdopted, Adopted: AdoptedArgs{Language: "csharp", Key: repoKey, Registry: write(t, props)}}, &stdout, &stderr)
+
+			if code != 1 || stdout.String() != "" || !strings.Contains(stderr.String(), "no root element") {
+				t.Errorf("exit %d, stdout %q, stderr %q, want exit 1 naming the missing root", code, stdout.String(), stderr.String())
+			}
+		})
 	}
 }
 

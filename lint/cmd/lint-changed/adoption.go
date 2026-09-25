@@ -74,9 +74,12 @@ func goRegistryNames(registry, key string) bool {
 func propsScopes(data []byte, key, path string) (bool, error) {
 	want := "$(MSBuildProjectDirectory.StartsWith('" + key + "/'))"
 	decoder := xml.NewDecoder(bytes.NewReader(data))
-	found := false
+	rooted, found := false, false
 	for {
 		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) && !rooted {
+			err = errors.New("no root element")
+		}
 		if errors.Is(err, io.EOF) {
 			return found, nil
 		}
@@ -84,7 +87,11 @@ func propsScopes(data []byte, key, path string) (bool, error) {
 			return false, fmt.Errorf("%s is not well-formed XML, so MSBuild cannot load it either: %w", path, err)
 		}
 		start, ok := token.(xml.StartElement)
-		if !ok || start.Name.Local != "Import" {
+		if !ok {
+			continue
+		}
+		rooted = true
+		if start.Name.Local != "Import" {
 			continue
 		}
 		for _, attr := range start.Attr {
