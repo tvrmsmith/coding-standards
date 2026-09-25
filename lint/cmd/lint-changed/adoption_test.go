@@ -95,6 +95,7 @@ func TestPropsAdoption(t *testing.T) {
 		{"the condition in Project rather than Condition", `<Project><Import Project="$(MSBuildProjectDirectory.StartsWith('` + repoKey + `/'))" /></Project>`, false},
 		{"another repo's Import", strings.ReplaceAll("<Project>\n"+bootstrapImport+"\n</Project>\n", repoKey, repoKey+"-other"), false},
 		{"an empty Project", "<Project />\n", false},
+		{"a UTF-8 byte order mark before the Import bootstrap writes", "\ufeff<Project>\n" + bootstrapImport + "\n</Project>\n", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -155,6 +156,7 @@ func TestPropsWithContentOutsideTheRootIsBroken(t *testing.T) {
 		{"<Project/><Project/>", "a second root element"},
 		{"<Project/>junk", "text outside the root element"},
 		{"junk<Project/>", "text outside the root element"},
+		{"<Project/>\ufeff", "text outside the root element"},
 		{"<Project/>\n" + bootstrapImport + "\n", "a second root element"},
 	}
 	for _, c := range cases {

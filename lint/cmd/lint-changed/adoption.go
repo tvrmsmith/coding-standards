@@ -73,7 +73,7 @@ func goRegistryNames(registry, key string) bool {
 // a file MSBuild cannot load is broken rather than silently unwired.
 func propsScopes(data []byte, key, path string) (bool, error) {
 	want := "$(MSBuildProjectDirectory.StartsWith('" + key + "/'))"
-	decoder := xml.NewDecoder(bytes.NewReader(data))
+	decoder := xml.NewDecoder(bytes.NewReader(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))))
 	depth, rooted, found := 0, false, false
 	for {
 		token, err := decoder.Token()
