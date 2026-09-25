@@ -102,11 +102,12 @@ When every branch skipped, as in a repo adopted for none of the languages in the
 runs and the commit goes through, as it always did.
 
 So every run needs Go on `PATH`, even in a repo with no Go in it. `lint-changed changed-paths` also
-computes the changed set each run starts from, and `lint-changed owners` maps each branch's files to
-the module, project or package that lints them. `linters/common.sh` builds `lint-changed` from this
+computes the changed set each run starts from, `lint-changed owners` maps each branch's files to
+the module, project or package that lints them, and `lint-changed adopted` tells the Go and .NET
+branches whether the repo is adopted. `linters/common.sh` builds `lint-changed` from this
 hub into `${XDG_CACHE_HOME:-~/.cache}/coding-standards` once per run, which Go's build cache makes
-free after the first. No Go means neither the changed set, the owners mapping nor the filter can
-run, and an unexamined change proves nothing, so the run fails the commit rather than skipping.
+free after the first. No Go means neither the changed set, the owners mapping, the adoption check nor the filter
+can run, and an unexamined change proves nothing, so the run fails the commit rather than skipping.
 
 The changed set is the files the change adds, copies or modifies. A rename counts as a delete plus
 an add, so an edit made while renaming reaches its linter. `--since <ref>` diffs the working tree

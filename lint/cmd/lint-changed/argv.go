@@ -19,7 +19,7 @@ import (
 	"github.com/tvrmsmith/coding-standards/lint/internal/lintfind"
 )
 
-// Kind is which of lint-changed's six forms argv named.
+// Kind is which of lint-changed's seven forms argv named.
 type Kind int
 
 const (
