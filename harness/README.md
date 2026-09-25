@@ -105,8 +105,8 @@ So every run needs Go on `PATH`, even in a repo with no Go in it. `lint-changed 
 computes the changed set each run starts from, and `lint-changed owners` maps each branch's files to
 the module, project or package that lints them. `linters/common.sh` builds `lint-changed` from this
 hub into `${XDG_CACHE_HOME:-~/.cache}/coding-standards` once per run, which Go's build cache makes
-free after the first. No Go means neither the changed set, the owners mapping nor the filter can run, and an unexamined
-change proves nothing, so the run fails the commit rather than skipping.
+free after the first. No Go means neither the changed set, the owners mapping nor the filter can
+run, and an unexamined change proves nothing, so the run fails the commit rather than skipping.
 
 The changed set is the files the change adds, copies or modifies. A rename counts as a delete plus
 an add, so an edit made while renaming reaches its linter. `--since <ref>` diffs the working tree
