@@ -45,7 +45,7 @@ plugins `base.js` imports.
 | --- | --- |
 | `eslint-layer.js` | Loads the package's own ESLint config, spreads the personal preset after it. The layering, and the typed-layer gate. |
 | `lint-changed.sh` | The one entrypoint. Resolves the repo, computes the changed set, runs every language branch that applies, then runs one `lint-changed` over every report the branches produced and, on a full `--staged` run, spends the waivers it matched once the whole run is clean. `--only` runs a single branch. |
-| `linters/common.sh` | What every branch shares: argument parsing, repo resolution, the changed set from `lint-changed changed-paths`, the scratch directory, the ancestor walk each language owns a predicate for, `lint_changed_bin`, which builds the filter once per run and memoises the path to a file, `add_reports`, the call every branch ends on to hand its reports up, `run_filter`, the one `lint-changed` call that reads them, `spend_waivers`, and `rank_status`, the one place the ADR 0010 exit convention is folded. |
+| `linters/common.sh` | What every branch shares: argument parsing, repo resolution with the registry key from `lint-changed registry-key`, the changed set from `lint-changed changed-paths`, the scratch directory, the ancestor walk each language owns a predicate for, `lint_changed_bin`, which builds the filter once per run and memoises the path to a file, `add_reports`, the call every branch ends on to hand its reports up, `run_filter`, the one `lint-changed` call that reads them, `spend_waivers`, and `rank_status`, the one place the ADR 0010 exit convention is folded. |
 | `linters/ts.sh` | Lints the changed JavaScript and TypeScript, each file through its own package's ESLint binary, to a JSON report, then hands every report up to the dispatcher's one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
 | `linters/dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then hands every report up to the dispatcher's one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
 | `errorlog.props` | Sets `ErrorLog` for that build, imported through `CustomAfterMicrosoftCommonTargets`. MSBuild owns the report name because it has to expand `$(TargetFramework)` per inner build and escape the comma before the version suffix; the branch passes only the prefix. |
@@ -129,7 +129,7 @@ finding is what lets one regex read all three languages, which is what no-mistak
 
 `TVRMSMITH_REGISTRY_KEY` names the checkout directly. The Go and .NET branches decide whether a
 repository is adopted by looking its path up, in the Go registry file and in the props file's
-scoping condition, and they derive that path from `git rev-parse --git-common-dir`. A caller
+scoping condition, and they get that path from `lint-changed registry-key`. A caller
 linting in a detached worktree of some other bare repository gets the wrong derivation, so the
 lookup misses and the branch skips. A skip is silent and looks exactly like a clean result, which
 is the worst way for this to fail.
@@ -265,8 +265,9 @@ Three things about it differ from the other two:
   but the Go side installs nothing in the target and its binary is machine-wide, so without the
   registry, bootstrapping one repo would silently start linting every other repo the hook
   guards. The line is the **main checkout**, even when `bootstrap go` is pointed at a linked
-  worktree, and `linters/go.sh` resolves the same way before it looks itself up. Both use
-  `git rev-parse --git-common-dir`, whose parent is the main checkout in either case.
+  worktree, and the lint run resolves the same way, in `lint-changed registry-key`, before it
+  looks itself up. Both use `git rev-parse --git-common-dir`, whose parent is the main checkout
+  in either case.
   `test/lint-changed-go.test.js` pins all four combinations of registered/not and
   worktree/not, because a skip that should have been a run is silent and looks exactly like a
   repo with no findings.
@@ -348,13 +349,14 @@ TVRMSMITH_REGISTRY_KEY=/path/to/repo # answer the adoption question for a caller
 ~/.config/coding-standards/lint-changed.sh --since main
 ```
 
-`TVRMSMITH_REGISTRY_KEY` is read by the `go` and `dotnet` scripts, and only a caller that already
-knows the answer should set it. Both derive adoption from the parent of `git rev-parse
---git-common-dir`, which is the main checkout for an ordinary worktree and the wrong directory
-entirely for a checkout git does not think is related to the adopted one. The no-mistakes pipeline
-is that caller: it lints in a worktree of a bare repository it keeps under `~/.no-mistakes`, so the
-derived key named that bare repo, missed the registry and skipped every run in silence. It passes
-the registered checkout instead, in `NO_MISTAKES_REPO_PATH`.
+`TVRMSMITH_REGISTRY_KEY` sets the key the `go` and `dotnet` scripts look up, and only a caller that
+already knows the answer should set it. Without it, `lint-changed registry-key` derives the key
+from the parent of `git rev-parse --git-common-dir`, which is the main checkout for an ordinary
+worktree and the wrong directory entirely for a checkout git does not think is related to the
+adopted one. The no-mistakes pipeline is that caller: it lints in a worktree of a bare repository
+it keeps under `~/.no-mistakes`, so the derived key named the bare repo's parent, missed the
+registry and skipped every run in silence. It passes the registered checkout instead, in
+`NO_MISTAKES_REPO_PATH`.
 
 It moves which path is looked up. It does not bypass the lookup, so an override naming a path
 nobody adopted still skips, and findings still come from the tree the script is run in.

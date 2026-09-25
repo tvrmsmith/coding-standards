@@ -52,6 +52,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -211,6 +212,20 @@ func openFailure(err error) error {
 
 // Root is the repo's resolved root, the gate's one path currency.
 func (r Repo) Root() srcpath.Root { return r.root }
+
+// MainCheckout is the checkout a linked worktree was made from, or the repo
+// itself when it is not one: the parent of the common git dir, which is
+// <main>/.git from either. The lint harness keys adoption on it, because a
+// worktree is the same adoption as its main checkout and shares its hook.
+func (r Repo) MainCheckout() (srcpath.Root, error) {
+	out, err := r.git("rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return srcpath.Root{}, err
+	}
+	// Absolute is git's realpath, so a .git that is itself a symlink names the
+	// checkout it points into.
+	return srcpath.NewRoot(filepath.Dir(strings.TrimSpace(out)))
+}
 
 // Base is the commit the run diffs against, and the ref it was reached
 // through.

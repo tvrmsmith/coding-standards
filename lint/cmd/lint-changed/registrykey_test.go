@@ -1,0 +1,180 @@
+package main
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestParseRegistryKeyTakesNoArguments(t *testing.T) {
+	cmd, err := Parse([]string{"registry-key"})
+	if err != nil || cmd.Kind != KindRegistryKey {
+		t.Errorf("Parse(registry-key) = %+v, %v, want the registry-key form", cmd, err)
+	}
+	_, err = Parse([]string{"registry-key", "--staged"})
+	var ue *UsageError
+	if !errors.As(err, &ue) {
+		t.Errorf("Parse(registry-key --staged) = %v, want *UsageError", err)
+	}
+}
+
+func TestRegistryKeyIsTheRepoItself(t *testing.T) {
+	repo := committedRepo(t)
+	chdirWithoutRegistryKey(t, filepath.Join(repo, "sub"))
+
+	assertRegistryKey(t, resolved(t, repo))
+}
+
+// A linked worktree is the same adoption as the checkout it was made from.
+func TestRegistryKeyOfALinkedWorktreeIsItsMainCheckout(t *testing.T) {
+	repo := committedRepo(t)
+	worktree := filepath.Join(t.TempDir(), "linked")
+	repoGit(t, repo, "worktree", "add", "--quiet", worktree)
+	chdirWithoutRegistryKey(t, worktree)
+
+	assertRegistryKey(t, resolved(t, repo))
+}
+
+// The .NET props condition matches the resolved path, so a checkout entered
+// through a symlink keys on where the link points.
+func TestRegistryKeyOfASymlinkedCheckoutIsResolved(t *testing.T) {
+	repo := committedRepo(t)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Fatal(err)
+	}
+	chdirWithoutRegistryKey(t, link)
+
+	assertRegistryKey(t, resolved(t, repo))
+}
+
+// A .git that is itself a symlink keys on the checkout it points into, not on
+// the directory holding the link.
+func TestRegistryKeyOfASymlinkedGitDirIsResolved(t *testing.T) {
+	repo := committedRepo(t)
+	target := t.TempDir()
+	if err := os.Rename(filepath.Join(repo, ".git"), filepath.Join(target, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(target, ".git"), filepath.Join(repo, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	chdirWithoutRegistryKey(t, repo)
+
+	assertRegistryKey(t, resolved(t, target))
+}
+
+// A relative value is read against the working directory, the way the shell's
+// cd read it, and resolved like every other key.
+func TestRegistryKeyEnvNamesTheKeyResolved(t *testing.T) {
+	repo := committedRepo(t)
+	named := t.TempDir()
+	if err := os.Symlink(named, filepath.Join(repo, "named")); err != nil {
+		t.Fatal(err)
+	}
+	chdirWithoutRegistryKey(t, repo)
+	t.Setenv(registryKeyEnv, "named")
+
+	assertRegistryKey(t, resolved(t, named))
+}
+
+// Bootstrap writes the registry with pwd -P, and go.sh and the props condition
+// compare case-sensitively, so a mis-cased override keys on the on-disk
+// spelling the way the shell's cd && pwd -P did.
+func TestRegistryKeyEnvTakesTheOnDiskSpelling(t *testing.T) {
+	repo := committedRepo(t)
+	adopted := filepath.Join(t.TempDir(), "Adopted")
+	if err := os.Mkdir(adopted, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	misCased := filepath.Join(filepath.Dir(adopted), "aDOPTED")
+	if _, err := os.Stat(misCased); err != nil {
+		t.Skip("case-sensitive filesystem: a mis-cased override names no directory")
+	}
+	chdirWithoutRegistryKey(t, repo)
+	t.Setenv(registryKeyEnv, misCased)
+
+	assertRegistryKey(t, resolved(t, adopted))
+}
+
+// A key naming no directory matches no registry, so every branch would skip
+// and the gate would pass linting nothing.
+func TestRegistryKeyEnvNamingNoDirectoryFails(t *testing.T) {
+	repo := committedRepo(t)
+	chdirWithoutRegistryKey(t, repo)
+	for name, named := range map[string]string{
+		"missing path": filepath.Join(repo, "typo"),
+		"regular file": filepath.Join(repo, "one.go"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(registryKeyEnv, named)
+			var stdout, stderr strings.Builder
+
+			code := run(Command{Kind: KindRegistryKey}, &stdout, &stderr)
+
+			want := "TVRMSMITH_REGISTRY_KEY names '" + named + "', which is not a directory"
+			if code != 1 || stdout.String() != "" || !strings.Contains(stderr.String(), want) {
+				t.Errorf("exit %d, stdout %q, stderr %q, want exit 1 saying %q", code, stdout.String(), stderr.String(), want)
+			}
+		})
+	}
+}
+
+func TestRegistryKeyOutsideARepositoryFails(t *testing.T) {
+	chdirWithoutRegistryKey(t, t.TempDir())
+	var stdout, stderr strings.Builder
+
+	code := run(Command{Kind: KindRegistryKey}, &stdout, &stderr)
+
+	want := "could not find a git repository"
+	if code != 1 || stdout.String() != "" || !strings.Contains(stderr.String(), want) {
+		t.Errorf("exit %d, stdout %q, stderr %q, want exit 1 saying %q", code, stdout.String(), stderr.String(), want)
+	}
+}
+
+// committedRepo is a repository with one commit, which `git worktree add`
+// needs, and a subdirectory to run from.
+func committedRepo(t *testing.T) string {
+	t.Helper()
+	repo := t.TempDir()
+	repoGit(t, repo, "init", "--quiet")
+	writeRepoFile(t, repo, "one.go")
+	if err := os.Mkdir(filepath.Join(repo, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	repoGit(t, repo, "add", "--all")
+	repoGit(t, repo, "commit", "--quiet", "-m", "base")
+	return repo
+}
+
+// chdirWithoutRegistryKey clears an ambient TVRMSMITH_REGISTRY_KEY, which
+// would otherwise answer every case.
+func chdirWithoutRegistryKey(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv(registryKeyEnv, "")
+	t.Chdir(dir)
+}
+
+// resolved is dir through its symlinks. t.TempDir on macOS sits under /var,
+// itself a link to /private/var.
+func resolved(t *testing.T, dir string) string {
+	t.Helper()
+	path, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func assertRegistryKey(t *testing.T, want string) {
+	t.Helper()
+	var stdout, stderr strings.Builder
+
+	code := run(Command{Kind: KindRegistryKey}, &stdout, &stderr)
+
+	if code != 0 || stdout.String() != want+"\n" {
+		t.Errorf("exit %d, stdout %q, stderr %q, want exit 0 and %q", code, stdout.String(), stderr.String(), want)
+	}
+}
