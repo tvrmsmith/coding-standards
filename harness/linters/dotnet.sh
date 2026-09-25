@@ -42,11 +42,9 @@ dotnet_owns() {
   esac
 }
 
-_dotnet_has_csproj() { ls "$1"/*.csproj >/dev/null 2>&1; }
-
 dotnet_lint() {
-  local file proj dir out build_status status=0 pairs=() projects project_count
-  local files=() prefix sarif sarifs=() found errorlog_props
+  local file proj member out build_status status=0 projects=()
+  local files=() prefix sarif sarifs=() found errorlog_props groups=$scratch/dotnet-owners
   local sarif_dir=$scratch/dotnet-sarif
 
   # Whether this repo is adopted is a question the props file already answers: it carries one
@@ -101,29 +99,22 @@ dotnet_lint() {
   # the commit unexamined.
   [ ${#files[@]} -gt 0 ] || [ "$mode" = "--staged" ] || return 0
 
-  # The project that owns a file: nearest ancestor holding a .csproj. That is also the directory
-  # MSBuild treats as the project root, so every .cs below it is in the compilation by default.
-  for file in ${files[@]+"${files[@]}"}; do
-    if dir=$(ancestor_with "$file" _dotnet_has_csproj); then
-      proj=$(ls "$dir"/*.csproj 2>/dev/null | head -1)
-      pairs+=("$proj	$repo_root/$file")
-    else
-      echo "lint-changed: no .csproj above $file — skipped" >&2
-    fi
-  done
-
-  projects=
-  if [ ${#pairs[@]} -gt 0 ]; then
-    projects=$(printf '%s\n' "${pairs[@]}" | cut -f1 | sort -u)
-    project_count=$(printf '%s\n' "$projects" | grep -c .)
-    [ "$project_count" -gt 4 ] && echo "lint-changed: $project_count projects to build; this will take a moment" >&2
-  fi
-
-  # The blocking half, built by common.sh since every branch's reports go to the same binary. The
-  # dispatcher runs it over the SARIF below, keeping only the findings touching a changed line and
-  # applying any waiver. Built here, before a single build runs, because a filter that will not
-  # build makes every SARIF it would have produced unreadable anyway.
-  lint_changed_bin >/dev/null || return 1
+  # The project that owns a file: every .csproj in its nearest ancestor holding one. That is also
+  # the directory MSBuild treats as the project root, so every .cs below it is in each of those
+  # compilations by default, and picking one would lint the file under settings the others may not
+  # share.
+  #
+  # The blocking half, built by common.sh since every branch's reports go to the same binary, also
+  # answers this. The dispatcher runs it over the SARIF below, keeping only the findings touching a
+  # changed line and applying any waiver. owner_groups builds it before a single build runs,
+  # because a filter that will not build makes every SARIF it would have produced unreadable anyway.
+  owner_groups csharp "$groups" ${files[@]+"${files[@]}"} || return 1
+  while IFS= read -r -d '' proj; do
+    projects+=("$proj")
+    # The members are the changed files, and a build compiles the whole project whatever they are.
+    while IFS= read -r -d '' member && [ -n "$member" ]; do :; done
+  done <"$groups"
+  [ ${#projects[@]} -gt 4 ] && echo "lint-changed: ${#projects[@]} projects to build; this will take a moment" >&2
 
   mkdir -p "$sarif_dir" || return 1
 
@@ -132,10 +123,7 @@ dotnet_lint() {
   # suffix. errorlog.props carries both and says why; all pass 2 passes in is the prefix.
   errorlog_props=$harness/errorlog.props
 
-  # Read rather than word-split: an unquoted expansion splits a project path on every space it
-  # holds and then globs each piece.
-  while IFS= read -r proj; do
-    [ -n "$proj" ] || continue
+  for proj in ${projects[@]+"${projects[@]}"}; do
     # Two passes, and both are needed for different reasons.
     #
     # Pass 1 is an ordinary incremental build, project references included. Its only job is to
@@ -208,7 +196,7 @@ dotnet_lint() {
       echo "  Expected $prefix.<framework>.sarif from ErrorLog. Check that the project does not" >&2
       echo "  set its own ErrorLog." >&2
     fi
-  done <<<"$projects"
+  done
 
   # Every report goes to the dispatcher's one filter run. Merging the SARIF here instead would mean
   # this branch understanding SARIF, which is the one thing handing the job to lint-changed buys.

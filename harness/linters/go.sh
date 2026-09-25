@@ -26,11 +26,9 @@ go_owns() {
   esac
 }
 
-_go_has_mod() { [ -f "$1/go.mod" ]; }
-
 go_lint() {
-  local file module dir rel status=0 present=() pairs=() packages=()
-  local report reports=()
+  local file module package status=0 present=() packages=()
+  local report reports=() groups=$scratch/go-owners
   local report_dir=$scratch/go-reports module_count=0
 
   # Which repos are adopted is state the Go side has nowhere else to keep: nothing is installed in
@@ -58,47 +56,19 @@ go_lint() {
 
   # The module a file belongs to: nearest ancestor holding a go.mod. golangci-lint has to run from
   # there — outside a module it reports "directory prefix does not contain main module" and finds
-  # nothing — and a monorepo can hold several.
-  for file in ${present[@]+"${present[@]}"}; do
-    if module=$(ancestor_with "$file" _go_has_mod); then
-      pairs+=("$module	$(dirname "$file")	$repo_root/$file")
-    else
-      echo "lint-changed: no go.mod above $file — skipped" >&2
-    fi
-  done
-
-  # Fail fast, before a single golangci run: a filter that will not build makes every report it
-  # would have produced unreadable anyway.
-  lint_changed_bin >/dev/null || return 1
+  # nothing — and a monorepo can hold several. Each group is a module and the packages under it
+  # holding a changed file. owner_groups builds the filter first, so one that will not build fails
+  # the branch before a single golangci run, whose every report it would leave unreadable.
+  owner_groups go "$groups" ${present[@]+"${present[@]}"} || return 1
   mkdir -p "$report_dir" || return 1
 
-  # Read line by line rather than word-split: an unquoted `$(...)` splits a module or file path on
-  # every space it holds and then globs each piece, which is the one thing the NUL-delimited
-  # changed set upstream exists to prevent. With no module at all the loop reads one empty line
-  # and does nothing, which is the path that leaves the dispatcher's filter to ask the divergence
-  # question on its own.
-  while IFS= read -r module; do
-    [ -n "$module" ] || continue
+  # With no module at all the loop reads nothing, which is the path that leaves the dispatcher's
+  # filter to ask the divergence question on its own.
+  while IFS= read -r -d '' module; do
     packages=()
-    while IFS= read -r dir; do
-      [ -n "$dir" ] || continue
-      # Three cases, spelled out, because a prefix strip alone cannot tell them apart and either
-      # collapse sends golangci-lint at the wrong package, so the file reports clean unlinted.
-      #
-      #   a module at the repo root, where ancestor_with answers "." and there is no prefix to
-      #   strip, so the package path is $dir as it stands;
-      #   the module's own root directory, which is package ".";
-      #   anything below the module, which is $dir with the module prefix removed — including a
-      #   package repeating the module's name, gate/gate under module gate.
-      if [ "$module" = "." ]; then
-        rel=$dir
-      elif [ "$dir" = "$module" ]; then
-        rel=.
-      else
-        rel=${dir#"$module"/}
-      fi
-      packages+=("./$rel")
-    done <<<"$(printf '%s\n' ${pairs[@]+"${pairs[@]}"} | awk -F'\t' -v m="$module" '$1 == m { print $2 }' | sort -u)"
+    while IFS= read -r -d '' package && [ -n "$package" ]; do
+      packages+=("$package")
+    done
 
     # One report per module, named by count rather than by the module path, which can hold any
     # byte a directory name can.
@@ -137,7 +107,7 @@ go_lint() {
     fi
 
     reports+=("$report")
-  done <<<"$(printf '%s\n' ${pairs[@]+"${pairs[@]}"} | cut -f1 | sort -u)"
+  done <"$groups"
 
   # Every module that did produce a report still hands it on, beside a 1 for the one that blew up:
   # the dispatcher reports 1 whatever the filter says, because a filter that read only some of the

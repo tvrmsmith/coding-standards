@@ -23,18 +23,6 @@ ts_owns() {
   esac
 }
 
-# The package a file belongs to: nearest ancestor holding an ESLint config, since that is the
-# directory ESLint has to run from — flat config does not cascade, and the wrapper loads the
-# package's config from the process cwd.
-_ts_has_config() {
-  local name
-  for name in eslint.config.js eslint.config.mjs eslint.config.cjs eslint.config.ts \
-              .eslintrc.js .eslintrc.cjs .eslintrc.mjs .eslintrc.json .eslintrc; do
-    [ -f "$1/$name" ] && return 0
-  done
-  return 1
-}
-
 # ESLint itself always comes from the repo, never from the harness: the package pins the version
 # its config was written for, ESLint 8 or 9, and its plugins resolve relative to it. Nothing is
 # installed on demand. A package whose dependencies are not installed fails the commit rather than
@@ -42,8 +30,8 @@ _ts_has_config() {
 _ts_has_eslint_bin() { [ -x "$1/node_modules/.bin/eslint" ]; }
 
 ts_lint() {
-  local file pkg rel eslint_dir eslint_bin status=0 present=() pairs=() batch=()
-  local report reports=()
+  local file pkg eslint_dir eslint_bin status=0 present=() batch=()
+  local report reports=() groups=$scratch/ts-owners
   local report_dir=$scratch/ts-reports package_count=0
 
   # 1, not 2: nothing was linted, so this is the gate breaking rather than a surviving finding.
@@ -62,26 +50,22 @@ ts_lint() {
     [ -e "$file" ] && present+=("$file")
   done
 
-  for file in ${present[@]+"${present[@]}"}; do
-    if pkg=$(ancestor_with "$file" _ts_has_config); then
-      pairs+=("$pkg	$file")
-    else
-      echo "lint-changed: no ESLint config above $file — skipped" >&2
-    fi
-  done
-
-  # Fail fast, before a single ESLint run: a filter that will not build makes every report it
-  # would have produced unreadable anyway.
-  lint_changed_bin >/dev/null || return 1
+  # The package a file belongs to: nearest ancestor holding an ESLint config, since that is the
+  # directory ESLint has to run from — flat config does not cascade, and the wrapper loads the
+  # package's config from the process cwd. Each group is a package and its changed files relative to
+  # it. owner_groups builds the filter first, so one that will not build fails the branch before a
+  # single ESLint run, whose every report it would leave unreadable.
+  owner_groups ts "$groups" ${present[@]+"${present[@]}"} || return 1
   mkdir -p "$report_dir" || return 1
 
-  # Read line by line rather than word-split: an unquoted `$(...)` splits a package or file path on
-  # every space it holds and then globs each piece, so ESLint would be handed two arguments naming
-  # nothing and fail the commit over a file that does not exist. With no package at all the loop
-  # reads one empty line and does nothing, which is the path that leaves the dispatcher's filter to
-  # ask the divergence question on its own.
-  while IFS= read -r pkg; do
-    [ -n "$pkg" ] || continue
+  # With no package at all the loop reads nothing, which is the path that leaves the dispatcher's
+  # filter to ask the divergence question on its own.
+  while IFS= read -r -d '' pkg; do
+    batch=()
+    while IFS= read -r -d '' file && [ -n "$file" ]; do
+      batch+=("$file")
+    done
+
     # ancestor_with starts at the parent of the path it is given, so it takes a path *inside* the
     # package: the package's own node_modules is the first place to look.
     # 1, not 2, and not a skip: this package's changed files reached no linter at all, so a clean
@@ -93,14 +77,6 @@ ts_lint() {
       continue
     }
     eslint_bin=$repo_root/$eslint_dir/node_modules/.bin/eslint
-
-    batch=()
-    while IFS= read -r file; do
-      [ -n "$file" ] || continue
-      rel=${file#"$pkg"/}
-      batch+=("$rel")
-    done <<<"$(printf '%s\n' ${pairs[@]+"${pairs[@]}"} | awk -F'\t' -v p="$pkg" '$1 == p { print $2 }')"
-    [ ${#batch[@]} -gt 0 ] || continue
 
     # One report per package, named by count rather than by the package path, which can hold any
     # byte a directory name can.
@@ -143,7 +119,7 @@ ts_lint() {
         ;;
       *) status=1; echo "=== $pkg — the lint run failed ===" >&2 ;;
     esac
-  done <<<"$(printf '%s\n' ${pairs[@]+"${pairs[@]}"} | cut -f1 | sort -u)"
+  done <"$groups"
 
   # Every package that did produce a report still hands it on, beside a 1 for the one that blew
   # up: the dispatcher reports 1 whatever the filter says, because a filter that read only some of

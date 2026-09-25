@@ -11,7 +11,7 @@
  * That needs go on PATH, so the cases skip without it.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -250,6 +250,26 @@ test('two packages report through one filter run', { skip }, () => {
     // is burnt on a commit that never went through.
     assert.match(stdout, /^a\/src\/a\.js:\d+:\d+: no-unused-vars: /m)
     assert.match(stdout, /^b\/src\/a\.js:\d+:\d+: no-unused-vars: /m)
+  } finally {
+    f.cleanup()
+  }
+})
+
+// A mapping that fails has to fail the branch. Read as no package at all, the changed file would be
+// skipped and the commit would pass with nothing linted. An eslint.config.js that is a symlink to
+// itself cannot be stat'ed, so the package lookup fails on it rather than reading it as absent.
+test('a failed package lookup fails the gate', { skip }, () => {
+  const f = fixture()
+  try {
+    mkdirSync(join(f.repo, 'sub'))
+    symlinkSync('eslint.config.js', join(f.repo, 'sub', 'eslint.config.js'))
+    writeFileSync(join(f.repo, 'sub', 'b.js'), 'export const a = 1\nexport const b = 2\nconst x = 3\n')
+    git(f.repo, 'add', '.')
+    git(f.repo, 'commit', '--quiet', '-m', 'looped eslint config')
+    touchLineThree(f.repo, 'sub/b.js')
+
+    const { status, stdout, stderr } = lint(f.repo, f)
+    assert.equal(status, 1, `expected the gate to break\nstdout:\n${stdout}\nstderr:\n${stderr}`)
   } finally {
     f.cleanup()
   }
