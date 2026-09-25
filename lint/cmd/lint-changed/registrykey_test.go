@@ -80,6 +80,25 @@ func TestRegistryKeyEnvNamesTheKeyResolved(t *testing.T) {
 	assertRegistryKey(t, resolved(t, named))
 }
 
+// Bootstrap writes the registry with pwd -P, and go.sh and the props condition
+// compare case-sensitively, so a mis-cased override keys on the on-disk
+// spelling the way the shell's cd && pwd -P did.
+func TestRegistryKeyEnvTakesTheOnDiskSpelling(t *testing.T) {
+	repo := committedRepo(t)
+	adopted := filepath.Join(t.TempDir(), "Adopted")
+	if err := os.Mkdir(adopted, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	misCased := filepath.Join(filepath.Dir(adopted), "aDOPTED")
+	if _, err := os.Stat(misCased); err != nil {
+		t.Skip("case-sensitive filesystem: a mis-cased override names no directory")
+	}
+	chdirWithoutRegistryKey(t, repo)
+	t.Setenv(registryKeyEnv, misCased)
+
+	assertRegistryKey(t, resolved(t, adopted))
+}
+
 // A key naming no directory matches no registry, so every branch would skip
 // and the gate would pass linting nothing.
 func TestRegistryKeyEnvNamingNoDirectoryFails(t *testing.T) {

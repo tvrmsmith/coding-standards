@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/tvrmsmith/coding-standards/internal/gitscope"
 	"github.com/tvrmsmith/coding-standards/internal/srcpath"
@@ -76,5 +78,46 @@ func namedRegistryKey(named string) (srcpath.Root, error) {
 	if !info.IsDir() {
 		return srcpath.Root{}, notADir
 	}
-	return key, nil
+	return srcpath.NewRoot(spelledOnDisk(key.Dir()))
+}
+
+// spelledOnDisk is dir with each component spelled the way its parent lists it,
+// which is what the shell's `cd && pwd -P` printed. On a case-insensitive
+// filesystem EvalSymlinks keeps the case the caller typed, and bootstrap wrote
+// the registry with pwd -P, so a mis-cased override would miss every
+// case-sensitive lookup and skip in silence. A component only takes another
+// spelling that os.SameFile confirms is the same directory, so two directories a
+// case-sensitive filesystem keeps apart never merge. A parent it cannot list
+// keeps the component as typed.
+func spelledOnDisk(dir string) string {
+	spelled := string(filepath.Separator)
+	for _, component := range strings.Split(strings.TrimPrefix(dir, spelled), string(filepath.Separator)) {
+		spelled = filepath.Join(spelled, listedSpelling(spelled, component))
+	}
+	return spelled
+}
+
+// listedSpelling is how parent lists component, or component itself when the
+// listing holds it exactly or confirms no other spelling.
+func listedSpelling(parent, component string) string {
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return component
+	}
+	if slices.ContainsFunc(entries, func(e os.DirEntry) bool { return e.Name() == component }) {
+		return component
+	}
+	typed, err := os.Stat(filepath.Join(parent, component))
+	if err != nil {
+		return component
+	}
+	for _, entry := range entries {
+		if !strings.EqualFold(entry.Name(), component) {
+			continue
+		}
+		if info, err := os.Stat(filepath.Join(parent, entry.Name())); err == nil && os.SameFile(info, typed) {
+			return entry.Name()
+		}
+	}
+	return component
 }
