@@ -74,30 +74,56 @@ func goRegistryNames(registry, key string) bool {
 func propsScopes(data []byte, key, path string) (bool, error) {
 	want := "$(MSBuildProjectDirectory.StartsWith('" + key + "/'))"
 	decoder := xml.NewDecoder(bytes.NewReader(data))
-	rooted, found := false, false
+	depth, rooted, found := 0, false, false
 	for {
 		token, err := decoder.Token()
-		if errors.Is(err, io.EOF) && !rooted {
+		if errors.Is(err, io.EOF) {
+			if rooted {
+				return found, nil
+			}
 			err = errors.New("no root element")
 		}
-		if errors.Is(err, io.EOF) {
-			return found, nil
+		if err == nil && depth == 0 {
+			err = outsideRoot(token, rooted)
 		}
 		if err != nil {
 			return false, fmt.Errorf("%s is not well-formed XML, so MSBuild cannot load it either: %w", path, err)
 		}
-		start, ok := token.(xml.StartElement)
-		if !ok {
-			continue
-		}
-		rooted = true
-		if start.Name.Local != "Import" {
-			continue
-		}
-		for _, attr := range start.Attr {
-			if attr.Name.Space == "" && attr.Name.Local == "Condition" && strings.Contains(attr.Value, want) {
+		switch token := token.(type) {
+		case xml.StartElement:
+			depth++
+			rooted = true
+			if token.Name.Local == "Import" && importScopes(token, want) {
 				found = true
 			}
+		case xml.EndElement:
+			depth--
 		}
 	}
+}
+
+// outsideRoot rejects what encoding/xml lets through at the top level and an
+// XML reader does not: a second root element, or text before or after the
+// root. Comments, processing instructions and whitespace stay legal there.
+func outsideRoot(token xml.Token, rooted bool) error {
+	switch token := token.(type) {
+	case xml.StartElement:
+		if rooted {
+			return errors.New("a second root element")
+		}
+	case xml.CharData:
+		if len(bytes.TrimSpace(token)) > 0 {
+			return errors.New("text outside the root element")
+		}
+	}
+	return nil
+}
+
+func importScopes(start xml.StartElement, want string) bool {
+	for _, attr := range start.Attr {
+		if attr.Name.Space == "" && attr.Name.Local == "Condition" && strings.Contains(attr.Value, want) {
+			return true
+		}
+	}
+	return false
 }

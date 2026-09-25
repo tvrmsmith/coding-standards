@@ -148,6 +148,39 @@ func TestPropsWithNoRootElementIsBroken(t *testing.T) {
 	}
 }
 
+// encoding/xml reads each of these to the end without an error, and an XML
+// reader refuses every one, so a stray Import outside the root never counts.
+func TestPropsWithContentOutsideTheRootIsBroken(t *testing.T) {
+	cases := []struct{ props, reason string }{
+		{"<Project/><Project/>", "a second root element"},
+		{"<Project/>junk", "text outside the root element"},
+		{"junk<Project/>", "text outside the root element"},
+		{"<Project/>\n" + bootstrapImport + "\n", "a second root element"},
+	}
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("%q", c.props), func(t *testing.T) {
+			var stdout, stderr strings.Builder
+
+			code := run(Command{Kind: KindAdopted, Adopted: AdoptedArgs{Language: "csharp", Key: repoKey, Registry: write(t, c.props)}}, &stdout, &stderr)
+
+			if code != 1 || stdout.String() != "" || !strings.Contains(stderr.String(), c.reason) {
+				t.Errorf("exit %d, stdout %q, stderr %q, want exit 1 naming %q", code, stdout.String(), stderr.String(), c.reason)
+			}
+		})
+	}
+}
+
+// Everything an XML reader allows around the root stays readable.
+func TestPropsWithCommentsAndDeclarationAroundTheRootIsRead(t *testing.T) {
+	props := "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<!-- written by bootstrap -->\n<Project>\n" + bootstrapImport + "\n</Project>\n<!-- end -->\n<?tail x?>\n"
+
+	got, err := adopted(AdoptedArgs{Language: "csharp", Key: repoKey, Registry: write(t, props)})
+
+	if err != nil || !got {
+		t.Errorf("adopted = %v, %v, want adopted", got, err)
+	}
+}
+
 func TestAdoptedPrintsItsAnswer(t *testing.T) {
 	cases := []struct {
 		registry string
