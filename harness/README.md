@@ -265,8 +265,9 @@ Three things about it differ from the other two:
   but the Go side installs nothing in the target and its binary is machine-wide, so without the
   registry, bootstrapping one repo would silently start linting every other repo the hook
   guards. The line is the **main checkout**, even when `bootstrap go` is pointed at a linked
-  worktree, and `linters/go.sh` resolves the same way before it looks itself up. Both use
-  `git rev-parse --git-common-dir`, whose parent is the main checkout in either case.
+  worktree, and the lint run resolves the same way, in `lint-changed registry-key`, before it
+  looks itself up. Both use `git rev-parse --git-common-dir`, whose parent is the main checkout
+  in either case.
   `test/lint-changed-go.test.js` pins all four combinations of registered/not and
   worktree/not, because a skip that should have been a run is silent and looks exactly like a
   repo with no findings.
@@ -351,10 +352,11 @@ TVRMSMITH_REGISTRY_KEY=/path/to/repo # answer the adoption question for a caller
 `TVRMSMITH_REGISTRY_KEY` sets the key the `go` and `dotnet` scripts look up, and only a caller that
 already knows the answer should set it. Without it, `lint-changed registry-key` derives the key
 from the parent of `git rev-parse --git-common-dir`, which is the main checkout for an ordinary
-worktree and the wrong directory entirely for a checkout git does not think is related to the adopted one. The no-mistakes pipeline
-is that caller: it lints in a worktree of a bare repository it keeps under `~/.no-mistakes`, so the
-derived key named that bare repo, missed the registry and skipped every run in silence. It passes
-the registered checkout instead, in `NO_MISTAKES_REPO_PATH`.
+worktree and the wrong directory entirely for a checkout git does not think is related to the
+adopted one. The no-mistakes pipeline is that caller: it lints in a worktree of a bare repository
+it keeps under `~/.no-mistakes`, so the derived key named that bare repo, missed the registry and
+skipped every run in silence. It passes the registered checkout instead, in
+`NO_MISTAKES_REPO_PATH`.
 
 It moves which path is looked up. It does not bypass the lookup, so an override naming a path
 nobody adopted still skips, and findings still come from the tree the script is run in.
