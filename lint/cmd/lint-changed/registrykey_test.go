@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,8 +13,10 @@ func TestParseRegistryKeyTakesNoArguments(t *testing.T) {
 	if err != nil || cmd.Kind != KindRegistryKey {
 		t.Errorf("Parse(registry-key) = %+v, %v, want the registry-key form", cmd, err)
 	}
-	if _, err := Parse([]string{"registry-key", "--staged"}); err == nil {
-		t.Error("Parse(registry-key --staged) succeeded, want a usage error")
+	_, err = Parse([]string{"registry-key", "--staged"})
+	var ue *UsageError
+	if !errors.As(err, &ue) {
+		t.Errorf("Parse(registry-key --staged) = %v, want *UsageError", err)
 	}
 }
 
@@ -47,6 +50,22 @@ func TestRegistryKeyOfASymlinkedCheckoutIsResolved(t *testing.T) {
 	assertRegistryKey(t, resolved(t, repo))
 }
 
+// A .git that is itself a symlink keys on the checkout it points into, not on
+// the directory holding the link.
+func TestRegistryKeyOfASymlinkedGitDirIsResolved(t *testing.T) {
+	repo := committedRepo(t)
+	target := t.TempDir()
+	if err := os.Rename(filepath.Join(repo, ".git"), filepath.Join(target, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(target, ".git"), filepath.Join(repo, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	chdirWithoutRegistryKey(t, repo)
+
+	assertRegistryKey(t, resolved(t, target))
+}
+
 // A relative value is read against the working directory, the way the shell's
 // cd read it, and resolved like every other key.
 func TestRegistryKeyEnvNamesTheKeyResolved(t *testing.T) {
@@ -66,16 +85,21 @@ func TestRegistryKeyEnvNamesTheKeyResolved(t *testing.T) {
 func TestRegistryKeyEnvNamingNoDirectoryFails(t *testing.T) {
 	repo := committedRepo(t)
 	chdirWithoutRegistryKey(t, repo)
-	for _, named := range []string{filepath.Join(repo, "typo"), filepath.Join(repo, "one.go")} {
-		t.Setenv(registryKeyEnv, named)
-		var stdout, stderr strings.Builder
+	for name, named := range map[string]string{
+		"missing path": filepath.Join(repo, "typo"),
+		"regular file": filepath.Join(repo, "one.go"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(registryKeyEnv, named)
+			var stdout, stderr strings.Builder
 
-		code := run(Command{Kind: KindRegistryKey}, &stdout, &stderr)
+			code := run(Command{Kind: KindRegistryKey}, &stdout, &stderr)
 
-		want := "TVRMSMITH_REGISTRY_KEY names '" + named + "', which is not a directory"
-		if code != 1 || stdout.String() != "" || !strings.Contains(stderr.String(), want) {
-			t.Errorf("%s: exit %d, stdout %q, stderr %q, want exit 1 saying %q", named, code, stdout.String(), stderr.String(), want)
-		}
+			want := "TVRMSMITH_REGISTRY_KEY names '" + named + "', which is not a directory"
+			if code != 1 || stdout.String() != "" || !strings.Contains(stderr.String(), want) {
+				t.Errorf("exit %d, stdout %q, stderr %q, want exit 1 saying %q", code, stdout.String(), stderr.String(), want)
+			}
+		})
 	}
 }
 
@@ -85,8 +109,9 @@ func TestRegistryKeyOutsideARepositoryFails(t *testing.T) {
 
 	code := run(Command{Kind: KindRegistryKey}, &stdout, &stderr)
 
-	if code != 1 || stdout.String() != "" || stderr.String() == "" {
-		t.Errorf("exit %d, stdout %q, stderr %q, want exit 1 with gitscope's message", code, stdout.String(), stderr.String())
+	want := "could not find a git repository"
+	if code != 1 || stdout.String() != "" || !strings.Contains(stderr.String(), want) {
+		t.Errorf("exit %d, stdout %q, stderr %q, want exit 1 saying %q", code, stdout.String(), stderr.String(), want)
 	}
 }
 

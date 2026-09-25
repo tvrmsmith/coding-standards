@@ -129,7 +129,7 @@ finding is what lets one regex read all three languages, which is what no-mistak
 
 `TVRMSMITH_REGISTRY_KEY` names the checkout directly. The Go and .NET branches decide whether a
 repository is adopted by looking its path up, in the Go registry file and in the props file's
-scoping condition, and they derive that path from `git rev-parse --git-common-dir`. A caller
+scoping condition, and they get that path from `lint-changed registry-key`. A caller
 linting in a detached worktree of some other bare repository gets the wrong derivation, so the
 lookup misses and the branch skips. A skip is silent and looks exactly like a clean result, which
 is the worst way for this to fail.
@@ -354,8 +354,8 @@ already knows the answer should set it. Without it, `lint-changed registry-key` 
 from the parent of `git rev-parse --git-common-dir`, which is the main checkout for an ordinary
 worktree and the wrong directory entirely for a checkout git does not think is related to the
 adopted one. The no-mistakes pipeline is that caller: it lints in a worktree of a bare repository
-it keeps under `~/.no-mistakes`, so the derived key named that bare repo, missed the registry and
-skipped every run in silence. It passes the registered checkout instead, in
+it keeps under `~/.no-mistakes`, so the derived key named the bare repo's parent, missed the
+registry and skipped every run in silence. It passes the registered checkout instead, in
 `NO_MISTAKES_REPO_PATH`.
 
 It moves which path is looked up. It does not bypass the lookup, so an override naming a path

@@ -218,22 +218,13 @@ func (r Repo) Root() srcpath.Root { return r.root }
 // <main>/.git from either. The lint harness keys adoption on it, because a
 // worktree is the same adoption as its main checkout and shares its hook.
 func (r Repo) MainCheckout() (srcpath.Root, error) {
-	out, err := r.git("rev-parse", "--git-common-dir")
+	out, err := r.git("rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return srcpath.Root{}, err
 	}
-	// Relative to the directory git ran in, which r.git makes the repo root.
-	common := strings.TrimSpace(out)
-	if !filepath.IsAbs(common) {
-		common = filepath.Join(r.root.Dir(), common)
-	}
-	// Resolved before taking the parent, so a .git that is itself a symlink
-	// names the checkout it points into.
-	resolved, err := srcpath.NewRoot(common)
-	if err != nil {
-		return srcpath.Root{}, err
-	}
-	return srcpath.NewRoot(filepath.Dir(resolved.Dir()))
+	// Absolute is git's realpath, so a .git that is itself a symlink names the
+	// checkout it points into.
+	return srcpath.NewRoot(filepath.Dir(strings.TrimSpace(out)))
 }
 
 // Base is the commit the run diffs against, and the ref it was reached
