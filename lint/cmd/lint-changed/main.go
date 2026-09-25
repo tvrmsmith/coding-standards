@@ -1,5 +1,5 @@
 // Command lint-changed is the blocking half of a pre-commit lint gate. See
-// argv.go for the six forms it takes and the exit codes each returns.
+// argv.go for the seven forms it takes and the exit codes each returns.
 package main
 
 import (
@@ -31,6 +31,8 @@ func run(cmd Command, stdout, stderr io.Writer) int {
 		return runChangedPaths(cmd.ChangedPaths, stdout, stderr)
 	case KindOwners:
 		return runOwners(cmd.Owners, stdout, stderr)
+	case KindAdopted:
+		return runAdopted(cmd.Adopted, stdout, stderr)
 	default:
 		_, _ = fmt.Fprintln(stderr, "lint-changed: internal error: unknown command kind")
 		return 1
