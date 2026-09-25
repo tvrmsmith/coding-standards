@@ -24,8 +24,9 @@ type OwnersArgs struct {
 }
 
 // OwnerGroup is one build unit a language branch lints and what it points
-// the linter at inside it. Members are relative to the owner's directory, the
-// directory each linter runs from.
+// the linter at inside it. Members are relative to the owner's directory,
+// which the Go and TS branches run their linter from. The C# branch builds
+// the whole project and reads no members.
 type OwnerGroup struct {
 	// Owner is the module directory for Go, the package directory for TS,
 	// and the .csproj path for C#.
@@ -139,11 +140,14 @@ func unitsIn(language, dir, file string) ([]unit, error) {
 		return []unit{{dir, rel}}, nil
 	case lintfind.LanguageCSharp:
 		projects, err := projectsIn(dir)
+		if err != nil {
+			return nil, err
+		}
 		units := make([]unit, 0, len(projects))
 		for _, project := range projects {
 			units = append(units, unit{filepath.Join(dir, project), rel})
 		}
-		return units, err
+		return units, nil
 	default:
 		return nil, fmt.Errorf("owners: unknown language %q", language)
 	}
@@ -183,9 +187,11 @@ func projectsIn(dir string) ([]string, error) {
 		if strings.HasPrefix(name, ".") || !strings.HasSuffix(name, ".csproj") {
 			continue
 		}
-		if ok, err := isFile(filepath.Join(dir, name)); err != nil {
+		ok, err := isFile(filepath.Join(dir, name))
+		if err != nil {
 			return nil, err
-		} else if ok {
+		}
+		if ok {
 			projects = append(projects, name)
 		}
 	}

@@ -11,7 +11,7 @@
  * That needs go on PATH, so the cases skip without it.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -238,6 +238,28 @@ test('two modules report through one filter run', { skip }, () => {
     // burnt on a commit that never went through.
     assert.match(stdout, /^a\/main\.go:3:2: stub: stub finding$/m)
     assert.match(stdout, /^b\/main\.go:3:2: stub: stub finding$/m)
+  } finally {
+    f.cleanup()
+  }
+})
+
+// A mapping that fails has to fail the branch. Read as no module at all, the changed file would be
+// skipped and the commit would pass with nothing linted. A go.mod that is a symlink to itself
+// cannot be stat'ed, so the module lookup fails on it rather than reading it as absent.
+test('a failed module lookup fails the gate', { skip }, () => {
+  const f = fixture()
+  try {
+    mkdirSync(join(f.repo, 'sub'))
+    symlinkSync('go.mod', join(f.repo, 'sub', 'go.mod'))
+    writeFileSync(join(f.repo, 'sub', 'x.go'), 'package sub\n')
+    git(f.repo, 'add', '.')
+    git(f.repo, 'commit', '--quiet', '-m', 'looped go.mod')
+    writeFileSync(f.registry, `${f.repo}\n`)
+    writeFileSync(join(f.repo, 'sub', 'x.go'), 'package sub\n\nvar _ = 1\n')
+
+    const { status, stdout, stderr } = lint(f.repo, f)
+    assert.equal(status, 1, `expected the gate to break\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+    assert.doesNotMatch(stdout, /stub finding/)
   } finally {
     f.cleanup()
   }

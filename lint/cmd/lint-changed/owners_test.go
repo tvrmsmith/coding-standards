@@ -162,6 +162,26 @@ func TestAnUnreadableDirectoryFailsTheMapping(t *testing.T) {
 	}
 }
 
+// A mapping error exits 1 with nothing on stdout, so the branch reading the
+// groups cannot mistake a partial or empty answer for every file unowned.
+func TestRunOwnersExitsOneWithEmptyStdoutWhenTheMappingFails(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX permissions that bind the running user")
+	}
+	inTree(t, "go.mod", "locked/inner/a.go")
+	if err := os.Chmod("locked", 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod("locked", 0o700) }) //nolint:gosec // G302: a directory needs its execute bit back for t.TempDir to remove it
+	var stdout, stderr strings.Builder
+
+	code := run(Command{Kind: KindOwners, Owners: OwnersArgs{Language: "go", Files: []string{"locked/inner/a.go"}}}, &stdout, &stderr)
+
+	if code != 1 || stdout.String() != "" {
+		t.Errorf("exit %d, stdout %q, want exit 1 and empty stdout", code, stdout.String())
+	}
+}
+
 func TestRunOwnersPrintsNulTerminatedGroupsAndNamesTheUnowned(t *testing.T) {
 	inTree(t, "a/go.mod", "b/go.mod")
 	var stdout, stderr strings.Builder

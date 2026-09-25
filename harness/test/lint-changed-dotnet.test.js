@@ -13,7 +13,7 @@
  * Skipped where there is no dotnet or no go, since the script itself skips or fails on those.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -92,6 +92,24 @@ function lint(f) {
     },
   })
   return { status: result.status, stdout: result.stdout, stderr: result.stderr }
+}
+
+/**
+ * The fixture with a second project, App.Legacy.csproj, beside App.csproj in src. MSBuild's
+ * default glob compiles every .cs in src into both, so each changed file maps to both projects.
+ * Legacy defines LEGACY, which lets a file carry a warning only one of the two builds reports: a
+ * finding from each build proves both were built and both SARIF reports reached the filter.
+ */
+function twoProjectFixture() {
+  const f = fixture()
+  writeFileSync(
+    join(f.repo, 'src', 'App.Legacy.csproj'),
+    '<Project Sdk="Microsoft.NET.Sdk">\n  <PropertyGroup>\n    <TargetFramework>net8.0</TargetFramework>\n    <DefineConstants>$(DefineConstants);LEGACY</DefineConstants>\n  </PropertyGroup>\n</Project>\n',
+  )
+  writeFileSync(join(f.repo, 'src', 'Bar.cs'), 'public class Bar { public void M() { } }\n')
+  git(f.repo, 'add', '.')
+  git(f.repo, 'commit', '--quiet', '-m', 'legacy project')
+  return f
 }
 
 describe('lint-changed.sh --only dotnet', () => {
@@ -181,6 +199,50 @@ describe('lint-changed.sh --only dotnet', () => {
       const { status, stdout, stderr } = lint(f)
       assert.equal(status, 0, `expected a clean pass\nstdout:\n${stdout}\nstderr:\n${stderr}`)
     } finally {
+      f.cleanup()
+    }
+  })
+
+  // Trevor's decision on issue #174: a file in a directory holding several projects maps to every
+  // one of them, and each is built.
+  test('every project in the owning directory is built and reports', { skip: missing && `no ${missing} on PATH` }, () => {
+    const f = twoProjectFixture()
+    try {
+      writeFileSync(
+        join(f.repo, 'src', 'Foo.cs'),
+        'public class Foo\n{\n    public void M()\n    {\n#if !LEGACY\n        int app = 1;\n#endif\n    }\n}\n',
+      )
+      writeFileSync(
+        join(f.repo, 'src', 'Bar.cs'),
+        'public class Bar\n{\n    public void M()\n    {\n#if LEGACY\n        int legacy = 1;\n#endif\n    }\n}\n',
+      )
+      git(f.repo, 'add', 'src/Foo.cs', 'src/Bar.cs')
+
+      const { status, stdout, stderr } = lint(f)
+      assert.equal(status, 2, `expected the blocking exit code\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+      assert.match(stdout, /src\/Foo\.cs:6:.*CS0219/)
+      assert.match(stdout, /src\/Bar\.cs:6:.*CS0219/)
+    } finally {
+      f.cleanup()
+    }
+  })
+
+  // A mapping that fails has to fail the branch. Read as no owner at all, every changed file would
+  // be skipped and the commit would pass on a compilation that never ran. A directory the running
+  // user can enter but not list is enough to make the project lookup fail.
+  test('a failed project lookup fails the gate', { skip: (missing && `no ${missing} on PATH`) || (process.getuid?.() === 0 && 'root reads any directory') }, () => {
+    const f = fixture()
+    const locked = join(f.repo, 'src', 'locked')
+    try {
+      mkdirSync(locked)
+      writeFileSync(join(locked, 'Baz.cs'), 'public class Baz { }\n')
+      git(f.repo, 'add', 'src/locked/Baz.cs')
+      chmodSync(locked, 0o300)
+
+      const { status, stdout, stderr } = lint(f)
+      assert.equal(status, 1, `expected the gate to break\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+    } finally {
+      chmodSync(locked, 0o700)
       f.cleanup()
     }
   })
