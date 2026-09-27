@@ -4,8 +4,10 @@
 // suppress one of them, and exits non-zero if any survive. A separate spend
 // form marks a matched waiver as used, once the dispatcher that called the
 // filter knows the whole commit went through, a changed-paths form lists the
-// files a run covers, which the dispatcher hands to each language branch, and a
-// registry-key form prints the path the branches look adoption up under.
+// files a run covers, which the dispatcher hands to each language branch, an
+// owners form groups a branch's files by the build unit that lints them, and a
+// registry-key form prints the path the branches look adoption up under. An
+// adopted form tells a branch whether its language is wired up at all.
 //
 // argv is parsed by hand rather than through the flag package, for the
 // reason gate/internal/scope gives: flag exits 2 on a usage mistake and lets
@@ -18,13 +20,13 @@ import (
 	"github.com/tvrmsmith/coding-standards/lint/internal/lintfind"
 )
 
-// Kind is which of lint-changed's six forms argv named.
+// Kind is which of lint-changed's eight forms argv named.
 type Kind int
 
 const (
 	// KindFilter reads every --report named, scopes the findings to the
-	// diff, and lets a waiver suppress a survivor. Anything not naming one
-	// of the other forms means this.
+	// diff, and lets a waiver suppress a survivor. Anything not naming
+	// another form means this.
 	KindFilter Kind = iota
 	// KindWaive records a one-shot waiver.
 	KindWaive
@@ -40,6 +42,11 @@ const (
 	KindChangedPaths
 	// KindRegistryKey prints the path adoption is looked up under.
 	KindRegistryKey
+	// KindOwners groups one language's changed files by the build unit that
+	// owns each, NUL-terminated.
+	KindOwners
+	// KindAdopted answers whether a repository is adopted for one language.
+	KindAdopted
 )
 
 // ScopeMode is which base a filter run scopes its findings against.
@@ -69,6 +76,8 @@ type Command struct {
 	Waive        WaiveArgs
 	Spend        SpendArgs
 	ChangedPaths Scope
+	Owners       OwnersArgs
+	Adopted      AdoptedArgs
 }
 
 // Report is one report path and the parser that reads it, paired at parse
@@ -105,6 +114,18 @@ type WaiveArgs struct {
 	Reason   string
 }
 
+// AdoptedArgs is argv for the adopted form.
+type AdoptedArgs struct {
+	// Language is lintfind.LanguageGo or lintfind.LanguageCSharp. TypeScript
+	// has no registry: a package is linted when it holds an ESLint config.
+	Language string
+	// Key is the path adoption is looked up under, as registry-key printed it.
+	Key string
+	// Registry is the file that records adoption: the Go registry, or the
+	// .NET props file whose path-scoped Imports double as one.
+	Registry string
+}
+
 // SpendArgs is argv for the spend form.
 type SpendArgs struct{ IDs []string }
 
@@ -122,12 +143,14 @@ const usage = `usage: lint-changed [--staged | --since <ref> | --files <path> ..
        lint-changed waivers
        lint-changed spend --waiver <id> [--waiver <id> ...]
        lint-changed changed-paths (--staged | --since <ref> | --files <path> ...)
+       lint-changed owners --language <lang> [--files <path> ...]
+       lint-changed adopted --language (go | csharp) --registry-key <path> --registry <file>
        lint-changed registry-key`
 
 // Parse reads argv without the program name. "waive", "waivers", "spend",
-// "changed-paths" and "registry-key" as the first argument select those five
-// forms; anything else, including no arguments at all, is read as the filter
-// form.
+// "changed-paths", "owners", "adopted" and "registry-key" as the first
+// argument select those seven forms; anything else, including no arguments at
+// all, is read as the filter form.
 func Parse(args []string) (Command, error) {
 	if len(args) > 0 && args[0] == "waive" {
 		wa, err := parseWaive(args[1:])
@@ -161,6 +184,20 @@ func Parse(args []string) (Command, error) {
 			return Command{}, &UsageError{Problem: "registry-key takes no arguments"}
 		}
 		return Command{Kind: KindRegistryKey}, nil
+	}
+	if len(args) > 0 && args[0] == "owners" {
+		oa, err := parseOwners(args[1:])
+		if err != nil {
+			return Command{}, err
+		}
+		return Command{Kind: KindOwners, Owners: oa}, nil
+	}
+	if len(args) > 0 && args[0] == "adopted" {
+		aa, err := parseAdopted(args[1:])
+		if err != nil {
+			return Command{}, err
+		}
+		return Command{Kind: KindAdopted, Adopted: aa}, nil
 	}
 	fa, err := parseFilter(args)
 	if err != nil {
@@ -361,6 +398,78 @@ func parseWaive(args []string) (WaiveArgs, error) {
 		return WaiveArgs{}, &UsageError{Problem: "waive: --reason is required"}
 	}
 	return wa, nil
+}
+
+// parseOwners takes no --files at all as legal, since every changed file of a
+// language can be absent from disk and the branch still has to reach its tail.
+func parseOwners(args []string) (OwnersArgs, error) {
+	var oa OwnersArgs
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--language":
+			v, next, err := flagValue(args, i, "--language")
+			if err != nil {
+				return OwnersArgs{}, err
+			}
+			oa.Language, i = v, next
+		case "--files":
+			v, next, err := flagValue(args, i, "--files")
+			if err != nil {
+				return OwnersArgs{}, err
+			}
+			oa.Files, i = append(oa.Files, v), next
+		default:
+			return OwnersArgs{}, &UsageError{Problem: "owners: unknown argument '" + args[i] + "'"}
+		}
+	}
+	switch oa.Language {
+	case lintfind.LanguageCSharp, lintfind.LanguageGo, lintfind.LanguageTS:
+		return oa, nil
+	default:
+		return OwnersArgs{}, &UsageError{Problem: "owners: --language '" + oa.Language + "' is not one of " +
+			lintfind.LanguageCSharp + ", " + lintfind.LanguageGo + ", " + lintfind.LanguageTS}
+	}
+}
+
+func parseAdopted(args []string) (AdoptedArgs, error) {
+	var aa AdoptedArgs
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--language":
+			v, next, err := flagValue(args, i, "--language")
+			if err != nil {
+				return AdoptedArgs{}, err
+			}
+			aa.Language, i = v, next
+		case "--registry-key":
+			v, next, err := flagValue(args, i, "--registry-key")
+			if err != nil {
+				return AdoptedArgs{}, err
+			}
+			aa.Key, i = v, next
+		case "--registry":
+			v, next, err := flagValue(args, i, "--registry")
+			if err != nil {
+				return AdoptedArgs{}, err
+			}
+			aa.Registry, i = v, next
+		default:
+			return AdoptedArgs{}, &UsageError{Problem: "adopted: unknown argument '" + args[i] + "'"}
+		}
+	}
+	switch aa.Language {
+	case lintfind.LanguageGo, lintfind.LanguageCSharp:
+	default:
+		return AdoptedArgs{}, &UsageError{Problem: "adopted: --language must be " +
+			lintfind.LanguageGo + " or " + lintfind.LanguageCSharp}
+	}
+	if aa.Key == "" {
+		return AdoptedArgs{}, &UsageError{Problem: "adopted: --registry-key is required"}
+	}
+	if aa.Registry == "" {
+		return AdoptedArgs{}, &UsageError{Problem: "adopted: --registry is required"}
+	}
+	return aa, nil
 }
 
 func parseSpend(args []string) (SpendArgs, error) {

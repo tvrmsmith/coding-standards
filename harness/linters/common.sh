@@ -99,9 +99,27 @@ changed_paths() {
   "$bin" changed-paths "${scope[@]}" </dev/null
 }
 
+# The build units owning a branch's files, as `lint-changed owners` groups them: each group is an
+# owner, its members relative to the owner's directory, and an empty field, every field
+# NUL-terminated. Which unit owns a file is `lint-changed`'s, where a Go test can reach it. A file
+# no unit owns is named on stderr and left out.
+#
+# Written to a file rather than read through a process substitution, whose status bash drops: a
+# mapping that failed would read as every file being unowned, and the branch would pass clean.
+#
+# Called as: owner_groups <language> <out-file> [<file>...]
+owner_groups() {
+  local bin language=$1 out=$2 file args=()
+  shift 2
+  for file in "$@"; do
+    args+=(--files "$file")
+  done
+  bin=$(lint_changed_bin) || return 1
+  "$bin" owners --language "$language" ${args[@]+"${args[@]}"} </dev/null >"$out"
+}
+
 # The nearest ancestor of $1 that satisfies the predicate named in $2, which is called with a
-# directory and answers by exit status. Every language asks this question — which package, which
-# module, which project owns this file — and only the predicate differs.
+# directory and answers by exit status.
 ancestor_with() {
   local dir predicate=$2
   dir=$(dirname "$1")
@@ -242,6 +260,19 @@ spend_waivers() {
 
   bin=$(lint_changed_bin) || return 1
   "$bin" spend "${waivers[@]}" </dev/null
+}
+
+# Whether this repo is adopted for one language, as `lint-changed adopted` answers it for
+# $registry_key in the registry file $2: echoes "adopted" or "not-adopted", or returns 1 with the
+# reason on stderr when the registry exists and cannot be read. Asked in Go rather than grepped
+# here, because a registry the match misread came back as not wired, which --staged skips in
+# silence, so the commit passed unlinted.
+#
+# Called as: adoption <go|csharp> <registry>
+adoption() {
+  local bin
+  bin=$(lint_changed_bin) || return 1
+  "$bin" adopted --language "$1" --registry-key "$registry_key" --registry "$2" </dev/null
 }
 
 # Skip, don't fail. A repo bootstrapped for one language must not have its commits blocked by a
