@@ -15,8 +15,8 @@ func TestParseRegistryKeyTakesNoArguments(t *testing.T) {
 	}
 	_, err = Parse([]string{"registry-key", "--staged"})
 	var ue *UsageError
-	if !errors.As(err, &ue) {
-		t.Errorf("Parse(registry-key --staged) = %v, want *UsageError", err)
+	if !errors.As(err, &ue) || ue.Problem != "registry-key takes no arguments" {
+		t.Errorf("Parse(registry-key --staged) = %v, want the usage error saying it takes no arguments", err)
 	}
 }
 
@@ -67,7 +67,20 @@ func TestRegistryKeyOfASymlinkedGitDirIsResolved(t *testing.T) {
 }
 
 // A relative value is read against the working directory, the way the shell's
-// cd read it, and resolved like every other key.
+// cd read it, not against the repo root.
+func TestRegistryKeyEnvReadsARelativeValueAgainstTheWorkingDirectory(t *testing.T) {
+	repo := committedRepo(t)
+	plain := filepath.Join(repo, "plain")
+	if err := os.Mkdir(plain, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	chdirWithoutRegistryKey(t, filepath.Join(repo, "sub"))
+	t.Setenv(registryKeyEnv, "../plain")
+
+	assertRegistryKey(t, resolved(t, plain))
+}
+
+// An override that is a symlink keys on where it points.
 func TestRegistryKeyEnvNamesTheKeyResolved(t *testing.T) {
 	repo := committedRepo(t)
 	named := t.TempDir()
@@ -85,11 +98,11 @@ func TestRegistryKeyEnvNamesTheKeyResolved(t *testing.T) {
 // spelling the way the shell's cd && pwd -P did.
 func TestRegistryKeyEnvTakesTheOnDiskSpelling(t *testing.T) {
 	repo := committedRepo(t)
-	adopted := filepath.Join(t.TempDir(), "Adopted")
-	if err := os.Mkdir(adopted, 0o700); err != nil {
+	adopted := filepath.Join(t.TempDir(), "Parent", "Adopted")
+	if err := os.MkdirAll(adopted, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	misCased := filepath.Join(filepath.Dir(adopted), "aDOPTED")
+	misCased := filepath.Join(filepath.Dir(filepath.Dir(adopted)), "pARENT", "aDOPTED")
 	if _, err := os.Stat(misCased); err != nil {
 		t.Skip("case-sensitive filesystem: a mis-cased override names no directory")
 	}
@@ -97,6 +110,34 @@ func TestRegistryKeyEnvTakesTheOnDiskSpelling(t *testing.T) {
 	t.Setenv(registryKeyEnv, misCased)
 
 	assertRegistryKey(t, resolved(t, adopted))
+}
+
+// The choice the on-disk spelling rests on, pinned on any filesystem since CI's
+// is case-sensitive and never reaches a respelling.
+func TestSpellingAmongTakesOnlyAConfirmedSpelling(t *testing.T) {
+	nfd := "Re\u0301cords"
+	confirms := func(want string) func(string) bool {
+		return func(name string) bool { return name == want }
+	}
+	cases := []struct {
+		name      string
+		component string
+		names     []string
+		sameDir   func(string) bool
+		want      string
+	}{
+		{"an exact listing wins", "Adopted", []string{"adopted", "Adopted"}, confirms("adopted"), "Adopted"},
+		{"a confirmed case fold is taken", "aDOPTED", []string{"other", "Adopted"}, confirms("Adopted"), "Adopted"},
+		{"a confirmed normalization is taken", "R\u00e9cords", []string{nfd}, confirms(nfd), nfd},
+		{"an unconfirmed fold is ignored", "aDOPTED", []string{"Adopted"}, confirms(""), "aDOPTED"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := spellingAmong(c.component, c.names, c.sameDir); got != c.want {
+				t.Errorf("spellingAmong(%q, %q) = %q, want %q", c.component, c.names, got, c.want)
+			}
+		})
+	}
 }
 
 // A key naming no directory matches no registry, so every branch would skip

@@ -101,9 +101,11 @@ commit whose staged files were all deleted from the working tree used to go thro
 When every branch skipped, as in a repo adopted for none of the languages in the change, no filter
 runs and the commit goes through, as it always did.
 
-So every run needs Go on `PATH`, even in a repo with no Go in it. `lint-changed changed-paths` also
-computes the changed set each run starts from, `lint-changed owners` maps each branch's files to
-the module, project or package that lints them, and `lint-changed adopted` tells the Go and .NET
+So every run needs Go on `PATH`, even in a repo with no Go in it, and git 2.31 or later, for the
+`--path-format` flag `lint-changed registry-key` reads the common git dir with. `lint-changed
+changed-paths` also computes the changed set each run starts from, `lint-changed registry-key`
+names the path adoption is looked up under, `lint-changed owners` maps each branch's files to the
+module, project or package that lints them, and `lint-changed adopted` tells the Go and .NET
 branches whether the repo is adopted. `linters/common.sh` builds `lint-changed` from this
 hub into `${XDG_CACHE_HOME:-~/.cache}/coding-standards` once per run, which Go's build cache makes
 free after the first. No Go means neither the changed set, the owners mapping, the adoption check nor the filter

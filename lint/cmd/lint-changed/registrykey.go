@@ -82,13 +82,11 @@ func namedRegistryKey(named string) (srcpath.Root, error) {
 }
 
 // spelledOnDisk is dir with each component spelled the way its parent lists it,
-// which is what the shell's `cd && pwd -P` printed. On a case-insensitive
-// filesystem EvalSymlinks keeps the case the caller typed, and bootstrap wrote
-// the registry with pwd -P, so a mis-cased override would miss every
-// case-sensitive lookup and skip in silence. A component only takes another
-// spelling that os.SameFile confirms is the same directory, so two directories a
-// case-sensitive filesystem keeps apart never merge. A parent it cannot list
-// keeps the component as typed.
+// which is what the shell's `cd && pwd -P` printed. APFS matches a name whatever
+// its case or Unicode normalization, EvalSymlinks keeps the spelling the caller
+// typed, and bootstrap wrote the registry with pwd -P, so a differently spelled
+// override would miss every byte-exact lookup and skip in silence. A parent it
+// cannot list keeps the component as typed.
 func spelledOnDisk(dir string) string {
 	spelled := string(filepath.Separator)
 	for _, component := range strings.Split(strings.TrimPrefix(dir, spelled), string(filepath.Separator)) {
@@ -97,26 +95,39 @@ func spelledOnDisk(dir string) string {
 	return spelled
 }
 
-// listedSpelling is how parent lists component, or component itself when the
-// listing holds it exactly or confirms no other spelling.
+// listedSpelling is how parent lists component.
 func listedSpelling(parent, component string) string {
 	entries, err := os.ReadDir(parent)
 	if err != nil {
 		return component
 	}
-	if slices.ContainsFunc(entries, func(e os.DirEntry) bool { return e.Name() == component }) {
-		return component
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
 	}
 	typed, err := os.Stat(filepath.Join(parent, component))
 	if err != nil {
 		return component
 	}
-	for _, entry := range entries {
-		if !strings.EqualFold(entry.Name(), component) {
-			continue
-		}
-		if info, err := os.Stat(filepath.Join(parent, entry.Name())); err == nil && os.SameFile(info, typed) {
-			return entry.Name()
+	return spellingAmong(component, names, func(name string) bool {
+		info, err := os.Stat(filepath.Join(parent, name))
+		return err == nil && os.SameFile(info, typed)
+	})
+}
+
+// spellingAmong is the name in names that spells component: component itself
+// when listed, else the first name sameDir confirms is the directory component
+// opens, else component. Every name is a candidate, not only a case fold of
+// component, because NFC and NFD spellings of one name differ in more than case.
+// The confirmation is what keeps two directories a case-sensitive filesystem
+// holds apart from merging.
+func spellingAmong(component string, names []string, sameDir func(name string) bool) string {
+	if slices.Contains(names, component) {
+		return component
+	}
+	for _, name := range names {
+		if sameDir(name) {
+			return name
 		}
 	}
 	return component
