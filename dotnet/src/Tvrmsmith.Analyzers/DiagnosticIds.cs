@@ -41,4 +41,10 @@ public static class DiagnosticIds
     /// <c>comment-block-length</c> — a run of non-documentation comments longer than the budget.
     /// </summary>
     public const string CommentBlockLength = "TVRM0006";
+
+    /// <summary>
+    /// <c>no-anonymous-object-comparison</c>. An assertion comparing one anonymous object with
+    /// another, which bundles unrelated values into a throwaway shape so one call asserts them all.
+    /// </summary>
+    public const string NoAnonymousObjectComparison = "TVRM0007";
 }

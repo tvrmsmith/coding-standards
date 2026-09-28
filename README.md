@@ -121,9 +121,13 @@ Everything else is off the shelf. These have no off-the-shelf equivalent:
    physical *line*, so they flag long code and miss a long comment made of short lines. Go has
    no equivalent either, and `go/README.md` records the two ways a doc comment behaves
    differently there.
+7. `no-anonymous-object-comparison`, Roslyn only (`TVRM0007`). Catches an anonymous-object
+   subject compared with an anonymous-object expectation, which bundles values that share no
+   object into one assertion. The rewrite is one `Should()` per value inside an `AssertionScope`.
+   The TypeScript preset has no counterpart.
 
-Go needs two of the six and no more. `testifylint` covers A2 and most of A5 on its own, which is
-why the Go half has one hand-written assertion rule where C# needed five, and A4 has no Go shape
+Go needs two of the seven and no more. `testifylint` covers A2 and most of A5 on its own, which is
+why the Go half has one hand-written assertion rule where C# needed six, and A4 has no Go shape
 at all: neither a nil dereference nor a failed type assertion can turn a missing value into a
 *passing* assertion, so there is nothing to ban. `go/README.md` records that decision with the
 rest of the rule tables.

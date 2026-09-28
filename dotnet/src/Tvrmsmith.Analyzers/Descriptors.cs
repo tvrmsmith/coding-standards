@@ -101,6 +101,22 @@ internal static class Descriptors
             + "covers the synchronous test body it cannot see.",
         helpLinkUri: SkillReferences + "dotnet-awesome-assertions.md#assertions-must-actually-execute-custom-rule");
 
+    /// <summary>TVRM0007 <c>no-anonymous-object-comparison</c>.</summary>
+    public static readonly DiagnosticDescriptor NoAnonymousObjectComparison = new(
+        id: DiagnosticIds.NoAnonymousObjectComparison,
+        title: "Do not compare two anonymous objects",
+        messageFormat: "Assert these {0} values with one Should() each inside an AssertionScope, not as one anonymous object",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description:
+            "Bundling unrelated values into an anonymous object so one call can assert them all "
+            + "costs the failure message: it reports a structural diff of a throwaway type rather "
+            + "than which fact broke, and the expected side needs casts to match member types. One "
+            + "Should() per value inside an AssertionScope still reports every failure at once. A "
+            + "real object compared with an anonymous expectation is not this shape.",
+        helpLinkUri: SkillReferences + "dotnet-awesome-assertions.md#never-bundle-values-into-an-anonymous-subject-custom-rule");
+
     /// <summary>TVRM0006 — <c>comment-block-length</c>.</summary>
     public static readonly DiagnosticDescriptor CommentBlockLength = new(
         id: DiagnosticIds.CommentBlockLength,

@@ -30,6 +30,8 @@ src/Tvrmsmith.Analyzers/
   NoAssertionEscapeCastAnalyzer.cs           # TVRM0003
   NoAssertionWithoutMatcherAnalyzer.cs       # TVRM0004
   NoDroppedAsyncAssertionAnalyzer.cs         # TVRM0005
+  CommentBlockLengthAnalyzer.cs              # TVRM0006
+  NoAnonymousObjectComparisonAnalyzer.cs     # TVRM0007
   AnalyzerReleases.{Shipped,Unshipped}.md
   config/Tvrmsmith.Analyzers.globalconfig    # the curated severities
   build/Tvrmsmith.Analyzers.props            # nupkg auto-import, for the published package
@@ -63,6 +65,8 @@ correct rewrite needs a judgement call the analyzer cannot make.
 | `TVRM0003` | `no-assertion-escape-cast` | a cast to `object` whose only purpose is to reach `ObjectAssertions` |
 | `TVRM0004` | `no-assertion-without-matcher` | `x.Should();` as a whole statement, with no matcher after it |
 | `TVRM0005` | `no-dropped-async-assertion` | an awaitable assertion statement in a synchronous body, where CS4014 cannot see it |
+| `TVRM0006` | `comment-block-length` | a run of non-documentation comments over the line budget |
+| `TVRM0007` | `no-anonymous-object-comparison` | an anonymous-object subject compared with an anonymous-object expectation |
 
 Two scoping decisions carry most of the precision, and both are load-bearing:
 
@@ -92,6 +96,14 @@ the condition tested, and the parameterized-test pattern that asserts unconditio
 refines by case. No syntactic test separates those from a real skipped assertion, so it stays
 **[review-only]**. `TVRM0005` stops at the enclosing `async` method for the opposite reason: the
 compiler already reports CS4014 there, and a second diagnostic on the same line is pure noise.
+
+**`TVRM0007` needs both sides anonymous, and names no matcher.** The anonymous subject is what
+makes the assertion a bundle of values that share no object. A real object against an anonymous
+expectation is the fix `TVRM0001` asks for, so it stays silent, and so does a projection such as
+`items.Select(i => new { i.Name })`, whose subject is a real collection. Any matcher taking an
+anonymous-object argument fires, `Be` included, because anonymous types override `Equals` and
+compare the bundle as surely as `BeEquivalentTo` does. The rule matches the creation expression, not
+the type, so a subject or expectation held in a local first goes unreported.
 
 `tools/MeasureA5` is how the split above was decided rather than argued. It parses a target repo
 with Roslyn and counts each shape, including the sub-buckets that separate the legitimate

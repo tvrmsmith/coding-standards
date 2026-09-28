@@ -61,6 +61,17 @@ public class CustomRuleViolations
         act.Should().ThrowAsync<InvalidOperationException>();
     }
 
+    // TVRM0007 no-anonymous-object-comparison.
+    [Fact]
+    public void UnrelatedValuesBundledIntoAnAnonymousSubject()
+    {
+        var page = new Page { Number = 2 };
+        var envelope = new Envelope { Location = new Uri("https://example.test/items/123") };
+
+        new { page.Number, envelope.Location }.Should().BeEquivalentTo(
+            new { Number = 2, Location = new Uri("https://example.test/items/123") });
+    }
+
     // TVRM0006 comment-block-length. Twelve lines of plain prose, over the ten-line budget, and
     // deliberately the justifying-a-workaround shape the guideline is about rather than anything
     // a doc comment would carry. The block has to be plain // lines: a /// block is exempt at any

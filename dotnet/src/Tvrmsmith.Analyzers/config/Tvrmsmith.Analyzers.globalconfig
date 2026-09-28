@@ -78,6 +78,12 @@ dotnet_diagnostic.TVRM0004.severity = warning
 # against the adoption target it is dominated by legitimate idioms.
 dotnet_diagnostic.TVRM0005.severity = warning
 
+# TVRM0007 no-anonymous-object-comparison. The mechanical half of the scoping guidance. Values
+# that share no object belong in an AssertionScope, one Should() each, rather than in an anonymous
+# subject compared with an anonymous expectation. A real object against an anonymous expectation
+# is the TVRM0001 fix and stays silent.
+dotnet_diagnostic.TVRM0007.severity = warning
+
 ##
 ## Comment length — enforcement home for the "Comments" guideline in coding-standards/SKILL.md.
 ##
