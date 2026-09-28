@@ -102,8 +102,10 @@ makes the assertion a bundle of values that share no object. A real object again
 expectation is the fix `TVRM0001` asks for, so it stays silent, and so does a projection such as
 `items.Select(i => new { i.Name })`, whose subject is a real collection. Any matcher taking an
 anonymous-object argument fires, `Be` included, because anonymous types override `Equals` and
-compare the bundle as surely as `BeEquivalentTo` does. The rule matches the creation expression, not
-the type, so a subject or expectation held in a local first goes unreported.
+compare the bundle as surely as `BeEquivalentTo` does. Either side may be a `var` local the rule
+follows back to its `new { ... }`, the only other place C# can hold an anonymous type. It reads
+the declaration alone, so a bundle later reassigned from a projection of the same shape still
+reports.
 
 `tools/MeasureA5` is how the split above was decided rather than argued. It parses a target repo
 with Roslyn and counts each shape, including the sub-buckets that separate the legitimate

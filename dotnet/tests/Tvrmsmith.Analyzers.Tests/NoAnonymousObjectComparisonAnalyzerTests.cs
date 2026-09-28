@@ -63,6 +63,59 @@ public class NoAnonymousObjectComparisonAnalyzerTests
             """,
             Expect.Diagnostic(Descriptors.NoAnonymousObjectComparison).WithLocation(0).WithArguments(2));
 
+    /// <summary>
+    /// A <c>var</c> local is the only other way to hold an anonymous type, so the rule follows
+    /// the local back to the object it was created as.
+    /// </summary>
+    [Fact]
+    public Task FiresOnTheBundleHeldInALocal() =>
+        Verify.Fires(
+            """
+            public class ItemTests
+            {
+                public void Compare(Item item, Response response)
+                {
+                    var actual = new { item.Name, response.StatusCode };
+
+                    {|#0:actual|}.Should().BeEquivalentTo(new { Name = "Alice", StatusCode = 200 });
+                }
+            }
+            """,
+            Expect.Diagnostic(Descriptors.NoAnonymousObjectComparison).WithLocation(0).WithArguments(2));
+
+    [Fact]
+    public Task FiresOnTheExpectationHeldInALocal() =>
+        Verify.Fires(
+            """
+            public class ItemTests
+            {
+                public void Compare(Item item, Response response)
+                {
+                    var expected = new { Name = "Alice", StatusCode = 200 };
+
+                    {|#0:new { item.Name, response.StatusCode }|}.Should().BeEquivalentTo(expected);
+                }
+            }
+            """,
+            Expect.Diagnostic(Descriptors.NoAnonymousObjectComparison).WithLocation(0).WithArguments(2));
+
+    [Fact]
+    public Task FiresWhenBothSidesAreHeldInLocals() =>
+        Verify.Fires(
+            """
+            public class ItemTests
+            {
+                public void Compare(Item item, Response response)
+                {
+                    var actual = new { item.Name, response.StatusCode };
+                    var expected = new { Name = "Alice", StatusCode = 200 };
+
+                    {|#0:actual|}.Should().BeEquivalentTo(expected);
+                }
+            }
+            """,
+            Expect.Diagnostic(Descriptors.NoAnonymousObjectComparison).WithLocation(0).WithArguments(2));
+
     /// <summary>The rewrite the diagnostic asks for.</summary>
     [Fact]
     public Task SilentOnOneAssertionPerFactInsideAnAssertionScope() =>
@@ -147,6 +200,27 @@ public class NoAnonymousObjectComparisonAnalyzerTests
                         new { Name = "Alice" },
                         new { Name = "Bob" },
                     });
+                }
+            }
+            """);
+
+    /// <summary>
+    /// A local holding one element of a projection has an anonymous type, but it was picked out
+    /// of a real object rather than built as a bundle, so following the local finds no creation.
+    /// </summary>
+    [Fact]
+    public Task SilentOnALocalHoldingAProjectedElement() =>
+        Verify.Silent(
+            """
+            using System.Linq;
+
+            public class ItemTests
+            {
+                public void First(PagedResult result)
+                {
+                    var first = result.Items.Select(i => new { i.Name, i.Age }).First();
+
+                    first.Should().BeEquivalentTo(new { Name = "Alice", Age = 30 });
                 }
             }
             """);

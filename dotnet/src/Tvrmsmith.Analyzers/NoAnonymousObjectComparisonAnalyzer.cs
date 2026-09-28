@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -19,11 +20,13 @@ namespace Tvrmsmith.Analyzers;
 /// reports every failure at once.
 /// </para>
 /// <para>
-/// The subject is what makes it a bundle, so both sides have to be anonymous-object creations. A
-/// real object against an anonymous expectation is the shape <c>TVRM0001</c> steers toward, and
-/// a projection such as <c>items.Select(i =&gt; new { i.Name })</c> has a subject of its own. The
-/// matcher is not named: anonymous types override <c>Equals</c>, so <c>Be</c> compares the bundle
-/// as surely as <c>BeEquivalentTo</c> does.
+/// The subject is what makes it a bundle, so both sides have to be anonymous objects someone
+/// built with <c>new { ... }</c>, inline or in a <c>var</c> local the assertion names. C# gives an
+/// anonymous type no name to write, so a local is the only other place one can be held. A real
+/// object against an anonymous expectation is the shape <c>TVRM0001</c> steers toward, and a
+/// projection such as <c>items.Select(i =&gt; new { i.Name }).First()</c> has a subject of its
+/// own, even held in a local. The matcher is not named, because anonymous types override
+/// <c>Equals</c> and <c>Be</c> compares the bundle as surely as <c>BeEquivalentTo</c> does.
 /// </para>
 /// </remarks>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
@@ -46,9 +49,16 @@ public sealed class NoAnonymousObjectComparisonAnalyzer : DiagnosticAnalyzer
         var invocation = (InvocationExpressionSyntax)context.Node;
 
         // Both syntactic tests run before IsShouldInvocation asks the semantic model.
-        if (invocation.ShouldReceiver()?.Unparenthesize() is not AnonymousObjectCreationExpressionSyntax subject
-            || !IsComparedWithAnAnonymousObject(invocation)
+        if (invocation.ShouldReceiver()?.Unparenthesize() is not { } subject
+            || !CanHoldAnAnonymousObject(subject)
+            || invocation.Parent is not MemberAccessExpressionSyntax { Parent: InvocationExpressionSyntax matcher }
             || !invocation.IsShouldInvocation(context.SemanticModel, context.CancellationToken))
+        {
+            return;
+        }
+
+        if (AnonymousObjectBehind(subject, context.SemanticModel, context.CancellationToken) is not { } bundle
+            || !IsComparedWithAnAnonymousObject(matcher, context.SemanticModel, context.CancellationToken))
         {
             return;
         }
@@ -56,25 +66,63 @@ public sealed class NoAnonymousObjectComparisonAnalyzer : DiagnosticAnalyzer
         context.ReportDiagnostic(Diagnostic.Create(
             Descriptors.NoAnonymousObjectComparison,
             subject.GetLocation(),
-            subject.Initializers.Count));
+            bundle.Initializers.Count));
     }
 
-    /// <summary>Does the matcher called on <paramref name="shouldInvocation"/> take an anonymous object?</summary>
-    private static bool IsComparedWithAnAnonymousObject(InvocationExpressionSyntax shouldInvocation)
+    /// <summary>Does <paramref name="matcher"/> take an anonymous object, inline or through a local?</summary>
+    private static bool IsComparedWithAnAnonymousObject(
+        InvocationExpressionSyntax matcher,
+        SemanticModel semanticModel,
+        CancellationToken cancellationToken)
     {
-        if (shouldInvocation.Parent is not MemberAccessExpressionSyntax { Parent: InvocationExpressionSyntax matcher })
-        {
-            return false;
-        }
-
         foreach (var argument in matcher.ArgumentList.Arguments)
         {
-            if (argument.Expression.Unparenthesize() is AnonymousObjectCreationExpressionSyntax)
+            if (AnonymousObjectBehind(argument.Expression, semanticModel, cancellationToken) is not null)
             {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private static bool CanHoldAnAnonymousObject(ExpressionSyntax expression) =>
+        expression is AnonymousObjectCreationExpressionSyntax or IdentifierNameSyntax;
+
+    /// <summary>
+    /// The <c>new { ... }</c> that <paramref name="expression"/> is, or that the local it names
+    /// was declared with.
+    /// </summary>
+    /// <remarks>
+    /// Only the declaration is read, so a local declared as a bundle and later reassigned from a
+    /// projection of the same shape still reports. Rare enough to accept at warning severity.
+    /// </remarks>
+    private static AnonymousObjectCreationExpressionSyntax? AnonymousObjectBehind(
+        ExpressionSyntax expression,
+        SemanticModel semanticModel,
+        CancellationToken cancellationToken)
+    {
+        expression = expression.Unparenthesize();
+        if (expression is AnonymousObjectCreationExpressionSyntax creation)
+        {
+            return creation;
+        }
+
+        if (expression is not IdentifierNameSyntax
+            || semanticModel.GetSymbolInfo(expression, cancellationToken).Symbol is not ILocalSymbol local)
+        {
+            return null;
+        }
+
+        foreach (var reference in local.DeclaringSyntaxReferences)
+        {
+            if (reference.GetSyntax(cancellationToken) is VariableDeclaratorSyntax { Initializer.Value: var value }
+                && value.Unparenthesize() is AnonymousObjectCreationExpressionSyntax declared)
+            {
+                return declared;
+            }
+        }
+
+        return null;
     }
 }
