@@ -116,6 +116,68 @@ public class NoAnonymousObjectComparisonAnalyzerTests
             """,
             Expect.Diagnostic(Descriptors.NoAnonymousObjectComparison).WithLocation(0).WithArguments(2));
 
+    /// <summary>
+    /// Values copied out of one object need no scope. The object itself is the subject, so the
+    /// advice is a single BeEquivalentTo on it.
+    /// </summary>
+    [Fact]
+    public Task AdvisesOneBeEquivalentToWhenEveryValueComesFromOneObject() =>
+        Verify.Fires(
+            """
+            public class PageTests
+            {
+                public void Page(PagedResult result)
+                {
+                    {|#0:new { result.Page, Size = result.PageSize, Count = result.Items.Count }|}
+                        .Should().BeEquivalentTo(new { Page = 2, Size = 3, Count = 10 });
+                }
+            }
+            """,
+            Expect.Diagnostic(Descriptors.NoAnonymousObjectComparisonOfOneObject)
+                .WithLocation(0)
+                .WithArguments("result"));
+
+    [Fact]
+    public Task AdvisesOneBeEquivalentToForALocalCopiedFromOneObject() =>
+        Verify.Fires(
+            """
+            public class PageTests
+            {
+                public void Page(PagedResult result)
+                {
+                    var actual = new { result.Page, result.PageSize };
+
+                    {|#0:actual|}.Should().BeEquivalentTo(new { Page = 2, PageSize = 3 });
+                }
+            }
+            """,
+            Expect.Diagnostic(Descriptors.NoAnonymousObjectComparisonOfOneObject)
+                .WithLocation(0)
+                .WithArguments("result"));
+
+    /// <summary>
+    /// A call is not a stable reference to the object, the same line TVRM0001 draws, so a member
+    /// reached through one sends the advice back to a scope.
+    /// </summary>
+    [Fact]
+    public Task AdvisesAScopeWhenAValueIsReachedThroughACall() =>
+        Verify.Fires(
+            """
+            using System.Linq;
+
+            public class PageTests
+            {
+                public void Page(PagedResult result)
+                {
+                    {|#0:new { result.Page, First = result.Items.First().Name }|}
+                        .Should().BeEquivalentTo(new { Page = 2, First = "Alice" });
+                }
+            }
+            """,
+            Expect.Diagnostic(Descriptors.NoAnonymousObjectComparison)
+                .WithLocation(0)
+                .WithArguments(2));
+
     /// <summary>The rewrite the diagnostic asks for.</summary>
     [Fact]
     public Task SilentOnOneAssertionPerFactInsideAnAssertionScope() =>

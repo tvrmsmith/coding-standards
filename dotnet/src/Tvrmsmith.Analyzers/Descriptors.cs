@@ -117,6 +117,24 @@ internal static class Descriptors
             + "real object compared with an anonymous expectation is not this shape.",
         helpLinkUri: SkillReferences + "dotnet-awesome-assertions.md#never-bundle-values-into-an-anonymous-subject-custom-rule");
 
+    /// <summary>
+    /// TVRM0007 <c>no-anonymous-object-comparison</c>, when every value in the bundle is read from
+    /// one object. Same rule, different fix, so it shares the id and carries its own advice.
+    /// </summary>
+    public static readonly DiagnosticDescriptor NoAnonymousObjectComparisonOfOneObject = new(
+        id: DiagnosticIds.NoAnonymousObjectComparison,
+        title: "Do not compare two anonymous objects",
+        messageFormat: "Every value here is read from '{0}', so assert '{0}' itself with one BeEquivalentTo against the anonymous expectation",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description:
+            "Copying members of one object into an anonymous object before comparing adds a "
+            + "throwaway type and nothing else. The object is already the subject, so compare it with "
+            + "the anonymous expectation in a single BeEquivalentTo, which checks only the members "
+            + "the expectation names.",
+        helpLinkUri: SkillReferences + "dotnet-awesome-assertions.md#never-bundle-values-into-an-anonymous-subject-custom-rule");
+
     /// <summary>TVRM0006 — <c>comment-block-length</c>.</summary>
     public static readonly DiagnosticDescriptor CommentBlockLength = new(
         id: DiagnosticIds.CommentBlockLength,

@@ -123,7 +123,21 @@ using (new AssertionScope())
 }
 ```
 
-The analyzer fires only when both sides are anonymous objects. A real object compared with an
+When every value is read from one object, that object is already the subject. Keep a single
+`BeEquivalentTo` and point it at the object instead of copying its members out.
+
+```csharp
+// BAD. Members of one object copied into a throwaway shape.
+new { result.Page, result.PageSize }.Should().BeEquivalentTo(new { Page = 2, PageSize = 3 });
+
+// GOOD. The object itself against the anonymous expectation.
+result.Should().BeEquivalentTo(
+    new { Page = 2, PageSize = 3 },
+    o => o.ExcludingMissingMembers());
+```
+
+The analyzer fires only when both sides are anonymous objects, and its message names which fix
+applies. A real object compared with an
 anonymous expectation is the combining pattern above, and an anonymous object passed anywhere
 else, such as a request body, is not an assertion at all.
 

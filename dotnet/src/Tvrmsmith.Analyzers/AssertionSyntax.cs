@@ -144,6 +144,32 @@ internal static class AssertionSyntax
         }
     }
 
+    /// <summary>
+    /// The identifier a member chain bottoms out at, <c>response</c> for both
+    /// <c>response.StatusCode</c> and <c>response.Headers.Location</c>.
+    /// </summary>
+    /// <remarks>
+    /// Null when the expression *is* that identifier, which keeps
+    /// <c>x.Should().Be(1); x.Should().BeGreaterThan(0);</c> out of <c>TVRM0001</c>'s grouping:
+    /// those are two assertions on one value, not two members that a single anonymous object
+    /// replaces. <c>TVRM0007</c> uses the same root to tell values copied out of one object from
+    /// values gathered from several.
+    /// </remarks>
+    public static ExpressionSyntax? MemberChainRoot(ExpressionSyntax expression)
+    {
+        ExpressionSyntax? root = null;
+
+        foreach (var node in WalkReceiverSpine(expression))
+        {
+            root = node;
+        }
+
+        return root is IdentifierNameSyntax or ThisExpressionSyntax or BaseExpressionSyntax
+            && root != expression
+            ? root
+            : null;
+    }
+
     /// <summary>Strips redundant parentheses without changing what the expression denotes.</summary>
     public static ExpressionSyntax Unparenthesize(this ExpressionSyntax expression)
     {

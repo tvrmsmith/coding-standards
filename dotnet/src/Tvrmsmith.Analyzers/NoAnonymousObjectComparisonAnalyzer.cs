@@ -25,7 +25,8 @@ namespace Tvrmsmith.Analyzers;
 /// anonymous type no name to write, so a local is the only other place one can be held. A real
 /// object against an anonymous expectation is the shape <c>TVRM0001</c> steers toward, and a
 /// projection such as <c>items.Select(i =&gt; new { i.Name }).First()</c> has a subject of its
-/// own, even held in a local. The matcher is not named, because anonymous types override
+/// own, even held in a local. When every value is read from one object, the advice changes from
+/// a scope to a single <c>BeEquivalentTo</c> on that object. The matcher is not named, because anonymous types override
 /// <c>Equals</c> and <c>Be</c> compares the bundle as surely as <c>BeEquivalentTo</c> does.
 /// </para>
 /// </remarks>
@@ -34,7 +35,9 @@ public sealed class NoAnonymousObjectComparisonAnalyzer : DiagnosticAnalyzer
 {
     /// <inheritdoc />
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } =
-        ImmutableArray.Create(Descriptors.NoAnonymousObjectComparison);
+        ImmutableArray.Create(
+            Descriptors.NoAnonymousObjectComparison,
+            Descriptors.NoAnonymousObjectComparisonOfOneObject);
 
     /// <inheritdoc />
     public override void Initialize(AnalysisContext context)
@@ -63,10 +66,44 @@ public sealed class NoAnonymousObjectComparisonAnalyzer : DiagnosticAnalyzer
             return;
         }
 
-        context.ReportDiagnostic(Diagnostic.Create(
-            Descriptors.NoAnonymousObjectComparison,
-            subject.GetLocation(),
-            bundle.Initializers.Count));
+        context.ReportDiagnostic(SharedRoot(bundle) is { } root
+            ? Diagnostic.Create(
+                Descriptors.NoAnonymousObjectComparisonOfOneObject,
+                subject.GetLocation(),
+                root.ToString())
+            : Diagnostic.Create(
+                Descriptors.NoAnonymousObjectComparison,
+                subject.GetLocation(),
+                bundle.Initializers.Count));
+    }
+
+    /// <summary>
+    /// The one object every value in <paramref name="bundle"/> is read from, or
+    /// <see langword="null"/> when the values come from more than one place.
+    /// </summary>
+    /// <remarks>
+    /// Values copied out of one object are that object's members, and a single BeEquivalentTo on
+    /// the object checks them without the copy. Anything gathered from several places, or
+    /// reached through a call, has no subject to compare and belongs in an AssertionScope.
+    /// </remarks>
+    private static ExpressionSyntax? SharedRoot(AnonymousObjectCreationExpressionSyntax bundle)
+    {
+        ExpressionSyntax? shared = null;
+
+        foreach (var member in bundle.Initializers)
+        {
+            var value = member.Expression.Unparenthesize();
+            if (!AssertionSyntax.IsStableReference(value)
+                || AssertionSyntax.MemberChainRoot(value) is not { } root
+                || (shared is not null && !SyntaxFactory.AreEquivalent(shared, root)))
+            {
+                return null;
+            }
+
+            shared = root;
+        }
+
+        return shared;
     }
 
     /// <summary>Does <paramref name="matcher"/> take an anonymous object, inline or through a local?</summary>

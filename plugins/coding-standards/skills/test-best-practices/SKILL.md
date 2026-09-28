@@ -44,8 +44,10 @@ assert result matches { page: 2, page_size: 3, total: 10 }
 
 This applies to collections too. Don't assert count then index into elements separately — use a single equivalence check against expected items.
 
-The object has to exist already, as something the code under test returned. Values gathered from
-different places go in a scope, below.
+The object has to exist already, as something the code under test returned. When every value
+comes from that one object, compare the object itself in one equivalence check rather than copying
+its members into a new structure first. Values gathered from different places go in a scope,
+below.
 
 ### Assertions Should Communicate Meaning
 
