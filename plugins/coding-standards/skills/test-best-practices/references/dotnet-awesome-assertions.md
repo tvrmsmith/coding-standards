@@ -123,17 +123,16 @@ using (new AssertionScope())
 }
 ```
 
-When every value is read from one object, that object is already the subject. Keep a single
-`BeEquivalentTo` and point it at the object instead of copying its members out.
+When every value is a direct member of one object, that object is already the subject. Keep a
+single `BeEquivalentTo`, point it at the object, and write the expectation with the object's own
+member names. `BeEquivalentTo` compares only the members the expectation names.
 
 ```csharp
 // BAD. Members of one object copied into a throwaway shape.
-new { result.Page, result.PageSize }.Should().BeEquivalentTo(new { Page = 2, PageSize = 3 });
+new { result.Page, Size = result.PageSize }.Should().BeEquivalentTo(new { Page = 2, Size = 3 });
 
-// GOOD. The object itself against the anonymous expectation.
-result.Should().BeEquivalentTo(
-    new { Page = 2, PageSize = 3 },
-    o => o.ExcludingMissingMembers());
+// GOOD. The object itself against an expectation using its member names.
+result.Should().BeEquivalentTo(new { Page = 2, PageSize = 3 });
 ```
 
 The analyzer fires only when both sides are anonymous objects, and its message names which fix

@@ -25,9 +25,10 @@ namespace Tvrmsmith.Analyzers;
 /// anonymous type no name to write, so a local is the only other place one can be held. A real
 /// object against an anonymous expectation is the shape <c>TVRM0001</c> steers toward, and a
 /// projection such as <c>items.Select(i =&gt; new { i.Name }).First()</c> has a subject of its
-/// own, even held in a local. When every value is read from one object, the advice changes from
-/// a scope to a single <c>BeEquivalentTo</c> on that object, and a bundle of one value is told
-/// to assert that value directly. The matcher is not named, because anonymous types override
+/// own, even held in a local. When every value is a member read one level deep from one object,
+/// the advice changes from a scope to a single <c>BeEquivalentTo</c> on that object, and a
+/// bundle of one other value is told to assert that value directly. An empty bundle holds no
+/// value to advise on. The matcher is not named, because anonymous types override
 /// <c>Equals</c> and <c>Be</c> compares the bundle as surely as <c>BeEquivalentTo</c> does.
 /// </para>
 /// </remarks>
@@ -63,18 +64,24 @@ public sealed class NoAnonymousObjectComparisonAnalyzer : DiagnosticAnalyzer
         }
 
         if (AnonymousObjectBehind(subject, context.SemanticModel, context.CancellationToken) is not { } bundle
+            || bundle.Initializers.Count == 0
             || !IsComparedWithAnAnonymousObject(matcher, context.SemanticModel, context.CancellationToken))
         {
             return;
         }
 
-        context.ReportDiagnostic(AdviceFor(bundle, subject.GetLocation()));
+        context.ReportDiagnostic(
+            AdviceFor(bundle, subject.GetLocation(), context.SemanticModel, context.CancellationToken));
     }
 
     /// <summary>The diagnostic whose fix suits <paramref name="bundle"/>.</summary>
-    private static Diagnostic AdviceFor(AnonymousObjectCreationExpressionSyntax bundle, Location location)
+    private static Diagnostic AdviceFor(
+        AnonymousObjectCreationExpressionSyntax bundle,
+        Location location,
+        SemanticModel semanticModel,
+        CancellationToken cancellationToken)
     {
-        if (SharedRoot(bundle) is { } root)
+        if (SharedRoot(bundle, semanticModel, cancellationToken) is { } root)
         {
             return Diagnostic.Create(Descriptors.NoAnonymousObjectComparisonOfOneObject, location, root.ToString());
         }
@@ -92,19 +99,21 @@ public sealed class NoAnonymousObjectComparisonAnalyzer : DiagnosticAnalyzer
     /// <see langword="null"/> when the values come from more than one place.
     /// </summary>
     /// <remarks>
-    /// Values copied out of one object are that object's members, and a single BeEquivalentTo on
-    /// the object checks them without the copy. Anything gathered from several places, or
-    /// reached through a call, has no subject to compare and belongs in an AssertionScope.
+    /// Each value has to be <c>root.Member</c>, one level deep, for a single BeEquivalentTo on the
+    /// root to check it. A renamed member only changes the name the expectation writes. A nested
+    /// or indexed value belongs to some other object, and a type or <c>base</c> is no value to
+    /// assert, so those bundles belong in an AssertionScope.
     /// </remarks>
-    private static ExpressionSyntax? SharedRoot(AnonymousObjectCreationExpressionSyntax bundle)
+    private static ExpressionSyntax? SharedRoot(
+        AnonymousObjectCreationExpressionSyntax bundle,
+        SemanticModel semanticModel,
+        CancellationToken cancellationToken)
     {
         ExpressionSyntax? shared = null;
 
         foreach (var member in bundle.Initializers)
         {
-            var value = member.Expression.Unparenthesize();
-            if (!AssertionSyntax.IsStableReference(value)
-                || AssertionSyntax.MemberChainRoot(value) is not { } root
+            if (member.Expression.Unparenthesize() is not MemberAccessExpressionSyntax { Expression: var root }
                 || (shared is not null && !SyntaxFactory.AreEquivalent(shared, root)))
             {
                 return null;
@@ -113,8 +122,18 @@ public sealed class NoAnonymousObjectComparisonAnalyzer : DiagnosticAnalyzer
             shared = root;
         }
 
-        return shared;
+        return shared is not null && IsAssertableValue(shared, semanticModel, cancellationToken) ? shared : null;
     }
+
+    /// <summary>Can <paramref name="root"/> itself be the subject of a <c>Should()</c>?</summary>
+    private static bool IsAssertableValue(
+        ExpressionSyntax root,
+        SemanticModel semanticModel,
+        CancellationToken cancellationToken) =>
+        root is ThisExpressionSyntax
+        || (root is IdentifierNameSyntax
+            && semanticModel.GetSymbolInfo(root, cancellationToken).Symbol
+                is ILocalSymbol or IParameterSymbol or IFieldSymbol or IPropertySymbol);
 
     /// <summary>Does <paramref name="matcher"/> take an anonymous object, inline or through a local?</summary>
     private static bool IsComparedWithAnAnonymousObject(

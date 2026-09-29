@@ -8,7 +8,7 @@ namespace Tvrmsmith.Analyzers.Tests;
 /// <summary>TVRM0007 <c>no-anonymous-object-comparison</c>.</summary>
 public class NoAnonymousObjectComparisonAnalyzerTests
 {
-    /// <summary>The shape from the review: unrelated facts bundled so one call asserts them all.</summary>
+    /// <summary>The shape from the review. Unrelated facts are bundled so one call asserts them all.</summary>
     [Fact]
     public Task FiresOnUnrelatedFactsBundledIntoAnAnonymousSubject() =>
         Verify.Fires(
@@ -118,10 +118,32 @@ public class NoAnonymousObjectComparisonAnalyzerTests
 
     /// <summary>
     /// Values copied out of one object need no scope. The object itself is the subject, so the
-    /// advice is a single BeEquivalentTo on it.
+    /// advice is a single BeEquivalentTo on it, and a renamed member only changes the name the
+    /// expectation writes.
     /// </summary>
     [Fact]
-    public Task AdvisesOneBeEquivalentToWhenEveryValueComesFromOneObject() =>
+    public Task AdvisesOneBeEquivalentToWhenEveryValueIsAMemberOfOneObject() =>
+        Verify.Fires(
+            """
+            public class PageTests
+            {
+                public void Page(PagedResult result)
+                {
+                    {|#0:new { result.Page, Size = result.PageSize }|}
+                        .Should().BeEquivalentTo(new { Page = 2, Size = 3 });
+                }
+            }
+            """,
+            Expect.Diagnostic(Descriptors.NoAnonymousObjectComparisonOfOneObject)
+                .WithLocation(0)
+                .WithArguments("result"));
+
+    /// <summary>
+    /// A nested value is not a member of the root, so a BeEquivalentTo on the root would compare
+    /// a member it does not have.
+    /// </summary>
+    [Fact]
+    public Task AdvisesAScopeWhenAValueIsNestedInsideTheObject() =>
         Verify.Fires(
             """
             public class PageTests
@@ -133,9 +155,88 @@ public class NoAnonymousObjectComparisonAnalyzerTests
                 }
             }
             """,
+            Expect.Diagnostic(Descriptors.NoAnonymousObjectComparison)
+                .WithLocation(0)
+                .WithArguments(3));
+
+    /// <summary>Values read through an indexer belong to an element, not to the collection.</summary>
+    [Fact]
+    public Task AdvisesAScopeWhenValuesAreReadThroughAnIndexer() =>
+        Verify.Fires(
+            """
+            public class ItemTests
+            {
+                public void First(IList<Item> items)
+                {
+                    {|#0:new { items[0].Name, items[0].Age }|}.Should().BeEquivalentTo(new { Name = "Alice", Age = 30 });
+                }
+            }
+            """,
+            Expect.Diagnostic(Descriptors.NoAnonymousObjectComparison)
+                .WithLocation(0)
+                .WithArguments(2));
+
+    [Fact]
+    public Task AdvisesAScopeWhenOnlySomeValuesComeFromTheObject() =>
+        Verify.Fires(
+            """
+            public class PageTests
+            {
+                public void Page(PagedResult result, int count)
+                {
+                    {|#0:new { result.Page, Count = count }|}.Should().BeEquivalentTo(new { Page = 2, Count = 3 });
+                }
+            }
+            """,
+            Expect.Diagnostic(Descriptors.NoAnonymousObjectComparison)
+                .WithLocation(0)
+                .WithArguments(2));
+
+    /// <summary>A type has no value to assert, so static members of one type get the scope.</summary>
+    [Fact]
+    public Task AdvisesAScopeWhenValuesAreStaticMembersOfOneType() =>
+        Verify.Fires(
+            """
+            public class EnvironmentTests
+            {
+                public void Machine()
+                {
+                    {|#0:new { Environment.MachineName, Environment.ProcessorCount }|}
+                        .Should().BeEquivalentTo(new { MachineName = "ci", ProcessorCount = 4 });
+                }
+            }
+            """,
+            Expect.Diagnostic(Descriptors.NoAnonymousObjectComparison)
+                .WithLocation(0)
+                .WithArguments(2));
+
+    /// <summary>
+    /// <c>this</c> is a value the test can assert, so members read through it get the one-object
+    /// advice. The implicit form names no object and gets the scope.
+    /// </summary>
+    [Fact]
+    public Task AdvisesOneBeEquivalentToOnThisOnlyWhenTheBundleNamesIt() =>
+        Verify.Fires(
+            """
+            public class PageTests
+            {
+                public int Page { get; set; }
+
+                public int Size { get; set; }
+
+                public void Explicit()
+                {
+                    {|#0:new { this.Page, this.Size }|}.Should().BeEquivalentTo(new { Page = 2, Size = 3 });
+                    {|#1:new { Page, Size }|}.Should().BeEquivalentTo(new { Page = 2, Size = 3 });
+                }
+            }
+            """,
             Expect.Diagnostic(Descriptors.NoAnonymousObjectComparisonOfOneObject)
                 .WithLocation(0)
-                .WithArguments("result"));
+                .WithArguments("this"),
+            Expect.Diagnostic(Descriptors.NoAnonymousObjectComparison)
+                .WithLocation(1)
+                .WithArguments(2));
 
     [Fact]
     public Task AdvisesOneBeEquivalentToForALocalCopiedFromOneObject() =>
@@ -191,10 +292,7 @@ public class NoAnonymousObjectComparisonAnalyzerTests
                 .WithLocation(0)
                 .WithArguments("item"));
 
-    /// <summary>
-    /// A call is not a stable reference to the object, the same line TVRM0001 draws, so a member
-    /// reached through one sends the advice back to a scope.
-    /// </summary>
+    /// <summary>A value reached through a call is not a member of the object, so the advice is a scope.</summary>
     [Fact]
     public Task AdvisesAScopeWhenAValueIsReachedThroughACall() =>
         Verify.Fires(
@@ -233,7 +331,7 @@ public class NoAnonymousObjectComparisonAnalyzerTests
             }
             """);
 
-    /// <summary>The pattern the combine-assertions guidance recommends: a real subject.</summary>
+    /// <summary>The pattern the combine-assertions guidance recommends. The subject is a real object.</summary>
     [Fact]
     public Task SilentOnARealObjectComparedWithAnAnonymousExpectation() =>
         Verify.Silent(
@@ -319,6 +417,20 @@ public class NoAnonymousObjectComparisonAnalyzerTests
                     var first = result.Items.Select(i => new { i.Name, i.Age }).First();
 
                     first.Should().BeEquivalentTo(new { Name = "Alice", Age = 30 });
+                }
+            }
+            """);
+
+    /// <summary>An empty anonymous object bundles no values, so there is nothing to advise.</summary>
+    [Fact]
+    public Task SilentOnTwoEmptyAnonymousObjects() =>
+        Verify.Silent(
+            """
+            public class EmptyTests
+            {
+                public void Empty()
+                {
+                    new { }.Should().BeEquivalentTo(new { });
                 }
             }
             """);

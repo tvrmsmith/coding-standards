@@ -103,10 +103,12 @@ expectation is the fix `TVRM0001` asks for, so it stays silent, and so does a pr
 `items.Select(i => new { i.Name })`, whose subject is a real collection. Any matcher taking an
 anonymous-object argument fires, `Be` included, because anonymous types override `Equals` and
 compare the bundle as surely as `BeEquivalentTo` does. The message picks the fix. When every
-member reads from one root object, by the same stable-reference rule `TVRM0001` groups on, it
-says to assert that object with one `BeEquivalentTo`. A bundle of one other value is told to
-assert that value directly with one `Should()`, which needs no scope. Otherwise it says to use an
-`AssertionScope`. Either side may be a `var` local the rule follows back to its `new { ... }`, the
+member is `root.Member`, one level deep from one local, parameter, field, property or `this`, it
+says to assert that object with one `BeEquivalentTo` against an expectation written with the
+object's member names. A renamed member still counts, but a nested or indexed value does not, so
+it goes to the scope. A bundle of one other value is told to assert that value directly with one
+`Should()`, which needs no scope. Otherwise it says to use an `AssertionScope`. An empty `new { }`
+bundles nothing and stays silent. Either side may be a `var` local the rule follows back to its `new { ... }`, the
 only other place C# can hold an anonymous type. It reads the declaration alone, so a bundle later
 reassigned from a projection of the same shape still reports.
 

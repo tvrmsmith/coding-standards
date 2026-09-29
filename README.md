@@ -124,7 +124,8 @@ Everything else is off the shelf. These have no off-the-shelf equivalent:
 7. `no-anonymous-object-comparison`, Roslyn only (`TVRM0007`). Catches an anonymous-object
    subject compared with an anonymous-object expectation, which bundles values that share no
    object into one assertion. The rewrite is one `Should()` per value inside an `AssertionScope`,
-   or, when every value is read from one object, a single `BeEquivalentTo` on that object.
+   or, when every value is a direct member of one object, a single `BeEquivalentTo` on that
+   object.
    The TypeScript preset has no counterpart.
 
 Go needs two of the seven and no more. `testifylint` covers A2 and most of A5 on its own, which is
