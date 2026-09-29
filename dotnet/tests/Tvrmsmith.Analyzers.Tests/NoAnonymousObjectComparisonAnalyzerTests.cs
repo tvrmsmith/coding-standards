@@ -264,6 +264,30 @@ public class NoAnonymousObjectComparisonAnalyzerTests
                 .WithArguments(2));
 
     /// <summary>
+    /// BeEquivalentTo compares public members only, so private ones read from one object have no
+    /// single comparison to move to.
+    /// </summary>
+    [Fact]
+    public Task AdvisesAScopeWhenTheValuesAreNotPublicMembers() =>
+        Verify.Fires(
+            """
+            public class CounterTests
+            {
+                private int _count;
+
+                private string _name = "";
+
+                public void Counter()
+                {
+                    {|#0:new { this._count, this._name }|}.Should().BeEquivalentTo(new { _count = 1, _name = "a" });
+                }
+            }
+            """,
+            Expect.Diagnostic(Descriptors.NoAnonymousObjectComparison)
+                .WithLocation(0)
+                .WithArguments(2));
+
+    /// <summary>
     /// <c>this</c> is a value the test can assert, so members read through it get the one-object
     /// advice. The implicit form names no object and gets the scope.
     /// </summary>

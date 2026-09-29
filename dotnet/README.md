@@ -106,9 +106,10 @@ compare the bundle as surely as `BeEquivalentTo` does. The message picks the fix
 is `root.Member`, one level deep from one local, parameter, field, property or `this`, and
 `root.Should()` offers a generic `BeEquivalentTo<T>(T)` that takes an anonymous object, it says to
 assert that object with one `BeEquivalentTo` against an expectation written with the object's
-member names. A renamed member still counts. A nested or indexed value does not, and neither does a
-root such as a collection, string or `DateTime` whose assertions cannot take an anonymous object,
-so those go to the scope. A bundle of one other value is told to assert that value directly with
+member names. A renamed member still counts. A nested or indexed value does not, a member that is
+not public does not because `BeEquivalentTo` skips it, and neither does a root such as a
+collection, string or `DateTime` whose assertions cannot take an anonymous object, so those go to
+the scope. A bundle of one other value is told to assert that value directly with
 one `Should()`, which needs no scope. Otherwise it says to use an `AssertionScope`. An empty
 `new { }` bundles nothing and stays silent. Either side may be a `var` local the rule follows back
 to its `new { ... }`, the only other place C# can hold an anonymous type. It reads the declaration

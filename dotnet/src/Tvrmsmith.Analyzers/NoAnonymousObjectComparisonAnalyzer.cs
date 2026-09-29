@@ -101,10 +101,11 @@ public sealed class NoAnonymousObjectComparisonAnalyzer : DiagnosticAnalyzer
     /// </summary>
     /// <remarks>
     /// Each value has to be <c>root.Member</c>, one level deep, for a single BeEquivalentTo on the
-    /// root to check it. A renamed member only changes the name the expectation writes. A nested
-    /// or indexed value belongs to some other object, a type or <c>base</c> is no value to assert,
-    /// and a root whose <c>Should()</c> cannot take an anonymous object has no single
-    /// BeEquivalentTo to offer, so those bundles belong in an AssertionScope.
+    /// root to check it, and the member has to be a public instance field or property, the only
+    /// kind BeEquivalentTo compares by default. A renamed member only changes the name the
+    /// expectation writes. A nested or indexed value belongs to some other object, a type or
+    /// <c>base</c> is no value to assert, and a root whose <c>Should()</c> cannot take an anonymous
+    /// object has no single BeEquivalentTo to offer, so those bundles belong in an AssertionScope.
     /// </remarks>
     private static ExpressionSyntax? SharedRoot(
         AnonymousObjectCreationExpressionSyntax bundle,
@@ -116,8 +117,11 @@ public sealed class NoAnonymousObjectComparisonAnalyzer : DiagnosticAnalyzer
 
         foreach (var member in bundle.Initializers)
         {
-            if (member.Expression.Unparenthesize() is not MemberAccessExpressionSyntax { Expression: var root }
-                || (shared is not null && !SyntaxFactory.AreEquivalent(shared, root)))
+            if (member.Expression.Unparenthesize() is not MemberAccessExpressionSyntax { Expression: var root } access
+                || (shared is not null && !SyntaxFactory.AreEquivalent(shared, root))
+                || semanticModel.GetSymbolInfo(access, cancellationToken).Symbol
+                    is not ((IPropertySymbol or IFieldSymbol)
+                        and { IsStatic: false, DeclaredAccessibility: Accessibility.Public }))
             {
                 return null;
             }
