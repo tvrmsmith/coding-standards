@@ -108,9 +108,9 @@ says to assert that object with one `BeEquivalentTo` against an expectation writ
 object's member names. A renamed member still counts, but a nested or indexed value does not, so
 it goes to the scope. A bundle of one other value is told to assert that value directly with one
 `Should()`, which needs no scope. Otherwise it says to use an `AssertionScope`. An empty `new { }`
-bundles nothing and stays silent. Either side may be a `var` local the rule follows back to its `new { ... }`, the
-only other place C# can hold an anonymous type. It reads the declaration alone, so a bundle later
-reassigned from a projection of the same shape still reports.
+bundles nothing and stays silent. Either side may be a `var` local the rule follows back to its
+`new { ... }`, the only other place C# can hold an anonymous type. It reads the declaration alone,
+so a bundle later reassigned from a projection of the same shape still reports.
 
 `tools/MeasureA5` is how the split above was decided rather than argued. It parses a target repo
 with Roslyn and counts each shape, including the sub-buckets that separate the legitimate

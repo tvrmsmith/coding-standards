@@ -138,7 +138,8 @@ internal static class Descriptors
 
     /// <summary>
     /// TVRM0007 <c>no-anonymous-object-comparison</c>, when the bundle holds one value that is not
-    /// a member of an object read one level deep. Same rule, different fix, so it shares the id and carries its own advice.
+    /// a member of an object read one level deep. Same rule, different fix, so it shares the id and
+    /// carries its own advice.
     /// </summary>
     public static readonly DiagnosticDescriptor NoAnonymousObjectComparisonOfOneValue = new(
         id: DiagnosticIds.NoAnonymousObjectComparison,
