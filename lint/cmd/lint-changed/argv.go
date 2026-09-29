@@ -4,9 +4,10 @@
 // suppress one of them, and exits non-zero if any survive. A separate spend
 // form marks a matched waiver as used, once the dispatcher that called the
 // filter knows the whole commit went through, a changed-paths form lists the
-// files a run covers, which the dispatcher hands to each language branch, and
-// an owners form groups a branch's files by the build unit that lints them.
-// An adopted form tells a branch whether its language is wired up at all.
+// files a run covers, which the dispatcher hands to each language branch, an
+// owners form groups a branch's files by the build unit that lints them, and a
+// registry-key form prints the path the branches look adoption up under. An
+// adopted form tells a branch whether its language is wired up at all.
 //
 // argv is parsed by hand rather than through the flag package, for the
 // reason gate/internal/scope gives: flag exits 2 on a usage mistake and lets
@@ -19,7 +20,7 @@ import (
 	"github.com/tvrmsmith/coding-standards/lint/internal/lintfind"
 )
 
-// Kind is which of lint-changed's seven forms argv named.
+// Kind is which of lint-changed's eight forms argv named.
 type Kind int
 
 const (
@@ -39,6 +40,8 @@ const (
 	// KindChangedPaths prints the files a run under one scope covers,
 	// NUL-terminated.
 	KindChangedPaths
+	// KindRegistryKey prints the path adoption is looked up under.
+	KindRegistryKey
 	// KindOwners groups one language's changed files by the build unit that
 	// owns each, NUL-terminated.
 	KindOwners
@@ -116,7 +119,7 @@ type AdoptedArgs struct {
 	// Language is lintfind.LanguageGo or lintfind.LanguageCSharp. TypeScript
 	// has no registry: a package is linted when it holds an ESLint config.
 	Language string
-	// Key is the path adoption is looked up under, as the shell resolved it.
+	// Key is the path adoption is looked up under, as registry-key printed it.
 	Key string
 	// Registry is the file that records adoption: the Go registry, or the
 	// .NET props file whose path-scoped Imports double as one.
@@ -141,12 +144,13 @@ const usage = `usage: lint-changed [--staged | --since <ref> | --files <path> ..
        lint-changed spend --waiver <id> [--waiver <id> ...]
        lint-changed changed-paths (--staged | --since <ref> | --files <path> ...)
        lint-changed owners --language <lang> [--files <path> ...]
-       lint-changed adopted --language (go | csharp) --registry-key <path> --registry <file>`
+       lint-changed adopted --language (go | csharp) --registry-key <path> --registry <file>
+       lint-changed registry-key`
 
 // Parse reads argv without the program name. "waive", "waivers", "spend",
-// "changed-paths", "owners" and "adopted" as the first argument select those
-// six forms; anything else, including no arguments at all, is read as the
-// filter form.
+// "changed-paths", "owners", "adopted" and "registry-key" as the first
+// argument select those seven forms; anything else, including no arguments at
+// all, is read as the filter form.
 func Parse(args []string) (Command, error) {
 	if len(args) > 0 && args[0] == "waive" {
 		wa, err := parseWaive(args[1:])
@@ -174,6 +178,12 @@ func Parse(args []string) (Command, error) {
 			return Command{}, err
 		}
 		return Command{Kind: KindChangedPaths, ChangedPaths: scope}, nil
+	}
+	if len(args) > 0 && args[0] == "registry-key" {
+		if len(args) > 1 {
+			return Command{}, &UsageError{Problem: "registry-key takes no arguments"}
+		}
+		return Command{Kind: KindRegistryKey}, nil
 	}
 	if len(args) > 0 && args[0] == "owners" {
 		oa, err := parseOwners(args[1:])
