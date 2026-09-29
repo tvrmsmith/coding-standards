@@ -54,7 +54,7 @@ public sealed class NoAnonymousObjectComparisonAnalyzer : DiagnosticAnalyzer
     {
         var invocation = (InvocationExpressionSyntax)context.Node;
 
-        // Both syntactic tests run before IsShouldInvocation asks the semantic model.
+        // The syntactic tests run before IsShouldInvocation asks the semantic model.
         if (invocation.ShouldReceiver()?.Unparenthesize() is not { } subject
             || !CanHoldAnAnonymousObject(subject)
             || invocation.Parent is not MemberAccessExpressionSyntax { Parent: InvocationExpressionSyntax matcher }
@@ -71,17 +71,18 @@ public sealed class NoAnonymousObjectComparisonAnalyzer : DiagnosticAnalyzer
         }
 
         context.ReportDiagnostic(
-            AdviceFor(bundle, subject.GetLocation(), context.SemanticModel, context.CancellationToken));
+            AdviceFor(bundle, invocation, subject.GetLocation(), context.SemanticModel, context.CancellationToken));
     }
 
     /// <summary>The diagnostic whose fix suits <paramref name="bundle"/>.</summary>
     private static Diagnostic AdviceFor(
         AnonymousObjectCreationExpressionSyntax bundle,
+        InvocationExpressionSyntax assertion,
         Location location,
         SemanticModel semanticModel,
         CancellationToken cancellationToken)
     {
-        if (SharedRoot(bundle, semanticModel, cancellationToken) is { } root)
+        if (SharedRoot(bundle, assertion, semanticModel, cancellationToken) is { } root)
         {
             return Diagnostic.Create(Descriptors.NoAnonymousObjectComparisonOfOneObject, location, root.ToString());
         }
@@ -101,11 +102,13 @@ public sealed class NoAnonymousObjectComparisonAnalyzer : DiagnosticAnalyzer
     /// <remarks>
     /// Each value has to be <c>root.Member</c>, one level deep, for a single BeEquivalentTo on the
     /// root to check it. A renamed member only changes the name the expectation writes. A nested
-    /// or indexed value belongs to some other object, and a type or <c>base</c> is no value to
-    /// assert, so those bundles belong in an AssertionScope.
+    /// or indexed value belongs to some other object, a type or <c>base</c> is no value to assert,
+    /// and a root whose <c>Should()</c> cannot take an anonymous object has no single
+    /// BeEquivalentTo to offer, so those bundles belong in an AssertionScope.
     /// </remarks>
     private static ExpressionSyntax? SharedRoot(
         AnonymousObjectCreationExpressionSyntax bundle,
+        InvocationExpressionSyntax assertion,
         SemanticModel semanticModel,
         CancellationToken cancellationToken)
     {
@@ -122,7 +125,11 @@ public sealed class NoAnonymousObjectComparisonAnalyzer : DiagnosticAnalyzer
             shared = root;
         }
 
-        return shared is not null && IsAssertableValue(shared, semanticModel, cancellationToken) ? shared : null;
+        return shared is not null
+            && IsAssertableValue(shared, semanticModel, cancellationToken)
+            && IsEquivalentToAnAnonymousObject(shared, assertion, semanticModel)
+            ? shared
+            : null;
     }
 
     /// <summary>Can <paramref name="root"/> itself be the subject of a <c>Should()</c>?</summary>
@@ -134,6 +141,47 @@ public sealed class NoAnonymousObjectComparisonAnalyzer : DiagnosticAnalyzer
         || (root is IdentifierNameSyntax
             && semanticModel.GetSymbolInfo(root, cancellationToken).Symbol
                 is ILocalSymbol or IParameterSymbol or IFieldSymbol or IPropertySymbol);
+
+    /// <summary>
+    /// Would <c><paramref name="root"/>.Should()</c>, written where <paramref name="assertion"/>
+    /// is, offer a BeEquivalentTo that takes an anonymous object?
+    /// </summary>
+    /// <remarks>
+    /// Only a generic <c>BeEquivalentTo&lt;T&gt;(T)</c> accepts one. A collection's assertions want
+    /// another collection, a string's want a string, and some have no BeEquivalentTo at all.
+    /// Asking the assertions type keeps the check free of any list of library types.
+    /// </remarks>
+    private static bool IsEquivalentToAnAnonymousObject(
+        ExpressionSyntax root,
+        InvocationExpressionSyntax assertion,
+        SemanticModel semanticModel)
+    {
+        var should = SyntaxFactory.InvocationExpression(
+            SyntaxFactory.MemberAccessExpression(
+                SyntaxKind.SimpleMemberAccessExpression,
+                root.WithoutTrivia(),
+                SyntaxFactory.IdentifierName(AssertionSyntax.ShouldMethodName)));
+
+        if (semanticModel.GetSpeculativeSymbolInfo(assertion.SpanStart, should, SpeculativeBindingOption.BindAsExpression)
+                .Symbol is not IMethodSymbol { ReturnType: var assertions })
+        {
+            return false;
+        }
+
+        for (var type = assertions; type is not null; type = type.BaseType)
+        {
+            foreach (var member in type.GetMembers("BeEquivalentTo"))
+            {
+                if (member is IMethodSymbol { Parameters.Length: > 0 } method
+                    && method.Parameters[0].Type is ITypeParameterSymbol { TypeParameterKind: TypeParameterKind.Method })
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>Does <paramref name="matcher"/> take an anonymous object, inline or through a local?</summary>
     private static bool IsComparedWithAnAnonymousObject(

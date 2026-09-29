@@ -211,6 +211,59 @@ public class NoAnonymousObjectComparisonAnalyzerTests
                 .WithArguments(2));
 
     /// <summary>
+    /// A collection's <c>Should()</c> compares only with another collection, so a member of one is
+    /// asserted directly rather than by pointing BeEquivalentTo at the collection.
+    /// </summary>
+    [Fact]
+    public Task AdvisesAssertingTheValueDirectlyWhenItsObjectIsACollection() =>
+        Verify.Fires(
+            """
+            public class ItemTests
+            {
+                public void Count(List<Item> items)
+                {
+                    {|#0:new { items.Count }|}.Should().BeEquivalentTo(new { Count = 3 });
+                }
+            }
+            """,
+            Expect.Diagnostic(Descriptors.NoAnonymousObjectComparisonOfOneValue)
+                .WithLocation(0)
+                .WithArguments("items.Count"));
+
+    [Fact]
+    public Task AdvisesAssertingTheValueDirectlyWhenItsObjectIsAString() =>
+        Verify.Fires(
+            """
+            public class NameTests
+            {
+                public void Length(string name)
+                {
+                    {|#0:new { name.Length }|}.Should().BeEquivalentTo(new { Length = 5 });
+                }
+            }
+            """,
+            Expect.Diagnostic(Descriptors.NoAnonymousObjectComparisonOfOneValue)
+                .WithLocation(0)
+                .WithArguments("name.Length"));
+
+    /// <summary>A DateTime's <c>Should()</c> has no BeEquivalentTo at all.</summary>
+    [Fact]
+    public Task AdvisesAScopeWhenTheObjectsAssertionsCannotTakeAnAnonymousObject() =>
+        Verify.Fires(
+            """
+            public class DateTests
+            {
+                public void Date(DateTime when)
+                {
+                    {|#0:new { when.Year, when.Month }|}.Should().BeEquivalentTo(new { Year = 2026, Month = 9 });
+                }
+            }
+            """,
+            Expect.Diagnostic(Descriptors.NoAnonymousObjectComparison)
+                .WithLocation(0)
+                .WithArguments(2));
+
+    /// <summary>
     /// <c>this</c> is a value the test can assert, so members read through it get the one-object
     /// advice. The implicit form names no object and gets the scope.
     /// </summary>
