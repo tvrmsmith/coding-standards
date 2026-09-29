@@ -135,6 +135,23 @@ internal static class Descriptors
             + "the expectation names.",
         helpLinkUri: SkillReferences + "dotnet-awesome-assertions.md#never-bundle-values-into-an-anonymous-subject-custom-rule");
 
+    /// <summary>
+    /// TVRM0007 <c>no-anonymous-object-comparison</c>, when the bundle holds one value that is not
+    /// read from an object. Same rule, different fix, so it shares the id and carries its own advice.
+    /// </summary>
+    public static readonly DiagnosticDescriptor NoAnonymousObjectComparisonOfOneValue = new(
+        id: DiagnosticIds.NoAnonymousObjectComparison,
+        title: "Do not compare two anonymous objects",
+        messageFormat: "Assert '{0}' directly with one Should(), not wrapped in an anonymous object",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description:
+            "Wrapping one value in an anonymous object before comparing adds a throwaway type and "
+            + "nothing else. One Should() on the value itself reports the failure directly, and one "
+            + "assertion needs no AssertionScope.",
+        helpLinkUri: SkillReferences + "dotnet-awesome-assertions.md#never-bundle-values-into-an-anonymous-subject-custom-rule");
+
     /// <summary>TVRM0006 — <c>comment-block-length</c>.</summary>
     public static readonly DiagnosticDescriptor CommentBlockLength = new(
         id: DiagnosticIds.CommentBlockLength,

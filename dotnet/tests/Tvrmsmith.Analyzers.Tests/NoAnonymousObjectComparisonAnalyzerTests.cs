@@ -156,6 +156,42 @@ public class NoAnonymousObjectComparisonAnalyzerTests
                 .WithArguments("result"));
 
     /// <summary>
+    /// One value needs no bundle and no scope. The advice is to assert that value directly.
+    /// </summary>
+    [Fact]
+    public Task AdvisesAssertingTheValueDirectlyWhenTheBundleHoldsOne() =>
+        Verify.Fires(
+            """
+            public class CountTests
+            {
+                public void Count(int count)
+                {
+                    {|#0:new { Count = count }|}.Should().BeEquivalentTo(new { Count = 3 });
+                }
+            }
+            """,
+            Expect.Diagnostic(Descriptors.NoAnonymousObjectComparisonOfOneValue)
+                .WithLocation(0)
+                .WithArguments("count"));
+
+    /// <summary>A single value read from an object still gets the advice to assert that object.</summary>
+    [Fact]
+    public Task AdvisesOneBeEquivalentToWhenTheOneValueComesFromAnObject() =>
+        Verify.Fires(
+            """
+            public class ItemTests
+            {
+                public void Name(Item item)
+                {
+                    {|#0:new { item.Name }|}.Should().BeEquivalentTo(new { Name = "Alice" });
+                }
+            }
+            """,
+            Expect.Diagnostic(Descriptors.NoAnonymousObjectComparisonOfOneObject)
+                .WithLocation(0)
+                .WithArguments("item"));
+
+    /// <summary>
     /// A call is not a stable reference to the object, the same line TVRM0001 draws, so a member
     /// reached through one sends the advice back to a scope.
     /// </summary>

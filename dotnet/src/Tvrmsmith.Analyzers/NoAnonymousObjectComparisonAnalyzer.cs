@@ -26,9 +26,9 @@ namespace Tvrmsmith.Analyzers;
 /// object against an anonymous expectation is the shape <c>TVRM0001</c> steers toward, and a
 /// projection such as <c>items.Select(i =&gt; new { i.Name }).First()</c> has a subject of its
 /// own, even held in a local. When every value is read from one object, the advice changes from
-/// a scope to a single <c>BeEquivalentTo</c> on that object. The matcher is not named, because
-/// anonymous types override <c>Equals</c> and <c>Be</c> compares the bundle as surely as
-/// <c>BeEquivalentTo</c> does.
+/// a scope to a single <c>BeEquivalentTo</c> on that object, and a bundle of one value is told
+/// to assert that value directly. The matcher is not named, because anonymous types override
+/// <c>Equals</c> and <c>Be</c> compares the bundle as surely as <c>BeEquivalentTo</c> does.
 /// </para>
 /// </remarks>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
@@ -38,7 +38,8 @@ public sealed class NoAnonymousObjectComparisonAnalyzer : DiagnosticAnalyzer
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } =
         ImmutableArray.Create(
             Descriptors.NoAnonymousObjectComparison,
-            Descriptors.NoAnonymousObjectComparisonOfOneObject);
+            Descriptors.NoAnonymousObjectComparisonOfOneObject,
+            Descriptors.NoAnonymousObjectComparisonOfOneValue);
 
     /// <inheritdoc />
     public override void Initialize(AnalysisContext context)
@@ -67,15 +68,23 @@ public sealed class NoAnonymousObjectComparisonAnalyzer : DiagnosticAnalyzer
             return;
         }
 
-        context.ReportDiagnostic(SharedRoot(bundle) is { } root
+        context.ReportDiagnostic(AdviceFor(bundle, subject.GetLocation()));
+    }
+
+    /// <summary>The diagnostic whose fix suits <paramref name="bundle"/>.</summary>
+    private static Diagnostic AdviceFor(AnonymousObjectCreationExpressionSyntax bundle, Location location)
+    {
+        if (SharedRoot(bundle) is { } root)
+        {
+            return Diagnostic.Create(Descriptors.NoAnonymousObjectComparisonOfOneObject, location, root.ToString());
+        }
+
+        return bundle.Initializers.Count == 1
             ? Diagnostic.Create(
-                Descriptors.NoAnonymousObjectComparisonOfOneObject,
-                subject.GetLocation(),
-                root.ToString())
-            : Diagnostic.Create(
-                Descriptors.NoAnonymousObjectComparison,
-                subject.GetLocation(),
-                bundle.Initializers.Count));
+                Descriptors.NoAnonymousObjectComparisonOfOneValue,
+                location,
+                bundle.Initializers[0].Expression.ToString())
+            : Diagnostic.Create(Descriptors.NoAnonymousObjectComparison, location, bundle.Initializers.Count);
     }
 
     /// <summary>
