@@ -327,9 +327,33 @@ public sealed class CombineAssertionsOnSameObjectAnalyzer : DiagnosticAnalyzer
             return new Assertion(
                 expressionStatement,
                 receiver,
-                AssertionSyntax.MemberChainRoot(receiver),
+                TargetOf(receiver),
                 IndexedRootOf(receiver),
                 IsHaveCountAssertion(should));
+        }
+
+        /// <summary>
+        /// The identifier the receiver chain bottoms out at — <c>response</c> for both
+        /// <c>response.StatusCode</c> and <c>response.Headers.Location</c>.
+        /// </summary>
+        /// <remarks>
+        /// Null when the receiver *is* that identifier, which keeps
+        /// <c>x.Should().Be(1); x.Should().BeGreaterThan(0);</c> out of the grouping: those are
+        /// two assertions on one value, not two members that a single anonymous object replaces.
+        /// </remarks>
+        private static ExpressionSyntax? TargetOf(ExpressionSyntax receiver)
+        {
+            ExpressionSyntax? root = null;
+
+            foreach (var node in AssertionSyntax.WalkReceiverSpine(receiver))
+            {
+                root = node;
+            }
+
+            return root is IdentifierNameSyntax or ThisExpressionSyntax or BaseExpressionSyntax
+                && root != receiver
+                ? root
+                : null;
         }
 
         /// <summary>
