@@ -137,9 +137,8 @@ result.Should().BeEquivalentTo(
 ```
 
 The analyzer fires only when both sides are anonymous objects, and its message names which fix
-applies. A real object compared with an
-anonymous expectation is the combining pattern above, and an anonymous object passed anywhere
-else, such as a request body, is not an assertion at all.
+applies. A real object compared with an anonymous expectation is the combining pattern above, and
+an anonymous object passed anywhere else, such as a request body, is not an assertion at all.
 
 ## Null Safety in Assertions (custom rule)
 

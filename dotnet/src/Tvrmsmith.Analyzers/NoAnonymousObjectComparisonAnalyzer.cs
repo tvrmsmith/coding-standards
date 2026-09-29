@@ -26,8 +26,9 @@ namespace Tvrmsmith.Analyzers;
 /// object against an anonymous expectation is the shape <c>TVRM0001</c> steers toward, and a
 /// projection such as <c>items.Select(i =&gt; new { i.Name }).First()</c> has a subject of its
 /// own, even held in a local. When every value is read from one object, the advice changes from
-/// a scope to a single <c>BeEquivalentTo</c> on that object. The matcher is not named, because anonymous types override
-/// <c>Equals</c> and <c>Be</c> compares the bundle as surely as <c>BeEquivalentTo</c> does.
+/// a scope to a single <c>BeEquivalentTo</c> on that object. The matcher is not named, because
+/// anonymous types override <c>Equals</c> and <c>Be</c> compares the bundle as surely as
+/// <c>BeEquivalentTo</c> does.
 /// </para>
 /// </remarks>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
