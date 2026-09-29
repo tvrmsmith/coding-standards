@@ -44,6 +44,11 @@ assert result matches { page: 2, page_size: 3, total: 10 }
 
 This applies to collections too. Don't assert count then index into elements separately — use a single equivalence check against expected items.
 
+The object has to exist already, as something the code under test returned. When every value
+comes from that one object, compare the object itself in one equivalence check rather than copying
+its members into a new structure first. Values gathered from different places go in a scope,
+below.
+
 ### Assertions Should Communicate Meaning
 
 The assertion method/matcher should describe what's being tested. A reader should understand the expectation from the assertion alone, without reading setup code.
@@ -78,6 +83,9 @@ Without scoping, only the first failure reports — slow feedback loops. Scoping
 - Assertions that can't be combined but verify related aspects of the same operation
 - Mixed assertion types (type check + property check + status check)
 - Verifying side effects alongside return values
+- Values that share no object. Assert each one on its own inside the scope. Packing them into a
+  throwaway structure so one equivalence check covers them all makes a failure report a diff of
+  that structure instead of the value that broke.
 
 **When NOT to scope:**
 - Single assertion — no need

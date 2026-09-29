@@ -101,6 +101,59 @@ internal static class Descriptors
             + "covers the synchronous test body it cannot see.",
         helpLinkUri: SkillReferences + "dotnet-awesome-assertions.md#assertions-must-actually-execute-custom-rule");
 
+    /// <summary>TVRM0007 <c>no-anonymous-object-comparison</c>.</summary>
+    public static readonly DiagnosticDescriptor NoAnonymousObjectComparison = new(
+        id: DiagnosticIds.NoAnonymousObjectComparison,
+        title: "Do not compare two anonymous objects",
+        messageFormat: "Assert these {0} values with one Should() each inside an AssertionScope, not as one anonymous object",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description:
+            "Bundling unrelated values into an anonymous object so one call can assert them all "
+            + "costs the failure message. It reports a structural diff of a throwaway type rather "
+            + "than which fact broke, and the expected side needs casts to match member types. One "
+            + "Should() per value inside an AssertionScope still reports every failure at once. A "
+            + "real object compared with an anonymous expectation is not this shape.",
+        helpLinkUri: SkillReferences + "dotnet-awesome-assertions.md#never-bundle-values-into-an-anonymous-subject-custom-rule");
+
+    /// <summary>
+    /// TVRM0007 <c>no-anonymous-object-comparison</c>, when every value in the bundle is a member of
+    /// one object, read one level deep. Same rule, different fix, so it shares the id and carries
+    /// its own advice.
+    /// </summary>
+    public static readonly DiagnosticDescriptor NoAnonymousObjectComparisonOfOneObject = new(
+        id: DiagnosticIds.NoAnonymousObjectComparison,
+        title: "Do not compare two anonymous objects",
+        messageFormat: "Every value here is read from '{0}', so assert '{0}' itself with one BeEquivalentTo against an anonymous expectation written with the member names of '{0}'",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description:
+            "Copying members of one object into an anonymous object before comparing adds a "
+            + "throwaway type and nothing else. The object is already the subject, so compare it in a "
+            + "single BeEquivalentTo with an anonymous expectation that uses the object's own member "
+            + "names. BeEquivalentTo checks only the members the expectation names.",
+        helpLinkUri: SkillReferences + "dotnet-awesome-assertions.md#never-bundle-values-into-an-anonymous-subject-custom-rule");
+
+    /// <summary>
+    /// TVRM0007 <c>no-anonymous-object-comparison</c>, when the bundle holds one value that is not
+    /// a member of an object read one level deep. Same rule, different fix, so it shares the id and
+    /// carries its own advice.
+    /// </summary>
+    public static readonly DiagnosticDescriptor NoAnonymousObjectComparisonOfOneValue = new(
+        id: DiagnosticIds.NoAnonymousObjectComparison,
+        title: "Do not compare two anonymous objects",
+        messageFormat: "Assert '{0}' directly with one Should(), not wrapped in an anonymous object",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description:
+            "Wrapping one value in an anonymous object before comparing adds a throwaway type and "
+            + "nothing else. One Should() on the value itself reports the failure directly, and one "
+            + "assertion needs no AssertionScope.",
+        helpLinkUri: SkillReferences + "dotnet-awesome-assertions.md#never-bundle-values-into-an-anonymous-subject-custom-rule");
+
     /// <summary>TVRM0006 — <c>comment-block-length</c>.</summary>
     public static readonly DiagnosticDescriptor CommentBlockLength = new(
         id: DiagnosticIds.CommentBlockLength,

@@ -19,7 +19,7 @@ namespace Tvrmsmith.Analyzers;
 /// </remarks>
 internal static class AssertionSyntax
 {
-    private const string ShouldMethodName = "Should";
+    public const string ShouldMethodName = "Should";
     private const string AssertionsTypeSuffix = "Assertions";
 
     /// <summary>

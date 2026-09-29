@@ -102,6 +102,43 @@ using (new AssertionScope())
 
 Without the scope, only the first failure is reported and subsequent assertions are never evaluated.
 
+## Never Bundle Values into an Anonymous Subject (custom rule)
+
+When the values come from different places, assert each one inside an `AssertionScope`. Packing
+them into an anonymous object so one `BeEquivalentTo` covers them all makes a failure report a
+structural diff of that throwaway type instead of the value that broke, and the expected side
+needs casts to match member types.
+
+```csharp
+// BAD. Three unrelated values bundled into one comparison.
+new { thrown.StatusCode, LoggedCritical = logger.Levels.Contains(LogLevel.Critical), Status = await StatusOf(id) }
+    .Should().BeEquivalentTo(new { StatusCode = (HttpStatusCode?)HttpStatusCode.Forbidden, LoggedCritical = true, Status = OrderStatus.Pending });
+
+// GOOD. One assertion per value, every failure still reported together.
+using (new AssertionScope())
+{
+    thrown.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    logger.Levels.Should().Contain(LogLevel.Critical);
+    (await StatusOf(id)).Should().Be(OrderStatus.Pending);
+}
+```
+
+When every value is a direct member of one object, that object is already the subject. Keep a
+single `BeEquivalentTo`, point it at the object, and write the expectation with the object's own
+member names. `BeEquivalentTo` compares only the members the expectation names.
+
+```csharp
+// BAD. Members of one object copied into a throwaway shape.
+new { result.Page, Size = result.PageSize }.Should().BeEquivalentTo(new { Page = 2, Size = 3 });
+
+// GOOD. The object itself against an expectation using its member names.
+result.Should().BeEquivalentTo(new { Page = 2, PageSize = 3 });
+```
+
+The analyzer fires only when both sides are anonymous objects, and its message names which fix
+applies. A real object compared with an anonymous expectation is the combining pattern above, and
+an anonymous object passed anywhere else, such as a request body, is not an assertion at all.
+
 ## Null Safety in Assertions (custom rule)
 
 Never use `!` (null-forgiving) to dereference a potentially null value before asserting. Never use `?.` — it silently skips the assertion chain if the value is null, causing a false pass.
@@ -175,4 +212,4 @@ _auditor.AuditTrailLogs.Should().ContainSingle()
 | Single item + type | `ContainSingle().Which.Should().BeOfType<T>().Which.Should().BeEquivalentTo(new { ... })` |
 | Type check only | `BeOfType<T>()` |
 | Nullable value | Construct expected value, use `Be()` — no `!` or `?.` |
-| Multiple unrelated assertions | Wrap in `AssertionScope` |
+| Multiple unrelated assertions | Wrap in `AssertionScope`, one `Should()` per value, no anonymous subject |
