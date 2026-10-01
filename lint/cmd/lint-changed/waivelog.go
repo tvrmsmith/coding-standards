@@ -25,14 +25,21 @@ func waiverLogPath() string {
 	if p := os.Getenv("TVRMSMITH_WAIVERS"); p != "" {
 		return p
 	}
+	return filepath.Join(stateDir(), "waivers.jsonl")
+}
+
+// stateDir is $XDG_STATE_HOME/coding-standards, else
+// ~/.local/state/coding-standards: where every record of what happened lives,
+// outside every repo.
+func stateDir() string {
 	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
-		return filepath.Join(xdg, "coding-standards", "waivers.jsonl")
+		return filepath.Join(xdg, "coding-standards")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "."
 	}
-	return filepath.Join(home, ".local", "state", "coding-standards", "waivers.jsonl")
+	return filepath.Join(home, ".local", "state", "coding-standards")
 }
 
 // runWaive records a one-shot waiver against the log.

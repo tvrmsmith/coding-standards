@@ -20,6 +20,7 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -120,6 +121,8 @@ const neutralised = {
   TVRMSMITH_ANALYZER_LOCAL_PROPS: undefined,
   TVRMSMITH_WAIVERS: join(sandbox, 'waivers.jsonl'),
   XDG_CACHE_HOME: join(sandbox, 'cache'),
+  XDG_STATE_HOME: join(sandbox, 'state'),
+  NM_GATE: undefined,
 }
 
 /**
@@ -486,6 +489,119 @@ describe('one invocation, every language the repo is wired for', () => {
     } finally {
       f.cleanup()
     }
+  })
+
+  describe('the run log', () => {
+    /** Each case gets its own state dir, so a line it reads is one only it wrote. */
+    const logEnv = (f) => ({ ...env(f), XDG_STATE_HOME: join(f.root, 'state') })
+    const logPath = (f) => join(f.root, 'state/coding-standards/lint-runs.jsonl')
+    const runLog = (f) =>
+      existsSync(logPath(f))
+        ? readFileSync(logPath(f), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line))
+        : []
+    const withOrigin = (f) => {
+      git(f.repo, 'remote', 'add', 'origin', 'https://example.test/fixture.git')
+      return f
+    }
+
+    test('a mixed commit logs one line per language, in dispatch order', { skip }, () => {
+      const f = withOrigin(fixture())
+      try {
+        const { status, stdout, stderr } = capture(f.repo, ['--since', 'HEAD'], logEnv(f))
+        assert.equal(status, 2, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        const lines = runLog(f)
+        assert.equal(lines.length, 2, `expected two log lines, got ${JSON.stringify(lines)}`)
+        assert.equal(lines[0].lang, 'ts')
+        assert.deepEqual(lines[0].findings, { 'no-unused-vars': 1 })
+        assert.equal(lines[0].blocked, true)
+        assert.equal(lines[1].lang, 'go')
+        assert.deepEqual(lines[1].findings, { gorule: 1 })
+        assert.equal(lines[1].blocked, true)
+        for (const line of lines) assert.equal(line.mode, 'since')
+        assert.equal(lines[0].ts, lines[1].ts)
+        assert.equal(lines[0].head, lines[1].head)
+      } finally {
+        f.cleanup()
+      }
+    })
+
+    test('a branch that skipped as not wired logs nothing', { skip }, () => {
+      const f = withOrigin(fixture())
+      try {
+        writeFileSync(join(f.repo, 'Program.cs'), 'class Program {}\n')
+        git(f.repo, 'add', 'Program.cs')
+        writeFileSync(join(f.root, 'empty.props'), '<Project />\n')
+        const { status, stdout, stderr } = capture(f.repo, ['--since', 'HEAD'], {
+          ...logEnv(f),
+          TVRMSMITH_ANALYZER_PROPS: join(f.root, 'empty.props'),
+        })
+        assert.equal(status, 2, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        assert.match(stderr, /is not wired for \.NET/)
+        const langs = runLog(f).map((line) => line.lang)
+        assert.deepEqual(langs, ['ts', 'go'])
+      } finally {
+        f.cleanup()
+      }
+    })
+
+    test('a branch that broke is logged, and the verdict it forced is not blocked', { skip }, () => {
+      const f = withOrigin(fixture({ gclExit: 3 }))
+      try {
+        const { status, stdout, stderr } = capture(f.repo, ['--since', 'HEAD'], logEnv(f))
+        assert.equal(status, 1, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        const lines = runLog(f)
+        assert.equal(lines.length, 2, `expected two log lines, got ${JSON.stringify(lines)}`)
+        assert.equal(lines[0].lang, 'ts')
+        assert.deepEqual(lines[0].findings, { 'no-unused-vars': 1 })
+        assert.equal(lines[0].blocked, false)
+        assert.equal(lines[1].lang, 'go')
+        assert.deepEqual(lines[1].findings, {})
+        assert.equal(lines[1].blocked, false)
+      } finally {
+        f.cleanup()
+      }
+    })
+
+    test('a log that cannot be written changes neither the status nor stdout', { skip }, () => {
+      const f = withOrigin(fixture())
+      try {
+        // A regular file where the state directory has to be created, so every write fails.
+        const notADir = join(f.root, 'not-a-dir')
+        writeFileSync(notADir, '')
+        const { status, stdout, stderr } = capture(f.repo, ['--since', 'HEAD'], {
+          ...env(f),
+          XDG_STATE_HOME: notADir,
+        })
+        assert.equal(status, 2, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        assert.equal(stdout, bothPorcelain)
+        assert.match(stderr, /creating run log directory/)
+      } finally {
+        f.cleanup()
+      }
+    })
+
+    test('a run no branch took part in writes no log and does not break the gate', { skip }, () => {
+      const r = repository('tvrmsmith-nolint-')
+      try {
+        writeFileSync(join(r.repo, 'README.md'), 'one\n')
+        commitAll(r.repo)
+        writeFileSync(join(r.repo, 'README.md'), 'two\n')
+        const state = { XDG_STATE_HOME: join(r.root, 'state') }
+        const log = join(r.root, 'state/coding-standards/lint-runs.jsonl')
+
+        const since = capture(r.repo, ['--since', 'HEAD'], state)
+        assert.equal(since.status, 0, `stdout:\n${since.stdout}\nstderr:\n${since.stderr}`)
+        assert.equal(since.stdout, '')
+        assert.equal(existsSync(log), false)
+
+        git(r.repo, 'add', 'README.md')
+        const staged = capture(r.repo, ['--staged'], state)
+        assert.equal(staged.status, 0, `stdout:\n${staged.stdout}\nstderr:\n${staged.stderr}`)
+        assert.equal(existsSync(log), false)
+      } finally {
+        r.cleanup()
+      }
+    })
   })
 
   test('an unknown --only is rejected rather than silently linting nothing', () => {

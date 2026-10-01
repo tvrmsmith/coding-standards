@@ -13,7 +13,7 @@
  * Skipped where there is no dotnet or no go, since the script itself skips or fails on those.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -75,6 +75,14 @@ function fixture() {
   }
 }
 
+/** Every line lint-changed has appended to the fixture's run log, parsed. */
+function runLog(f) {
+  const path = join(f.root, 'state/coding-standards/lint-runs.jsonl')
+  return existsSync(path)
+    ? readFileSync(path, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line))
+    : []
+}
+
 /** Runs the script over the staged change. @returns {{ status: number, stdout: string, stderr: string }} */
 function lint(f) {
   const result = spawnSync(script, ['--only', 'dotnet', '--staged'], {
@@ -89,6 +97,8 @@ function lint(f) {
       TVRMSMITH_ANALYZER_LOCAL_PROPS: f.localProps,
       TVRMSMITH_WAIVERS: join(f.root, 'waivers.jsonl'),
       XDG_CACHE_HOME: join(f.root, 'cache'),
+      XDG_STATE_HOME: join(f.root, 'state'),
+      NM_GATE: undefined,
     },
   })
   return { status: result.status, stdout: result.stdout, stderr: result.stderr }
@@ -132,6 +142,69 @@ describe('lint-changed.sh --only dotnet', () => {
     }
   })
 
+  test('a blocking run appends one line to the run log', { skip: missing && `no ${missing} on PATH` }, () => {
+    const f = fixture()
+    try {
+      git(f.repo, 'remote', 'add', 'origin', 'https://example.test/fixture.git')
+      writeFileSync(join(f.repo, 'src', 'Foo.cs'), 'public class Foo { public void M() { int x = 1; } }\n')
+      git(f.repo, 'add', 'src/Foo.cs')
+
+      const { status, stdout, stderr } = lint(f)
+      assert.equal(status, 2, `expected the blocking exit code\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+      const lines = runLog(f)
+      assert.equal(lines.length, 1, `expected one log line, got ${JSON.stringify(lines)}`)
+      assert.ok(Number.isInteger(lines[0].ts), `ts is not an integer: ${lines[0].ts}`)
+      const { ts, findings, ...rest } = lines[0]
+      assert.deepEqual(rest, {
+        repo: 'https://example.test/fixture.git',
+        branch: 'main',
+        head: git(f.repo, 'rev-parse', 'HEAD').trim(),
+        lang: 'dotnet',
+        mode: 'staged',
+        gate: false,
+        blocked: true,
+      })
+      // Real analyzer props add rule ids of their own, so only CS0219 is pinned.
+      assert.equal(findings.CS0219, 1)
+      for (const count of Object.values(findings)) {
+        assert.ok(Number.isInteger(count) && count > 0, `finding count is not a positive integer: ${count}`)
+      }
+    } finally {
+      f.cleanup()
+    }
+  })
+
+  test('a clean run appends one line with no findings', { skip: missing && `no ${missing} on PATH` }, () => {
+    const f = fixture()
+    try {
+      git(f.repo, 'remote', 'add', 'origin', 'https://example.test/fixture.git')
+      writeFileSync(
+        join(f.repo, 'src', 'Foo.cs'),
+        'namespace Fixture;\n\npublic static class Foo\n{\n    public static int M() => 1;\n}\n',
+      )
+      git(f.repo, 'add', 'src/Foo.cs')
+
+      const { status, stdout, stderr } = lint(f)
+      assert.equal(status, 0, `expected a clean pass\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+      const lines = runLog(f)
+      assert.equal(lines.length, 1, `expected one log line, got ${JSON.stringify(lines)}`)
+      assert.ok(Number.isInteger(lines[0].ts), `ts is not an integer: ${lines[0].ts}`)
+      const { ts, ...rest } = lines[0]
+      assert.deepEqual(rest, {
+        repo: 'https://example.test/fixture.git',
+        branch: 'main',
+        head: git(f.repo, 'rev-parse', 'HEAD').trim(),
+        lang: 'dotnet',
+        mode: 'staged',
+        gate: false,
+        blocked: false,
+        findings: {},
+      })
+    } finally {
+      f.cleanup()
+    }
+  })
+
   // The commit carries Foo.cs, MSBuild has nothing on disk to compile, and the build set is empty.
   // Exiting there passed the commit with nothing examined, which is the staged-versus-disk hard
   // stop of intent decision 3 going unasked.
@@ -145,6 +218,7 @@ describe('lint-changed.sh --only dotnet', () => {
       const { status, stdout, stderr } = lint(f)
       assert.notEqual(status, 0, `expected the commit to be refused\nstdout:\n${stdout}\nstderr:\n${stderr}`)
       assert.match(stderr, /src\/Foo\.cs/)
+      assert.deepEqual(runLog(f), [])
     } finally {
       f.cleanup()
     }

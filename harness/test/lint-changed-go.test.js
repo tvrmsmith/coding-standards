@@ -11,7 +11,7 @@
  * That needs go on PATH, so the cases skip without it.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -121,6 +121,15 @@ function fixture() {
  */
 const neutralised = { TVRMSMITH_REGISTRY_KEY: undefined, TVRMSMITH_GOLANGCI_CONFIG: undefined }
 
+const runLogPath = (root) => join(root, 'state/coding-standards/lint-runs.jsonl')
+
+/** Every line lint-changed has appended to the fixture's run log, parsed. */
+function runLog({ root }) {
+  return existsSync(runLogPath(root))
+    ? readFileSync(runLogPath(root), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line))
+    : []
+}
+
 /** @returns {{ status: number, stdout: string, stderr: string }} */
 function lint(cwd, { root, registry, stub }, env = {}, args = ['--since', 'HEAD']) {
   const result = spawnSync(script, ['--only', 'go', ...args], {
@@ -135,6 +144,8 @@ function lint(cwd, { root, registry, stub }, env = {}, args = ['--since', 'HEAD'
       // writes a lint-changed binary into their real cache.
       TVRMSMITH_WAIVERS: join(root, 'waivers.jsonl'),
       XDG_CACHE_HOME: join(root, 'cache'),
+      XDG_STATE_HOME: join(root, 'state'),
+      NM_GATE: undefined,
       ...env,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -363,6 +374,75 @@ test('an override naming an unregistered path still skips', { skip }, () => {
     writeFileSync(f.registry, `${f.repo}\n`)
     const gate = detachedCheckout(f)
     assertSkipped(lint(gate, f, { TVRMSMITH_REGISTRY_KEY: gate }))
+  } finally {
+    f.cleanup()
+  }
+})
+
+test('a blocking run appends one line to the run log', { skip }, () => {
+  const f = fixture()
+  try {
+    git(f.repo, 'remote', 'add', 'origin', 'https://example.test/fixture.git')
+    writeFileSync(f.registry, `${f.repo}\n`)
+    writeFileSync(join(f.repo, 'main.go'), 'package main\n\nfunc main() { _ = 1 }\n')
+
+    const { status, stdout, stderr } = lint(f.repo, f)
+    assert.equal(status, 2, `expected the blocking exit code\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+    const lines = runLog(f)
+    assert.equal(lines.length, 1, `expected one log line, got ${JSON.stringify(lines)}`)
+    assert.ok(Number.isInteger(lines[0].ts), `ts is not an integer: ${lines[0].ts}`)
+    const { ts, ...rest } = lines[0]
+    assert.deepEqual(rest, {
+      repo: 'https://example.test/fixture.git',
+      branch: 'main',
+      head: git(f.repo, 'rev-parse', 'HEAD').trim(),
+      lang: 'go',
+      mode: 'since',
+      gate: false,
+      blocked: true,
+      findings: { stub: 1 },
+    })
+  } finally {
+    f.cleanup()
+  }
+})
+
+test('a clean run appends one line with no findings', { skip }, () => {
+  const f = fixture()
+  try {
+    git(f.repo, 'remote', 'add', 'origin', 'https://example.test/fixture.git')
+    writeFileSync(f.registry, `${f.repo}\n`)
+    writeFileSync(join(f.repo, 'main.go'), 'package main\n\nfunc main() { _ = 1 }\n')
+
+    const { status, stdout, stderr } = lint(f.repo, f, { STUB_LINE: '1' })
+    assert.equal(status, 0, `expected a clean pass\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+    const lines = runLog(f)
+    assert.equal(lines.length, 1, `expected one log line, got ${JSON.stringify(lines)}`)
+    assert.ok(Number.isInteger(lines[0].ts), `ts is not an integer: ${lines[0].ts}`)
+    const { ts, ...rest } = lines[0]
+    assert.deepEqual(rest, {
+      repo: 'https://example.test/fixture.git',
+      branch: 'main',
+      head: git(f.repo, 'rev-parse', 'HEAD').trim(),
+      lang: 'go',
+      mode: 'since',
+      gate: false,
+      blocked: false,
+      findings: {},
+    })
+  } finally {
+    f.cleanup()
+  }
+})
+
+test('a branch that skipped as unregistered writes no run log', { skip }, () => {
+  const f = fixture()
+  try {
+    writeFileSync(join(f.repo, 'main.go'), 'package main\n\nfunc main() { _ = 1 }\n')
+
+    const { status, stdout, stderr } = lint(f.repo, f)
+    assert.equal(status, 0, `expected the skip to pass\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+    assert.equal(existsSync(runLogPath(f.root)), false)
   } finally {
     f.cleanup()
   }

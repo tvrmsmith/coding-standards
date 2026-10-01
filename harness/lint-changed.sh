@@ -40,6 +40,12 @@
 # --only runs a single branch. That is for no-mistakes `lint.extra_linters`, which wants one entry
 # per language so each gets its own identity, finding ids, budget and exit-code isolation.
 #
+# Every language that ran leaves one line in the run log, `lint-changed log-run` appending to
+# $XDG_STATE_HOME/coding-standards/lint-runs.jsonl. A branch ran when it handed the filter at least
+# one report or returned non-zero. One that owned no files, skipped as unwired, or reached its tail
+# with no report (TypeScript with no ESLint package, C# whose owned files are all absent) writes
+# nothing, and the log never changes the exit status.
+#
 # Written for bash 3.2 (the macOS system bash).
 set -uo pipefail
 
@@ -100,6 +106,7 @@ while IFS= read -r -d '' file; do
 done <"$changed_list"
 
 status=0
+ran=()
 for lang in $LANGUAGES; do
   [ -z "$only" ] || [ "$only" = "$lang" ] || continue
 
@@ -123,8 +130,15 @@ for lang in $LANGUAGES; do
   # lives in common.sh, next to the branch contract that states it. A branch returns 0 or 1, and
   # anything else is it breaking, including a 127 from a function that was never defined, so it
   # reports as 1 rather than as some richer code the hook cannot read.
+  reports_before=$(report_count)
   "${lang}_lint" "${owned[@]}"
   branch_status=$?
+  # Ran when it handed the filter at least one report, or broke. A branch that reached add_reports
+  # with none linted nothing, so it counts no more than one that skipped: a clean line for it would
+  # read as a language checked when no linter saw a file.
+  if [ "$(report_count)" -gt "$reports_before" ] || [ "$branch_status" -ne 0 ]; then
+    ran+=("$lang")
+  fi
   status=$(rank_status "$status" "$branch_status")
 done
 
@@ -139,5 +153,10 @@ status=$(rank_status "$status" "$filter_status")
 if [ "$status" -eq 0 ] && [ "$spends" -eq 1 ] && [ -s "$matched_waivers" ]; then
   spend_waivers || status=1
 fi
+
+# After the spend, so the line carries the final verdict. Its status is never read: the log is a
+# record of the run and not part of it. The guard is bash 3.2's, where a bare empty array under
+# `set -u` aborts with 127, which would turn every run no branch took part in into a broken gate.
+log_run "$status" ${ran[@]+"${ran[@]}"}
 
 exit "$status"

@@ -44,8 +44,8 @@ plugins `base.js` imports.
 | File | Job |
 | --- | --- |
 | `eslint-layer.js` | Loads the package's own ESLint config, spreads the personal preset after it. The layering, and the typed-layer gate. |
-| `lint-changed.sh` | The one entrypoint. Resolves the repo, computes the changed set, runs every language branch that applies, then runs one `lint-changed` over every report the branches produced and, on a full `--staged` run, spends the waivers it matched once the whole run is clean. `--only` runs a single branch. |
-| `linters/common.sh` | What every branch shares: argument parsing, repo resolution with the registry key from `lint-changed registry-key`, the changed set from `lint-changed changed-paths`, the scratch directory, `owner_groups`, which asks `lint-changed owners` for the build unit owning each changed file, `adoption`, which asks `lint-changed adopted` whether a registry names the repo, the ancestor walk `ts.sh` uses to find a package's installed ESLint, `lint_changed_bin`, which builds the filter once per run and memoises the path to a file, `add_reports`, the call every branch ends on to hand its reports up, `run_filter`, the one `lint-changed` call that reads them, `spend_waivers`, and `rank_status`, the one place the ADR 0010 exit convention is folded. |
+| `lint-changed.sh` | The one entrypoint. Resolves the repo, computes the changed set, runs every language branch that applies, then runs one `lint-changed` over every report the branches produced and, on a full `--staged` run, spends the waivers it matched once the whole run is clean. Appends a line per language that ran to the run log. `--only` runs a single branch. |
+| `linters/common.sh` | What every branch shares: argument parsing, repo resolution with the registry key from `lint-changed registry-key`, the changed set from `lint-changed changed-paths`, the scratch directory, `owner_groups`, which asks `lint-changed owners` for the build unit owning each changed file, `adoption`, which asks `lint-changed adopted` whether a registry names the repo, the ancestor walk `ts.sh` uses to find a package's installed ESLint, `lint_changed_bin`, which builds the filter once per run and memoises the path to a file, `add_reports`, the call every branch ends on to hand its reports up, `report_count`, which counts the reports handed up so far so the dispatcher can tell which branches ran, `run_filter`, the one `lint-changed` call that reads them, `spend_waivers`, `log_run`, which appends the run log through `lint-changed log-run`, and `rank_status`, the one place the ADR 0010 exit convention is folded. |
 | `linters/ts.sh` | Lints the changed JavaScript and TypeScript, each file through its own package's ESLint binary, to a JSON report, then hands every report up to the dispatcher's one `lint-changed` run, which blocks the commit on any finding touching a changed line. |
 | `linters/dotnet.sh` | The C# counterpart: builds the projects owning the changed `.cs` to SARIF, then hands every report up to the dispatcher's one `lint-changed` run, which blocks the commit on any finding touching a changed line. A directory holding several `.csproj` builds every one, since each compiles every `.cs` below it. |
 | `errorlog.props` | Sets `ErrorLog` for that build, imported through `CustomAfterMicrosoftCommonTargets`. MSBuild owns the report name because it has to expand `$(TargetFramework)` per inner build and escape the comma before the version suffix; the branch passes only the prefix. |
@@ -128,6 +128,24 @@ one line per surviving finding to stdout, `path:line:column: RULE: message`, rep
 nothing else; every header, diagnostic and waive command goes to stderr. One line per surviving
 finding is what lets one regex read all three languages, which is what no-mistakes'
 `lint.extra_linters` consumes.
+
+### The run log
+
+Every run appends one JSON line per language branch that ran to
+`${XDG_STATE_HOME:-~/.local/state}/coding-standards/lint-runs.jsonl`, beside the waiver log. A
+branch ran when it handed the filter at least one report or returned non-zero, so a mixed commit
+writes one line per language, an `--only` run writes one, and a run where every branch skipped or
+linted nothing (TypeScript with no ESLint package, C# whose owned files are all absent) writes none.
+Each line carries `ts`, `repo` (the origin URL with any `user:token@` stripped), `branch` (empty on a
+detached HEAD, so every no-mistakes gate line and any other detached run carries `""` and resolves
+its branch through `head`), `head`
+(under pre-commit, the parent of the commit being written), `lang`, `mode`, `gate` (`NM_GATE=1`),
+`blocked` and `findings`, a rule-to-count map of the unwaived survivors for that language, empty on a
+clean run. `blocked` is true only when the run's final status is 2, and every line of a run carries
+the same value, so a broken gate logs `false`. The filter hands its survivors over in the file
+`--kept` names, and `lint-changed log-run` writes the lines; `lint/cmd/lint-changed/runlog.go` owns
+the field set. The log is a record and never part of the verdict: a failed write prints to stderr
+and leaves the exit status alone.
 
 ### Linting a checkout that cannot say which repository it is
 

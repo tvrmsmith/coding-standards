@@ -1140,3 +1140,94 @@ func TestPreCommitHookBlocksEveryFormOfCommit(t *testing.T) {
 		})
 	}
 }
+
+func readKept(t *testing.T, path string) string {
+	t.Helper()
+	got, err := os.ReadFile(path) //nolint:gosec // G304: path is a fixed name under this test's own t.TempDir
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(got)
+}
+
+// --kept records one "<language>\t<rule>" line per survivor, in the order
+// stdout reports them, and leaves the verdict alone.
+func TestKeptFileNamesEachSurvivor(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "Foo.cs")
+	keptFile := filepath.Join(t.TempDir(), "kept")
+
+	res := f.run(sarifDoc(
+		sarifResult("TVRM0002", "second rule", sarifLoc("Foo.cs", 3, 3)),
+		sarifResult("TVRM0001", "no getter", sarifLoc("Foo.cs", 3, 3)),
+	), filterArgs("--staged", "--kept", keptFile)...)
+
+	if res.exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2\nstderr: %s", res.exitCode, res.stderr)
+	}
+	first, second := strings.Index(res.stdout, "TVRM0002"), strings.Index(res.stdout, "TVRM0001")
+	if first < 0 || second < first {
+		t.Fatalf("stdout = %q, want TVRM0002 then TVRM0001", res.stdout)
+	}
+	want := "csharp\tTVRM0002\ncsharp\tTVRM0001\n"
+	if got := readKept(t, keptFile); got != want {
+		t.Fatalf("kept file = %q, want %q", got, want)
+	}
+}
+
+// A run with no survivor still writes the kept file, empty.
+func TestKeptFileIsEmptyWhenNothingSurvives(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "Foo.cs")
+	keptFile := filepath.Join(t.TempDir(), "kept")
+
+	res := f.run(sarifDoc(sarifResult("TVRM0001", "untouched line", sarifLoc("Foo.cs", 1, 1))),
+		filterArgs("--staged", "--kept", keptFile)...)
+
+	if res.exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", res.exitCode, res.stderr)
+	}
+	if got := readKept(t, keptFile); got != "" {
+		t.Fatalf("kept file = %q, want empty", got)
+	}
+}
+
+// A survivor a waiver covers is not kept.
+func TestKeptFileOmitsWaivedSurvivor(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "Foo.cs")
+	waived := f.run("", "waive", "--language", "csharp", "--path", "Foo.cs", "--rule", "TVRM0001", "--reason", "known")
+	if waived.exitCode != 0 {
+		t.Fatalf("waive: exit code = %d, stderr: %s", waived.exitCode, waived.stderr)
+	}
+	keptFile := filepath.Join(t.TempDir(), "kept")
+
+	res := f.run(sarifDoc(sarifResult("TVRM0001", "no getter", sarifLoc("Foo.cs", 3, 3))),
+		filterArgs("--staged", "--kept", keptFile)...)
+
+	if res.exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", res.exitCode, res.stderr)
+	}
+	if got := readKept(t, keptFile); got != "" {
+		t.Fatalf("kept file = %q, want empty: the waiver covered the survivor", got)
+	}
+}
+
+// A failed --kept write is reported on stderr and never changes the verdict,
+// unlike --matched-waivers, whose write failure is a 1.
+func TestKeptWriteFailureKeepsTheVerdict(t *testing.T) {
+	f := newFixture(t)
+	stageEdit(f, "Foo.cs")
+	badPath := filepath.Join(t.TempDir(), "missing-dir", "kept")
+
+	blocked := f.run(sarifDoc(sarifResult("TVRM0001", "no getter", sarifLoc("Foo.cs", 3, 3))),
+		filterArgs("--staged", "--kept", badPath)...)
+	if blocked.exitCode != 2 || !strings.Contains(blocked.stderr, badPath) {
+		t.Fatalf("with a survivor: exit code = %d, want 2, stderr naming %s\nstderr: %s", blocked.exitCode, badPath, blocked.stderr)
+	}
+
+	clean := f.run(sarifDoc(), filterArgs("--staged", "--kept", badPath)...)
+	if clean.exitCode != 0 || !strings.Contains(clean.stderr, badPath) {
+		t.Fatalf("without a survivor: exit code = %d, want 0, stderr naming %s\nstderr: %s", clean.exitCode, badPath, clean.stderr)
+	}
+}
