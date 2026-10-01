@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { analyze } from '../analyze.mjs'
+import { bootstrapCi, mean, median } from '../stats.mjs'
 import { armSummaryWorld, buildWorld } from './fixture.js'
 
 const LOADS_STANDARDS = ['coding-standards:coding-standards']
@@ -287,6 +288,13 @@ test('a branch with a run still going is excluded as in flight', (t) => {
   )
 })
 
+test('a branch with no review round 1 is excluded as no pipeline run, with no group', (t) => {
+  const report = history(t, widgets({ runs: [{ id: 'run1', branch: 'feat-a', createdAt: 1000, steps: { lint: [[]] } }] }))
+
+  assert.deepEqual(report.branches, [])
+  assert.deepEqual(report.excluded, [{ repo: 'acme/widgets', branch: 'feat-a', group: null, reason: 'no pipeline run' }])
+})
+
 test('https and ssh upstream URLs give the same owner/name key', (t) => {
   const gadgets = 'checkouts/gadgets'
   const gizmos = 'checkouts/gizmos'
@@ -383,6 +391,15 @@ test('a load inside a review subagent does not count', (t) => {
 
   assert.equal(loadIn('rev-standards'), 'not-loaded')
   assert.equal(loadIn('worker-1'), 'loaded')
+})
+
+test('a subagent whose meta file does not parse is skipped and counted', (t) => {
+  const subagent = { id: 'a1', name: 'worker-1', meta: '{"name":', entries: [{ messageId: 'm3', skills: LOADS_STANDARDS, usage: { input: 4, output: 4 } }] }
+  const report = history(t, transcriptWorld({ entries: [M2], subagents: [subagent] }))
+
+  assert.equal(report.branches[0].group, 'not-loaded')
+  assert.equal(report.branches[0].metrics.implTokens.input, 1)
+  assert.deepEqual(report.sources.projects, { present: true, rows: 1, skipped: 1 })
 })
 
 test('a no-mistakes gate session directory is never read', (t) => {
@@ -613,7 +630,7 @@ test('a logged arm that differs from the hash of its repo and branch is a hash m
   ])
 })
 
-test('history mode with an arm log keeps only branches first run before the hook began', (t) => {
+test('history mode with an arm log excludes a branch whose first run postdates the hook', (t) => {
   const at800 = [{ at: '1970-01-01T00:13:20.000Z', skills: LOADS_STANDARDS }]
   const repos = [widgetsRepo({ branches: armBranches('feat-a', 'feat-b'), runs: [armRun('feat-a', 900), armRun('feat-b')] })]
   const sessions = [armSession('feat-a', { entries: at800 }), armSession('feat-b', { entries: at800 })]
@@ -621,7 +638,7 @@ test('history mode with an arm log keeps only branches first run before the hook
 
   assert.equal(report.mode, 'history')
   assert.deepEqual(report.branches.map(({ branch }) => branch), ['feat-a'])
-  assert.deepEqual(report.excluded, [])
+  assert.deepEqual(report.excluded, [{ repo: 'acme/widgets', branch: 'feat-b', group: 'loaded', reason: 'postdates hook' }])
   assert.equal(report.armCheck, null)
 })
 
@@ -632,33 +649,51 @@ test('history mode with an arm log keeps only branches first run before the hook
  * @param {Record<string, unknown>} [rest]
  */
 function lintRow(ts, lang, findings, rest = {}) {
-  return { ts, repo: UPSTREAM, branch: 'feat-b', head: 'abc', lang, mode: 'staged', gate: false, blocked: false, findings, ...rest }
+  return { ts, repo: UPSTREAM, branch: 'feat-b', head: 'h1', lang, mode: 'staged', gate: false, blocked: false, findings, ...rest }
 }
 
-test('lint metrics total each language earliest non-gate run and count the blocked commits', (t) => {
+/** @param {{ branches: { branch: string, metrics: Record<string, any> }[] }} report */
+function lintByBranch(report) {
+  return Object.fromEntries(report.branches.map(({ branch, metrics }) => [branch, [metrics.lintPreCommit, metrics.blockedCommits]]))
+}
+
+test('lint metrics sum the earliest non-gate run over its languages and count the blocked runs', (t) => {
   const lint = [
     lintRow(10, 'ts', { 'no-unused-vars': 2, eqeqeq: 1 }, { blocked: true }),
+    lintRow(10, 'go', { errcheck: 4 }, { blocked: true }),
     lintRow(20, 'ts', {}),
-    lintRow(15, 'go', { errcheck: 4 }, { blocked: true }),
-    lintRow(5, 'ts', { eqeqeq: 9 }, { gate: true, blocked: true }),
+    lintRow(30, 'dotnet', { CA1000: 1 }, { head: 'h2' }),
+    lintRow(5, 'ts', { eqeqeq: 9 }, { head: 'h0', gate: true, blocked: true }),
   ]
   const report = arm(t, armWorld({ lint }))
-  const [featA, featB] = report.branches
 
-  assert.equal(featB.metrics.lintPreCommit, 7)
-  assert.equal(featB.metrics.blockedCommits, 2)
-  assert.equal(featA.metrics.lintPreCommit, null)
-  assert.equal(featA.metrics.blockedCommits, null)
+  assert.deepEqual(lintByBranch(report), { 'feat-a': [0, 0], 'feat-b': [7, 1] })
+})
+
+test('a branch with no lint run whose work began before the lint log existed has null lint metrics', (t) => {
+  const report = arm(t, armWorld({ lint: [lintRow(1600, 'ts', { eqeqeq: 1 })] }))
+
+  assert.deepEqual(lintByBranch(report), { 'feat-a': [null, null], 'feat-b': [1, 0] })
 })
 
 test('a missing lint log nulls every lint metric without throwing', (t) => {
   const report = arm(t, armWorld())
 
   assert.deepEqual(report.sources.lintLog, { present: false, rows: 0, skipped: 0 })
-  for (const { metrics } of report.branches) {
-    assert.equal(metrics.lintPreCommit, null)
-    assert.equal(metrics.blockedCommits, null)
-  }
+  assert.deepEqual(lintByBranch(report), { 'feat-a': [null, null], 'feat-b': [null, null] })
+})
+
+test('a log row whose repo has no owner/name matches no branch and never aborts the report', (t) => {
+  const lint = [
+    lintRow(5, 'ts', { eqeqeq: 5 }, { repo: '' }),
+    lintRow(6, 'ts', { eqeqeq: 7 }, { repo: '/home/me/widgets' }),
+    lintRow(10, 'ts', { eqeqeq: 2 }, { repo: 'ssh://github-personal/Acme/Widgets.git' }),
+  ]
+  const arms = [...ARM_ROWS, { ts: 1200, session_id: 's-x', repo: '', branch: 'feat-x', arm: 'guidance' }]
+  const report = arm(t, armWorld({ lint, arms }))
+
+  assert.deepEqual(lintByBranch(report)['feat-b'], [2, 0])
+  assert.deepEqual(report.excluded, [{ repo: null, branch: 'feat-x', group: 'guidance', reason: 'no pipeline run' }])
 })
 
 test('a malformed arm log line is skipped and counted among valid rows', (t) => {
@@ -851,18 +886,24 @@ test('findings with no bracket tag leave the sections empty', (t) => {
 })
 
 test('a summary cell holds the count, median, mean and share of non-zero values with seeded intervals', (t) => {
-  const report = arm(t, armSummaryWorld())
+  const errors = { 'feat-b': 1, 'feat-e': 5, 'feat-a': 0, 'feat-c': 2 }
+  const run = (/** @type {string} */ name) => ({
+    steps: { review: [Array.from({ length: errors[name] }, (_, i) => ({ id: `error-${i + 1}`, severity: 'error' }))] },
+  })
+  const paths = buildWorld(t, armSummaryWorld({ run }))
+  const report = analyze({ mode: 'arm', paths, seed: 1 })
 
   assert.deepEqual(report.summary.guidance.reviewError, {
     n: 2,
     median: 3,
-    medianCi: { lo: 3, hi: 3 },
+    medianCi: bootstrapCi([1, 5], median, { seed: 1 }),
     mean: 3,
-    meanCi: { lo: 3, hi: 3 },
+    meanCi: bootstrapCi([1, 5], mean, { seed: 1 }),
     shareNonzero: 1,
   })
+  assert.deepEqual(report.summary['review-only'].reviewError.shareNonzero, 0.5)
   assert.equal(report.diff.reviewError.median, -2)
-  assert.deepEqual(report.diff.reviewError.medianCi, { lo: -2, hi: -2 })
+  assert.deepEqual(analyze({ mode: 'arm', paths, seed: 1 }).diff, report.diff)
 })
 
 test('a metric no branch in the group recorded has an empty cell', (t) => {
@@ -959,10 +1000,10 @@ test('an aspect is pinned when its most common arm covers at least 95% of its ke
     assignRow('aaaa0001', 100, RUN1, STANDARDS_ARM),
     resultRow('aaaa0001', 101, 'standards', 'general-purpose', [1, 2, 3]),
     resultRow('aaaa0001', 102, 'comments', 'general-purpose/sonnet', [0, 1, 0]),
-    ...elsewhere('comments', 'general-purpose/sonnet', 20),
+    ...elsewhere('comments', 'general-purpose/sonnet', 18),
     ...elsewhere('comments', 'general-purpose', 1),
-    ...elsewhere('standards', 'general-purpose', 10),
-    ...elsewhere('standards', 'low-effort', 10),
+    ...elsewhere('standards', 'general-purpose', 17),
+    ...elsewhere('standards', 'low-effort', 1),
   ])
 
   assert.equal(featAAspects(report).comments.pinned, true)

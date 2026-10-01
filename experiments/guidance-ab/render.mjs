@@ -8,7 +8,7 @@ import { formatEstimate, formatNumber } from './format.mjs'
  * @returns {string}
  */
 export function render(report) {
-  const { mode, groups, caveat, compliance, summary, diff, excluded, armCheck, verdict } = report
+  const { mode, groups, caveat, compliance, summary, diff, excluded, armCheck, verdict, sources } = report
   const totals = Object.keys(diff).map((metric) => [
     metric,
     ...groups.map((group) => cellText(summary[group][metric])),
@@ -17,6 +17,7 @@ export function render(report) {
   const sections = [
     [`guidance A/B report, mode: ${mode}`],
     caveat ? [caveat] : [],
+    ['Sources', ...sourceLines(sources)],
     groups.map((group) => `${group}: ${compliance[group].loaded}/${compliance[group].total} loaded (${compliance[group].unknown} unknown)`),
     ['Totals', ...table(['metric', ...groups, `diff (${groups[1]} - ${groups[0]})`], totals)],
     ...cuts(report),
@@ -84,6 +85,18 @@ function excludedLines(excluded, groups) {
   return reasons.map((reason) => {
     const counts = [...groups, null].map((group) => [group ?? 'no group', excluded.filter((e) => e.reason === reason && e.group === group).length])
     return `${reason}: ${counts.filter(([, n]) => n).map(([name, n]) => `${name} ${n}`).join(', ')}`
+  })
+}
+
+/**
+ * One line per input: `not found`, or how many rows it yielded and how many it skipped.
+ *
+ * @param {Record<string, import('./sources/transcripts.mjs').Source>} sources
+ */
+function sourceLines(sources) {
+  return Object.entries(sources).map(([name, { present, rows, skipped }]) => {
+    if (!present) return `${name}: not found`
+    return `${name}: ${rows} rows${skipped ? `, ${skipped} skipped` : ''}`
   })
 }
 

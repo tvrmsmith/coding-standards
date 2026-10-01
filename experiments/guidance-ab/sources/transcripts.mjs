@@ -9,8 +9,10 @@
  * }} Segment `prRepository` is the `owner/name`, lowercased, of the session's pr-link line; `firstAt`
  *   and `loadTimes` are epoch seconds, `loadTimes` one per coding-standards load; `usage` sums each message once
  *
- * @typedef {{ present: boolean, rows: number, skipped: number }} Source `rows` counts the files read and
- *   `skipped` the lines that held a relevant marker but did not parse
+ * @typedef {{ present: boolean, rows: number, skipped: number }} Source what one input yielded. For a JSONL
+ *   log `rows` counts the lines parsed and `skipped` the lines that did not parse. For the projects dir
+ *   `rows` counts the transcript files read and `skipped` the relevant lines and subagent meta files
+ *   that did not parse
  * @typedef {{
  *   segments: Map<string, Segment>, seen: Set<string>, prRepository: string | null, source: Source,
  * }} SessionRead `seen` holds the message ids already counted across the session's files
@@ -51,6 +53,8 @@ export function readSegments(projectsDir) {
 
 /**
  * Reads the session's own file, then its subagent files, counting each message once across all of them.
+ * A subagent whose meta file does not parse is skipped, since its loads cannot be told apart from a
+ * review subagent's.
  *
  * @param {string} dir the project directory
  * @param {string} sessionId
@@ -65,8 +69,12 @@ function readSession(dir, sessionId, source) {
     for (const file of readdirSync(subagentDir).sort()) {
       if (!file.endsWith('.jsonl')) continue
       const meta = join(subagentDir, file.replace(/\.jsonl$/, '.meta.json'))
-      const name = existsSync(meta) ? JSON.parse(readFileSync(meta, 'utf8')).name : null
-      readFile(join(subagentDir, file), session, !String(name).startsWith(REVIEW_PREFIX))
+      const parsed = existsSync(meta) ? parseLine(readFileSync(meta, 'utf8')) : {}
+      if (parsed == null) {
+        source.skipped += 1
+        continue
+      }
+      readFile(join(subagentDir, file), session, !String(parsed.name).startsWith(REVIEW_PREFIX))
     }
   }
   const segments = [...session.segments.values()]
@@ -111,7 +119,7 @@ function readFile(path, session, countsLoads) {
 
 /**
  * @param {string} text
- * @returns {any} null when the line is not valid JSON
+ * @returns {any} null when the text is not valid JSON
  */
 function parseLine(text) {
   try {

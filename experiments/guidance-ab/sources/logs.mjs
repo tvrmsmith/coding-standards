@@ -33,23 +33,31 @@ export function readJsonl(path) {
 }
 
 /**
- * Lint metrics for one branch from its lint-changed runs, or nulls when it has no non-gate run.
- * `preCommit` sums, over each language, the findings of that language's earliest run; `blocked` counts
- * the runs that blocked a commit. Gate runs are ignored.
+ * Lint metrics for one branch from its lint-changed lines. lint-changed writes one line per language
+ * per run, every line of a run sharing `ts` and `head`, and no line when nothing lintable ran. Gate
+ * lines are ignored. `lintPreCommit` sums the findings over the lines of the earliest run, and
+ * `blockedCommits` counts the runs that blocked. A branch with no run scores 0 on both when its work
+ * began at or after the log's first line, and null when it began earlier or there is no log.
  *
- * @param {LintRow[]} rows the branch's runs
+ * @param {LintRow[]} rows the branch's lines
+ * @param {{ began: number, logStart: number }} span `began` is when the branch's work began and
+ *   `logStart` the smallest `ts` in the log, gate lines included, or Infinity with no log
  * @returns {{ lintPreCommit: number | null, blockedCommits: number | null }}
  */
-export function lintMetrics(rows) {
-  const runs = rows.filter((row) => !row.gate).sort((a, b) => a.ts - b.ts)
-  if (!runs.length) return { lintPreCommit: null, blockedCommits: null }
-  /** @type {Map<string, number>} */
-  const earliest = new Map()
-  for (const { lang, findings } of runs) {
-    if (!earliest.has(lang)) earliest.set(lang, Object.values(findings).reduce((total, count) => total + count, 0))
+export function lintMetrics(rows, { began, logStart }) {
+  /** @type {Map<string, LintRow[]>} */
+  const runs = new Map()
+  for (const row of rows.filter((r) => !r.gate).sort((a, b) => a.ts - b.ts)) {
+    const key = `${row.ts}\0${row.head}`
+    runs.set(key, [...(runs.get(key) ?? []), row])
   }
+  if (!runs.size) {
+    const none = began >= logStart ? 0 : null
+    return { lintPreCommit: none, blockedCommits: none }
+  }
+  const [earliest] = runs.values()
   return {
-    lintPreCommit: [...earliest.values()].reduce((total, count) => total + count, 0),
-    blockedCommits: runs.filter((row) => row.blocked).length,
+    lintPreCommit: earliest.flatMap(({ findings }) => Object.values(findings)).reduce((total, count) => total + count, 0),
+    blockedCommits: [...runs.values()].filter((lines) => lines.some((row) => row.blocked)).length,
   }
 }

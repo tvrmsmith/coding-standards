@@ -13,7 +13,8 @@ node cli.mjs history  # observational: branches grouped by whether a transcript 
 
 Both print a text report. `--json` prints the full report as JSON instead. Arm mode compares the two
 assigned arms and ends with the decision rule's verdict. History mode groups are self-selected, so its
-report says so and carries no verdict.
+report says so and carries no verdict. The report's Sources section names each input it did not find
+and counts the lines it skipped because they did not parse.
 
 | Option | Default |
 | --- | --- |
@@ -35,6 +36,16 @@ A missing or unknown mode prints usage and exits 2. An analysis error, such as a
 | `state.sqlite` and `repos/` in the no-mistakes home | No-mistakes runs, review rounds, and the bare clones the diffs come from |
 | the review-ab file | The per-aspect review results and their arms |
 | the projects dir | Claude Code transcripts, for skill loads, tokens, and wall time |
+
+## Lint metrics
+
+lint-changed writes one `lint-runs.jsonl` line per language per run, and the lines of one run share
+`ts` and `head`. Per branch, `lintPreCommit` sums the findings over every line of the branch's earliest
+non-gate run, and `blockedCommits` counts the non-gate runs that blocked a commit. Gate lines count for
+neither. lint-changed writes nothing when nothing lintable ran, so a branch with no non-gate line
+scores 0 on both when its work began at or after the log's first line. It scores null when the log is
+missing or the work began before the log existed. A branch's work begins at the earlier of its first
+transcript line and its first no-mistakes run.
 
 ## Decision rule
 

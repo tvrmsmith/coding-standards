@@ -7,8 +7,10 @@
  * @typedef {{
  *   run: string, ts: number, repo: string, arms: Record<string, [string, string | null]>,
  *   results: Map<string, ResultRow & { arm: string }>,
- * }} Assign an assign row with the results kept for it, keyed by aspect
+ * }} Assign an assign row with the results kept for it, keyed by aspect. `repo` holds the id of the
+ *   no-mistakes run the assign reviewed, whatever its name says
  */
+import { tokenCost } from '../pricing.mjs'
 import { readJsonl } from './logs.mjs'
 
 /** Pinning is not retroactive, so a pinned aspect keeps a few rows from before it was pinned. */
@@ -91,7 +93,7 @@ function armString(pair) {
 function cost(results) {
   const fields = results.flatMap(({ tokens }) => [tokens.in, tokens.cw, tokens.cr, tokens.out])
   if (fields.every((n) => n == null)) return null
-  return results.reduce((total, { tokens }) => total + (tokens.in ?? 0) + (tokens.cw ?? 0) * 1.25 + (tokens.cr ?? 0) * 0.1 + (tokens.out ?? 0) * 5, 0)
+  return results.reduce((total, { tokens }) => total + tokenCost(tokens.in ?? 0, tokens.cw ?? 0, tokens.cr ?? 0, tokens.out ?? 0), 0)
 }
 
 /** A `path:line` or `path:start-end` reference, which a finding brackets without naming a section. */

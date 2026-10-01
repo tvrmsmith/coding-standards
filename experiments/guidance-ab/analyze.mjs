@@ -1,12 +1,14 @@
 /**
  * Joins the machine-local logs into the guidance A/B report.
  *
- * History mode takes every branch no-mistakes reviewed as a unit and groups it by whether a
- * transcript on that branch loaded the coding-standards skill. Arm mode takes the branches the arm log
- * assigns to an arm as the units and groups them by that arm.
+ * History mode takes every branch no-mistakes reviewed before the arm hook began logging as a unit, and
+ * groups it by whether a transcript on that branch loaded the coding-standards skill before the
+ * branch's first run. Arm mode takes the branches the arm log assigns to an arm as the units and groups
+ * them by that arm. Every branch that is not a unit is reported as an exclusion with its reason.
  */
 import { createHash } from 'node:crypto'
 import { extname, join, sep } from 'node:path'
+import { tokenCost } from './pricing.mjs'
 import { changedFiles } from './sources/git.mjs'
 import { lintMetrics, readJsonl } from './sources/logs.mjs'
 import { branchAspects, readReviewAb, sectionCounts } from './sources/review-ab.mjs'
@@ -16,7 +18,8 @@ import { summarize, verdict } from './summary.mjs'
 
 /**
  * @typedef {'guidance' | 'review-only'} ArmGroup
- * @typedef {{ repo: string, branch: string, group: ArmGroup }} Unit a branch the arm log assigns to an arm
+ * @typedef {{ repo: string | null, branch: string, group: ArmGroup }} Unit a branch the arm log assigns to an arm;
+ *   `repo` is null when the logged repo has no `owner/name`, so no reviewed branch matches it
  * @typedef {{ ts: number, session_id: string, repo: string, branch: string, arm: ArmGroup | 'unassigned' }} ArmRow
  */
 
@@ -61,6 +64,8 @@ export function analyze({ mode, paths, seed = 1, rule = DECISION_RULE }) {
   const units = mode === 'arm' ? armUnits(armLog.rows) : null
   // Infinity with no arm log, which keeps every history branch.
   const hookStart = Math.min(...armLog.rows.map((row) => row.ts))
+  // Infinity with no lint log, which leaves every lint metric null when a branch has no lint run.
+  const lintStart = Math.min(...lintLog.rows.map((row) => row.ts))
   const repos = readRepos(paths.noMistakesHome)
   const { segments: read, source } = readSegments(paths.projectsDir)
   const segments = read.map((segment) => ({ segment, repoId: repoOf(segment, repos, units ? armLog.rows : []) }))
@@ -71,12 +76,12 @@ export function analyze({ mode, paths, seed = 1, rule = DECISION_RULE }) {
     const firstRun = branch.runs.find((run) => stepRound(run, 'review', 1)) ?? null
     const repo = repoKey(branch.repo.upstreamUrl)
     const unit = units?.get(unitKey(repo, branch.branch))
-    if (units ? !unit : !firstRun || firstRun.createdAt >= hookStart) continue
+    if (units && !unit) continue
     const own = segments.filter((resolved) => belongsTo(resolved, branch)).map(({ segment }) => segment)
     const loaded = firstRun != null && own.some((segment) => segment.loadTimes.some((at) => at < firstRun.createdAt))
     const began = Math.min(firstRun?.createdAt ?? Infinity, ...own.map((segment) => segment.firstAt))
-    const group = unit ? unit.group : own.length ? (loaded ? 'loaded' : 'not-loaded') : null
-    const reason = exclusion(paths.noMistakesHome, branch, firstRun, group, units ? { hookStart, began } : null)
+    const group = unit ? unit.group : own.length && firstRun ? (loaded ? 'loaded' : 'not-loaded') : null
+    const reason = exclusion(paths.noMistakesHome, branch, firstRun, group, { arm: units != null, hookStart, began })
     decided.add(unitKey(repo, branch.branch))
     if (reason) {
       excluded.push({ repo, branch: branch.branch, group, reason })
@@ -93,7 +98,10 @@ export function analyze({ mode, paths, seed = 1, rule = DECISION_RULE }) {
       sections: sectionCounts(stepRound(firstRun, 'review', 1)?.findings ?? []),
       metrics: {
         ...metrics(branch, firstRun, own),
-        ...lintMetrics(lintLog.rows.filter((row) => unitKey(repoKey(row.repo), row.branch) === unitKey(repo, branch.branch))),
+        ...lintMetrics(
+          lintLog.rows.filter((row) => parseRepoKey(row.repo) === repo && row.branch === branch.branch),
+          { began, logStart: lintStart },
+        ),
       },
     })
   }
@@ -125,8 +133,9 @@ function armUnits(rows) {
   /** @type {Map<string, Unit>} */
   const units = new Map()
   for (const row of assigned) {
-    const key = unitKey(repoKey(row.repo), row.branch)
-    if (!units.has(key)) units.set(key, { repo: repoKey(row.repo), branch: row.branch, group: row.arm })
+    const repo = parseRepoKey(row.repo)
+    const key = unitKey(repo, row.branch)
+    if (!units.has(key)) units.set(key, { repo, branch: row.branch, group: row.arm })
   }
   return units
 }
@@ -141,7 +150,7 @@ function unassignedBranches(rows, units) {
   const seen = new Set(units.keys())
   const excluded = []
   for (const row of rows) {
-    const repo = repoKey(row.repo)
+    const repo = parseRepoKey(row.repo)
     const key = unitKey(repo, row.branch)
     if (seen.has(key)) continue
     seen.add(key)
@@ -164,13 +173,13 @@ function hashMismatches(rows) {
     const computed = digit < '8' ? 'guidance' : 'review-only'
     if (row.arm === computed) continue
     const key = `${row.repo}\0${row.branch}\0${row.arm}`
-    mismatches.set(key, { repo: repoKey(row.repo), branch: row.branch, logged: row.arm, computed })
+    mismatches.set(key, { repo: parseRepoKey(row.repo), branch: row.branch, logged: row.arm, computed })
   }
   return [...mismatches.values()]
 }
 
 /**
- * @param {string} repo normalized `owner/name`
+ * @param {string | null} repo normalized `owner/name`
  * @param {string} branch
  */
 function unitKey(repo, branch) {
@@ -182,17 +191,18 @@ function unitKey(repo, branch) {
  *
  * @param {string} noMistakesHome
  * @param {import('./sources/no-mistakes.mjs').Branch} branch
- * @param {import('./sources/no-mistakes.mjs').Run | null} firstRun null when no run has a review round 1, which only arm mode asks about
- * @param {string | null} group null when no transcript sits on the branch
- * @param {{ hookStart: number, began: number } | null} arm null outside arm mode; `hookStart` is when the arm
- *   hook began logging and `began` the earlier of the first run and the earliest transcript segment
+ * @param {import('./sources/no-mistakes.mjs').Run | null} firstRun null when no run has a review round 1
+ * @param {string | null} group null when no transcript sits on the branch, or in history mode no first run
+ * @param {{ arm: boolean, hookStart: number, began: number }} cut `arm` is true in arm mode, `hookStart` is
+ *   when the arm hook began logging, and `began` the earlier of the first run and the earliest transcript segment
  */
-function exclusion(noMistakesHome, branch, firstRun, group, arm) {
+function exclusion(noMistakesHome, branch, firstRun, group, { arm, hookStart, began }) {
   const { id, defaultBranch, workingPath } = branch.repo
   if (workingPath.split(sep).some((segment) => SANDBOX_SEGMENT.test(segment))) return 'sandbox repo'
   if (branch.runs.some((run) => run.status === 'running' || run.status === 'pending')) return 'in flight'
   if (!firstRun) return 'no pipeline run'
-  if (arm && arm.began < arm.hookStart) return 'predates hook'
+  if (arm && began < hookStart) return 'predates hook'
+  if (!arm && firstRun.createdAt >= hookStart) return 'postdates hook'
   const bare = join(noMistakesHome, 'repos', `${id}.git`)
   const changed = changedFiles([bare, workingPath], firstRun.headSha, `refs/remotes/origin/${defaultBranch}`)
   if (changed == null) return 'diff unavailable'
@@ -236,9 +246,9 @@ function belongsTo({ segment, repoId }, branch) {
 }
 
 /**
- * The repo a segment worked in, or null when it is unresolved. First match wins: an arm row logged for
- * the segment's session and branch names the repo, the cwd sits in a repo's checkout, then the session's pr-link names a repo, then exactly one repo's name is a segment
- * of the cwd.
+ * The repo a segment worked in, or null when it is unresolved. The first rule that applies decides: an
+ * arm row logged for the segment's session and branch names the repo; the cwd sits in a repo's
+ * checkout; the session's pr-link names the repo; exactly one repo's name is a directory of the cwd.
  *
  * @param {import('./sources/transcripts.mjs').Segment} segment
  * @param {import('./sources/no-mistakes.mjs').Repo[]} repos
@@ -247,7 +257,7 @@ function belongsTo({ segment, repoId }, branch) {
  */
 function repoOf(segment, repos, armRows) {
   const logged = armRows.find((row) => row.session_id === segment.sessionId && row.branch === segment.gitBranch)
-  if (logged) return repos.find((repo) => repoKey(repo.upstreamUrl) === repoKey(logged.repo))?.id ?? null
+  if (logged) return repos.find((repo) => repoKey(repo.upstreamUrl) === parseRepoKey(logged.repo))?.id ?? null
   const checkout = repos.find((repo) => segment.cwd === repo.workingPath || segment.cwd.startsWith(`${repo.workingPath}/`))
   if (checkout) return checkout.id
   if (segment.prRepository) return repos.find((repo) => repoKey(repo.upstreamUrl) === segment.prRepository)?.id ?? null
@@ -323,7 +333,7 @@ function implTokens(segments) {
 
 /** Prices the counts in input-token equivalents. */
 function tokenTotals(/** @type {number} */ input, /** @type {number} */ cacheWrite, /** @type {number} */ cacheRead, /** @type {number} */ output) {
-  return { input, cacheWrite, cacheRead, output, cost: input + cacheWrite * 1.25 + cacheRead * 0.1 + output * 5 }
+  return { input, cacheWrite, cacheRead, output, cost: tokenCost(input, cacheWrite, cacheRead, output) }
 }
 
 /** @param {import('./sources/no-mistakes.mjs').Finding[]} findings */
@@ -349,12 +359,23 @@ function uniqueFindings(rounds) {
 }
 
 /**
- * `owner/name`, lowercased, from an scp-style, https, or ssh upstream URL.
+ * `owner/name` from a no-mistakes upstream URL, which must have one.
  *
  * @param {string} url
  */
 function repoKey(url) {
-  const match = /^(?:git@[^:/]+:|https:\/\/[^/]+\/|ssh:\/\/git@[^/]+\/)([^/]+)\/([^/]+?)(?:\.git)?$/.exec(url)
-  if (!match) throw new Error(`cannot parse owner/name from upstream URL: ${url}`)
-  return `${match[1]}/${match[2]}`.toLowerCase()
+  const key = parseRepoKey(url)
+  if (key == null) throw new Error(`cannot parse owner/name from upstream URL: ${url}`)
+  return key
+}
+
+/**
+ * `owner/name`, lowercased, from an scp-style, https, or ssh URL, the ssh user optional; null for any
+ * other value, such as the empty or local-path origin a log row can carry.
+ *
+ * @param {unknown} url
+ */
+function parseRepoKey(url) {
+  const match = /^(?:git@[^:/]+:|https:\/\/[^/]+\/|ssh:\/\/(?:[^@/]+@)?[^/]+\/)([^/]+)\/([^/]+?)(?:\.git)?$/.exec(String(url))
+  return match ? `${match[1]}/${match[2]}`.toLowerCase() : null
 }

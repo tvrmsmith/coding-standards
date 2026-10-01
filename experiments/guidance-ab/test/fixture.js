@@ -33,8 +33,8 @@
  *   the session's, `usage` defaults to one input and one output token, and `repeat` writes the line
  *   that many times, as streaming does for one message. `raw` writes its text verbatim instead,
  *   and `stringMessage` writes a line whose `message` is a string
- * @typedef {{ id: string, name: string, entries: Entry[] }} Subagent a subagent file under the
- *   session, with a `.meta.json` carrying `name`
+ * @typedef {{ id: string, name: string, entries: Entry[], meta?: string }} Subagent a subagent file under
+ *   the session, with a `.meta.json` carrying `name`; `meta` writes its text verbatim as the meta file instead
  * @typedef {{
  *   id: string, cwd: string, branch: string, skills?: string[], entries?: Entry[],
  *   subagents?: Subagent[], prRepository?: string, dir?: string,
@@ -44,8 +44,9 @@
  * @typedef {Record<string, unknown> | string} LogRow one line of a state-dir log; a string is written verbatim
  * @typedef {{
  *   repos?: Repo[], sessions?: Session[], db?: boolean, arms?: LogRow[], lint?: LogRow[], reviewAb?: LogRow[],
- * }} World `db: false` writes no state.sqlite; `arms`, `lint` and `reviewAb` write `arms.jsonl`,
- *   `lint-runs.jsonl` and `review-ab.jsonl` into the state dir, and an omitted list writes no file
+ * }} World `db: false` writes no state.sqlite; `arms` and `lint` write `arms.jsonl` and
+ *   `lint-runs.jsonl` into the state dir, `reviewAb` writes `review-ab.jsonl` outside it, and an
+ *   omitted list writes no file
  */
 import { execFileSync } from 'node:child_process'
 import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
@@ -107,7 +108,7 @@ export function buildWorld(t, { repos = [], sessions = [], db = true, arms, lint
   const paths = {
     stateDir: join(root, 'state'),
     noMistakesHome: join(root, 'no-mistakes'),
-    reviewAb: join(root, 'state', 'review-ab.jsonl'),
+    reviewAb: join(root, 'review-ab.jsonl'),
     projectsDir: join(root, 'projects'),
   }
   mkdirSync(join(paths.noMistakesHome, 'repos'), { recursive: true })
@@ -272,7 +273,8 @@ function writeSession(projectsDir, session, at) {
     mkdirSync(agentDir, { recursive: true })
     const sidechain = subagent.entries.flatMap((entry) => entryLines(session, entry, true, at))
     writeFileSync(join(agentDir, `agent-${subagent.id}.jsonl`), `${sidechain.join('\n')}\n`)
-    writeFileSync(join(agentDir, `agent-${subagent.id}.meta.json`), JSON.stringify({ agentType: 'general-purpose', description: 'fixture', name: subagent.name, toolUseId: 'toolu_0', spawnDepth: 1 }))
+    const meta = subagent.meta ?? JSON.stringify({ agentType: 'general-purpose', description: 'fixture', name: subagent.name, toolUseId: 'toolu_0', spawnDepth: 1 })
+    writeFileSync(join(agentDir, `agent-${subagent.id}.meta.json`), meta)
   }
 }
 
