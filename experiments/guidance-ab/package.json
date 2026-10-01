@@ -1,0 +1,12 @@
+{
+  "name": "guidance-ab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Analysis for the guidance A/B experiment: joins machine-local logs and prints the result per arm.",
+  "license": "MIT",
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

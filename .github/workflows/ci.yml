@@ -288,6 +288,10 @@ jobs:
       - run: pnpm test
         working-directory: harness
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+      # guidance-ab has no dependencies, so it needs no install and runs on its own.
+      - run: pnpm test
+        working-directory: experiments/guidance-ab
+        if: ${{ !cancelled() }}
 
   wiring:
     name: every suite is wired in
@@ -329,6 +333,7 @@ jobs:
           dotnet/tests/Tvrmsmith.Analyzers.Tests/Tvrmsmith.Analyzers.Tests.csproj
           dotnet/tests/Tvrmsmith.MetricGate.CSharp.Tests/Tvrmsmith.MetricGate.CSharp.Tests.csproj
           dotnet/tests/verify-severities.sh
+          experiments/guidance-ab/package.json
           go.mod
           go/plugin/go.mod
           go/test/go.mod
