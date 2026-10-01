@@ -153,11 +153,20 @@ describe('lint-changed.sh --only dotnet', () => {
       assert.equal(status, 2, `expected the blocking exit code\nstdout:\n${stdout}\nstderr:\n${stderr}`)
       const lines = runLog(f)
       assert.equal(lines.length, 1, `expected one log line, got ${JSON.stringify(lines)}`)
-      assert.equal(lines[0].lang, 'dotnet')
-      assert.equal(lines[0].mode, 'staged')
-      assert.equal(lines[0].blocked, true)
-      assert.equal(lines[0].findings.CS0219, 1)
-      for (const count of Object.values(lines[0].findings)) {
+      assert.ok(Number.isInteger(lines[0].ts), `ts is not an integer: ${lines[0].ts}`)
+      const { ts, findings, ...rest } = lines[0]
+      assert.deepEqual(rest, {
+        repo: 'https://example.test/fixture.git',
+        branch: 'main',
+        head: git(f.repo, 'rev-parse', 'HEAD').trim(),
+        lang: 'dotnet',
+        mode: 'staged',
+        gate: false,
+        blocked: true,
+      })
+      // Real analyzer props add rule ids of their own, so only CS0219 is pinned.
+      assert.equal(findings.CS0219, 1)
+      for (const count of Object.values(findings)) {
         assert.ok(Number.isInteger(count) && count > 0, `finding count is not a positive integer: ${count}`)
       }
     } finally {

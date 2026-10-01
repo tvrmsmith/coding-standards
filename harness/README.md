@@ -133,9 +133,12 @@ finding is what lets one regex read all three languages, which is what no-mistak
 
 Every run appends one JSON line per language branch that ran to
 `${XDG_STATE_HOME:-~/.local/state}/coding-standards/lint-runs.jsonl`, beside the waiver log. A
-branch ran when it reached its `add_reports` tail or returned non-zero, so a mixed commit writes one
-line per language, an `--only` run writes one, and a run where every branch skipped writes none.
-Each line carries `ts`, `repo` (the origin URL with any `user:token@` stripped), `branch`, `head`
+branch ran when it handed the filter at least one report or returned non-zero, so a mixed commit
+writes one line per language, an `--only` run writes one, and a run where every branch skipped or
+linted nothing (TypeScript with no ESLint package, C# whose owned files are all absent) writes none.
+Each line carries `ts`, `repo` (the origin URL with any `user:token@` stripped), `branch` (empty on a
+detached HEAD, so every no-mistakes gate line and any other detached run carries `""` and resolves
+its branch through `head`), `head`
 (under pre-commit, the parent of the commit being written), `lang`, `mode`, `gate` (`NM_GATE=1`),
 `blocked` and `findings`, a rule-to-count map of the unwaived survivors for that language, empty on a
 clean run. `blocked` is true only when the run's final status is 2, and every line of a run carries

@@ -16,9 +16,22 @@ import (
 const logRunOrigin = "https://user:secret@example.test/o/r.git"
 
 // logRunRepo makes a repo with one commit and the given origin (none when
-// empty), chdirs into it, and pins git's environment so the machine's own
-// config cannot reach it. It returns the repo dir.
+// empty), chdirs into it, and pins git's environment. It returns the repo dir.
 func logRunRepo(t *testing.T, origin string) string {
+	t.Helper()
+	dir := pinGitEnv(t)
+	logRunGit(t, "init", "--quiet", "--initial-branch=main")
+	logRunGit(t, "commit", "--quiet", "--allow-empty", "-m", "base")
+	if origin != "" {
+		logRunGit(t, "remote", "add", "origin", origin)
+	}
+	return dir
+}
+
+// pinGitEnv chdirs into a fresh dir and pins git's environment so neither the
+// machine's own config nor a GIT_DIR inherited from a hook or `git rebase
+// --exec` can reach it. It returns the dir.
+func pinGitEnv(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -34,11 +47,6 @@ func logRunRepo(t *testing.T, origin string) string {
 	t.Setenv("GIT_AUTHOR_EMAIL", "a@x.invalid")
 	t.Setenv("GIT_COMMITTER_NAME", "A")
 	t.Setenv("GIT_COMMITTER_EMAIL", "a@x.invalid")
-	logRunGit(t, "init", "--quiet", "--initial-branch=main")
-	logRunGit(t, "commit", "--quiet", "--allow-empty", "-m", "base")
-	if origin != "" {
-		logRunGit(t, "remote", "add", "origin", origin)
-	}
 	return dir
 }
 
@@ -221,10 +229,7 @@ func TestLogRunAppendsAcrossCalls(t *testing.T) {
 }
 
 func TestLogRunGitLookupsThatFailYieldEmptyFields(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+	pinGitEnv(t)
 	logRunGit(t, "init", "--quiet", "--initial-branch=main")
 	state := logRunEnv(t)
 	line := logRunOne(t, state, 0, "", "go")

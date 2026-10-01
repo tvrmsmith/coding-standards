@@ -216,6 +216,16 @@ add_reports() {
   done
 }
 
+# How many `--report` entries the branches have put on filter_reports so far. The dispatcher reads
+# it to tell a branch that handed the filter a report from one that reached its tail with none.
+report_count() {
+  local arg n=0
+  for arg in ${filter_reports[@]+"${filter_reports[@]}"}; do
+    [ "$arg" = "--report" ] && n=$((n + 1))
+  done
+  echo "$n"
+}
+
 # The one `lint-changed` process over every report every branch handed in. The status is returned
 # rather than echoed, since lint-changed's own stdout is the porcelain the caller must not swallow.
 #
@@ -225,13 +235,10 @@ add_reports() {
 # commit whose every staged file was deleted from the working tree reaches no linter, and skipping
 # the filter is how it would pass unexamined. Every other mode has no such stop to ask for.
 run_filter() {
-  local bin arg file scope=() accept_spent=() has_report=0
+  local bin file scope=() accept_spent=()
 
   [ ${#filter_reports[@]} -gt 0 ] || return 0
-  for arg in "${filter_reports[@]}"; do
-    [ "$arg" = "--report" ] && has_report=1
-  done
-  [ $has_report -eq 1 ] || [ "$mode" = "--staged" ] || return 0
+  [ "$(report_count)" -gt 0 ] || [ "$mode" = "--staged" ] || return 0
 
   # Built once here rather than per branch, so a new mode or a change to how --files passes its
   # paths cannot land in one branch and leave another scoping against the wrong base. One --files

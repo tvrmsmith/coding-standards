@@ -404,3 +404,18 @@ test('a clean run appends one line with no findings', { skip }, () => {
     f.cleanup()
   }
 })
+
+test('a changed file in a repo with no ESLint config appends no line', { skip }, () => {
+  const f = fixture()
+  try {
+    git(f.repo, 'rm', '--quiet', 'eslint.config.js')
+    git(f.repo, 'commit', '--quiet', '-m', 'no eslint')
+    touchLineThree(f.repo)
+
+    const { status, stdout, stderr } = lint(f.repo, f)
+    assert.equal(status, 0, `expected a pass with nothing linted\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+    assert.deepEqual(runLog(f), [])
+  } finally {
+    f.cleanup()
+  }
+})

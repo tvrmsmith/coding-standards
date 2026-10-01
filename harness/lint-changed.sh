@@ -41,8 +41,10 @@
 # per language so each gets its own identity, finding ids, budget and exit-code isolation.
 #
 # Every language that ran leaves one line in the run log, `lint-changed log-run` appending to
-# $XDG_STATE_HOME/coding-standards/lint-runs.jsonl. A branch that owned no files or skipped as
-# unwired writes nothing, and the log never changes the exit status.
+# $XDG_STATE_HOME/coding-standards/lint-runs.jsonl. A branch ran when it handed the filter at least
+# one report or returned non-zero. One that owned no files, skipped as unwired, or reached its tail
+# with no report (TypeScript with no ESLint package, C# whose owned files are all absent) writes
+# nothing, and the log never changes the exit status.
 #
 # Written for bash 3.2 (the macOS system bash).
 set -uo pipefail
@@ -128,12 +130,13 @@ for lang in $LANGUAGES; do
   # lives in common.sh, next to the branch contract that states it. A branch returns 0 or 1, and
   # anything else is it breaking, including a 127 from a function that was never defined, so it
   # reports as 1 rather than as some richer code the hook cannot read.
-  reports_before=${#filter_reports[@]}
+  reports_before=$(report_count)
   "${lang}_lint" "${owned[@]}"
   branch_status=$?
-  # Ran when it reached its tail, which grows filter_reports (see add_reports in common.sh: the
-  # --format always goes on), or broke before it. A branch that skipped returned 0 and added nothing.
-  if [ ${#filter_reports[@]} -gt "$reports_before" ] || [ "$branch_status" -ne 0 ]; then
+  # Ran when it handed the filter at least one report, or broke. A branch that reached add_reports
+  # with none linted nothing, so it counts no more than one that skipped: a clean line for it would
+  # read as a language checked when no linter saw a file.
+  if [ "$(report_count)" -gt "$reports_before" ] || [ "$branch_status" -ne 0 ]; then
     ran+=("$lang")
   fi
   status=$(rank_status "$status" "$branch_status")
