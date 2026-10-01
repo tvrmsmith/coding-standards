@@ -196,6 +196,11 @@ filter_files=()
 # spends: the dispatcher does, and only once the whole commit has come back clean.
 matched_waivers=$scratch/matched-waivers
 
+# Where the one filter run writes a line per surviving finding, for the run log. Created empty up
+# front, so a run that never reaches the filter reads as no findings rather than a missing file.
+kept=$scratch/kept
+: >"$kept"
+
 # The tail every branch ends on, in place of running a filter of its own: `--format <format>` and a
 # `--report` per path onto filter_reports. The --format goes on even with no report at all, so a
 # non-empty filter_reports means at least one branch reached its tail, which is what tells
@@ -246,7 +251,7 @@ run_filter() {
   [ "$spends" -eq 1 ] || accept_spent=(--accept-spent)
 
   bin=$(lint_changed_bin) || return 1
-  "$bin" ${scope[@]+"${scope[@]}"} --matched-waivers "$matched_waivers" ${accept_spent[@]+"${accept_spent[@]}"} "${filter_reports[@]}" </dev/null
+  "$bin" ${scope[@]+"${scope[@]}"} --matched-waivers "$matched_waivers" --kept "$kept" ${accept_spent[@]+"${accept_spent[@]}"} "${filter_reports[@]}" </dev/null
 }
 
 # Marks every waiver the filter matched as spent. The dispatcher calls it only on a clean total of a
@@ -260,6 +265,24 @@ spend_waivers() {
 
   bin=$(lint_changed_bin) || return 1
   "$bin" spend "${waivers[@]}" </dev/null
+}
+
+# Appends one line per language to the run log, as `lint-changed log-run` writes it. Best effort: a
+# log that cannot be written must not change a verdict, so the status is ignored, and stdout goes to
+# stderr because stdout carries only porcelain. No languages is no run, and writes nothing.
+#
+# Called as: log_run <status> [<lang>...]
+log_run() {
+  local bin status=$1 lang langs=()
+  shift
+  [ $# -gt 0 ] || return 0
+  for lang in "$@"; do
+    langs+=(--lang "$lang")
+  done
+
+  bin=$(lint_changed_bin) || return 0
+  "$bin" log-run --mode "${mode#--}" --status "$status" --kept "$kept" "${langs[@]}" </dev/null >&2
+  return 0
 }
 
 # Whether this repo is adopted for one language, as `lint-changed adopted` answers it for

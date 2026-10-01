@@ -352,3 +352,53 @@ func TestParseWaiveUnchanged(t *testing.T) {
 func funcPointer(p lintfind.Parser) uintptr {
 	return reflect.ValueOf(p).Pointer()
 }
+
+func TestParseLogRun(t *testing.T) {
+	cmd, err := Parse([]string{"log-run", "--mode", "staged", "--status", "2", "--kept", "/k", "--lang", "ts", "--lang", "dotnet"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	want := LogRunArgs{Mode: "staged", Status: 2, Kept: "/k", Langs: []string{"ts", "dotnet"}}
+	if cmd.Kind != KindLogRun || !reflect.DeepEqual(cmd.LogRun, want) {
+		t.Fatalf("got kind %v %+v, want KindLogRun %+v", cmd.Kind, cmd.LogRun, want)
+	}
+}
+
+func TestParseLogRunRejectsBadArgv(t *testing.T) {
+	ok := []string{"--mode", "staged", "--status", "2", "--kept", "/k", "--lang", "ts"}
+	cases := map[string][]string{
+		"missing mode":   {"--status", "2", "--kept", "/k", "--lang", "ts"},
+		"mode flag":      {"--mode", "--staged", "--status", "2", "--kept", "/k", "--lang", "ts"},
+		"mode bogus":     {"--mode", "bogus", "--status", "2", "--kept", "/k", "--lang", "ts"},
+		"missing status": {"--mode", "staged", "--kept", "/k", "--lang", "ts"},
+		"status x":       {"--mode", "staged", "--status", "x", "--kept", "/k", "--lang", "ts"},
+		"missing kept":   {"--mode", "staged", "--status", "2", "--lang", "ts"},
+		"no lang":        {"--mode", "staged", "--status", "2", "--kept", "/k"},
+		"lang csharp":    {"--mode", "staged", "--status", "2", "--kept", "/k", "--lang", "csharp"},
+		"unknown arg":    append([]string{"--nope"}, ok...),
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse(append([]string{"log-run"}, args...))
+			var ue *UsageError
+			if !errors.As(err, &ue) {
+				t.Fatalf("got %T (%v), want *UsageError", err, err)
+			}
+		})
+	}
+}
+
+func TestParseFilterKept(t *testing.T) {
+	cmd, err := Parse([]string{"--staged", "--kept", "/k"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cmd.Kind != KindFilter || cmd.Filter.Kept != "/k" {
+		t.Fatalf("got %+v, want a filter command with Kept /k", cmd)
+	}
+	_, err = Parse([]string{"--staged", "--kept"})
+	var ue *UsageError
+	if !errors.As(err, &ue) {
+		t.Fatalf("--kept with no value: got %T (%v), want *UsageError", err, err)
+	}
+}

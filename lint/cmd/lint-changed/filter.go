@@ -125,6 +125,14 @@ func runFilter(fa FilterArgs, stdout, stderr io.Writer) int {
 		}
 	}
 
+	// A failed write here is reported and nothing more: the kept file feeds the
+	// run log, and a log must never turn a 0 or a 2 into a 1.
+	if fa.Kept != "" {
+		if err := writeKeptFindings(fa.Kept, kept); err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+		}
+	}
+
 	if len(reports.dropped) > 0 {
 		_, _ = fmt.Fprintf(stderr, "%d result(s) could not be placed inside the repo and were dropped\n", len(reports.dropped))
 	}
@@ -174,6 +182,26 @@ func writeMatchedWaivers(path string, matched []matchedWaiver) error {
 	// that invoked this run, never executed, so 0644 costs nothing here.
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
 		return fmt.Errorf("writing matched waivers to %s: %w", path, err)
+	}
+	return nil
+}
+
+// writeKeptFindings writes "<language>\t<rule>" for every surviving finding,
+// one per line in the order stdout reports them, to path, truncating whatever
+// was there. No survivor still writes an empty file, so a reader never mistakes
+// a missing file for a clean run.
+func writeKeptFindings(path string, kept []survivor) error {
+	var b strings.Builder
+	for _, s := range kept {
+		b.WriteString(s.finding.Language)
+		b.WriteByte('\t')
+		b.WriteString(s.finding.Rule)
+		b.WriteByte('\n')
+	}
+	//nolint:gosec // G306: read straight back by the dispatcher that invoked
+	// this run, never executed, so 0644 costs nothing here.
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		return fmt.Errorf("writing kept findings to %s: %w", path, err)
 	}
 	return nil
 }

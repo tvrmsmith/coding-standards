@@ -11,7 +11,7 @@
  * That needs go on PATH, so the cases skip without it.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -132,6 +132,14 @@ function touchLineThree(repo, file = 'src/a.js') {
   writeFileSync(join(repo, file), 'export const a = 1\nexport const b = 2\nconst x = 4\n')
 }
 
+/** Every line lint-changed has appended to the fixture's run log, parsed. */
+function runLog(f) {
+  const path = join(f.root, 'state/coding-standards/lint-runs.jsonl')
+  return existsSync(path)
+    ? readFileSync(path, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line))
+    : []
+}
+
 /** @returns {{ status: number, stdout: string, stderr: string }} */
 function lint(cwd, f, { args = ['--since', 'HEAD'], env = {} } = {}) {
   const result = spawnSync(script, ['--only', 'ts', ...args], {
@@ -144,6 +152,8 @@ function lint(cwd, f, { args = ['--since', 'HEAD'], env = {} } = {}) {
       // writes a lint-changed binary into their real cache.
       TVRMSMITH_WAIVERS: join(f.root, 'waivers.jsonl'),
       XDG_CACHE_HOME: join(f.root, 'cache'),
+      XDG_STATE_HOME: join(f.root, 'state'),
+      NM_GATE: undefined,
       ...env,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -344,6 +354,52 @@ test('a file the package ignores does not block', { skip }, () => {
     const { status, stdout, stderr } = lint(f.repo, f, { env: { STUB_IGNORED: 'src/a.js' } })
     assert.equal(status, 0, `an ignored file must not block\nstdout:\n${stdout}\nstderr:\n${stderr}`)
     assert.equal(stdout, '')
+  } finally {
+    f.cleanup()
+  }
+})
+
+test('a blocking run appends one line to the run log', { skip }, () => {
+  const f = fixture()
+  try {
+    git(f.repo, 'remote', 'add', 'origin', 'https://example.test/fixture.git')
+    touchLineThree(f.repo)
+
+    const { status, stdout, stderr } = lint(f.repo, f)
+    assert.equal(status, 2, `expected the blocking exit code\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+    const lines = runLog(f)
+    assert.equal(lines.length, 1, `expected one log line, got ${JSON.stringify(lines)}`)
+    assert.ok(Number.isInteger(lines[0].ts), `ts is not an integer: ${lines[0].ts}`)
+    const { ts, ...rest } = lines[0]
+    assert.deepEqual(rest, {
+      repo: 'https://example.test/fixture.git',
+      branch: 'main',
+      head: git(f.repo, 'rev-parse', 'HEAD').trim(),
+      lang: 'ts',
+      mode: 'since',
+      gate: false,
+      blocked: true,
+      findings: { 'no-unused-vars': 1 },
+    })
+  } finally {
+    f.cleanup()
+  }
+})
+
+test('a clean run appends one line with no findings', { skip }, () => {
+  const f = fixture()
+  try {
+    git(f.repo, 'remote', 'add', 'origin', 'https://example.test/fixture.git')
+    touchLineThree(f.repo)
+
+    const { status, stdout, stderr } = lint(f.repo, f, { env: { STUB_LINE: '1' } })
+    assert.equal(status, 0, `expected a clean pass\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+    const lines = runLog(f)
+    assert.equal(lines.length, 1, `expected one log line, got ${JSON.stringify(lines)}`)
+    assert.equal(lines[0].lang, 'ts')
+    assert.equal(lines[0].mode, 'since')
+    assert.equal(lines[0].blocked, false)
+    assert.deepEqual(lines[0].findings, {})
   } finally {
     f.cleanup()
   }

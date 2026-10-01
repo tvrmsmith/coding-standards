@@ -7,7 +7,8 @@
 // files a run covers, which the dispatcher hands to each language branch, an
 // owners form groups a branch's files by the build unit that lints them, and a
 // registry-key form prints the path the branches look adoption up under. An
-// adopted form tells a branch whether its language is wired up at all.
+// adopted form tells a branch whether its language is wired up at all, and a
+// log-run form appends one line per language branch that ran to the run log.
 //
 // argv is parsed by hand rather than through the flag package, for the
 // reason gate/internal/scope gives: flag exits 2 on a usage mistake and lets
@@ -17,10 +18,12 @@
 package main
 
 import (
+	"strconv"
+
 	"github.com/tvrmsmith/coding-standards/lint/internal/lintfind"
 )
 
-// Kind is which of lint-changed's eight forms argv named.
+// Kind is which of lint-changed's nine forms argv named.
 type Kind int
 
 const (
@@ -47,6 +50,8 @@ const (
 	KindOwners
 	// KindAdopted answers whether a repository is adopted for one language.
 	KindAdopted
+	// KindLogRun appends one run-log line per language branch that ran.
+	KindLogRun
 )
 
 // ScopeMode is which base a filter run scopes its findings against.
@@ -78,6 +83,7 @@ type Command struct {
 	ChangedPaths Scope
 	Owners       OwnersArgs
 	Adopted      AdoptedArgs
+	LogRun       LogRunArgs
 }
 
 // Report is one report path and the parser that reads it, paired at parse
@@ -104,6 +110,9 @@ type FilterArgs struct {
 	// AcceptSpent marks a run that will spend nothing, so a waiver already
 	// spent against any tree still covers its finding.
 	AcceptSpent bool
+	// Kept is the path --kept named, where the run writes one line per
+	// surviving finding. Empty means write nowhere.
+	Kept string
 }
 
 // WaiveArgs is argv for the waive form.
@@ -126,6 +135,18 @@ type AdoptedArgs struct {
 	Registry string
 }
 
+// LogRunArgs is argv for the log-run form.
+type LogRunArgs struct {
+	// Mode is "staged", "since" or "files": the scope the run covered.
+	Mode string
+	// Status is the run's final exit status.
+	Status int
+	// Kept is the file the filter wrote its surviving findings to.
+	Kept string
+	// Langs is every --lang, in argv order: the branches that ran.
+	Langs []string
+}
+
 // SpendArgs is argv for the spend form.
 type SpendArgs struct{ IDs []string }
 
@@ -138,18 +159,19 @@ func (e *UsageError) Error() string {
 	return "lint-changed: " + e.Problem + "\n\n" + usage
 }
 
-const usage = `usage: lint-changed [--staged | --since <ref> | --files <path> ...] [--format <fmt> --report <file> ...] [--matched-waivers <file>] [--accept-spent]
+const usage = `usage: lint-changed [--staged | --since <ref> | --files <path> ...] [--format <fmt> --report <file> ...] [--matched-waivers <file>] [--kept <file>] [--accept-spent]
        lint-changed waive --language <lang> [--path <p>] --rule <r> --reason <why>
        lint-changed waivers
        lint-changed spend --waiver <id> [--waiver <id> ...]
        lint-changed changed-paths (--staged | --since <ref> | --files <path> ...)
        lint-changed owners --language <lang> [--files <path> ...]
        lint-changed adopted --language (go | csharp) --registry-key <path> --registry <file>
-       lint-changed registry-key`
+       lint-changed registry-key
+       lint-changed log-run --mode (staged | since | files) --status <int> --kept <file> --lang (ts | go | dotnet) [--lang ...]`
 
 // Parse reads argv without the program name. "waive", "waivers", "spend",
-// "changed-paths", "owners", "adopted" and "registry-key" as the first
-// argument select those seven forms; anything else, including no arguments at
+// "changed-paths", "owners", "adopted", "registry-key" and "log-run" as the
+// first argument select those eight forms; anything else, including no arguments at
 // all, is read as the filter form.
 func Parse(args []string) (Command, error) {
 	if len(args) > 0 && args[0] == "waive" {
@@ -198,6 +220,13 @@ func Parse(args []string) (Command, error) {
 			return Command{}, err
 		}
 		return Command{Kind: KindAdopted, Adopted: aa}, nil
+	}
+	if len(args) > 0 && args[0] == "log-run" {
+		la, err := parseLogRun(args[1:])
+		if err != nil {
+			return Command{}, err
+		}
+		return Command{Kind: KindLogRun, LogRun: la}, nil
 	}
 	fa, err := parseFilter(args)
 	if err != nil {
@@ -251,6 +280,12 @@ func parseFilter(args []string) (FilterArgs, error) {
 				return FilterArgs{}, err
 			}
 			fa.MatchedWaivers, i = v, next
+		case "--kept":
+			v, next, err := flagValue(args, i, "--kept")
+			if err != nil {
+				return FilterArgs{}, err
+			}
+			fa.Kept, i = v, next
 		case "--accept-spent":
 			fa.AcceptSpent = true
 		default:
@@ -470,6 +505,65 @@ func parseAdopted(args []string) (AdoptedArgs, error) {
 		return AdoptedArgs{}, &UsageError{Problem: "adopted: --registry is required"}
 	}
 	return aa, nil
+}
+
+func parseLogRun(args []string) (LogRunArgs, error) {
+	var la LogRunArgs
+	var statusSet bool
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--mode":
+			v, next, err := flagValue(args, i, "--mode")
+			if err != nil {
+				return LogRunArgs{}, err
+			}
+			la.Mode, i = v, next
+		case "--status":
+			v, next, err := flagValue(args, i, "--status")
+			if err != nil {
+				return LogRunArgs{}, err
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return LogRunArgs{}, &UsageError{Problem: "log-run: --status '" + v + "' is not an integer"}
+			}
+			la.Status, statusSet, i = n, true, next
+		case "--kept":
+			v, next, err := flagValue(args, i, "--kept")
+			if err != nil {
+				return LogRunArgs{}, err
+			}
+			la.Kept, i = v, next
+		case "--lang":
+			v, next, err := flagValue(args, i, "--lang")
+			if err != nil {
+				return LogRunArgs{}, err
+			}
+			switch v {
+			case "ts", "go", "dotnet":
+			default:
+				return LogRunArgs{}, &UsageError{Problem: "log-run: unknown --lang '" + v + "', want one of ts, go, dotnet"}
+			}
+			la.Langs, i = append(la.Langs, v), next
+		default:
+			return LogRunArgs{}, &UsageError{Problem: "log-run: unknown argument '" + args[i] + "'"}
+		}
+	}
+	switch la.Mode {
+	case "staged", "since", "files":
+	default:
+		return LogRunArgs{}, &UsageError{Problem: "log-run: --mode must be one of staged, since, files"}
+	}
+	if !statusSet {
+		return LogRunArgs{}, &UsageError{Problem: "log-run: --status is required"}
+	}
+	if la.Kept == "" {
+		return LogRunArgs{}, &UsageError{Problem: "log-run: --kept is required"}
+	}
+	if len(la.Langs) == 0 {
+		return LogRunArgs{}, &UsageError{Problem: "log-run: at least one --lang is required"}
+	}
+	return la, nil
 }
 
 func parseSpend(args []string) (SpendArgs, error) {
