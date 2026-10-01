@@ -68,7 +68,7 @@ export function analyze({ mode, paths, seed = 1, rule = DECISION_RULE }) {
   const lintStart = Math.min(...lintLog.rows.map((row) => row.ts))
   const repos = readRepos(paths.noMistakesHome)
   const { segments: read, source } = readSegments(paths.projectsDir)
-  const segments = read.map((segment) => ({ segment, repoId: repoOf(segment, repos, units ? armLog.rows : []) }))
+  const segments = read.map((segment) => ({ segment, repo: repoOf(segment, repos, units ? armLog.rows : []) }))
   const branches = []
   const excluded = units ? unassignedBranches(armLog.rows, units) : []
   const decided = new Set()
@@ -77,7 +77,9 @@ export function analyze({ mode, paths, seed = 1, rule = DECISION_RULE }) {
     const repo = repoKey(branch.repo.upstreamUrl)
     const unit = units?.get(unitKey(repo, branch.branch))
     if (units && !unit) continue
-    const own = segments.filter((resolved) => belongsTo(resolved, branch)).map(({ segment }) => segment)
+    const own = segments
+      .filter((resolved) => resolved.repo === repo && resolved.segment.gitBranch === branch.branch)
+      .map(({ segment }) => segment)
     const loaded = firstRun != null && own.some((segment) => segment.loadTimes.some((at) => at < firstRun.createdAt))
     const began = Math.min(firstRun?.createdAt ?? Infinity, ...own.map((segment) => segment.firstAt))
     const group = unit ? unit.group : own.length && firstRun ? (loaded ? 'loaded' : 'not-loaded') : null
@@ -238,32 +240,26 @@ function metrics(branch, firstRun, segments) {
 }
 
 /**
- * @param {{ segment: import('./sources/transcripts.mjs').Segment, repoId: string | null }} resolved
- * @param {import('./sources/no-mistakes.mjs').Branch} branch
- */
-function belongsTo({ segment, repoId }, branch) {
-  return repoId === branch.repo.id && segment.gitBranch === branch.branch
-}
-
-/**
- * The repo a segment worked in, or null when it is unresolved. The first rule that applies decides: an
- * arm row logged for the segment's session and branch names the repo; the cwd sits in a repo's
- * checkout; the session's pr-link names the repo; exactly one repo's name is a directory of the cwd.
+ * The repo key a segment worked in, or null when it is unresolved. The first rule that applies decides:
+ * an arm row logged for the segment's session and branch names the repo; the cwd sits in a repo's
+ * checkout; the session's pr-link names a known repo; exactly one known repo's name is a directory of
+ * the cwd. Several no-mistakes repo rows can share one key, so the rules compare keys, not rows.
  *
  * @param {import('./sources/transcripts.mjs').Segment} segment
  * @param {import('./sources/no-mistakes.mjs').Repo[]} repos
  * @param {ArmRow[]} armRows empty outside arm mode
- * @returns {string | null} the repo id
+ * @returns {string | null} normalized `owner/name`
  */
 function repoOf(segment, repos, armRows) {
   const logged = armRows.find((row) => row.session_id === segment.sessionId && row.branch === segment.gitBranch)
-  if (logged) return repos.find((repo) => repoKey(repo.upstreamUrl) === parseRepoKey(logged.repo))?.id ?? null
+  if (logged) return parseRepoKey(logged.repo)
   const checkout = repos.find((repo) => segment.cwd === repo.workingPath || segment.cwd.startsWith(`${repo.workingPath}/`))
-  if (checkout) return checkout.id
-  if (segment.prRepository) return repos.find((repo) => repoKey(repo.upstreamUrl) === segment.prRepository)?.id ?? null
+  if (checkout) return repoKey(checkout.upstreamUrl)
+  const keys = new Set(repos.map((repo) => repoKey(repo.upstreamUrl)))
+  if (segment.prRepository && keys.has(segment.prRepository)) return segment.prRepository
   const dirs = segment.cwd.toLowerCase().split('/')
-  const named = repos.filter((repo) => dirs.includes(repoKey(repo.upstreamUrl).split('/')[1]))
-  return named.length === 1 ? named[0].id : null
+  const named = [...keys].filter((key) => dirs.includes(key.split('/')[1]))
+  return named.length === 1 ? named[0] : null
 }
 
 /**

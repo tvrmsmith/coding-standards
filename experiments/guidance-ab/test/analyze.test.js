@@ -11,7 +11,6 @@ import { join } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { analyze } from '../analyze.mjs'
-import { bootstrapCi, mean, median } from '../stats.mjs'
 import { armSummaryWorld, buildWorld } from './fixture.js'
 
 const LOADS_STANDARDS = ['coding-standards:coding-standards']
@@ -435,6 +434,38 @@ test('a segment with no pr-link takes the one repo whose name is a path segment 
   assert.deepEqual(ambiguous.excluded.map(({ branch, reason }) => ({ branch, reason })), [
     { branch: 'feat-a', reason: 'no transcript' },
   ])
+})
+
+/**
+ * Two no-mistakes repo rows sharing the widgets upstream: r1 at the widgets checkout with no run, and
+ * r1b at a second checkout holding the feat-a run.
+ *
+ * @param {Partial<import('./fixture.js').Session>} session
+ * @returns {import('./fixture.js').World}
+ */
+function twinRowsWorld(session) {
+  return {
+    repos: [widgetsRepo({ runs: [] }), widgetsRepo({ id: 'r1b', workingPath: 'checkouts/widgets-b' })],
+    sessions: [widgetsSession(session)],
+  }
+}
+
+test('a segment in one repo row checkout belongs to a branch whose runs sit under another row of the same upstream', (t) => {
+  const report = history(t, twinRowsWorld({}))
+
+  assert.deepEqual(report.branches.map(({ branch, compliance }) => ({ branch, compliance })), [{ branch: 'feat-a', compliance: true }])
+})
+
+test('repo rows sharing an upstream count as one repo for the named-directory rule', (t) => {
+  const report = history(t, twinRowsWorld({ cwd: '/Users/someone/dev/worktrees/widgets/feat-a' }))
+
+  assert.deepEqual(report.branches.map(({ branch }) => branch), ['feat-a'])
+})
+
+test('a pr-link naming a repo no-mistakes does not know falls through to the named-directory rule', (t) => {
+  const report = history(t, twinRowsWorld({ cwd: '/Users/someone/dev/worktrees/widgets/feat-a', prRepository: 'Other/Unknown' }))
+
+  assert.deepEqual(report.branches.map(({ branch }) => branch), ['feat-a'])
 })
 
 test('a session that switches branches counts each segment on its own branch', (t) => {
@@ -885,25 +916,40 @@ test('findings with no bracket tag leave the sections empty', (t) => {
   assert.deepEqual(report.branches[0].sections, {})
 })
 
-test('a summary cell holds the count, median, mean and share of non-zero values with seeded intervals', (t) => {
-  const errors = { 'feat-b': 1, 'feat-e': 5, 'feat-a': 0, 'feat-c': 2 }
-  const run = (/** @type {string} */ name) => ({
-    steps: { review: [Array.from({ length: errors[name] }, (_, i) => ({ id: `error-${i + 1}`, severity: 'error' }))] },
-  })
-  const paths = buildWorld(t, armSummaryWorld({ run }))
-  const report = analyze({ mode: 'arm', paths, seed: 1 })
+/** The loaded group's reviewError intervals under seed 1, pinned so the seeded output stays reproducible. */
+const LOADED_INTERVALS = { medianCi: { lo: 0, hi: 9 }, meanCi: { lo: 0.8, hi: 6.2 } }
 
-  assert.deepEqual(report.summary.guidance.reviewError, {
-    n: 2,
-    median: 3,
-    medianCi: bootstrapCi([1, 5], median, { seed: 1 }),
-    mean: 3,
-    meanCi: bootstrapCi([1, 5], mean, { seed: 1 }),
-    shareNonzero: 1,
+/** The reviewError diff intervals under seed 1; seed 2 gives a different mean interval. */
+const DIFF_INTERVALS = { medianCi: { lo: -6, hi: 13 }, meanCi: { lo: -3.2, hi: 8 } }
+
+test('a summary cell holds the count, median, mean and share of non-zero values, and the seed fixes its intervals', (t) => {
+  const loaded = [0, 1, 2, 3, 9]
+  const notLoaded = [0, 1, 3, 6, 15]
+  const errors = [...loaded, ...notLoaded]
+  const name = (/** @type {number} */ i) => `feat-${i}`
+  const errorRound = (/** @type {number} */ count) => Array.from({ length: count }, (_, i) => ({ id: `error-${i + 1}`, severity: 'error' }))
+  const paths = buildWorld(t, {
+    repos: [
+      widgetsRepo({
+        branches: Object.fromEntries(errors.map((_, i) => [name(i), { files: { 'src/app.ts': 3 } }])),
+        runs: errors.map((count, i) => ({ ...reviewedRun(`run${i}`, 1000, errorRound(count)), branch: name(i) })),
+      }),
+    ],
+    sessions: errors.map((_, i) => widgetsSession({ id: `s${i}`, branch: name(i), skills: i < loaded.length ? LOADS_STANDARDS : [] })),
   })
-  assert.deepEqual(report.summary['review-only'].reviewError.shareNonzero, 0.5)
-  assert.equal(report.diff.reviewError.median, -2)
-  assert.deepEqual(analyze({ mode: 'arm', paths, seed: 1 }).diff, report.diff)
+  const report = analyze({ mode: 'history', paths, seed: 1 })
+  const point = (/** @type {Record<string, any>} */ cell) => ({ n: cell.n, median: cell.median, mean: cell.mean, shareNonzero: cell.shareNonzero })
+  const intervals = (/** @type {Record<string, any>} */ cell) => ({ medianCi: cell.medianCi, meanCi: cell.meanCi })
+
+  assert.deepEqual(point(report.summary.loaded.reviewError), { n: 5, median: 2, mean: 3, shareNonzero: 0.8 })
+  assert.deepEqual(point(report.summary['not-loaded'].reviewError), { n: 5, median: 3, mean: 5, shareNonzero: 0.8 })
+  assert.deepEqual(
+    { median: report.diff.reviewError.median, mean: report.diff.reviewError.mean, shareNonzero: report.diff.reviewError.shareNonzero },
+    { median: 1, mean: 2, shareNonzero: 0 },
+  )
+  assert.deepEqual(intervals(report.summary.loaded.reviewError), LOADED_INTERVALS)
+  assert.deepEqual(intervals(report.diff.reviewError), DIFF_INTERVALS)
+  assert.notDeepEqual(intervals(analyze({ mode: 'history', paths, seed: 2 }).diff.reviewError), DIFF_INTERVALS)
 })
 
 test('a metric no branch in the group recorded has an empty cell', (t) => {
