@@ -3,8 +3,9 @@
  *
  * History mode takes every branch no-mistakes reviewed before the arm hook began logging as a unit, and
  * groups it by whether a transcript on that branch loaded the coding-standards skill before the
- * branch's first run. Arm mode takes the branches the arm log assigns to an arm as the units and groups
- * them by that arm. Every branch that is not a unit is reported as an exclusion with its reason.
+ * branch's first run, and reports every other reviewed branch as an exclusion with its reason. Arm mode
+ * takes the branches the arm log assigns to an arm as the units and groups them by that arm. It leaves a
+ * branch the arm log never names out of the report, since that branch is outside the experiment.
  */
 import { createHash } from 'node:crypto'
 import { extname, join, sep } from 'node:path'
