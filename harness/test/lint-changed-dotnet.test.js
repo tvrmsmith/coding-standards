@@ -177,6 +177,7 @@ describe('lint-changed.sh --only dotnet', () => {
   test('a clean run appends one line with no findings', { skip: missing && `no ${missing} on PATH` }, () => {
     const f = fixture()
     try {
+      git(f.repo, 'remote', 'add', 'origin', 'https://example.test/fixture.git')
       writeFileSync(
         join(f.repo, 'src', 'Foo.cs'),
         'namespace Fixture;\n\npublic static class Foo\n{\n    public static int M() => 1;\n}\n',
@@ -187,10 +188,18 @@ describe('lint-changed.sh --only dotnet', () => {
       assert.equal(status, 0, `expected a clean pass\nstdout:\n${stdout}\nstderr:\n${stderr}`)
       const lines = runLog(f)
       assert.equal(lines.length, 1, `expected one log line, got ${JSON.stringify(lines)}`)
-      assert.equal(lines[0].lang, 'dotnet')
-      assert.equal(lines[0].mode, 'staged')
-      assert.equal(lines[0].blocked, false)
-      assert.deepEqual(lines[0].findings, {})
+      assert.ok(Number.isInteger(lines[0].ts), `ts is not an integer: ${lines[0].ts}`)
+      const { ts, ...rest } = lines[0]
+      assert.deepEqual(rest, {
+        repo: 'https://example.test/fixture.git',
+        branch: 'main',
+        head: git(f.repo, 'rev-parse', 'HEAD').trim(),
+        lang: 'dotnet',
+        mode: 'staged',
+        gate: false,
+        blocked: false,
+        findings: {},
+      })
     } finally {
       f.cleanup()
     }
@@ -209,6 +218,7 @@ describe('lint-changed.sh --only dotnet', () => {
       const { status, stdout, stderr } = lint(f)
       assert.notEqual(status, 0, `expected the commit to be refused\nstdout:\n${stdout}\nstderr:\n${stderr}`)
       assert.match(stderr, /src\/Foo\.cs/)
+      assert.deepEqual(runLog(f), [])
     } finally {
       f.cleanup()
     }

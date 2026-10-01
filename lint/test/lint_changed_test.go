@@ -1157,14 +1157,21 @@ func TestKeptFileNamesEachSurvivor(t *testing.T) {
 	stageEdit(f, "Foo.cs")
 	keptFile := filepath.Join(t.TempDir(), "kept")
 
-	res := f.run(sarifDoc(sarifResult("TVRM0001", "no getter", sarifLoc("Foo.cs", 3, 3))),
-		filterArgs("--staged", "--kept", keptFile)...)
+	res := f.run(sarifDoc(
+		sarifResult("TVRM0002", "second rule", sarifLoc("Foo.cs", 3, 3)),
+		sarifResult("TVRM0001", "no getter", sarifLoc("Foo.cs", 3, 3)),
+	), filterArgs("--staged", "--kept", keptFile)...)
 
 	if res.exitCode != 2 {
 		t.Fatalf("exit code = %d, want 2\nstderr: %s", res.exitCode, res.stderr)
 	}
-	if got := readKept(t, keptFile); got != "csharp\tTVRM0001\n" {
-		t.Fatalf("kept file = %q, want %q", got, "csharp\tTVRM0001\n")
+	first, second := strings.Index(res.stdout, "TVRM0002"), strings.Index(res.stdout, "TVRM0001")
+	if first < 0 || second < first {
+		t.Fatalf("stdout = %q, want TVRM0002 then TVRM0001", res.stdout)
+	}
+	want := "csharp\tTVRM0002\ncsharp\tTVRM0001\n"
+	if got := readKept(t, keptFile); got != want {
+		t.Fatalf("kept file = %q, want %q", got, want)
 	}
 }
 

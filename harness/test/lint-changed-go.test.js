@@ -410,6 +410,7 @@ test('a blocking run appends one line to the run log', { skip }, () => {
 test('a clean run appends one line with no findings', { skip }, () => {
   const f = fixture()
   try {
+    git(f.repo, 'remote', 'add', 'origin', 'https://example.test/fixture.git')
     writeFileSync(f.registry, `${f.repo}\n`)
     writeFileSync(join(f.repo, 'main.go'), 'package main\n\nfunc main() { _ = 1 }\n')
 
@@ -417,9 +418,18 @@ test('a clean run appends one line with no findings', { skip }, () => {
     assert.equal(status, 0, `expected a clean pass\nstdout:\n${stdout}\nstderr:\n${stderr}`)
     const lines = runLog(f)
     assert.equal(lines.length, 1, `expected one log line, got ${JSON.stringify(lines)}`)
-    assert.equal(lines[0].lang, 'go')
-    assert.equal(lines[0].blocked, false)
-    assert.deepEqual(lines[0].findings, {})
+    assert.ok(Number.isInteger(lines[0].ts), `ts is not an integer: ${lines[0].ts}`)
+    const { ts, ...rest } = lines[0]
+    assert.deepEqual(rest, {
+      repo: 'https://example.test/fixture.git',
+      branch: 'main',
+      head: git(f.repo, 'rev-parse', 'HEAD').trim(),
+      lang: 'go',
+      mode: 'since',
+      gate: false,
+      blocked: false,
+      findings: {},
+    })
   } finally {
     f.cleanup()
   }

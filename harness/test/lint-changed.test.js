@@ -536,6 +536,7 @@ describe('one invocation, every language the repo is wired for', () => {
           TVRMSMITH_ANALYZER_PROPS: join(f.root, 'empty.props'),
         })
         assert.equal(status, 2, `stdout:\n${stdout}\nstderr:\n${stderr}`)
+        assert.match(stderr, /is not wired for \.NET/)
         const langs = runLog(f).map((line) => line.lang)
         assert.deepEqual(langs, ['ts', 'go'])
       } finally {
@@ -573,6 +574,7 @@ describe('one invocation, every language the repo is wired for', () => {
         })
         assert.equal(status, 2, `stdout:\n${stdout}\nstderr:\n${stderr}`)
         assert.equal(stdout, bothPorcelain)
+        assert.match(stderr, /creating run log directory/)
       } finally {
         f.cleanup()
       }
