@@ -190,7 +190,7 @@ function difference(a, b, seed) {
 export function verdict(rule, groups, diff) {
   if (!rule) return { rule, outcome: 'not-set', detail: 'no decision rule is set' }
   const point = diff[rule.metric][rule.statistic]
-  const ci = diff[rule.metric][`${rule.statistic}Ci`] 
+  const ci = diff[rule.metric][`${rule.statistic}Ci`]
   const outcome = ci && ci.hi < -rule.margin ? groups[1] : ci && ci.lo > rule.margin ? groups[0] : 'inconclusive'
   const detail = `${rule.metric} ${rule.statistic}, ${groups[1]} minus ${groups[0]}: ${formatEstimate(point, ci)} against margin ${rule.margin}`
   return { rule, outcome, detail }
