@@ -258,7 +258,7 @@ const DEFAULT_AT = '1970-01-01T00:00:00.000Z'
  * @param {(path: string) => string} at
  */
 function writeSession(projectsDir, session, at) {
-  const { id, cwd, branch, skills = [], subagents = [], prRepository, dir = at(cwd).replace(/[^A-Za-z0-9]/g, '-') } = session
+  const { id, cwd, skills = [], subagents = [], prRepository, dir = at(cwd).replace(/[^A-Za-z0-9]/g, '-') } = session
   const sessionDir = join(projectsDir, dir)
   mkdirSync(sessionDir, { recursive: true })
   const entries = session.entries ?? [{ messageId: `msg_${id}`, skills }]
