@@ -85,6 +85,8 @@ lint/                                # lint-changed: the language-neutral half o
   internal/                          #   the SARIF, golangci-lint and ESLint readers, and the waiver log
   test/                              # black-box tests against the built binary
 harness/                             # machine-local adoption harness: editor layer + pre-commit
+experiments/                         # analysis scripts for experiments on this repo's guidance
+  guidance-ab/                       #   the guidance A/B report: a Node CLI over machine-local logs
 tools/                               # no-mistakes-unit.sh: runs each Test-step unit that
                                      #   .no-mistakes.yaml declares
 ```

@@ -27,3 +27,6 @@ test:
     - name: harness
       path: harness
       command: tools/no-mistakes-unit.sh node harness
+    - name: guidance-ab
+      path: experiments/guidance-ab
+      command: tools/no-mistakes-unit.sh node experiments/guidance-ab
