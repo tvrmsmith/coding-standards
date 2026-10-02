@@ -188,6 +188,14 @@ test('a first run with no lint step has no lint first run', (t) => {
   assert.equal(lintFirstRun(t), null)
 })
 
+test('lint first run counts an earlier run that stopped at lint, while review metrics come from the first reviewed run', (t) => {
+  const lintOnly = { id: 'run0', branch: 'feat-a', createdAt: 900, steps: { lint: [[{ id: 'l1', severity: 'warning' }, { id: 'l2', severity: 'warning' }]] } }
+  const reviewed = { ...reviewedRun('run1', 1000), steps: { lint: [[]], review: [[{ id: 'e1', severity: 'error' }]] } }
+  const [branch] = history(t, widgets({ runs: [lintOnly, reviewed] })).branches
+
+  assert.deepEqual({ lintFirstRun: branch.metrics.lintFirstRun, reviewError: branch.metrics.reviewError }, { lintFirstRun: 2, reviewError: 1 })
+})
+
 test('pipeline tokens sum every invocation on the branch and price them', (t) => {
   const run1 = {
     ...reviewedRun('run1', 1000, []),
@@ -245,6 +253,22 @@ test('a branch that changes no code file is excluded', (t) => {
   assert.deepEqual(report.excluded, [
     { repo: 'acme/widgets', branch: 'feat-a', group: 'loaded', reason: 'no code change' },
   ])
+})
+
+test('a bats file and an extensionless file under bin count as code, and LICENSE does not', (t) => {
+  const branches = {
+    'feat-a': { files: { 'tests/e2e.bats': 2 } },
+    'feat-b': { files: { 'bin/slice-wave': 2 } },
+    'feat-c': { files: { LICENSE: 2 } },
+  }
+  const names = Object.keys(branches)
+  const report = history(t, {
+    repos: [widgetsRepo({ branches, runs: names.map((name, i) => ({ ...reviewedRun(`run${i}`, 1000, []), branch: name })) })],
+    sessions: names.map((name, i) => widgetsSession({ id: `s${i}`, branch: name })),
+  })
+
+  assert.deepEqual(report.branches.map(({ branch }) => branch), ['feat-a', 'feat-b'])
+  assert.deepEqual(report.excluded, [{ repo: 'acme/widgets', branch: 'feat-c', group: 'loaded', reason: 'no code change' }])
 })
 
 test('a branch whose head neither repo holds is excluded as diff unavailable', (t) => {
@@ -462,7 +486,28 @@ test('repo rows sharing an upstream count as one repo for the named-directory ru
   assert.deepEqual(report.branches.map(({ branch }) => branch), ['feat-a'])
 })
 
-test('a pr-link naming a repo no-mistakes does not know falls through to the named-directory rule', (t) => {
+test('repo rows sharing an upstream that both hold runs on a branch make one unit', (t) => {
+  const report = history(t, {
+    repos: [widgetsRepo({ runs: [reviewedRun('run0', 900, [])] }), widgetsRepo({ id: 'r1b', workingPath: 'checkouts/widgets-b' })],
+    sessions: [widgetsSession()],
+  })
+
+  assert.deepEqual(report.branches.map(({ repo, branch, metrics }) => ({ repo, branch, rounds: metrics.reviewRounds })), [
+    { repo: 'acme/widgets', branch: 'feat-a', rounds: 2 },
+  ])
+  assert.deepEqual(report.excluded, [])
+})
+
+test('the named directory of the cwd outranks the session pr-link', (t) => {
+  const gadgets = widgetsRepo({ id: 'r2', upstream: 'https://github.com/Acme/Gadgets.git', workingPath: 'checkouts/gadgets', runs: [reviewedRun('run2', 1000, [])] })
+  const session = widgetsSession({ cwd: '/Users/someone/dev/worktrees/widgets/feat-a', prRepository: 'Acme/Gadgets' })
+  const report = history(t, { repos: [widgetsRepo(), gadgets], sessions: [session] })
+
+  assert.deepEqual(report.branches.map(({ repo, branch }) => ({ repo, branch })), [{ repo: 'acme/widgets', branch: 'feat-a' }])
+  assert.deepEqual(report.excluded, [{ repo: 'acme/gadgets', branch: 'feat-a', group: null, reason: 'no transcript' }])
+})
+
+test('a pr-link naming a repo no-mistakes does not know leaves the named-directory rule to decide', (t) => {
   const report = history(t, twinRowsWorld({ cwd: '/Users/someone/dev/worktrees/widgets/feat-a', prRepository: 'Other/Unknown' }))
 
   assert.deepEqual(report.branches.map(({ branch }) => branch), ['feat-a'])
@@ -699,6 +744,46 @@ test('lint metrics sum the earliest non-gate run over its languages and count th
   const report = arm(t, armWorld({ lint }))
 
   assert.deepEqual(lintByBranch(report), { 'feat-a': [0, 0], 'feat-b': [7, 1] })
+})
+
+test('a branch whose runs mix a blocked and an unblocked language counts one blocked commit', (t) => {
+  const lint = [lintRow(10, 'ts', {}, { blocked: true }), lintRow(10, 'go', {}), lintRow(20, 'ts', {})]
+  const report = arm(t, armWorld({ lint }))
+
+  assert.deepEqual(lintByBranch(report)['feat-b'], [0, 1])
+})
+
+test('lint lines out of ts order give the same lint metrics', (t) => {
+  const lint = [
+    lintRow(30, 'dotnet', { CA1000: 1 }, { head: 'h2' }),
+    lintRow(5, 'ts', { eqeqeq: 9 }, { head: 'h0', gate: true, blocked: true }),
+    lintRow(20, 'ts', {}),
+    lintRow(10, 'go', { errcheck: 4 }, { blocked: true }),
+    lintRow(10, 'ts', { 'no-unused-vars': 2, eqeqeq: 1 }, { blocked: true }),
+  ]
+  const report = arm(t, armWorld({ lint }))
+
+  assert.deepEqual(lintByBranch(report)['feat-b'], [7, 1])
+})
+
+test('two runs at one ts with different heads count apart, the earliest by head ascending', (t) => {
+  const lint = [lintRow(10, 'ts', { eqeqeq: 2 }, { head: 'h2', blocked: true }), lintRow(10, 'ts', { eqeqeq: 1 }, { head: 'h1', blocked: true })]
+  const report = arm(t, armWorld({ lint }))
+
+  assert.deepEqual(lintByBranch(report)['feat-b'], [1, 2])
+})
+
+test('a branch with no lint line scores 0 only when its repo has a lint line from before its work began', (t) => {
+  const at1500 = [{ at: SEGMENT_AT, skills: LOADS_STANDARDS }]
+  const gadgets = widgetsRepo({ id: 'r2', upstream: 'https://github.com/Acme/Gadgets.git', workingPath: 'checkouts/gadgets', runs: [reviewedRun('run2', 2000, [])] })
+  const report = history(t, {
+    repos: [widgetsRepo({ runs: [reviewedRun('run1', 2000, [])] }), gadgets],
+    sessions: [widgetsSession({ entries: at1500 }), widgetsSession({ id: 's2', cwd: 'checkouts/gadgets', entries: at1500 })],
+    lint: [lintRow(5, 'ts', {})],
+  })
+  const byRepo = Object.fromEntries(report.branches.map(({ repo, metrics }) => [repo, [metrics.lintPreCommit, metrics.blockedCommits]]))
+
+  assert.deepEqual(byRepo, { 'acme/widgets': [0, 0], 'acme/gadgets': [null, null] })
 })
 
 test('a branch with no lint run whose work began before the lint log existed has null lint metrics', (t) => {

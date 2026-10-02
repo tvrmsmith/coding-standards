@@ -35,19 +35,21 @@ export function readJsonl(path) {
 /**
  * Lint metrics for one branch from its lint-changed lines. lint-changed writes one line per language
  * per run, every line of a run sharing `ts` and `head`, and no line when nothing lintable ran. Gate
- * lines are ignored. `lintPreCommit` sums the findings over the lines of the earliest run, and
- * `blockedCommits` counts the runs that blocked. A branch with no run scores 0 on both when its work
- * began at or after the log's first line, and null when it began earlier or there is no log.
+ * lines are ignored. `lintPreCommit` sums the findings over the lines of the earliest run, by `ts` and
+ * then `head`, and `blockedCommits` counts the runs with a line that blocked. A branch with no run
+ * scores 0 on both when its work began at or after its repo's first line, and null when it began
+ * earlier or its repo has no line, since a repo without the hook writes none.
  *
  * @param {LintRow[]} rows the branch's lines
  * @param {{ began: number, logStart: number }} span `began` is when the branch's work began and
- *   `logStart` the smallest `ts` in the log, gate lines included, or Infinity with no log
+ *   `logStart` the smallest `ts` among its repo's lines, gate lines included, or Infinity with none
  * @returns {{ lintPreCommit: number | null, blockedCommits: number | null }}
  */
 export function lintMetrics(rows, { began, logStart }) {
   /** @type {Map<string, LintRow[]>} */
   const runs = new Map()
-  for (const row of rows.filter((r) => !r.gate).sort((a, b) => a.ts - b.ts)) {
+  const ordered = rows.filter((r) => !r.gate).sort((a, b) => a.ts - b.ts || String(a.head).localeCompare(String(b.head)))
+  for (const row of ordered) {
     const key = `${row.ts}\0${row.head}`
     runs.set(key, [...(runs.get(key) ?? []), row])
   }

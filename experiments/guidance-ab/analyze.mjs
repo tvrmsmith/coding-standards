@@ -22,12 +22,20 @@ import { summarize, verdict } from './summary.mjs'
  * @typedef {{ repo: string | null, branch: string, group: ArmGroup }} Unit a branch the arm log assigns to an arm;
  *   `repo` is null when the logged repo has no `owner/name`, so no reviewed branch matches it
  * @typedef {{ ts: number, session_id: string, repo: string, branch: string, arm: ArmGroup | 'unassigned' }} ArmRow
+ * @typedef {{
+ *   repo: string, rows: import('./sources/no-mistakes.mjs').Repo[], branch: string,
+ *   runs: import('./sources/no-mistakes.mjs').Run[],
+ * }} RepoBranch a branch merged across the no-mistakes repo rows that share its `owner/name` key, its
+ *   runs oldest first; a sandbox row is never merged, so it stays a branch of its own
  */
 
 /** @type {Record<string, number>} */
 const SEVERITY_RANK = { info: 0, warning: 1, error: 2 }
 
-const CODE_EXTENSIONS = new Set(['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'go', 'cs', 'py', 'rb', 'java', 'kt', 'rs', 'swift', 'sh'])
+const CODE_EXTENSIONS = new Set(['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'go', 'cs', 'py', 'rb', 'java', 'kt', 'rs', 'swift', 'sh', 'bash', 'bats'])
+
+/** A directory that holds scripts, which often have no extension. */
+const SCRIPT_DIRECTORY = 'bin'
 
 /** A `mktemp` directory name, which marks a throwaway checkout made by a test or a script. */
 const SANDBOX_SEGMENT = /^tmp\.[A-Za-z0-9]+$/
@@ -65,17 +73,16 @@ export function analyze({ mode, paths, seed = 1, rule = DECISION_RULE }) {
   const units = mode === 'arm' ? armUnits(armLog.rows) : null
   // Infinity with no arm log, which keeps every history branch.
   const hookStart = Math.min(...armLog.rows.map((row) => row.ts))
-  // Infinity with no lint log, which leaves every lint metric null when a branch has no lint run.
-  const lintStart = Math.min(...lintLog.rows.map((row) => row.ts))
+  const lintByRepo = Map.groupBy(lintLog.rows, (row) => parseRepoKey(row.repo))
   const repos = readRepos(paths.noMistakesHome)
   const { segments: read, source } = readSegments(paths.projectsDir)
   const segments = read.map((segment) => ({ segment, repo: repoOf(segment, repos, units ? armLog.rows : []) }))
   const branches = []
   const excluded = units ? unassignedBranches(armLog.rows, units) : []
   const decided = new Set()
-  for (const branch of readBranches(paths.noMistakesHome)) {
+  for (const branch of mergeRepoRows(readBranches(paths.noMistakesHome))) {
     const firstRun = branch.runs.find((run) => stepRound(run, 'review', 1)) ?? null
-    const repo = repoKey(branch.repo.upstreamUrl)
+    const { repo } = branch
     const unit = units?.get(unitKey(repo, branch.branch))
     if (units && !unit) continue
     const own = segments
@@ -85,6 +92,7 @@ export function analyze({ mode, paths, seed = 1, rule = DECISION_RULE }) {
     const began = Math.min(firstRun?.createdAt ?? Infinity, ...own.map((segment) => segment.firstAt))
     const group = unit ? unit.group : own.length && firstRun ? (loaded ? 'loaded' : 'not-loaded') : null
     const reason = exclusion(paths.noMistakesHome, branch, firstRun, group, { arm: units != null, hookStart, began })
+    const repoLint = lintByRepo.get(repo) ?? []
     decided.add(unitKey(repo, branch.branch))
     if (reason) {
       excluded.push({ repo, branch: branch.branch, group, reason })
@@ -102,8 +110,9 @@ export function analyze({ mode, paths, seed = 1, rule = DECISION_RULE }) {
       metrics: {
         ...metrics(branch, firstRun, own),
         ...lintMetrics(
-          lintLog.rows.filter((row) => parseRepoKey(row.repo) === repo && row.branch === branch.branch),
-          { began, logStart: lintStart },
+          repoLint.filter((row) => row.branch === branch.branch),
+          // Infinity when the repo has no lint line, which leaves the metrics null without a lint run.
+          { began, logStart: Math.min(...repoLint.map((row) => row.ts)) },
         ),
       },
     })
@@ -121,6 +130,35 @@ export function analyze({ mode, paths, seed = 1, rule = DECISION_RULE }) {
   }
   const groups = ['loaded', 'not-loaded']
   return { mode: 'history', groups, caveat: HISTORY_CAVEAT, branches, excluded, armCheck: null, ...summarize({ groups, branches, seed }), verdict: null, sources: { projects: source, armLog: armLog.source, lintLog: lintLog.source, reviewAb: reviewAb.source } }
+}
+
+/**
+ * Merges the branches of no-mistakes repo rows that share an `owner/name` key, so one unit appears once.
+ *
+ * @param {import('./sources/no-mistakes.mjs').Branch[]} rowBranches one per repo row and branch
+ * @returns {RepoBranch[]}
+ */
+function mergeRepoRows(rowBranches) {
+  /** @type {Map<string, RepoBranch>} */
+  const merged = new Map()
+  for (const { repo: row, branch, runs } of rowBranches) {
+    const repo = repoKey(row.upstreamUrl)
+    const key = isSandbox(row) ? `sandbox\0${row.id}\0${branch}` : unitKey(repo, branch)
+    const entry = merged.get(key)
+    if (entry) {
+      entry.rows.push(row)
+      entry.runs.push(...runs)
+    } else {
+      merged.set(key, { repo, rows: [row], branch, runs: [...runs] })
+    }
+  }
+  for (const entry of merged.values()) entry.runs.sort((a, b) => a.createdAt - b.createdAt)
+  return [...merged.values()]
+}
+
+/** @param {import('./sources/no-mistakes.mjs').Repo} row */
+function isSandbox(row) {
+  return row.workingPath.split(sep).some((segment) => SANDBOX_SEGMENT.test(segment))
 }
 
 /**
@@ -193,29 +231,55 @@ function unitKey(repo, branch) {
  * Why the branch is not a unit, checked in precedence order, or null when it is one.
  *
  * @param {string} noMistakesHome
- * @param {import('./sources/no-mistakes.mjs').Branch} branch
+ * @param {RepoBranch} branch
  * @param {import('./sources/no-mistakes.mjs').Run | null} firstRun null when no run has a review round 1
  * @param {string | null} group null when no transcript sits on the branch, or in history mode no first run
  * @param {{ arm: boolean, hookStart: number, began: number }} cut `arm` is true in arm mode, `hookStart` is
  *   when the arm hook began logging, and `began` the earlier of the first run and the earliest transcript segment
  */
 function exclusion(noMistakesHome, branch, firstRun, group, { arm, hookStart, began }) {
-  const { id, defaultBranch, workingPath } = branch.repo
-  if (workingPath.split(sep).some((segment) => SANDBOX_SEGMENT.test(segment))) return 'sandbox repo'
+  if (branch.rows.some(isSandbox)) return 'sandbox repo'
   if (branch.runs.some((run) => run.status === 'running' || run.status === 'pending')) return 'in flight'
   if (!firstRun) return 'no pipeline run'
   if (arm && began < hookStart) return 'predates hook'
   if (!arm && firstRun.createdAt >= hookStart) return 'postdates hook'
-  const bare = join(noMistakesHome, 'repos', `${id}.git`)
-  const changed = changedFiles([bare, workingPath], firstRun.headSha, `refs/remotes/origin/${defaultBranch}`)
+  const changed = branchChanges(noMistakesHome, branch.rows, firstRun.headSha)
   if (changed == null) return 'diff unavailable'
-  if (!changed.some((path) => CODE_EXTENSIONS.has(extname(path).slice(1)))) return 'no code change'
+  if (!changed.some(isCode)) return 'no code change'
   if (group == null && !arm) return 'no transcript'
   return null
 }
 
 /**
- * @param {import('./sources/no-mistakes.mjs').Branch} branch
+ * What the head changed against the default branch, from the first repo row whose bare repo or working
+ * checkout holds both, or null when none does.
+ *
+ * @param {string} noMistakesHome
+ * @param {import('./sources/no-mistakes.mjs').Repo[]} rows
+ * @param {string} head
+ */
+function branchChanges(noMistakesHome, rows, head) {
+  for (const { id, defaultBranch, workingPath } of rows) {
+    const bare = join(noMistakesHome, 'repos', `${id}.git`)
+    const changed = changedFiles([bare, workingPath], head, `refs/remotes/origin/${defaultBranch}`)
+    if (changed != null) return changed
+  }
+  return null
+}
+
+/**
+ * A file with a code extension, or an extensionless file under a script directory.
+ *
+ * @param {string} path as git prints it, `/`-separated
+ */
+function isCode(path) {
+  const extension = extname(path).slice(1)
+  if (extension) return CODE_EXTENSIONS.has(extension)
+  return path.split('/').slice(0, -1).includes(SCRIPT_DIRECTORY)
+}
+
+/**
+ * @param {RepoBranch} branch
  * @param {import('./sources/no-mistakes.mjs').Run} firstRun
  * @param {import('./sources/transcripts.mjs').Segment[]} segments those on the branch
  */
@@ -236,15 +300,16 @@ function metrics(branch, firstRun, segments) {
     implTokens: impl,
     wallSeconds: wallSeconds(branch.runs, segments),
     totalCost: pipeline || impl ? (pipeline?.cost ?? 0) + (impl?.cost ?? 0) : null,
-    lintFirstRun: stepRound(firstRun, 'lint', 1)?.findings.length ?? null,
+    lintFirstRun: branch.runs.map((run) => stepRound(run, 'lint', 1)).find(Boolean)?.findings.length ?? null,
   }
 }
 
 /**
  * The repo key a segment worked in, or null when it is unresolved. The first rule that applies decides:
  * an arm row logged for the segment's session and branch names the repo; the cwd sits in a repo's
- * checkout; the session's pr-link names a known repo; exactly one known repo's name is a directory of
- * the cwd. Several no-mistakes repo rows can share one key, so the rules compare keys, not rows.
+ * checkout; exactly one known repo's name is a directory of the cwd; the session's pr-link names a
+ * known repo. A session's pr-link covers all its segments, so it ranks below what the segment's own cwd
+ * says. Several no-mistakes repo rows can share one key, so the rules compare keys, not rows.
  *
  * @param {import('./sources/transcripts.mjs').Segment} segment
  * @param {import('./sources/no-mistakes.mjs').Repo[]} repos
@@ -257,10 +322,10 @@ function repoOf(segment, repos, armRows) {
   const checkout = repos.find((repo) => segment.cwd === repo.workingPath || segment.cwd.startsWith(`${repo.workingPath}/`))
   if (checkout) return repoKey(checkout.upstreamUrl)
   const keys = new Set(repos.map((repo) => repoKey(repo.upstreamUrl)))
-  if (segment.prRepository && keys.has(segment.prRepository)) return segment.prRepository
   const dirs = segment.cwd.toLowerCase().split('/')
   const named = [...keys].filter((key) => dirs.includes(key.split('/')[1]))
-  return named.length === 1 ? named[0] : null
+  if (named.length === 1) return named[0]
+  return segment.prRepository && keys.has(segment.prRepository) ? segment.prRepository : null
 }
 
 /**

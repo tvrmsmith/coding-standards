@@ -41,11 +41,16 @@ A missing or unknown mode prints usage and exits 2. An analysis error, such as a
 
 lint-changed writes one `lint-runs.jsonl` line per language per run, and the lines of one run share
 `ts` and `head`. Per branch, `lintPreCommit` sums the findings over every line of the branch's earliest
-non-gate run, and `blockedCommits` counts the non-gate runs that blocked a commit. Gate lines count for
-neither. lint-changed writes nothing when nothing lintable ran, so a branch with no non-gate line
-scores 0 on both when its work began at or after the log's first line. It scores null when the log is
-missing or the work began before the log existed. A branch's work begins at the earlier of its first
-transcript line and its first no-mistakes run.
+non-gate run, by `ts` and then `head`, and `blockedCommits` counts the non-gate runs that blocked a
+commit. Gate lines count for neither. lint-changed writes nothing when nothing lintable ran, so a
+branch with no non-gate line scores 0 on both when its repo has a line in the log and the branch's work
+began at or after the repo's first line, gate lines included. It scores null when the repo has no line,
+since a repo without the hook writes none, when the log is missing, or when the work began before the
+repo's first line. A branch's work begins at the earlier of its first transcript line and its first
+reviewed no-mistakes run.
+
+`lintFirstRun` counts the findings of lint round 1 in the branch's earliest run that has one, which can
+be a run that stopped at lint before any review.
 
 ## Decision rule
 
