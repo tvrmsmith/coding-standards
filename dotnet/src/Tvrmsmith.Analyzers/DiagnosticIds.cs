@@ -47,4 +47,10 @@ public static class DiagnosticIds
     /// another, which bundles unrelated values into a throwaway shape so one call asserts them all.
     /// </summary>
     public const string NoAnonymousObjectComparison = "TVRM0007";
+
+    /// <summary>
+    /// <c>no-comments</c>. Any comment other than an XML doc comment on a declaration, a
+    /// suppression or directive a tool reads, or one in generated code.
+    /// </summary>
+    public const string NoComments = "TVRM0008";
 }

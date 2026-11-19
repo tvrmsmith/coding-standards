@@ -16,9 +16,10 @@ version: "2"
 linters:
   default: none
   enable:
-    # The personal rules. Nothing off the shelf covers either shape in any language.
+    # The personal rules. Nothing off the shelf covers these shapes in any language.
     - tvrmsmith-comment-block-length
     - tvrmsmith-combine-assertions
+    - tvrmsmith-no-comments
 
     # Assertions (A2, A5). One linter covers most of two guidelines, which is why the Go half
     # needed only one custom assertion rule where the C# half needed five.
@@ -75,6 +76,13 @@ linters:
         original-url: github.com/tvrmsmith/coding-standards
         settings:
           max: 10
+      tvrmsmith-no-comments:
+        type: module
+        description: >-
+          Reports every comment that is not a doc comment, a tool directive or suppression, or
+          in a generated file. Guideline "Comments": code documents itself, and what another
+          agent needs to know is written as a test.
+        original-url: github.com/tvrmsmith/coding-standards
       tvrmsmith-combine-assertions:
         type: module
         description: >-

@@ -71,6 +71,7 @@ not exist until a config declares it.
 |---|---|---|---|
 | `tvrmsmith-comment-block-length` | `comment-block-length` | Comments | a run of non-documentation comments over 10 lines |
 | `tvrmsmith-combine-assertions` | `combine-assertions-on-same-object` | A1 | consecutive testify assertions picking one object apart, and a length assertion followed by indexing into the same collection |
+| `tvrmsmith-no-comments` | `no-comments` | Comments | every comment but a doc comment, a tool directive or suppression, or one in a generated file |
 
 One `register.Plugin` call per rule rather than one plugin holding every analyzer: the registered
 name *is* the linter name in the config, so a name per rule is what lets each be enabled,
@@ -122,6 +123,29 @@ The "a doc comment ends the run beside it" rule the other two halves need has no
 contiguous comment lines above a declaration are one group, which the parser attaches whole, so
 the shape it guards against cannot be written.
 
+### no-comments
+
+The third implementation of `no-comments`, beside the ESLint rule and Roslyn's `TVRM0008`; the
+[shared doc](../packages/eslint-plugin-tvrmsmith/docs/rules/no-comments.md) covers the guideline,
+the message and the full exemption table. It runs in `LoadModeSyntax` and takes no settings.
+Three things are specific to Go:
+
+- **A doc comment is structural, as it is for `comment-block-length`.** It is the group the parser
+  attached to a declaration or to the package clause. The trailing line comment on a struct field,
+  a `const` or `var` spec or a type spec is exempt too, because godoc renders it as documentation;
+  the one trailing an import is not. The cgo preamble above `import "C"` is that import's doc
+  group, so it is kept.
+- **A directive is the toolchain's own form.** `//` with no space, a lowercase name, a colon and
+  an argument, the pattern `go/ast` uses itself, which covers `//go:build`, `//go:generate`,
+  `//nolint:errcheck` and `//lint:ignore`. A bare `//nolint`, `// +build`, `//line`, `//export`,
+  `//extern` and gosec's `#nosec` are added by name.
+- **The region above the `package` clause is not exempt.** `comment-block-length` skips it whole;
+  this rule keeps only the package doc and the directives there, so a licence header is reported.
+
+The hub lints its own root module with this preset in CI, and that module was written in the
+commented style the rule bans, so the CI step passes `--disable tvrmsmith-no-comments` until those
+comments are cleared. The preset itself enables the rule for every repository it runs over.
+
 ## The curated config
 
 `golangci.yml` sets `linters.default: none` and names what it enables. A rule is there because
@@ -145,6 +169,7 @@ that has its own `.golangci.yml` keeps it: the personal layer is a separate run,
 | `bodyclose`, `sqlclosecheck`, `rowserrcheck` | Errors | A leaked handle is a silent failure that surfaces as exhaustion somewhere else entirely, in a request that did nothing wrong. `rowserrcheck` is the unchecked result again: iteration that stopped because of an error looks exactly like iteration that finished. |
 | `nolintlint` | Errors, swallowed exception | A bare `//nolint` turns a linter off with no reason stated, which is the shape the Errors guideline is about, applied to the linter. `allow-unused` is on because the directives in the target repo point at its own linter set, not this one. |
 | `tvrmsmith-comment-block-length` | Comments | Above. |
+| `tvrmsmith-no-comments` | Comments | Above. |
 
 ### Unmapped, and that is fine
 

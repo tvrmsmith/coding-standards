@@ -81,21 +81,21 @@ Anti-pattern → fix:
 Use the project's own logger and error-id patterns rather than generic ones.
 
 ## Comments
-A comment earns its place by saying something the code cannot. A wrong comment is worse than no
-comment, because the reader trusts it.
+Code documents itself. Do not write comments: a comment narrating the code duplicates it and rots
+beside it, and a wrong comment is worse than none, because the reader trusts it.
 
-- **Explain why, not what.** A comment narrating the mechanics duplicates the code and rots beside
-  it. Record the reason, the constraint, or the thing that surprised you.
-- **A comment is part of the change.** Changing code changes the comments describing it, in the
-  same edit. Stale comments, TODOs long done, and references to renamed or removed symbols are all
-  wrong comments.
-- **Document what reading cannot recover.** Non-obvious logic, invariants, units, side effects, and
-  public API contracts.
-- **Delete restatement.** `i++ // increment i` adds noise and a rot risk, nothing else.
-- **A paragraph justifying a workaround means the code is wrong.** Fix the code. The judgement
-  stays whether the comment is *justifying* something; length is only the tripwire that makes you
-  look. Lint warns over 10 lines (`comment-block-length`, TVRM0006), and a doc comment is exempt
-  at any length, so a report asks you to re-read the code rather than to trim the prose.
+- **Say it in the code.** Carry the meaning in a name, a type, a constant or an extracted
+  function. `i++ // increment i` is deleted, and `// convert to seconds` becomes `toSeconds()`.
+- **A comment justifying a workaround means the code is wrong.** Fix the code rather than
+  explaining it.
+- **What another agent needs to know goes in a test.** Name the test for the behavior and assert
+  it. It documents the same fact as a comment would, and it fails when the fact stops being true.
+- **Doc comments on declarations are the exception.** JSDoc, TSDoc, XML doc and Go doc comments
+  document public API contracts, units, invariants and side effects. Put them on the declaration
+  they describe; one above a statement documents nothing.
+- **A suppression carries its reason on itself.** `-- reason` after an `eslint-disable`,
+  `// reason` after `//nolint:linter`, or on the `#pragma warning disable` line.
+- **Generated files belong to their generator.** Do not edit their comments, or their code.
 
 ## React
 Touching `.jsx`/`.tsx`, or JSX or a `use*` hook in `.js`/`.ts` → read [`react.md`](./react.md) and

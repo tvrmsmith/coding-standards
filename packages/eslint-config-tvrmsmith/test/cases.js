@@ -170,6 +170,21 @@ export const RETRY_CEILING = 5`,
 export const RETRY_CEILING = 5`,
   },
 
+  // ---- base: comments, code documents itself ----
+  //
+  // The compliant sample keeps the two exemptions a real file leans on most: a doc comment on
+  // the exported declaration and a suppression that carries its reason.
+  {
+    rule: 'tvrmsmith/no-comments',
+    scope: 'source',
+    violating: `// inlined because the shared helper reads config too early
+export const RETRY_CEILING = 5`,
+    compliant: `/** The retry ceiling for this client. Must stay under the gateway's own timeout. */
+export const RETRY_CEILING = 5
+// eslint-disable-next-line no-console -- the CLI's only output channel
+console.log(RETRY_CEILING)`,
+  },
+
   {
     rule: 'no-restricted-syntax',
     selector: noOptionalChainInExpect,
