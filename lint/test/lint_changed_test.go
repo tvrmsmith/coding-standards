@@ -184,7 +184,6 @@ func TestIgnoresScopeSurvivesEmptyDiff(t *testing.T) {
 	f := newFixture(t)
 	f.write("Foo.cs", baseFile)
 	f.commitAll("base")
-	// No staged change: the touched map is empty.
 
 	res := f.run(sarifDoc(sarifResultNoLocation("AD0001", "analyzer failed to load")), filterArgs("--staged")...)
 
@@ -311,7 +310,6 @@ func TestCrossProcessWaiverRoundTrip(t *testing.T) {
 		t.Fatalf("spend: exit code = %d, stderr: %s", spent.exitCode, spent.stderr)
 	}
 
-	// A different index tree: stage a second file so write-tree changes.
 	f.write("Bar.cs", baseFile)
 	f.stage("Bar.cs")
 
@@ -375,8 +373,6 @@ func TestFilterAloneNeverSpendsAcrossRepeatedRuns(t *testing.T) {
 		t.Fatalf("first run: stderr missing the match notice: %s", first.stderr)
 	}
 
-	// No spend call here: this is the dispatcher dying in the window between
-	// the filter returning 0 and the spend it would otherwise have issued.
 	second := f.run(doc, filterArgs("--staged")...)
 	if second.exitCode != 0 {
 		t.Fatalf("second run: exit code = %d, want 0\nstdout: %s\nstderr: %s", second.exitCode, second.stdout, second.stderr)
@@ -395,7 +391,6 @@ func TestFilterAloneNeverSpendsAcrossRepeatedRuns(t *testing.T) {
 func TestStagedFileDirtyIsHardStop(t *testing.T) {
 	f := newFixture(t)
 	stageEdit(f, "Foo.cs")
-	// Dirty the working copy again without re-staging.
 	f.write("Foo.cs", "line1\nline2\nCHANGED\nline4\nDIRTY\n")
 
 	res := f.run(sarifDoc(), filterArgs("--staged")...)
@@ -431,10 +426,6 @@ func TestUsageErrorsExitOne(t *testing.T) {
 		args []string
 		want string
 	}{
-		// The whole problem sentence, not the flag name. Every one of these
-		// spellings also appears in the usage banner the error prints under
-		// itself, so asserting on the flag alone passes against a binary that
-		// diagnosed nothing and printed the banner.
 		{"report with no format", []string{"--staged", "--report", "a.json"}, "lint-changed: --report a.json has no --format before it"},
 		{"language is not a filter flag", []string{"--staged", "--language", "csharp"}, "lint-changed: unknown argument '--language'"},
 		{"two scopes", []string{"--format", "sarif", "--staged", "--since", "main"},
@@ -459,7 +450,6 @@ func TestFilesScopesEveryLineWithoutABase(t *testing.T) {
 	f := newFixture(t)
 	f.write("Foo.cs", baseFile)
 	f.commitAll("base")
-	// No staged change at all: a --staged run would see an empty diff.
 
 	res := f.run(sarifDoc(sarifResult("TVRM0001", "msg", sarifLoc("Foo.cs", 2, 2))), filterArgs("--files", "Foo.cs")...)
 
@@ -537,9 +527,6 @@ func TestOneWaiverCoversOneFinding(t *testing.T) {
 		t.Fatalf("exit code = %d, want 2: one waiver must not cover both findings\nstdout: %s\nstderr: %s",
 			res.exitCode, res.stdout, res.stderr)
 	}
-	// Which finding survived, not just that one did. Exit 2 alone also comes
-	// back from a run where the waiver never matched anything and both findings
-	// blocked, which is the opposite of the behaviour under test.
 	if !strings.Contains(res.stdout, "Foo.cs:3") {
 		t.Fatalf("stdout does not report the unwaived finding at line 3: %s", res.stdout)
 	}
@@ -582,7 +569,6 @@ func TestWaiverIsNotSpentOnABlockingRun(t *testing.T) {
 		t.Fatalf("waiver log has %d lines, want 1 (the record alone, no spend)", len(lines))
 	}
 
-	// The real finding is gone now, and the waiver is still there to spend.
 	clean := f.run(sarifDoc(sarifResult("TVRM0001", "the waived one", sarifLoc("Foo.cs", 2, 2))), filterArgs("--staged")...)
 	if clean.exitCode != 0 {
 		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", clean.exitCode, clean.stdout, clean.stderr)
@@ -774,9 +760,6 @@ func TestReportsAreFilteredInOneRun(t *testing.T) {
 // ignored language.
 func TestWaiverDoesNotLeakAcrossLanguages(t *testing.T) {
 	f := newFixture(t)
-	// Both files' base content lands in one commit so that staging either
-	// edit below never drags the other's still-staged change into HEAD, the
-	// way commitAll after stageEdit would.
 	f.write("Foo.cs", baseFile)
 	f.write("main.go", baseFile)
 	f.commitAll("base")
@@ -915,7 +898,6 @@ func TestUnplaceableReportBesideAPlaceableOneExitsOne(t *testing.T) {
 	stageEdit(f, "Foo.cs")
 	outside := writeReport(t, "outside.sarif",
 		sarifDoc(sarifResult("TVRM0001", "msg", sarifLoc("/elsewhere/Other.cs", 3, 3))))
-	// Placeable but out of scope, so the run would otherwise end clean at 0.
 	inside := writeReport(t, "inside.sarif",
 		sarifDoc(sarifResult("TVRM0002", "msg", sarifLoc("Foo.cs", 5, 5))))
 
@@ -984,8 +966,6 @@ func TestARealFindingOutranksAnUncheckedReport(t *testing.T) {
 		t.Fatalf("the waive command never reached stderr: %s", both.stderr)
 	}
 
-	// The reports are given unchecked-first, since a run that stopped at the
-	// first failure would never open the one holding the finding.
 	withOutside := f.run("", filterArgs("--staged", "--report", outside, "--report", found)...)
 	if withOutside.exitCode != 2 {
 		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", withOutside.exitCode, withOutside.stdout, withOutside.stderr)

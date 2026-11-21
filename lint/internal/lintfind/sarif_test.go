@@ -309,9 +309,6 @@ func TestParseSARIFAbsoluteFileURIWithPercentEncoding(t *testing.T) {
 // no Locations.
 func TestParseSARIFDropsResultWithNoPlaceableLocation(t *testing.T) {
 	root := testRoot(t)
-	// Both files exist on disk, so neither result is rejected merely for
-	// naming a path that is not there: containment alone rejects the first and
-	// the absent region alone rejects the second.
 	writeSource(t, root, "src/Foo.cs")
 	outside := t.TempDir()
 	outsideFile := filepath.Join(outside, "Foo.cs")
@@ -465,7 +462,6 @@ func TestParseSARIFIgnoresScopeForAnalyzerLoadFailures(t *testing.T) {
 		}
 	}
 
-	// TVRM0001 is an ordinary rule and must not be flagged.
 	doc := sarifDoc(t, "src/Foo.cs", 1, 0)
 	findings, _, err := ParseSARIF(strings.NewReader(doc), root)
 	if err != nil {
@@ -508,8 +504,6 @@ func TestParseSARIFKeepsScopeIgnoringRuleWithNoLocations(t *testing.T) {
 		}
 	}
 
-	// An ordinary rule with no location is still dropped: nothing places it and
-	// nothing exempts it.
 	doc := `{"version": "2.1.0", "runs": [{"results": [{
 		"ruleId": "TVRM0001", "message": {"text": "a finding"}
 	}]}]}`

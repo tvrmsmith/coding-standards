@@ -38,7 +38,7 @@ func pinGitEnv(t *testing.T) string {
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_SYSTEM", "/dev/null")
 	for _, k := range []string{"GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"} {
-		t.Setenv(k, "") // registers the restore; git rejects an empty GIT_DIR, so unset it too
+		t.Setenv(k, "")
 		if err := os.Unsetenv(k); err != nil {
 			t.Fatal(err)
 		}

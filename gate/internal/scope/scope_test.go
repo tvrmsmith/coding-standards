@@ -58,8 +58,6 @@ func TestParseSelectsMetricsAtTheirThreshold(t *testing.T) {
 				{Definition: fakeBeta, Threshold: 3},
 			},
 		},
-		// The joined form is the one place two equals signs meet, so it pins
-		// that the split takes the first and leaves the assignment intact.
 		"--threshold=<name>=<n> splits at the first equals": {
 			argv: []string{"--metric=beta", "--threshold=beta=3"},
 			want: []metric.Selection{

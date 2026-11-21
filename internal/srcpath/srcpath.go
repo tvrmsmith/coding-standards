@@ -579,11 +579,6 @@ func (r Root) NamedFiles(names []string, cwd string) ([]Path, error) {
 func (r Root) named(name, cwd string, dirs dirNames) (Path, error) {
 	candidate := filepath.FromSlash(name)
 	if filepath.IsAbs(candidate) {
-		// An absolute name says where it is on its own, so the working
-		// directory bears on nothing about it and every component below is the
-		// developer's own. Clearing cwd here is what tells firstTypedComponent
-		// so, and it is the same thing the caller's read not happening used to
-		// say.
 		cwd = ""
 	} else {
 		candidate = filepath.Join(cwd, candidate)
@@ -605,9 +600,6 @@ func (r Root) named(name, cwd string, dirs dirNames) (Path, error) {
 	if place == outside {
 		return "", &UnresolvedError{Name: name, Reason: "is outside the repo root"}
 	}
-	// EvalSymlinks already resolved this path, so absence here is a delete
-	// racing the two syscalls rather than a name the developer mistyped, and it
-	// reads as the filesystem failure it is.
 	info, err := os.Stat(resolved)
 	if err != nil {
 		return "", unreadable(name, err)

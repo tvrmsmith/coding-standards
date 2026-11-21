@@ -345,8 +345,6 @@ func renderCobertura(stamp string, sources []string, classes ...coverageClass) s
 	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>` + "\n")
 	timestampAttr := ""
 	if stamp != "" {
-		// Concatenated rather than formatted: xmlAttribute has already escaped
-		// the value for XML, and %q would escape it a second time for Go.
 		timestampAttr = ` timestamp="` + xmlAttribute(stamp) + `"`
 	}
 	fmt.Fprintf(&b, `<coverage line-rate="0" version="1.9"%s>`+"\n", timestampAttr)
@@ -830,8 +828,6 @@ func hideEditFilter(t *testing.T) (attributesFile, cleanCommand string) {
 	if err := os.WriteFile(attributesFile, []byte("*.cs filter=hide\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// A path rather than a command line, because the config value has to survive
-	// GIT_CONFIG_PARAMETERS' own single-quote packing intact.
 	cleanCommand = filepath.Join(dir, "hide-edit")
 	//nolint:gosec // git spawns this sed script as the *.cs clean driver named by the attributes file beside it, so it must be executable, and G306 tests the mode as a bitwise subset of 0600, which no execute bit can satisfy
 	if err := os.WriteFile(cleanCommand, []byte("#!/bin/sh\nexec sed 's/, edited//'\n"), 0o700); err != nil {
@@ -876,8 +872,6 @@ func unparseableGlobalConfigHome(t *testing.T) []string {
 	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[core\n\tquotePath = false\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// XDG_CONFIG_HOME is the other place git looks for a global config, and an
-	// ambient one would answer ahead of the home this case just built.
 	return []string{"HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, ".config")}
 }
 
@@ -1051,10 +1045,6 @@ func deeplyNestedPaths(t *testing.T, count int) []string {
 	for i := range count {
 		paths = append(paths, fmt.Sprintf("%s/Order%03d.cs", dir, i))
 	}
-	// gitscope is asked whether this layout splits rather than told what the
-	// budget is. A layout that quietly stopped splitting, or a budget raised
-	// past it, would otherwise leave the case green as a single-invocation
-	// duplicate of the one-file case beside it.
 	specs := make([]srcpath.Path, 0, len(paths))
 	for _, path := range paths {
 		specs = append(specs, srcpath.Path(path))

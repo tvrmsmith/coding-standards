@@ -19,9 +19,6 @@ func TestFilesNamingAFifoRefusesItWithoutCallingItADirectory(t *testing.T) {
 		t.Skipf("the filesystem does not allow a fifo: %v", err)
 	}
 
-	// Neither a regular file nor a directory. No extractor can read it, so the
-	// run still refuses, but named as a directory the message would describe a
-	// mistake the developer did not make.
 	f.runArgs("--files", pipe).assertMatches(t, "files_not_regular", 1, "",
 		"src/Ordering/Pipe.cs is not a regular file\n")
 }

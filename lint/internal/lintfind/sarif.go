@@ -106,9 +106,6 @@ func ParseSARIF(r io.Reader, root srcpath.Root) ([]Finding, []Dropped, error) {
 			findings = append(findings, *finding)
 		}
 	}
-	// Stamped here, the single success return, rather than at placeResult's
-	// construction site, so a future construction site inside this parser
-	// cannot forget it.
 	for i := range findings {
 		findings[i].Language = LanguageCSharp
 	}
@@ -182,10 +179,6 @@ func placeResult(result sarifResult, root srcpath.Root) (*Finding, error) {
 
 	locations := placeLocations(result.Locations, root)
 	locations = append(locations, placeLocations(result.RelatedLocations, root)...)
-	// A rule that ignores scope is kept whatever its locations say. Roslyn
-	// reports all four of them at Location.None, so the result carries no
-	// locations array at all and dropping it here would mean an analyzer that
-	// failed to load never blocked anything.
 	if len(locations) == 0 && !ignoresScope(result.RuleID) {
 		return nil, nil
 	}
@@ -224,17 +217,10 @@ func placeLocation(loc sarifLocation, root srcpath.Root) (Location, bool) {
 	if region.StartLine == 0 {
 		return Location{}, false
 	}
-	// An endLine below startLine spans no line at all, so the scope filter
-	// would match it against nothing and the finding would vanish with
-	// neither a Dropped entry nor an UNPARSED marker. Absent reads as 0 and
-	// takes the same floor.
 	endLine := region.EndLine
 	if endLine < region.StartLine {
 		endLine = region.StartLine
 	}
-	// An absent startColumn and an explicit 0 are indistinguishable through
-	// encoding/json, and SARIF 2.1 itself defaults region.startColumn to 1, so
-	// both read as 1 here rather than leaving either to luck.
 	startColumn := region.StartColumn
 	if startColumn == 0 {
 		startColumn = 1

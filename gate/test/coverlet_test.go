@@ -82,9 +82,6 @@ func TestFullStackScoresAReportCoverletWrote(t *testing.T) {
 	f.writeCoverletFixture()
 	f.commitAll("initial")
 
-	// The edit comes before the collection. Collecting first would leave a
-	// report older than the working-tree file the gate compares it to, which
-	// the gate correctly refuses as coverage_stale.
 	f.appendComment("src/Points.cs", 7)
 	f.collectCoverage()
 
@@ -116,31 +113,18 @@ const sourcePathPins = `    <ContinuousIntegrationBuild>false</ContinuousIntegra
 func (f *fixture) writeCoverletFixture() {
 	f.t.Helper()
 
-	// The fixture pins its SDK from the same file that pins the tool pack's,
-	// read rather than retyped so the two cannot drift apart.
 	f.write("global.json", readFixture(f.t, filepath.Join(dotnetDir, "global.json")))
 
-	// Nothing in the asserted document depends on this. The gate's changed set
-	// comes from a diff against the base commit, which lists tracked paths
-	// only, so the build output under bin/ and obj/ could never reach it. The
-	// file is here so the fixture repo a reader lands in mid-debug keeps
-	// pages of build output out of git status.
 	f.write(".gitignore", "bin/\nobj/\n")
 
-	// A hand-written solution file is what lets the case run the literal
-	// canonical invocation, `dotnet test` with no project argument.
 	f.write("Fixture.slnx", `<Solution>
   <Project Path="src/Lib.csproj" />
   <Project Path="tests/Tests.csproj" />
 </Solution>
 `)
 
-	// Copied verbatim from the dotnet extractor's own fixture. That is what
-	// ties this golden's complexity 9 to the number the extractor's suite
-	// already scores the same method at.
 	f.write("src/Points.cs", readFixture(f.t, pointsFixture))
 
-	// ImplicitUsings is on because Points.cs names Exception without a using.
 	f.write("src/Lib.csproj", `<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>`+coverletFixtureFramework+`</TargetFramework>
@@ -152,11 +136,6 @@ func (f *fixture) writeCoverletFixture() {
 </Project>
 `)
 
-	// RollForward matches the packed tool's own setting, so a machine carrying
-	// the pinned SDK band and no 8.x shared framework launches the testhost on
-	// the runtime it has instead of failing the run outright. It moves nothing
-	// in the golden, because Roslyn still compiles for net8.0 and the
-	// instrumentable-line count is its output, not the testhost's.
 	f.write("tests/Tests.csproj", `<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>`+coverletFixtureFramework+`</TargetFramework>
@@ -177,9 +156,6 @@ func (f *fixture) writeCoverletFixture() {
 </Project>
 `)
 
-	// One call into one arm of the switch. That single call is what produces
-	// the 15 of 20 instrumentable lines the golden's coverage 0.75 comes from,
-	// so changing it changes the golden.
 	f.write("tests/PointsTests.cs", `using Fixtures;
 using Xunit;
 
@@ -202,26 +178,11 @@ public class PointsTests
 func (f *fixture) collectCoverage() {
 	f.t.Helper()
 	cmd := dotnetCmd(f.t, f.root, "test", "--collect:XPlat Code Coverage")
-	// The restore uses the machine's ordinary NuGet cache rather than the
-	// throwaway NUGET_PACKAGES installRealExtractor sets up. That isolation
-	// exists because the tool project pins one version forever and would
-	// otherwise resolve run 1's local build. These are immutable public
-	// packages, so a cold restore on every run would cost CI minutes and prove
-	// nothing.
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		f.t.Fatal(dotnetFailure(`dotnet test --collect:"XPlat Code Coverage"`, err, out))
 	}
 
-	// The exit status says the tests passed, not that the collector wrote
-	// anything. A run where coverlet.collector resolves but collects nothing
-	// exits zero with no report, and a second report would reach the document
-	// only as an extra GUID in skipped_paths. Either way the case would red as
-	// an opaque golden diff, so the count is checked here where the cause can
-	// be named.
-	//
-	// The count is the gate's own discovery, run here rather than restated, so
-	// what this guard counts and what the gate later reads cannot disagree.
 	root, err := srcpath.NewRoot(f.root)
 	if err != nil {
 		f.t.Fatalf("rooting the fixture repo at %s: %v", f.root, err)
@@ -309,20 +270,12 @@ func (f *fixture) assertCoverletReportShape(path, dotnetOut string) {
 			hitsAboveOne = true
 		}
 	}
-	// Distinct line numbers, not <line> entries. coverlet emits a sibling method
-	// per lambda or local function whose sequence points overlap the enclosing
-	// one, so counting entries would raise this floor above the report-wide
-	// lines-covered it is compared against and red a sound report.
 	covered := 0
 	for _, hit := range classLines {
 		if hit {
 			covered++
 		}
 	}
-	// A precondition rather than a shape the gate reads past: the gate does read
-	// the per-line hits, so an empty scored class would red the golden on its
-	// own. It stops the case here so the rows below, which all speak for shapes
-	// no golden diff reports, cannot report an empty class as a lost shape.
 	if len(classLines) == 0 || covered == 0 {
 		f.t.Fatalf("%s scored class %s carries %d <line> entries and %d of them hit, want both above zero, so every shape check below would speak for a class the report left empty or never ran\n%s",
 			path, class.Filename, len(classLines), covered, dotnetOut)
@@ -341,10 +294,6 @@ func (f *fixture) assertCoverletReportShape(path, dotnetOut string) {
 		}
 	}
 
-	// The root summary is read as the numbers it claims to be rather than as
-	// two non-empty strings. Both are report-wide, so the scored class's own
-	// hit lines are a floor on lines-covered and proof that a zero rate is
-	// wrong, which is as far as this class alone can speak for them.
 	lineRate, lineRateErr := strconv.ParseFloat(report.LineRate, 64)
 	linesCovered, linesCoveredErr := strconv.Atoi(report.LinesCovered)
 

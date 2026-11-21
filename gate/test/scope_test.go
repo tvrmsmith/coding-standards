@@ -45,30 +45,18 @@ func TestScopeUsageErrors(t *testing.T) {
 			argv:    []string{"--since", "main", "--staged"},
 			problem: "--staged and --since name two scopes; pass one",
 		},
-		// --files arriving second on a command line that already named a
-		// scope. The message that says where the paths go belongs to a
-		// repeated --files alone, and this line really does name two scopes.
 		"a scope flag after a different one": {
 			argv:    []string{"--staged", "--files", orderService},
 			problem: "--files and --staged name two scopes; pass one",
 		},
-		// One flag typed twice names no second scope, so it gets a sentence
-		// about the repetition. "--staged and --staged name two scopes"
-		// contradicts itself and leaves the developer looking for a second
-		// flag they never typed.
 		"the same scope flag twice": {
 			argv:    []string{"--staged", "--staged"},
 			problem: "--staged was passed twice; pass it once",
 		},
-		// The same rule with a value flag, where the developer plausibly meant
-		// the second ref to replace the first. The gate refuses rather than
-		// picking one, which is the call the two-scope cases make too.
 		"the same ref flag twice": {
 			argv:    []string{"--since", "release", "--since", "main"},
 			problem: "--since was passed twice; pass it once",
 		},
-		// --files is variadic rather than repeatable, so a second one names
-		// one scope and gets the message saying where the paths go.
 		"a repeated --files": {
 			argv:    []string{"--files", orderService, "--files", otherService},
 			problem: "--files takes every path in one list, as in 'metric-gate --files a.cs b.cs'",
@@ -81,9 +69,6 @@ func TestScopeUsageErrors(t *testing.T) {
 			argv:    []string{"--since", "--staged"},
 			problem: "--since needs a ref",
 		},
-		// What an unset shell variable expands to. Taken as a ref it would
-		// reach the developer as the default-candidates message telling them
-		// to pass the flag they just passed.
 		"--since with an empty ref": {
 			argv:    []string{"--since", ""},
 			problem: "--since needs a ref",
@@ -96,19 +81,10 @@ func TestScopeUsageErrors(t *testing.T) {
 			argv:    []string{"--files", "--staged"},
 			problem: "--files needs at least one path",
 		},
-		// The mistake the stop-at-dash slurp exists for, and the only argv that
-		// reaches the conflict arm with --files already holding paths. Taken as
-		// a file name, --staged would reach the developer as a path that does
-		// not exist rather than as the two scopes they typed.
 		"a scope flag after a non-empty --files": {
 			argv:    []string{"--files", orderService, "--staged"},
 			problem: "--staged and --files name two scopes; pass one",
 		},
-		// Both stops are a single dash, not two, which is the asymmetry
-		// against --coverage that
-		// TestCoverageFlagTakesAValueBeginningWithOneDashAsAPath sits opposite.
-		// Weakened to "--", `--since -5` becomes a ref lookup for a commit
-		// nobody named.
 		"--since followed by a single-dash argument": {
 			argv:    []string{"--since", "-5"},
 			problem: "--since needs a ref",
@@ -117,8 +93,6 @@ func TestScopeUsageErrors(t *testing.T) {
 			argv:    []string{"--files", "-report.xml"},
 			problem: "--files needs at least one path",
 		},
-		// An empty argument does not start with '-', so the slurp takes it,
-		// and joined onto the working directory it names the working directory.
 		"--files with an empty path": {
 			argv:    []string{"--files", ""},
 			problem: "--files was handed an empty path",
@@ -131,19 +105,10 @@ func TestScopeUsageErrors(t *testing.T) {
 			argv:    []string{"--coverage="},
 			problem: "--coverage needs a path",
 		},
-		// What an unset shell variable expands to. It must not reach the
-		// reader as a report naming nothing.
 		"--coverage with an empty separate value": {
 			argv:    []string{"--coverage", ""},
 			problem: "--coverage needs a path",
 		},
-		// A mistyped flag after --coverage would otherwise be swallowed as a
-		// report path and reach the developer as a coverage diagnostic inside a
-		// document, which reads as "the gate ran and your coverage is wrong"
-		// rather than "the command line is wrong". No producer names a report
-		// with two leading dashes, so the flag spelling is the one worth
-		// refusing. A single dash is taken as a path, which
-		// TestCoverageFlagTakesAValueBeginningWithOneDashAsAPath pins.
 		"--coverage given a flag as a separate value": {
 			argv:    []string{"--coverage", "--nope"},
 			problem: "--coverage needs a path, not the flag '--nope'",
@@ -180,10 +145,6 @@ func TestScopeUsageErrors(t *testing.T) {
 			argv:    []string{"--metric", "crap", "--metric", "crap"},
 			problem: "--metric was given 'crap' twice; pass it once",
 		},
-		// A single dash is not the flag-shaped refusal --metric makes, so it
-		// falls through to the ordinary unknown-metric rule, matching the
-		// asymmetry TestCoverageFlagTakesAValueBeginningWithOneDashAsAPath
-		// pins for --coverage.
 		"--metric given a single-dash value": {
 			argv:    []string{"--metric", "-x"},
 			problem: "unknown metric '-x'; this binary hosts: crap",
@@ -240,10 +201,6 @@ func TestScopeUsageErrors(t *testing.T) {
 			argv:    []string{"--threshold", "crap=12", "--threshold", "crap=20"},
 			problem: "--threshold was given crap twice; pass it once",
 		},
-		// A single dash falls through to the ordinary rules rather than the
-		// flag-shaped refusal, the same asymmetry --metric's single-dash case
-		// pins: taken as a value it never reaches '=', so the missing-'='
-		// message fires instead of a report about a flag.
 		"--threshold given a single-dash value": {
 			argv:    []string{"--threshold", "-5"},
 			problem: "--threshold '-5' is missing '=', as in 'crap=30'",
@@ -264,9 +221,6 @@ func TestSinceMeasuresEveryMethodChangedAcrossTheWholeBranch(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
-	// release sits outside gitscope.BaseCandidates, so a run that ignored the
-	// ref and fell back to the default resolution would label its base main
-	// and this case would go red on that line alone.
 	f.git("branch", "release")
 
 	f.git("checkout", "--quiet", "-b", "feature")
@@ -299,9 +253,6 @@ func TestSinceMeasuresTheBranchPointNotTheTipOfTheNamedRef(t *testing.T) {
 	f.git("checkout", "--quiet", "main")
 	f.touchLine(orderService, 45)
 	f.commitAll("edit PlaceAsync on main")
-	// release names main's tip, and nothing in gitscope.BaseCandidates names
-	// release, so this case is red both if the run measures the tip rather
-	// than the branch point and if it ignores the ref it was handed.
 	f.git("branch", "release")
 	f.git("checkout", "--quiet", "feature")
 
@@ -331,16 +282,8 @@ func TestSinceNamingATagThatDoesNotPointAtACommitFailsNamingThatRef(t *testing.T
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
-	// A lightweight tag on a tree, which is a ref that resolves while naming
-	// nothing the run can diff against.
 	f.git("tag", "treetag", f.git("rev-parse", "HEAD^{tree}"))
 
-	// The tag resolves at the unpeeled check, and `cat-file -t <sha>^{}`
-	// answering `tree` is what turns that into the answer --since owes its
-	// caller. Dropped, as that classification is on the default walk's
-	// candidate check, merge-base is what fails, at exit 128, and the developer
-	// is told the diff could not be read for a ref they named by hand and can
-	// fix by naming another.
 	f.runArgs("--since", "treetag").assertMatches(t, "since_tag_not_a_commit", 1, "",
 		"no diff base: --since treetag does not name a commit\n")
 }
@@ -373,12 +316,6 @@ func TestSinceNamingAPathInsideACommitFailsNamingThatRev(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 
-	// `HEAD:<path>` resolves, to the blob the path holds, so the unpeeled
-	// verify passes it through and the classification is what answers. It is
-	// the shape that catches a peel applied to the rev the developer typed
-	// rather than to the id the verify resolved: `HEAD:<path>^{}` asks git for
-	// a path spelled with a trailing `^{}`, which no tree holds, and the run
-	// would report a git failure over a path nobody typed.
 	f.runArgs("--since", "HEAD:"+orderService).assertMatchesWith(t, "since_absent_sha_not_a_commit", 1, "",
 		"no diff base: --since HEAD:"+orderService+" does not name a commit\n",
 		map[string]string{"REV": "HEAD:" + orderService})
@@ -397,12 +334,6 @@ func TestStagedMeasuresOnlyWhatIsStaged(t *testing.T) {
 
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
-	// The stub parses only orderService and reports both its spans, of which
-	// only cancel holds a staged line. Under the default merge-base scope the
-	// gate would hand the extractor Other.cs as well, and the stub's silence
-	// about it would fail the run with extractor_no_parse_status instead of
-	// producing this document, which is what makes --staged excluding the
-	// unstaged edit discriminating.
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
@@ -435,13 +366,6 @@ func TestStagedRefusesAFileStagedInOneStateAndDirtyInAnother(t *testing.T) {
 
 func TestStagedRefusesADirtyFileAmongMorePathspecsThanOneArgvCarries(t *testing.T) {
 	t.Parallel()
-	// Every claimed path used to go on one git command line with no ceiling. A
-	// large enough staged changeset made that argv too long for exec, and the
-	// gate reported E2BIG as diff_unparseable, which names the wrong problem,
-	// since git parsed nothing because it never ran. Batched, the refusal has to
-	// survive the split, so the dirty file is the last path. Wherever the
-	// boundaries fall it sits in the final batch, and a union that dropped a
-	// batch would report a clean tree.
 	paths := deeplyNestedPaths(t, 120)
 	dirty := paths[len(paths)-1]
 
@@ -572,10 +496,6 @@ func TestFilesNamingTheSameFileTwiceHandsItToTheGateOnce(t *testing.T) {
 	handed := filepath.Join(t.TempDir(), "handed")
 	f.stub.StdinLog = handed
 
-	// Two spellings of each path. The skipped one is listed once in the
-	// document, and the claimed one reaches the extractor once: handed it
-	// twice the extractor reports every span in it twice and the run exits 1
-	// over a contract it did not break.
 	f.runArgs("--files", "docs/notes.md", "./docs/notes.md", orderService, "./"+orderService).
 		assertMatches(t, "files_with_skipped_path", 0, "",
 			"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
@@ -586,11 +506,6 @@ func TestFilesNamingTheSameFileTwiceHandsItToTheGateOnce(t *testing.T) {
 func TestFilesNamingAFileInTheWrongCaseRefusesRatherThanMeasuresIt(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, "main")
-	// macOS only by construction. Every Linux runner is case sensitive, where
-	// the mis-cased spelling names no file at all and the refusal is the
-	// absent-path one instead. srcpath's spelling_test.go carries the
-	// Linux-reachable coverage of the decision branch, so what skips here is
-	// the document and the message rather than the logic.
 	if !caseInsensitiveFilesystem(t, f.root) {
 		t.Skip("the filesystem is case sensitive, so the mis-cased spelling names no file and the case is a duplicate of the unresolvable one")
 	}
@@ -598,11 +513,6 @@ func TestFilesNamingAFileInTheWrongCaseRefusesRatherThanMeasuresIt(t *testing.T)
 	f.commitAll("initial")
 	singleFileCoverageAndStub(t, f)
 
-	// The spelling resolves here, and resolving symlinks does not settle its
-	// case, so the gate would hand the extractor src/ordering/... while
-	// coverage carries the tracked src/Ordering/... . The two would match
-	// nothing against each other and every method in a covered file would come
-	// back unknown, so the run refuses the spelling instead.
 	f.runArgs("--files", "src/ordering/OrderService.cs").
 		assertMatches(t, "files_wrong_case", 1, "",
 			"src/ordering/OrderService.cs is not spelled as the file on disk is\n")
@@ -616,11 +526,6 @@ func TestFilesNamingAMisCasedRepoRootPrefixRefusesTheSpellingNotTheLocation(t *t
 	singleFileCoverageAndStub(t, f)
 	miscasedRoot := sameDirectoryUpperCased(t, f.root)
 
-	// Issue 48. The file is the fixture's own, correctly cased below the root,
-	// and only the root prefix is typed in another case. EvalSymlinks keeps
-	// that case, so filepath.Rel reads the path as escaping and the gate used
-	// to answer "is outside the repo root", sending the developer after a
-	// location mistake when what they have is a spelling one.
 	typed := filepath.Join(miscasedRoot, filepath.FromSlash(orderService))
 	f.runArgs("--files", typed).
 		assertMatchesWith(t, "files_miscased_root_prefix", 1, "",
@@ -674,10 +579,6 @@ func TestFilesNamingAPathThroughAFileFailsInTheDocument(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 
-	// A typo that puts a filename where a directory belongs. The operating
-	// system answers ENOTDIR rather than saying the path is absent, and every
-	// other --files refusal reaches the document, so this one does too rather
-	// than exiting 1 with an empty stdout an agent cannot tell from a crash.
 	f.runArgs("--files", orderService+"/x.cs").
 		assertMatches(t, "files_not_a_directory", 1, "",
 			"src/Ordering/OrderService.cs/x.cs could not be read, not a directory\n")
@@ -690,10 +591,6 @@ func TestFilesResolvesARelativePathAgainstTheWorkingDirectory(t *testing.T) {
 	f.commitAll("initial")
 	singleFileCoverageAndStub(t, f)
 
-	// The shell a pre-commit hook runs in sits wherever the developer is, not
-	// at the repo root. OrderService.cs names nothing from the root, so a
-	// resolution joined onto the root rather than the working directory
-	// refuses a file sitting right there.
 	f.runArgsFrom("src/Ordering", "--files", "OrderService.cs").
 		assertMatches(t, "files_single_file", 0, "",
 			"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
@@ -709,13 +606,6 @@ func TestStagedMeasuresNothingForAPureMoveStagedOnItsOwn(t *testing.T) {
 	f.write(origin, csharpFile(20))
 	f.commitAll("initial")
 	f.git("mv", origin, moved)
-	// ADR 0015's rule that a rename with no content change touches nothing
-	// holds over the index too, so the pre-commit hook this scope exists for
-	// does not demand coverage for every method in a file the developer only
-	// moved. The tree is clean, so the cached and uncached listings agree here
-	// and this case says nothing about cachedFlag inside pureMoves.
-	// TestStagedLooksForPureMovesInTheIndexRatherThanTheWorkingTree is the one
-	// that pins it.
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(moved), []span{vanish}),
@@ -738,8 +628,6 @@ func TestAFilesRunLeavesNothingBehindThatChangesTheNextRun(t *testing.T) {
 	f.touchLine(orderService, 62)
 	singleFileCoverageAndStub(t, f)
 
-	// The flagged run is asserted too, so a sequence that degenerates into two
-	// failing runs cannot pass as the one this case is named for.
 	f.runArgs("--files", orderService).assertMatches(t, "files_single_file", 0, "",
 		"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
 
@@ -749,18 +637,12 @@ func TestAFilesRunLeavesNothingBehindThatChangesTheNextRun(t *testing.T) {
 
 func TestFilesReturnsEveryMethodInTheFileIncludingNestedOnes(t *testing.T) {
 	t.Parallel()
-	// validate nests inside placeAsync. Under a diff the smallest containing
-	// span takes the touched line and the container is not changed, but
-	// --files carries no line to narrow against, so both are measured.
 	validate := span{File: orderService, Name: "OrderService.PlaceAsync.Validate", StartLine: 45, EndLine: 50, Complexity: 2}
 
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 
-	// Lines 42-44 and 51 belong to placeAsync alone, 45-50 to validate, and
-	// only 51 is uncovered, so the two carry different coverage and neither
-	// row can stand in for the other.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: append(spanCoverage(42, 10, 9), spanCoverage(61, 3, 2)...)}))
 	f.stub = stubConfig{
@@ -781,9 +663,6 @@ func TestStagedDoesNotRefuseADirtyFileNoExtractorClaims(t *testing.T) {
 
 	f.touchLine(orderService, 62)
 	f.git("add", orderService)
-	// Staged in one state and on disk in another, the shape --staged refuses,
-	// on a file no extractor claims. The gate never scores it, so it has no
-	// line numbers to misattribute and the run proceeds.
 	f.write("docs/notes.md", "second\n")
 	f.git("add", "docs/notes.md")
 	f.write("docs/notes.md", "third\n")
@@ -804,10 +683,6 @@ func TestSinceARefSharingNoHistoryWithHeadSaysSo(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
-	// An orphan branch is a second root commit, so the two histories share no
-	// commit and git answers the merge base with no rather than with a
-	// failure. The ref itself resolves, which is what tells this apart from a
-	// name that does not exist.
 	f.git("checkout", "--quiet", "--orphan", "unrelated")
 	f.write("docs/notes.md", "first\n")
 	f.commitAll("unrelated root")
@@ -822,12 +697,6 @@ func TestSinceOnABranchWithNoCommitSaysTheBranchHasNone(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
-	// An orphan branch that was never committed on. main resolves, so the ref
-	// check passes and HEAD is what does not, which git reports from merge-base
-	// as exit 128 rather than the exit 1 that means no. Read as a failure to
-	// answer, the run blames a diff it never asked for. The repo here holds a
-	// full history, so a message about the repo having no commits would be
-	// contradicted by the log the developer can print.
 	f.git("checkout", "--quiet", "--orphan", "work")
 
 	f.runArgs("--since", "main").assertMatches(t, "since_no_commits", 1, "",
@@ -842,11 +711,6 @@ func TestStagedNamesTheDirtyFileWhenTheExtractorFailsOnIt(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 
-	// Staged and then deleted from disk, which is the widest divergence
-	// --staged refuses. The extractor is handed a path with nothing to read and
-	// fails on it, so no file is claimed and the ordinary divergence check sees
-	// nothing. Reported as the extractor's own failure the caller is told its
-	// source does not parse, when the cause is the refusal this scope exists for.
 	f.write(added, csharpFile(20))
 	f.git("add", added)
 	f.removeFile(added)
@@ -866,9 +730,6 @@ func TestFilesNamingTwoHardLinksToOneInodeMeasuresBoth(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
-	// Two tracked paths, one inode. They are two files to the extractor and two
-	// files to a coverage report, so dropping either as a duplicate spelling
-	// leaves a file the developer named unmeasured under a pass.
 	if err := os.Link(filepath.Join(f.root, filepath.FromSlash(orderService)),
 		filepath.Join(f.root, filepath.FromSlash(otherService))); err != nil {
 		t.Fatal(err)
@@ -893,11 +754,6 @@ func TestSinceReportsADiffGitRefusesToPrintInTheDocument(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.git("branch", "release")
-	// The ref and the merge base both resolve, so the document exists and
-	// ADR 0008 requires it on stdout under this scope too. The diff then reads
-	// the old side's blob, which is gone, so git exits 128 before printing a
-	// patch. Returned untyped instead, the run would exit 1 with an empty
-	// stdout an agent cannot tell from a crash.
 	blob := f.git("rev-parse", "HEAD:"+orderService)
 	f.touchLine(orderService, 62)
 	f.removeLooseObject(blob)
@@ -929,11 +785,6 @@ func TestStagedKeepsTheExtractorsCauseWhenTheDirtyFileIsOneNoExtractorReads(t *t
 	f.write("docs/notes.md", "first\n")
 	f.commitAll("initial")
 
-	// The extractor fails on a source file that is not dirty, and a Markdown
-	// file is separately staged and then edited. Asked about every path in the
-	// diff, the fallback would report staged_file_dirty naming docs/notes.md
-	// and replace the extractor's own cause with one about a file nothing was
-	// ever going to read.
 	f.touchLine(orderService, 62)
 	f.git("add", orderService)
 	f.write("docs/notes.md", "second\n")
@@ -956,12 +807,6 @@ func TestStagedReportsADivergenceCheckGitCannotRunInTheDocument(t *testing.T) {
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
-	// The staged diff compares the index against a commit, so it reads objects
-	// alone and succeeds, and the extractor answers from its canned config
-	// without opening anything. The divergence check is the one command that
-	// has to read the working-tree copy, and with the file unreadable it exits
-	// 128 instead of naming the file. Returned untyped, the run would exit 1
-	// with an empty stdout an agent cannot tell from a crash.
 	f.denyReadFile(orderService)
 	cause := f.divergenceStderr(orderService)
 
@@ -977,11 +822,6 @@ func TestStagedKeepsTheExtractorsCauseWhenTheDivergenceCheckCannotRun(t *testing
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 	f.git("add", orderService)
-	// The extractor dies and the divergence check the fallback would ask
-	// instead cannot run either, because the same file is unreadable. With no
-	// answer of its own to substitute, the fallback leaves standing the one
-	// cause the gate did establish rather than replacing it with a refusal it
-	// never proved.
 	f.stub = stubConfig{Extensions: []string{".cs"}, ExitCode: 3}
 	f.denyReadFile(orderService)
 
@@ -1002,12 +842,6 @@ func TestStagedRefusesAMoveWhoseIndexContentTheWorkingTreeNoLongerHolds(t *testi
 	f.git("mv", origin, moved)
 	f.touchLine(moved, 7)
 	f.git("add", moved)
-	// The index now holds the edit and the working tree holds the pre-move
-	// text again, which is the divergence --staged exists to refuse. Compared
-	// against the working-tree copy the added side digests equal to the deleted
-	// blob, so the gate calls the pair a pure move, drops Moved.cs from the
-	// diff, and never hands it to an extractor, and the run passes on the file
-	// the guard was written for.
 	f.write(moved, before)
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
@@ -1025,12 +859,6 @@ func TestStagedNamesEveryDirtyFileInOneMessage(t *testing.T) {
 	f.write(otherService, csharpFile(30))
 	f.commitAll("initial")
 
-	// Two files staged in one state and on disk in another. Both are the
-	// gate's to score, so a message naming one of them sends the developer
-	// back for a second run to find the other. What this pins is the ", " join.
-	// The order the two names come out in is dirtyMessage's own sort, which
-	// this case cannot tell from the sort ClaimedPaths already did upstream, so
-	// the unit case beside dirtyMessage is what holds that rule.
 	f.touchLine(orderService, 62)
 	f.touchLine(otherService, 12)
 	f.git("add", orderService, otherService)
@@ -1057,8 +885,6 @@ func TestFilesListsEveryUnhandledPathSortedRatherThanAsTyped(t *testing.T) {
 	f.commitAll("initial")
 	singleFileCoverageAndStub(t, f)
 
-	// The two unhandled paths are named in reverse sorted order, so a document
-	// that echoed the command line back would list notes.md first.
 	f.runArgs("--files", "docs/notes.md", "docs/architecture.md", orderService).
 		assertMatches(t, "files_two_skipped_paths", 0, "",
 			"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
@@ -1071,11 +897,6 @@ func TestFilesNamingAFileInADirectoryItCannotReadFailsInTheDocument(t *testing.T
 	f.commitAll("initial")
 	f.denyReadKeepingEntry("src/Ordering")
 
-	// The directory can be entered, so the path resolves and names a regular
-	// file, and only the spelling check has to read the directory itself. A
-	// filesystem that will not answer is not the tree disagreeing with the
-	// spelling, so the refusal carries what the operating system said instead
-	// of accusing the developer of a typo.
 	f.runArgs("--files", orderService).
 		assertMatches(t, "files_unreadable_directory", 1, "",
 			"src/Ordering/OrderService.cs could not be read, permission denied\n")
@@ -1125,9 +946,6 @@ func TestStagedRefusesAFileACleanFilterMakesLookUnmodified(t *testing.T) {
 
 	f.touchLine(orderService, 62)
 	f.git("add", orderService)
-	// The clean filter strips this marker, so git's own answer to whether the
-	// working tree differs from the index is no, and the gate would score
-	// index line numbers against text on disk that does not match them.
 	f.write(orderService, replaceLine(f.read(orderService), 45, "// line 45, hidden"))
 	if f.git("diff", "--name-only", "--", orderService) != "" {
 		t.Fatal("the clean filter did not hide the edit here, so git reports the ordinary divergence and the case cannot be about the blanked driver")
@@ -1181,10 +999,6 @@ func TestStagedScoresAFileWhoseOnlyDifferenceOnDiskIsTheExecutableBit(t *testing
 
 	f.touchLine(orderService, 62)
 	f.git("add", orderService)
-	// The bit is not content. The text on disk is byte for byte what the index
-	// holds, so the extractor reads the lines the staged numbers describe and
-	// there is nothing to misattribute, but a plain diff still names the path
-	// and the run would refuse a tree no edit can clean.
 	f.setExecutable(orderService)
 
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
@@ -1206,9 +1020,6 @@ func TestFilesNamingASymlinkMeasuresTheFileItPointsAt(t *testing.T) {
 	f.symlinkTo(filepath.Join(f.root, filepath.FromSlash(orderService)), "src/Ordering/Link.cs")
 	singleFileCoverageAndStub(t, f)
 
-	// The extractor and the coverage report are both keyed by the target's
-	// path. Measured under the link's own path instead, the file would match
-	// no report path and every method in it would come back unknown.
 	f.runArgs("--files", "src/Ordering/Link.cs").assertMatches(t, "files_single_file", 0, "",
 		"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
 }
@@ -1222,9 +1033,6 @@ func TestFilesNamingASymlinkOutOfTheRepoFailsNamingThePathAsTyped(t *testing.T) 
 	writeAbsolute(t, outside, csharpFile(10))
 	f.symlinkTo(outside, "src/Ordering/Outside.cs")
 
-	// The link is inside the root and the file it names is not. Stopping at
-	// the link, the gate would measure a file no commit of this repo holds and
-	// report it under a path inside the repo.
 	f.runArgs("--files", "src/Ordering/Outside.cs").
 		assertMatches(t, "files_symlink_outside_repo", 1, "",
 			"src/Ordering/Outside.cs is outside the repo root\n")
@@ -1239,11 +1047,6 @@ func TestFilesListsANamedSkipAheadOfOneCoverageDiscoveryFound(t *testing.T) {
 	singleFileCoverageAndStub(t, f)
 	f.denyRead("TestResults/locked")
 
-	// Both producers of skipped_paths at once, which is the order ADR 0008
-	// fixes: the paths the developer named, then whatever coverage discovery
-	// could not read. "TestResults/locked" sorts ahead of "docs/notes.md", so
-	// a merge that sorted the two or appended them the other way round goes
-	// red here.
 	f.runArgs("--files", "docs/notes.md", orderService).
 		assertMatches(t, "files_skip_before_discovery_skip", 0, "",
 			"0 of 2 changed methods over CRAP threshold 30, worst score 9.08\n")
@@ -1255,10 +1058,6 @@ func TestSinceNamingARevisionGitWillNotEvaluateReportsAnUnreadableDiff(t *testin
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 
-	// A reflog entry the log does not have. git refuses the revision rather
-	// than answering that it names no commit, and reported as a ref that does
-	// not exist it would send the developer looking for a branch they never
-	// typed.
 	f.runArgs("--since", "HEAD@{99}").assertMatches(t, "since_ref_unreadable", 1, "",
 		"could not read the diff: git rev-parse --verify --quiet HEAD@{99}: exit status 128\n")
 }
@@ -1272,11 +1071,6 @@ func TestStagedLooksForPureMovesInTheIndexRatherThanTheWorkingTree(t *testing.T)
 	f := newFixture(t, "main")
 	f.write(origin, csharpFile(20))
 	f.commitAll("initial")
-	// The index holds one added file and no deletion. The working tree holds
-	// that add beside a deletion nobody staged, which is the pure move the
-	// index does not have. Read off the working tree the two would pair up,
-	// Moved.cs would be dropped as a file the developer only renamed, and a
-	// staged addition would go unscored under exit 0 pass.
 	f.copyFile(origin, moved)
 	f.git("add", moved)
 	f.removeFile(origin)
@@ -1316,8 +1110,6 @@ func TestAnAddedSymlinkIsNeverDigestedAsItsTarget(t *testing.T) {
 
 	f := newFixture(t, "main")
 	f.write(origin, csharpFile(20))
-	// Target.cs carries Origin.cs's content byte for byte, which is what makes
-	// a digest read through the link match the deleted blob.
 	f.copyFile(origin, target)
 	f.commitAll("initial")
 	f.copyFile(origin, moved)
@@ -1342,10 +1134,6 @@ func TestAnAddedSymlinkIsNeverDigestedAsItsTarget(t *testing.T) {
 func TestFilesOrdersTheSpansItFoundRatherThanKeepingTheExtractorsOrder(t *testing.T) {
 	t.Parallel()
 	const calc = "src/Ordering/Calc.cs"
-	// Two methods declared on one line, so the document's own sort by
-	// descending score ties on every key it compares and the rows come out in
-	// the order the join handed them over. That order is the join's to fix,
-	// since a real extractor emits spans in whatever order it walked the file.
 	f1 := span{File: calc, Name: "Calc.F", Signature: "(int)", StartLine: 14, EndLine: 14, Complexity: 1}
 	g := span{File: calc, Name: "Calc.G", Signature: "(string)", StartLine: 14, EndLine: 14, Complexity: 1}
 
@@ -1371,11 +1159,6 @@ func TestStagedScoresAFileTheWorkingCopyOnlyReindented(t *testing.T) {
 
 	f.touchLine(orderService, 62)
 	f.git("add", orderService)
-	// Format on save after staging. Every line keeps its number and its
-	// content, which is exactly what `git diff -w` is defined to ignore and
-	// what the gate's own diff already ignores, so there is nothing to
-	// misattribute. Compared without -w the guard names the path and the run
-	// refuses a tree only re-staging can clean.
 	f.write(orderService, indented(f.read(orderService), "    "))
 	if f.git("diff", "--name-only", "--", orderService) == "" {
 		t.Fatal("the reindent left the working copy matching the index, so nothing here is for -w to hide")
@@ -1400,12 +1183,6 @@ func TestStagedRefusesAFileTheWorkingCopyAddedABlankLineTo(t *testing.T) {
 
 	f.touchLine(orderService, 62)
 	f.git("add", orderService)
-	// The other side of the reindent case. A blank line added after staging
-	// moves every line below it, so the spans the extractor reports off disk sit
-	// one line away from the staged content the coverage numbers describe, and
-	// the run would score the wrong lines and report a number rather than an
-	// error. -w forgives whitespace inside a line and not a line the index does
-	// not have, which is what keeps this refusal standing.
 	f.insertBlankLine(orderService, 10)
 
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
@@ -1428,11 +1205,6 @@ func TestFilesNamingOnlyUnhandledPathsPassesWithoutReachingCoverage(t *testing.T
 	f.denyRead("TestResults/locked")
 	f.stub = stubConfig{Extensions: []string{".cs"}}
 
-	// No extractor claims the one named path, so the changed set is empty and
-	// ADR 0014 exits 0 pass before any input is resolved. The locked directory
-	// is what makes that visible: coverage discovery would list it in
-	// skipped_paths, so a document carrying only the named path proves the
-	// early exit ran ahead of discovery.
 	f.runArgs("--files", "docs/notes.md").
 		assertMatches(t, "files_only_unhandled_path", 0, "",
 			"no changed methods, nothing to measure\n")
@@ -1448,11 +1220,6 @@ func TestSinceReportsAMergeBaseGitCannotWalkAsAnUnreadableDiff(t *testing.T) {
 	f.commitAll("second")
 	f.removeLooseObject(f.git("rev-parse", "HEAD"))
 
-	// Both `rev-parse --verify` checks pass, since neither reads the commit
-	// they name, and the walk merge-base has to make is the first thing that
-	// touches the missing object. Left to fall through to the exit-1 arm this
-	// would come back as two histories sharing no commit, sending the
-	// developer after a branch relationship that is not the problem.
 	cause := f.gitStderr("merge-base", "HEAD", "other")
 
 	f.runArgs("--since", "other").assertMatchesWith(t, "since_merge_base_unreadable", 1, "",
@@ -1470,16 +1237,8 @@ func TestSinceNamingABranchWhoseCommitObjectIsGoneReportsAnUnreadableDiff(t *tes
 	gone := f.git("rev-parse", "other")
 	f.removeLooseObject(gone)
 
-	// other resolves at the unpeeled check, since that check never reads the
-	// commit it names, and the peel cat-file -t asks about is the first thing
-	// that touches the missing object. Left classified by the old `^{commit}`
-	// peel this would come back as a ref that does not name a commit, sending
-	// the developer after a branch that is sitting right there in refs/heads.
 	cause := f.gitStderr("cat-file", "-t", gone+"^{}")
 
-	// The document an unreadable diff carries is the same whichever step failed
-	// to read it, so this case shares the golden the merge-base case pins; the
-	// input shape it covers is a named branch whose commit object is gone.
 	f.runArgs("--since", "other").assertMatchesWith(t, "since_merge_base_unreadable", 1, "",
 		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
 }
@@ -1494,13 +1253,6 @@ func TestSinceNamingAnExplicitPeelOfAGoneCommitFailsNamingThatRev(t *testing.T) 
 	f.commitAll("second")
 	f.removeLooseObject(f.git("rev-parse", "other"))
 
-	// The other half of the branch-commit-gone case. Spelled plain, other
-	// resolves at the verify and the damaged store comes back as an unreadable
-	// diff; spelled with the peel the developer wrote themselves, the verify has
-	// to read the commit to peel it and exits 1, so the same damaged store comes
-	// back as a ref that does not name a commit. The peel is the rev here, not
-	// something the run appended, and this case is red if the verify ever stops
-	// being the step that fails on it.
 	peeled := "other^{commit}"
 
 	f.runArgs("--since", peeled).assertMatchesWith(t, "since_absent_sha_not_a_commit", 1, "",
@@ -1514,21 +1266,11 @@ func TestSinceNamingAFullShaTheStoreDoesNotHoldReportsAnUnreadableDiff(t *testin
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 
-	// `commit-tree` writes a commit no ref reaches, so removing it damages
-	// nothing main's history walks.
 	gone := f.git("commit-tree", f.git("rev-parse", "HEAD^{tree}"), "-m", "unreferenced")
 	f.removeLooseObject(gone)
 
-	// `rev-parse --verify --quiet` answers a well-formed 40-hex sha with the sha
-	// itself, without asking the store whether it holds the object, so the run
-	// reaches the classification and cat-file is what fails. The document is the
-	// one every unreadable diff carries; the input shape here is a full sha the
-	// store does not hold.
 	cause := f.gitStderr("cat-file", "-t", gone+"^{}")
 
-	// TestSinceNamingAnAbbreviatedShaTheStoreDoesNotHoldFailsNamingThatRev names
-	// the same commit spelled short and gets the other document. One commit, two
-	// documents, which is the whole of the disagreement between the spellings.
 	f.runArgs("--since", gone).assertMatchesWith(t, "since_merge_base_unreadable", 1, "",
 		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
 }
@@ -1542,12 +1284,6 @@ func TestSinceNamingAnAbbreviatedShaTheStoreDoesNotHoldFailsNamingThatRev(t *tes
 	gone := f.git("commit-tree", f.git("rev-parse", "HEAD^{tree}"), "-m", "unreferenced")
 	f.removeLooseObject(gone)
 
-	// An abbreviation has to be matched against the object store to be resolved
-	// at all, so the commit spelled short exits 1 at the verify and never
-	// reaches the classification.
-	// TestSinceNamingAFullShaTheStoreDoesNotHoldReportsAnUnreadableDiff names the
-	// same commit in full and gets the other document. One commit, two documents,
-	// which is the whole of the disagreement between the spellings.
 	abbreviated := gone[:8]
 
 	f.runArgs("--since", abbreviated).assertMatchesWith(t, "since_absent_sha_not_a_commit", 1, "",
@@ -1573,11 +1309,6 @@ func TestSinceNamingAFullShaTheStoreHoldsResolvesTheBaseFromIt(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// The green side of the spelling split the absent-sha case pins. A
-	// well-formed 40-hex clears the verify without the store being consulted,
-	// so the classification is the first step that reads this object, and
-	// this case is red if a live full sha stops coming back `commit` there and
-	// the run starts reporting a sha it can see as naming no commit.
 	f.runArgs("--since", base).assertMatches(t, "since_single_method", 0, f.baseLabel(base),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
@@ -1600,11 +1331,6 @@ func TestSinceNamingAnAnnotatedTagResolvesTheBaseThroughIt(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// An annotated tag is a tag object, not a commit, so it resolves only
-	// because the run peels it. The `^{commit}` verify used to do that; the
-	// classification check is what does it now, and this case is red if that
-	// peel is ever dropped and --since <annotated tag> starts reporting a ref
-	// that does not name a commit.
 	f.runArgs("--since", "release").assertMatches(t, "since_single_method", 0, f.baseLabel("release"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
@@ -1621,15 +1347,8 @@ func TestSinceNamingAnAnnotatedTagWhoseCommitObjectIsGoneReportsAnUnreadableDiff
 	f.commitAll("second")
 	f.removeLooseObject(tagged)
 
-	// The tag object itself is intact, so the unpeeled verify answers with its
-	// id and only the peel reaches the commit that is gone. This is what the
-	// `^{}` buys over asking about the tag object bare, which answers `tag` at
-	// exit 0 and would put the run back on "does not name a commit" for a store
-	// that is damaged rather than a ref that is wrong.
 	cause := f.gitStderr("cat-file", "-t", tagObject+"^{}")
 
-	// Same shared unreadable-diff document as the other cases; the input shape
-	// here is an annotated tag whose target commit is gone.
 	f.runArgs("--since", "other").assertMatchesWith(t, "since_merge_base_unreadable", 1, "",
 		"could not read the diff: "+cause+"\n", map[string]string{"CAUSE": toonEscaped(cause)})
 }
@@ -1641,10 +1360,6 @@ func TestStagedReportsAHeadGitCannotReadAsAnUnreadableDiff(t *testing.T) {
 	f.commitAll("initial")
 	f.corruptPackedRefs()
 
-	// git answers the HEAD check with exit 128 rather than the exit 1 that
-	// means no commit. Read as no commit, the run would tell a developer whose
-	// repo holds a full history to make their first one, and re-staging would
-	// never clear it because staging is not what is broken.
 	cause := f.gitStderr("rev-parse", "--verify", "--quiet", "HEAD")
 
 	f.runArgs("--staged").assertMatchesWith(t, "staged_head_unreadable", 1, "",
@@ -1658,10 +1373,6 @@ func TestFilesKeepsTheExtractorsCauseWhenExtractionDies(t *testing.T) {
 	f.commitAll("initial")
 	f.stub = stubConfig{Extensions: []string{".cs"}, ExitCode: 3}
 
-	// --files has no divergence check to substitute a cause of its own, so what
-	// the extractor said is what the document carries. The base stays null
-	// because this scope resolves none, and skipped_paths stays empty because
-	// the list of what no extractor claimed is built after extraction returns.
 	f.runArgs("--files", orderService).assertMatches(t, "files_extractor_failed", 1, "",
 		"csharp extractor exited 3\n")
 }
@@ -1675,12 +1386,8 @@ func TestStagedTakesANamedCoverageReport(t *testing.T) {
 	f.touchLine(orderService, 62)
 	f.git("add", orderService)
 
-	// Discoverable, and it leaves Cancel uncovered. Reading it instead of the
-	// named report scores Cancel 12.00, which is what makes the case tell one
-	// parser owning argv apart from --coverage being dropped on a scope flag.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 0)}))
-	// Named, outside any TestResults directory so discovery cannot reach it.
 	f.write("artifacts/coverage.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -1699,10 +1406,6 @@ func TestFilesStopsCollectingPathsAtTheCoverageFlag(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 
-	// A --files list is variadic, so the risk this case pins is the flag after
-	// it being swallowed as a path. That would fail the run naming
-	// artifacts/coverage.xml as an unresolvable source file rather than
-	// reading it as the report.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 0)}))
 	f.write("artifacts/coverage.xml", cobertura(f.root,
@@ -1724,13 +1427,6 @@ func TestFilesResumesParsingAfterTheWholeListRatherThanInsideIt(t *testing.T) {
 	f.write(otherService, csharpFile(30))
 	f.commitAll("initial")
 
-	// A multi-path list is what pins where the parser resumes. --files consumes
-	// two arguments here, so an index that resumes one short reads
-	// src/Ordering/Other.cs a second time as a positional argument and exits 1
-	// on a usage error, and one long swallows --coverage and discovers the
-	// report instead of reading the one named. The two reports carry different
-	// numbers so the second failure shows in the document rather than only in
-	// which file was opened.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 0)}))
 	f.write("artifacts/coverage.xml", cobertura(f.root,

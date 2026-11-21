@@ -23,7 +23,6 @@ func TestTouchedLinesNamesTheEditedLines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TouchedLines against the fixture's own HEAD errored %v, want the edited lines", err)
 	}
-	// dirtyRepo commits two comment lines and rewrites the second on disk.
 	if want := []int{2}; !slices.Equal(touched[paths[0]], want) {
 		t.Errorf("TouchedLines named %v for %s, want %v", touched[paths[0]], paths[0], want)
 	}
@@ -35,8 +34,6 @@ func TestTouchedLinesNamesTheEditedLines(t *testing.T) {
 // refuses.
 func TestTouchedLinesTypesAGitRefusalAsAnUnreadableDiff(t *testing.T) {
 	repo, _ := dirtyRepo(t, 1)
-	// A well-formed object name the store does not hold, so git fails inside
-	// the diff rather than anywhere base resolution could have caught it.
 	absent := strings.Repeat("0", 40)
 
 	touched, err := repo.TouchedLines(Base{Ref: "absent", Commit: absent})

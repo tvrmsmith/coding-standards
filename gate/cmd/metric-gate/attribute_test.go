@@ -47,16 +47,12 @@ func TestASelectionDeclaringNoCoverageScoresWithoutTheJoin(t *testing.T) {
 	if len(metrics) != 1 {
 		t.Fatalf("metrics = %+v, want the one selected entry", metrics)
 	}
-	// The metric is still named, at its own bar, having read nothing. What a
-	// row looks like for it waits on the formula that would fill one.
 	if len(metrics[0].Rows) != 0 {
 		t.Errorf("rows = %+v, want none", metrics[0].Rows)
 	}
 	if metrics[0].Measured() != 0 || metrics[0].Failed() != 0 {
 		t.Errorf("measured = %d, failed = %d, want 0 and 0", metrics[0].Measured(), metrics[0].Failed())
 	}
-	// The run passes rather than dying on unknown_changed_method, which is the
-	// whole of the scenario.
 	doc := report.Document{ChangedMethods: len([]extract.Span{cancelSpan}), Metrics: metrics}
 	if code := doc.ExitCode(); code != 0 {
 		t.Errorf("ExitCode() = %d, want 0", code)
@@ -92,8 +88,6 @@ func TestADeclaredRunScoresEveryMetricOffTheOneSet(t *testing.T) {
 // selections over one unmatched method must report one, not two.
 func TestOneUnattributableMethodCountsOnceWhateverIsSelected(t *testing.T) {
 	selected := []metric.Selection{declaresCoverage, declaresCoverageToo}
-	// The set names some other file, so cancelSpan's file matched no report
-	// path at all, which is ADR 0011's file_unmatched.
 	elsewhere := coverage.Set{"src/Billing/InvoiceService.cs": coverage.Lines{1: true}}
 
 	metrics, unknown := attribute(selected, extract.Result{Spans: []extract.Span{cancelSpan}}, []extract.Span{cancelSpan}, elsewhere, true)
@@ -145,8 +139,6 @@ func TestOneMethodIsJudgedAtEachSelectionsOwnBar(t *testing.T) {
 		t.Errorf("failed = %d and %d, want 0 and 1: the same method clears one bar and not the other",
 			metrics[0].Failed(), metrics[1].Failed())
 	}
-	// One metric failing fails the run, so the document exits 2 rather than
-	// reading only the entry that passed.
 	doc := report.Document{ChangedMethods: 1, Metrics: metrics}
 	if code := doc.ExitCode(); code != 2 {
 		t.Errorf("ExitCode() = %d, want 2", code)

@@ -42,8 +42,6 @@ func main() {
 		writeCapabilities(cfg)
 		return
 	}
-	// The real extractor reads every path before it answers, so the stub
-	// drains stdin too and the two agree on when the gate's write completes.
 	if err := drainStdin(cfg); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(64)

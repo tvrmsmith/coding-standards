@@ -142,9 +142,7 @@ Three things are specific to Go:
 - **The region above the `package` clause is not exempt.** `comment-block-length` skips it whole;
   this rule keeps only the package doc and the directives there, so a licence header is reported.
 
-The hub lints its own root module with this preset in CI, and that module was written in the
-commented style the rule bans, so the CI step passes `--disable tvrmsmith-no-comments` until those
-comments are cleared. The preset itself enables the rule for every repository it runs over.
+The hub lints its own root module with this preset in CI, this rule included.
 
 ## The curated config
 

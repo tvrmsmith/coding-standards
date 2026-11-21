@@ -51,9 +51,6 @@ func Open(logPath string) (*Store, error) {
 	s := &Store{logPath: logPath}
 
 	//nolint:gosec // G304: the path is the caller's whole point. A waiver log
-	// is machine-local and named by the person running the tool, through
-	// TVRMSMITH_WAIVERS or the XDG default, so there is no trust line for a
-	// variable path to cross here.
 	f, err := os.Open(logPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
@@ -61,8 +58,6 @@ func Open(logPath string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening waiver log %s: %w", logPath, err)
 	}
-	// Discarded deliberately: this handle only ever read, so a close failure
-	// tells a caller nothing it can act on and nothing about the log's content.
 	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
@@ -176,9 +171,6 @@ func (s *Store) Record(w Waiver) (Waiver, error) {
 	if w.Language == "" {
 		return Waiver{}, fmt.Errorf("waiver: language is required")
 	}
-	// No path requirement. An empty path is the analyzer-load case, where the
-	// diagnostic is reported at no location at all, and Match treats it as the
-	// value it is rather than as a missing field.
 	if w.Rule == "" {
 		return Waiver{}, fmt.Errorf("waiver: rule is required")
 	}
@@ -321,9 +313,6 @@ func (s *Store) append(l line) error {
 	}
 	data = append(data, '\n')
 
-	// O_CREATE makes the file, not the directory above it, and the default log
-	// path names one no installer creates. Without this the first waiver anyone
-	// records fails on a machine that has never recorded one.
 	if err := os.MkdirAll(filepath.Dir(s.logPath), 0o700); err != nil {
 		return fmt.Errorf("creating the waiver log directory: %w", err)
 	}
@@ -336,10 +325,6 @@ func (s *Store) append(l line) error {
 		_ = f.Close()
 		return fmt.Errorf("writing waiver log %s: %w", s.logPath, err)
 	}
-	// Checked rather than deferred and discarded. This handle wrote, and a
-	// close that fails after a write that succeeded is how a record goes
-	// missing. Reporting it is what stops a waiver being spent in memory and
-	// absent from the log the next process reads.
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("closing waiver log %s: %w", s.logPath, err)
 	}

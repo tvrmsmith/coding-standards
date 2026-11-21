@@ -209,15 +209,9 @@ jobs:
       # naming the linter and giving a site-specific reason, never an entry in
       # go/golangci.yml's excludes or an exclusion rule taking a linter off a
       # path, either of which runs over other repositories too.
-      #
-      # The one linter left off is tvrmsmith-no-comments, and only for this run.
-      # It arrived after the hub's own code was written in the commented style it
-      # now bans, and it reports 1,655 comments here. The flag goes once those are
-      # cleared, and the preset itself still enables the rule for every repository
-      # it lints.
       - name: Lint the root module with the personal preset
         if: ${{ !cancelled() && steps.setup.outcome == 'success' && steps.gcl.outcome == 'success' }}
-        run: ./go/bin/tvrmsmith-gcl run --config ./go/golangci.yml --disable tvrmsmith-no-comments --output.text.print-issued-lines=false ./...
+        run: ./go/bin/tvrmsmith-gcl run --config ./go/golangci.yml --output.text.print-issued-lines=false ./...
 
   dotnet:
     name: extractor and analyzers (dotnet)

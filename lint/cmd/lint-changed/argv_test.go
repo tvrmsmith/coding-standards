@@ -77,7 +77,6 @@ func TestParseFilterSince(t *testing.T) {
 }
 
 func TestParseFilterFilesRepeatsOnePathPerFlag(t *testing.T) {
-	// A comma is legal in a filename, so the path a,b.cs stays one path.
 	cmd, err := Parse([]string{"--format", "sarif", "--files", "a,b.cs", "--files", "c.cs"})
 	if err != nil {
 		t.Fatalf("Parse: %v", err)

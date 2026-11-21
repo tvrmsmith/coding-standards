@@ -12,10 +12,6 @@ import (
 type eslintFileResult struct {
 	FilePath string          `json:"filePath"`
 	Messages []eslintMessage `json:"messages"`
-	// SuppressedMessages is read by nobody. ESLint puts the results an inline
-	// eslint-disable turned off into that separate array, so reading Messages
-	// alone honours the target repo's own suppressions, the same courtesy the
-	// SARIF path pays by dropping an inSource suppression.
 }
 
 type eslintMessage struct {
@@ -51,11 +47,6 @@ func ParseESLint(r io.Reader, root srcpath.Root) ([]Finding, []Dropped, error) {
 	var findings []Finding
 	var dropped []Dropped
 	for _, result := range results {
-		// An empty filePath names no tree at all, checked before placement
-		// is even attempted. Outside: true would claim the file result
-		// describes another tree, which is not this result's problem, and
-		// letting it fall through to root.Place would drop every message in
-		// it silently, exactly what UNPARSED exists to prevent.
 		if result.FilePath == "" {
 			for _, msg := range result.Messages {
 				findings = append(findings, unparsed("eslint", "file result carries no filePath", msg.Message))
@@ -63,11 +54,6 @@ func ParseESLint(r io.Reader, root srcpath.Root) ([]Finding, []Dropped, error) {
 			continue
 		}
 
-		// filePath resolves once per file result, since every message in it
-		// names the same file. ESLint reports an absolute filePath for every
-		// file it read off disk, which is the only way harness/linters/ts.sh
-		// runs it, so the path root.Place is handed already names a real file
-		// in the tree.
 		path, ok := root.Place(result.FilePath).Inside()
 		for _, msg := range result.Messages {
 			if !ok {
@@ -77,10 +63,6 @@ func ParseESLint(r io.Reader, root srcpath.Root) ([]Finding, []Dropped, error) {
 			findings = append(findings, placeESLintMessage(msg, path))
 		}
 	}
-	// Stamped here, the single success return, rather than at
-	// placeESLintMessage's construction sites (there are several, including
-	// the unparsed() calls), so a future construction site inside this
-	// parser cannot forget it.
 	for i := range findings {
 		findings[i].Language = LanguageTS
 	}
@@ -104,9 +86,6 @@ func ruleName(ruleID *string) string {
 // or no ruleId.
 func placeESLintMessage(msg eslintMessage, path srcpath.Path) Finding {
 	if msg.Line == 0 {
-		// Line 1 column 1, so the report still points at the file and a waiver
-		// for it stays keyed on that path. Only a file result with no filePath
-		// at all takes the path-less route.
 		return unparsed("eslint", "message carries no usable line", msg.Message,
 			Location{Path: path, StartLine: 1, StartColumn: 1, EndLine: 1})
 	}
