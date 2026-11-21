@@ -349,12 +349,6 @@ func TestCIDeclaresTheSuiteStep(t *testing.T) {
 				ciWorkflow, suiteStep, step.Run, suiteScript)
 		}
 
-		// The snapshot above says ci.yml still carries the reviewed script. It
-		// says nothing about which cases that script names, so the loop's own
-		// list is read out of the step's script and compared with the suite's
-		// slice as a set, both directions. Containment one way would miss a name
-		// left in the script after a half-applied rename, which CI then greps for
-		// and never finds.
 		switch looped, err := scriptLoopNames(step.Run); {
 		case err != nil:
 			t.Errorf("%s: the %q step's script: %v", ciWorkflow, suiteStep, err)
@@ -371,10 +365,6 @@ func TestCIDeclaresTheSuiteStep(t *testing.T) {
 				ciWorkflow, suiteStep, step.WorkingDirectory, gateWorkingDir)
 		}
 
-		// The env key is read through the suite's own parser rather than
-		// compared to a literal, so the workflow and the suite agree on what
-		// enables enforcement. Without it both real-toolchain cases skip and the
-		// PASS loop reds for the wrong reason.
 		value, set := step.Env[envRequireDotnet]
 		raw := value.Value
 		switch enforce, err := requireDotnet(raw, set); {

@@ -36,8 +36,6 @@ func changedPaths(scope Scope) ([]string, error) {
 	if scope.Mode == ScopeFiles {
 		return scope.Files, nil
 	}
-	// OpenHook for the reason runFilter gives: under a pre-commit hook the index
-	// git names is the one the commit will write.
 	repo, err := gitscope.OpenHook()
 	if err != nil {
 		return nil, err

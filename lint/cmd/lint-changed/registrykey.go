@@ -46,10 +46,6 @@ func registryKey() (srcpath.Root, error) {
 	if err != nil {
 		return srcpath.Root{}, fmt.Errorf("lint-changed: resolving the registry key: %w", err)
 	}
-	// A linked worktree is the same adoption as the checkout it was made from,
-	// and the hook lives in the common git dir, so keying on the worktree would
-	// install a hook in every worktree that then skipped, which reads exactly
-	// like the layer being broken.
 	main, err := repo.MainCheckout()
 	if err != nil {
 		return srcpath.Root{}, fmt.Errorf("lint-changed: resolving the registry key: %w", err)

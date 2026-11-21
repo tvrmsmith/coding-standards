@@ -52,9 +52,6 @@ func TestSpelledAsOnDiskReportsADirectoryItCannotRead(t *testing.T) {
 	closed := filepath.Join(root.Dir(), "src", "Ordering")
 	denyAccess(t, closed, 0o111)
 
-	// A filesystem that will not answer is neither a match nor a mismatch, and
-	// reported as a mismatch it would tell the developer their spelling is
-	// wrong when the tree never said so.
 	spelled, err := root.spelledAsOnDisk(filepath.Join("src", "Ordering", "OrderService.cs"), dirNames{})
 
 	if !errors.Is(err, fs.ErrPermission) || spelled {
@@ -79,8 +76,6 @@ func TestRelativizeReportsARootTheCandidateHasNoRelativeReadingAgainst(t *testin
 }
 
 func TestNamedSaysAPathHasNoReadingRelativeToTheRootRatherThanCallingItOutside(t *testing.T) {
-	// The file exists, so the refusal cannot be the absence one, and it is
-	// absolute, so it is not the working-directory join either.
 	dir := t.TempDir()
 	file := filepath.Join(dir, "OrderService.cs")
 	if err := os.WriteFile(file, nil, 0o600); err != nil {

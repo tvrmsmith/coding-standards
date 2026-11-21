@@ -93,7 +93,6 @@ func owners(language string, files []string) ([]OwnerGroup, []string, error) {
 
 	groups := make([]OwnerGroup, 0, len(members))
 	for owner, ms := range members {
-		// Compacted because several files in one Go package name it once.
 		groups = append(groups, OwnerGroup{Owner: owner, Members: slices.Compact(slices.Sorted(slices.Values(ms)))})
 	}
 	sort.Slice(groups, func(i, j int) bool { return groups[i].Owner < groups[j].Owner })

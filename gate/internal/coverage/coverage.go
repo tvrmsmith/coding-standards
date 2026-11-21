@@ -145,10 +145,6 @@ type Set map[srcpath.Path]Lines
 // `skipped_paths` rather than leaving understated coverage unexplained.
 func Discover(root srcpath.Root) (sources []Source, skipped []string, err error) {
 	err = filepath.WalkDir(root.Dir(), func(path string, entry fs.DirEntry, err error) error {
-		// One unreadable directory somewhere under the repo root must not
-		// abort discovery: that would exit 1 with no document at all, where
-		// the worst a skipped subtree can cost is a report the walk did not
-		// see, which the reader now sees in `skipped_paths`.
 		if err != nil {
 			_, name, _ := walkedName(root, path)
 			skipped = append(skipped, name.String())
@@ -339,8 +335,6 @@ func Load(root srcpath.Root, sources []Source, newest Newest, now time.Time) (Se
 				Message: "coverage report " + source.Name.String() + " " + err.Error(),
 			}
 		}
-		// Staleness is checked before the merge, not after it, so a refused or
-		// skipped report never contributes a line even transiently.
 		if at.Before(newest.At) {
 			if source.Origin == Discovered {
 				skipped = append(skipped, source.Name.String())
@@ -542,11 +536,6 @@ func (r coberturaReport) mergeInto(set Set, root srcpath.Root, reportPath srcpat
 		path := distinct[0]
 		lines, ok := merged[path]
 		if !ok {
-			// Seeded before the lines are folded in, so a class with no
-			// <line> at all still leaves a present key mapping to empty
-			// Lines. That entry is the answer join.Attribute reads as an
-			// uninstrumented file; skipping such a class would collapse it
-			// into the absent-key meaning.
 			lines = Lines{}
 			merged[path] = lines
 		}

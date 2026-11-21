@@ -9,11 +9,6 @@ import (
 	"github.com/tvrmsmith/coding-standards/internal/srcpath"
 )
 
-// The batching is what keeps a large staged changeset off one oversized argv,
-// and the black-box suite can only afford a fixture that crosses the budget
-// once. The rules about where the split falls, and that nothing is dropped at
-// it, are driven from here, where a case costs no git and no files on disk.
-
 func TestDivergenceBatchesKeepAnOrdinaryChangesetOnOneInvocation(t *testing.T) {
 	paths := ordinaryPaths(200)
 
@@ -25,10 +20,6 @@ func TestDivergenceBatchesKeepAnOrdinaryChangesetOnOneInvocation(t *testing.T) {
 }
 
 func TestDivergenceBatchesSplitPastTheBudgetWithoutLosingAPath(t *testing.T) {
-	// Ordinary paths, enough of them that their pathspec text runs just past
-	// the budget, which is the changeset issue 50 is about. The argv the
-	// unbatched call built over a set this size is the one exec refuses with
-	// E2BIG.
 	paths := ordinaryPaths(budgetCrossingCount)
 
 	batches := divergenceBatches(paths)
@@ -47,9 +38,6 @@ func TestDivergenceBatchesSplitPastTheBudgetWithoutLosingAPath(t *testing.T) {
 }
 
 func TestDivergenceBatchesSendAPathLargerThanTheBudgetAlone(t *testing.T) {
-	// No batching makes this path fit, so the only honest answer is to hand it
-	// to git and let git or exec be the one to refuse it. Dropped instead, the
-	// guard would pass on a file it never asked about.
 	huge := srcpath.Path("src/" + strings.Repeat("d", divergenceBudget) + ".cs")
 
 	batches := divergenceBatches([]srcpath.Path{huge})
@@ -60,20 +48,12 @@ func TestDivergenceBatchesSendAPathLargerThanTheBudgetAlone(t *testing.T) {
 }
 
 func TestDivergenceBatchesOfNoPathsAreNone(t *testing.T) {
-	// DivergentFromIndex short circuits on an empty path list rather than
-	// asking git about nothing. A batch of no paths would contradict that,
-	// since it is an invocation whose pathspec list is empty, which is how git
-	// is told to diff the whole tree.
 	if batches := divergenceBatches(nil); len(batches) != 0 {
 		t.Errorf("divergenceBatches over no paths returned %d batches, want none", len(batches))
 	}
 }
 
 func TestDivergenceBatchCountIsTheNumberOfInvocations(t *testing.T) {
-	// The black-box fixture asks this instead of holding a copy of the budget,
-	// so it has to answer for the layout it is handed rather than for the path
-	// count. A wrapper that returned anything but the number of invocations
-	// would tell that fixture its layout splits when it does not.
 	cases := map[string][]srcpath.Path{
 		"no paths":                       nil,
 		"an ordinary changeset":          ordinaryPaths(200),
@@ -93,8 +73,6 @@ func TestDivergenceBatchCountIsTheNumberOfInvocations(t *testing.T) {
 }
 
 func TestDivergenceBatchCountSeparatesASplittingLayoutFromAWholeOne(t *testing.T) {
-	// The count is only useful to the fixture if the two layouts answer
-	// differently, so pin the answers themselves and not just the agreement.
 	if got := DivergenceBatchCount(ordinaryPaths(200)); got != 1 {
 		t.Errorf("DivergenceBatchCount over an ordinary changeset answered %d, want one invocation", got)
 	}

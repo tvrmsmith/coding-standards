@@ -21,10 +21,6 @@ const gatePrefix = "github.com/tvrmsmith/coding-standards/gate/"
 // dodge.
 func TestInternalDoesNotDependOnGate(t *testing.T) {
 	t.Parallel()
-	// -test brings each internal/ package's test-augmented variant into the
-	// graph alongside the package itself, so a _test.go file under
-	// internal/ importing gate/ reds here too. Without it, an import
-	// confined to a test file would pass unseen.
 	cmd := exec.Command("go", "list", "-test", "-f", "{{.ImportPath}}{{range .Deps}} {{.}}{{end}}", "./internal/...")
 	cmd.Dir = "../.."
 	var stdout, stderr bytes.Buffer
@@ -32,11 +28,6 @@ func TestInternalDoesNotDependOnGate(t *testing.T) {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		// gate/internal/... is itself unreachable from repo-root internal/
-		// under Go's own internal-package rule, so a file under internal/
-		// importing e.g. gate/internal/report doesn't surface as a matched
-		// dependency below: go list refuses to load the graph at all and
-		// this is where that regression shows up instead.
 		t.Fatalf("go list -test ./internal/... exited %v, so this guard could not inspect the dependency graph at all. One way this happens: a file under internal/ imports a gate/internal/... package, which Go's own internal-package rule forbids loading from outside gate/, so the regression surfaces as a load error here rather than as a matched dependency below. stderr:\n%s", err, stderr.String())
 	}
 
@@ -48,12 +39,6 @@ func TestInternalDoesNotDependOnGate(t *testing.T) {
 		if len(fields) == 0 {
 			continue
 		}
-		// Field 0 is always the package's own import path as a single
-		// token, even under -test where a test-variant dependency further
-		// along the line can read as "path [variant.test]" with a space
-		// inside it. Splitting on whitespace and matching the prefix
-		// against each field still works for that reason: the bracketed
-		// form's own leading path is its own field too.
 		packages++
 		pkg := fields[0]
 		var offending []string
@@ -67,9 +52,6 @@ func TestInternalDoesNotDependOnGate(t *testing.T) {
 		}
 	}
 
-	// A guard that walks zero internal/ packages passes over anything, the
-	// same failure mode TestCIDeclaresTheSuiteStep guards against by
-	// rejecting an empty realExtractorCases.
 	if packages == 0 {
 		t.Fatal("go list -test ./internal/... named no packages, so this guard walked an empty graph and would pass regardless of what internal/ imports")
 	}

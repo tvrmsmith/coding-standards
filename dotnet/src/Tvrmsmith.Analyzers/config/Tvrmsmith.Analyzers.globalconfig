@@ -104,6 +104,12 @@ dotnet_diagnostic.TVRM0006.severity = warning
 # keeps the setting in the same file as the severity it goes with.
 tvrmsmith_comment_block_max_lines = 10
 
+# TVRM0008 no-comments: every comment but an XML doc comment on a declaration, a suppression or
+# directive a tool reads, or one in generated code. The same "Comments" guideline, read strictly:
+# code documents itself, and what another agent needs to know is written as a test. Warning like
+# the rest, which the pre-commit lint still blocks on when the comment touches a changed line.
+dotnet_diagnostic.TVRM0008.severity = warning
+
 # --- BEGIN generated: built-in CA severities (node dotnet/generate-ca-severities.mjs) ---
 #
 # The 262 CA rules the .NET SDK ships *quiet*, minus 25 exclusions.

@@ -127,10 +127,6 @@ func parse(args []string, hosted []metric.Definition) (Scope, error) {
 	// hosted metric" rather than "none": a flag not given is a default, not a
 	// negative selection.
 	var selected []string
-	// thresholds holds one explicit override per metric name, keyed for the
-	// twice-check; thresholdOrder keeps the typed order so the
-	// did-not-select validation below reports the first offending flag
-	// deterministically rather than in map iteration order.
 	thresholds := map[string]int{}
 	var thresholdOrder []string
 
@@ -148,12 +144,6 @@ func parse(args []string, hosted []metric.Definition) (Scope, error) {
 				return Scope{}, conflict(ModeSince, sc.Mode)
 			}
 			i++
-			// The same stop the --files arm makes: an argument starting with
-			// '-' is another flag the developer typed, so taking it as a ref
-			// would report a commit that does not exist rather than the
-			// usage block. An empty argument names no ref either, and taken
-			// as one it reaches the caller as the default-candidates message
-			// telling them to pass the flag they just passed.
 			if i >= len(args) || args[i] == "" || strings.HasPrefix(args[i], "-") {
 				return Scope{}, &UsageError{Problem: "--since needs a ref"}
 			}
@@ -196,10 +186,6 @@ func parse(args []string, hosted []metric.Definition) (Scope, error) {
 			if value == "" {
 				return Scope{}, &UsageError{Problem: "--metric needs a metric name"}
 			}
-			// The same two-dash-only refusal --coverage makes, for the same
-			// reason: a hosted metric name never begins with a dash, and a
-			// mistyped flag taken as a name would reach the developer as an
-			// unknown-metric message rather than the usage error it is.
 			if strings.HasPrefix(value, "--") {
 				return Scope{}, &UsageError{Problem: "--metric needs a metric name, not the flag '" + value + "'"}
 			}
@@ -241,9 +227,6 @@ func parse(args []string, hosted []metric.Definition) (Scope, error) {
 			if err != nil {
 				return Scope{}, &UsageError{Problem: "--threshold '" + value + "' is not a whole number, as in 'crap=30'"}
 			}
-			// Below 1 no method can pass: complexity 1 fully covered scores 1,
-			// the floor of crap.Measurement.Score, so a threshold under it
-			// would fail every run outright rather than set a bar.
 			if n < 1 {
 				return Scope{}, &UsageError{Problem: "--threshold " + value + " is below 1, so no method could pass"}
 			}
@@ -290,11 +273,9 @@ func parse(args []string, hosted []metric.Definition) (Scope, error) {
 		}
 	}
 
-	// Order follows hosted, never the order --metric was typed in, so the
-	// document does not vary with argv ordering (issue 19).
 	sc.Metrics = make([]metric.Selection, 0, len(names))
 	for _, name := range names {
-		def, _ := metric.Lookup(hosted, name) // name came from hosted itself, so this always finds it
+		def, _ := metric.Lookup(hosted, name)
 		threshold := def.DefaultThreshold
 		if t, ok := thresholds[name]; ok {
 			threshold = t
@@ -315,10 +296,6 @@ func parse(args []string, hosted []metric.Definition) (Scope, error) {
 func slurpFiles(args []string, from int) ([]string, error) {
 	var files []string
 	for i := from; i < len(args) && !strings.HasPrefix(args[i], "-"); i++ {
-		// An empty argument does not start with '-', so the slurp takes it,
-		// and it names no file. Resolved it is the working directory itself,
-		// so the run would exit 1 saying an empty name is a directory and the
-		// reader would see a message naming nothing.
 		if args[i] == "" {
 			return nil, &UsageError{Problem: "--files was handed an empty path"}
 		}

@@ -8,10 +8,6 @@ import (
 	"github.com/tvrmsmith/coding-standards/gate/internal/crap"
 )
 
-// Every list-shaped behaviour of a document is a fan-out over Metrics, and
-// with CRAP the one hosted metric no black-box case can hand it two. These
-// build the two-entry document directly, since Document is plain data.
-
 // scoredRow is one measured method at score, which is what makes an entry pass
 // or fail its own threshold.
 func scoredRow(name string, score float64) Row {
@@ -101,8 +97,6 @@ func TestStdoutPutsEveryRowsTableAfterTheWholeSummary(t *testing.T) {
 	if !slices.Equal(keys, want) {
 		t.Errorf("top-level keys = %v, want %v\n%s", keys, want, rendered)
 	}
-	// The summary table holds both metrics, so the two keys above are not two
-	// documents' worth of rows under one summary row.
 	wantSummary := "metrics[2|]{name|threshold|measured|failed}:\n  first|30|1|0\n  second|12|1|1\n"
 	if !strings.Contains(rendered, wantSummary) {
 		t.Errorf("document is missing the summary table\n%s\nwant\n%s", rendered, wantSummary)
@@ -138,7 +132,6 @@ func TestActionCellCarriesTheTokenTheMeasurementChose(t *testing.T) {
 		t.Fatalf("Stdout(): %v", err)
 	}
 
-	// Descending score, so the three rows arrive in the order written above.
 	got := actionCells(string(body), "crap")
 	want := []string{"split_method", "raise_coverage", "none"}
 	if !slices.Equal(got, want) {

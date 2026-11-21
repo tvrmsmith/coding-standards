@@ -76,9 +76,6 @@ func TestEmitReturnsExitOneOnAShortWriteThatReportsNoError(t *testing.T) {
 	if code != 1 {
 		t.Errorf("code = %d, want 1", code)
 	}
-	// The counts are asserted, not just a non-nil error, so a render failure
-	// or any other exit-1 cause cannot satisfy this case in the short write's
-	// place.
 	want := fmt.Sprintf("wrote %d of %d bytes", len(body)-1, len(body))
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("err = %v, want it to report %q", err, want)
@@ -95,10 +92,6 @@ func TestEmitKeepsTheDocumentsCodeWhenOnlyTheStderrSummaryFails(t *testing.T) {
 	var stdout bytes.Buffer
 	code, err := emit(&stdout, erroringWriter{err: errors.New("closed")}, doc)
 
-	// The document reached the caller before the summary failed, so the
-	// summary going nowhere is dropped rather than becoming a second exit-1
-	// cause, and the document's own 2 is still what comes back. A document
-	// that exits 2 is what separates that from returning a constant.
 	if code != 2 {
 		t.Errorf("code = %d, want 2", code)
 	}
@@ -123,9 +116,6 @@ func TestEmitWritesTheDocumentAndSummaryOnAHealthyWriter(t *testing.T) {
 	if err != nil {
 		t.Errorf("err = %v, want nil", err)
 	}
-	// 0 and the summary line are written out rather than read back off doc,
-	// so the case still fails if emit starts sourcing either from somewhere
-	// else.
 	if code != 0 {
 		t.Errorf("code = %d, want 0", code)
 	}

@@ -141,6 +141,18 @@ export function createBase({ extraRestrictedSyntax = [] } = {}) {
       },
     },
     {
+      name: 'tvrmsmith/base/no-comments',
+      files: sourceFiles,
+      plugins: { tvrmsmith },
+      rules: {
+        // The "Comments" guideline: code documents itself, and what another agent needs to
+        // know is written as a test. warn like the rest of the custom layer, which the
+        // pre-commit lint still blocks on when the comment touches a changed line. Doc
+        // comments on declarations, tool directives and generated files are exempt.
+        'tvrmsmith/no-comments': 'warn',
+      },
+    },
+    {
       name: 'tvrmsmith/base/assertion-intent',
       files: testFiles,
       plugins: { jest, tvrmsmith },

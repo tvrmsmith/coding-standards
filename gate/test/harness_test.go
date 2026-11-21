@@ -51,9 +51,6 @@ const extractorName = "metric-gate-csharp"
 var enforceDotnet bool
 
 func TestMain(m *testing.M) {
-	// Parsed here rather than only where it is used, so a -run filter that
-	// excludes the full-stack cases cannot leave a typo like
-	// METRIC_GATE_REQUIRE_DOTNET=true undetected and enforcement quietly off.
 	require, err := requireDotnet(os.LookupEnv(envRequireDotnet))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -89,7 +86,6 @@ func removeBinDir(dir string) {
 func buildBinaries(dir string) error {
 	targets := map[string]string{
 		"metric-gate": "./cmd/metric-gate",
-		// The stub takes the real tool's name so os.Executable() lookup finds it.
 		extractorName: "./test/stub",
 	}
 	for name, pkg := range targets {

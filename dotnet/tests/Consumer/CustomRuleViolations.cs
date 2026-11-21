@@ -61,6 +61,16 @@ public class CustomRuleViolations
         act.Should().ThrowAsync<InvalidOperationException>();
     }
 
+    // TVRM0008 no-comments. This line is its own violation, and so is every other // label in
+    // this file: each one names a rule, and none of them is a doc comment.
+    [Fact]
+    public void NarratedWithAComment()
+    {
+        var page = new Page { Number = 2 };
+
+        page.Number.Should().Be(2); // the page number survives the round trip
+    }
+
     // TVRM0007 no-anonymous-object-comparison.
     [Fact]
     public void UnrelatedValuesBundledIntoAnAnonymousSubject()

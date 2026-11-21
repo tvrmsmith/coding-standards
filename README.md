@@ -129,8 +129,15 @@ Everything else is off the shelf. These have no off-the-shelf equivalent:
    or, when every value is a direct member of one object, a single `BeEquivalentTo` on that
    object.
    The TypeScript preset has no counterpart.
+8. `no-comments`, Roslyn (`TVRM0008`), ESLint **and** golangci-lint, all three
+   [documented together](packages/eslint-plugin-tvrmsmith/docs/rules/no-comments.md). Reports
+   every comment except a doc comment on a declaration, a suppression or directive a tool reads,
+   and anything in a generated file. Its message tells the agent reading it that code documents
+   itself, that a comment often justifies a workaround, and that what another agent needs to know
+   belongs in a test. Core ESLint has only slices of it: `no-inline-comments` reaches trailing
+   comments and `no-warning-comments` reaches TODO markers.
 
-Go needs two of the seven and no more. `testifylint` covers A2 and most of A5 on its own, which is
+Go needs three of the eight and no more. `testifylint` covers A2 and most of A5 on its own, which is
 why the Go half has one hand-written assertion rule where C# needed six, and A4 has no Go shape
 at all: neither a nil dereference nor a failed type assertion can turn a missing value into a
 *passing* assertion, so there is nothing to ban. `go/README.md` records that decision with the

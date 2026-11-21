@@ -13,6 +13,7 @@ Flat config only.
 | [`combine-assertions-on-same-object`](docs/rules/combine-assertions-on-same-object.md) | A1 — *Combine Assertions on the Same Object* (`test-best-practices`) | no, on purpose |
 | [`no-quantifier-assertion`](docs/rules/no-quantifier-assertion.md) | A2 — *Assertions Should Communicate Meaning* (`test-best-practices`) | no, on purpose |
 | [`comment-block-length`](docs/rules/comment-block-length.md) | *Comments* (`coding-standards`) | no, on purpose |
+| [`no-comments`](docs/rules/no-comments.md) | *Comments* (`coding-standards`) | no, on purpose |
 
 A1 has no off-the-shelf rule at all. A2 mostly does, and `no-quantifier-assertion` covers
 what those rules leave behind: `expect(xs.every(p)).toBe(true)`, where the collection is
@@ -23,6 +24,8 @@ rule doc's provenance section.
 The *Comments* guideline has no off-the-shelf rule in either ecosystem: every length rule on
 offer caps a physical line, so it flags long code and misses a long comment made of short
 lines. `comment-block-length` measures the comment instead, and exempts doc comments.
+`no-comments` is the same guideline read strictly: every comment is reported except a doc
+comment on a declaration, a suppression or directive a tool reads, and one in a generated file.
 
 The enforcement mapping names three custom assertion rules, but the other two are C#-only:
 
@@ -59,7 +62,10 @@ export default [
   {
     files: ['**/*.{js,jsx,ts,tsx}'],
     plugins: { tvrmsmith },
-    rules: { 'tvrmsmith/comment-block-length': ['warn', { max: 10 }] },
+    rules: {
+      'tvrmsmith/comment-block-length': ['warn', { max: 10 }],
+      'tvrmsmith/no-comments': 'warn',
+    },
   },
 ]
 ```
