@@ -222,8 +222,6 @@ func (r Repo) MainCheckout() (srcpath.Root, error) {
 	if err != nil {
 		return srcpath.Root{}, err
 	}
-	// Absolute is git's realpath, so a .git that is itself a symlink names the
-	// checkout it points into.
 	return srcpath.NewRoot(filepath.Dir(strings.TrimSpace(out)))
 }
 
@@ -365,15 +363,6 @@ func (r Repo) ResolveBase() (Base, error) {
 			if errors.Is(err, errNoSuchRev) {
 				continue
 			}
-			// No fixture reaches this arm, and swapping it for a continue
-			// leaves the whole suite green. The ref store is the only place a
-			// ref read fails to answer at all, since every damaged loose ref
-			// real git will produce is the exit 1 that means no such ref, and a
-			// damaged store fails every read alike, so the HEAD check above
-			// returns before the walk starts. It is kept because a continue
-			// here is the swallowing this resolver exists to remove, and which
-			// arm a fixture can reach is a property of today's git rather than
-			// of the rule.
 			return Base{}, err
 		}
 		mergeBase, err := r.git("merge-base", "HEAD", ref)
@@ -748,15 +737,9 @@ func cachedFlag(base Base) []string {
 // error block rather than exiting 1 with an empty stdout, which is the shape
 // TouchedLines already holds itself to on the same path.
 func (r Repo) DivergentFromIndex(paths []srcpath.Path) ([]srcpath.Path, error) {
-	// A short circuit that saves spawning git when there is nothing to ask it
-	// about. It changes no answer, since the trailing filter over paths returns
-	// an empty result for an empty slice whatever git prints.
 	if len(paths) == 0 {
 		return nil, nil
 	}
-	// The drivers are resolved once rather than per batch. They are a property
-	// of the repository and not of the paths, so asking again would spawn a
-	// git per batch to learn the same answer.
 	drivers, err := r.filterDrivers()
 	if err != nil {
 		return nil, unreadableDiff(err)
@@ -799,8 +782,6 @@ func (r Repo) StagedPaths(base Base) ([]StagedChange, error) {
 	if err != nil {
 		return nil, unreadableDiff(err)
 	}
-	// --no-renames keeps every record two NUL-terminated fields, a status and a
-	// path, so the pairs can be read off without a per-status shape.
 	fields := strings.Split(out, "\x00")
 	var changes []StagedChange
 	for i := 0; i+1 < len(fields); i += 2 {
@@ -874,9 +855,6 @@ func divergenceBatches(paths []srcpath.Path) [][]srcpath.Path {
 	cost := 0
 	for _, path := range paths {
 		next := len(pathspec(path)) + 1
-		// A path whose own pathspec passes the budget still goes, alone.
-		// Dropping it would answer a question about a file nobody asked about,
-		// so git or exec is left to be the one that refuses it.
 		if len(batch) > 0 && cost+next > divergenceBudget {
 			batches = append(batches, batch)
 			batch, cost = nil, 0
@@ -949,8 +927,6 @@ func parseNumstatPaths(out string) (map[srcpath.Path]bool, error) {
 func (r Repo) filterDrivers() ([]string, error) {
 	out, err := r.git("config", "--name-only", "--get-regexp", "-z", filterDriverKeys)
 	if noMatch(err) {
-		// `git config --get-regexp` exits 1 on no match, which is the ordinary
-		// case of a repository configuring no filter at all.
 		return nil, nil
 	}
 	if err != nil {
@@ -1059,12 +1035,6 @@ func (r Repo) pureMoves(base Base, records []rawRecord) []srcpath.Path {
 	for _, add := range added {
 		body, err := r.addedContent(base, add)
 		if err != nil {
-			// ADR 0015's unreadable-add rule. An add the gate cannot
-			// digest could be carrying any deleted
-			// blob's content, so it is counted as a claimant of every digest
-			// rather than of none. It can never be proven a move itself, and
-			// it leaves every readable add one claimant nearer to unproven,
-			// which is the conservative direction: the run measures it.
 			unreadable++
 			continue
 		}
@@ -1456,10 +1426,6 @@ type gitError struct {
 }
 
 func (e *gitError) Error() string {
-	// Nothing was captured when the process never ran, exec.ErrNotFound for a
-	// missing git or a blanked driver binary git tried to launch, and a
-	// trailing ": " would leave the reader looking for a complaint that was
-	// never made.
 	if e.stderr == "" {
 		return fmt.Sprintf("git %s: %v", strings.Join(e.args, " "), e.err)
 	}

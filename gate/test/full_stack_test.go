@@ -316,8 +316,6 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 		t.Skip("forks child test binaries that each rebuild the gate, skipped with -short")
 	}
 
-	// Every row below asserts one block per name in realExtractorCases, so an
-	// emptied slice would leave the rows asserting nothing at all.
 	if len(realExtractorCases) == 0 {
 		t.Fatal("realExtractorCases is empty, so every row below is vacuous")
 	}
@@ -326,9 +324,6 @@ func TestRequireDotnetDecidesTheFullStackOutcome(t *testing.T) {
 	// depends on the flags this parent happens to run under.
 	const long, short = "-test.short=false", "-test.short=true"
 
-	// outcome and wants are asserted against each case's own block, so every
-	// name in realExtractorCases has to reach that outcome for its own
-	// documented reason and no sibling's message can cover for it.
 	cases := []struct {
 		name    string
 		require string
@@ -495,23 +490,9 @@ func (f *fixture) appendComment(rel string, n int) {
 func installRealExtractor(t *testing.T) string {
 	t.Helper()
 	requireRealDotnet(t)
-	// A directory holding the gate and no extractor beside it is exactly what
-	// this case needs before it installs the real tool into it.
 	dir := gateOnlyDir(t)
 
-	// `dotnet tool install` resolves the package id and version out of the
-	// NuGet global packages folder once anything has extracted it there, and
-	// the csproj pins one version forever. Sharing the machine's folder would
-	// install run 1's build on every later run, so this case would verify a
-	// stale extractor and keep passing after a real regression in the tool.
-	// The tradeoff is that this fresh folder makes dotnet pack restore from a
-	// feed on every run, and dotnetFailure names that cause when it fails
-	// offline instead of leaving NU1301 to read as a broken gate.
 	nugetPackages := t.TempDir()
-	// Both commands run under dotnet/, so dotnet/global.json is an ancestor
-	// and the muxer resolves the SDK pin the same way here as it does for a
-	// developer packing by hand. Every path handed to them is absolute for
-	// that reason: the working directory is the pin's, not this package's.
 	dotnet := func(args ...string) *exec.Cmd {
 		cmd := dotnetCmd(t, dotnetDir, args...)
 		cmd.Env = append(os.Environ(), "NUGET_PACKAGES="+nugetPackages)
@@ -529,12 +510,6 @@ func installRealExtractor(t *testing.T) string {
 		t.Fatal(dotnetFailure("dotnet pack", err, out))
 	}
 
-	// The install names the version the pack just produced and reads a config
-	// whose source list is packDir and nothing else. Either alone leaves a
-	// hole: --add-source appends to the machine's sources rather than replacing
-	// them, and an unversioned install takes the highest version any source
-	// offers, so an id this repo has never published could be claimed on
-	// nuget.org and installed here instead of the tool under test.
 	version := packedVersion(t, packDir)
 	install := dotnet("tool", "install",
 		"--tool-path", dir,

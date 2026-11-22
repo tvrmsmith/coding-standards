@@ -16,11 +16,13 @@ import (
 
 	"github.com/tvrmsmith/coding-standards/go/plugin/combineassertions"
 	"github.com/tvrmsmith/coding-standards/go/plugin/commentblocklength"
+	"github.com/tvrmsmith/coding-standards/go/plugin/nocomments"
 )
 
 func init() {
 	register.Plugin("tvrmsmith-comment-block-length", newCommentBlockLength)
 	register.Plugin("tvrmsmith-combine-assertions", newCombineAssertions)
+	register.Plugin("tvrmsmith-no-comments", newNoComments)
 }
 
 type commentBlockLengthSettings struct {
@@ -80,4 +82,24 @@ func (c *combineAssertions) BuildAnalyzers() ([]*analysis.Analyzer, error) {
 // exists in the type checker's output.
 func (c *combineAssertions) GetLoadMode() string {
 	return register.LoadModeTypesInfo
+}
+
+type noComments struct{}
+
+var _ register.LinterPlugin = (*noComments)(nil)
+
+// newNoComments takes no settings. Every comment outside the exemptions is reported, so there is
+// no threshold to tune.
+func newNoComments(any) (register.LinterPlugin, error) {
+	return &noComments{}, nil
+}
+
+func (c *noComments) BuildAnalyzers() ([]*analysis.Analyzer, error) {
+	return []*analysis.Analyzer{nocomments.NewAnalyzer()}, nil
+}
+
+// GetLoadMode is LoadModeSyntax: the rule reads comments and the declarations they attach to,
+// never a type.
+func (c *noComments) GetLoadMode() string {
+	return register.LoadModeSyntax
 }

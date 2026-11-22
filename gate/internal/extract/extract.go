@@ -113,10 +113,6 @@ func (r Result) Unclaimed(paths []srcpath.Path) []srcpath.Path {
 // Extract runs every located extractor over the changed files it claims. It
 // returns a *report.Failure for every exit-1 cause in ADR 0009's contract.
 func Extract(root srcpath.Root, changed []srcpath.Path) (Result, error) {
-	// An extractor no changed file could possibly belong to is never located
-	// and never launched. A docs-only change therefore passes with an empty
-	// changed set in a deployment that ships the gate without an extractor
-	// beside it.
 	worth := worthRunning(changed)
 	result := Result{claimed: map[srcpath.Path]bool{}}
 	if len(worth) == 0 {
@@ -267,11 +263,6 @@ func (e extractor) run(changed []srcpath.Path) (spans []Span, claimed []srcpath.
 		return nil, nil, err
 	}
 	claimed = e.filter(changed, caps.Extensions)
-	// The table only located this binary because a changed path carried one of
-	// the extensions the row declares, so a binary that then claims none of
-	// them disagrees with the table. Returning an empty result here would score
-	// nothing and exit 0 `pass` on a real source change, which is the silent
-	// outcome ADR 0009 rejects.
 	if len(claimed) == 0 {
 		return nil, nil, &report.Failure{
 			Code:    report.CodeExtractorCapabilitiesMismatch,
@@ -311,9 +302,6 @@ func (e extractor) capabilities() (capabilities, error) {
 			Message: e.language + " extractor emitted invalid capabilities JSON",
 		}
 	}
-	// The table picked this binary for a language, so a binary answering with
-	// a different one is the misroute ADR 0009 puts the list on the binary to
-	// catch, not a language the gate should quietly go along with.
 	if caps.Language != e.language {
 		return capabilities{}, &report.Failure{
 			Code:    report.CodeExtractorCapabilitiesMismatch,
@@ -380,9 +368,6 @@ func (e extractor) exec(stdin *bytes.Buffer, args ...string) ([]byte, error) {
 			Message: fmt.Sprintf("%s extractor not found: %s", e.language, filepath.Base(e.binary)),
 		}
 	}
-	// A binary that is present but will not launch, because it is not
-	// executable or was built for another platform, is a different problem
-	// from an absent one, and the reader needs the cause to tell them apart.
 	return nil, &report.Failure{
 		Code:    report.CodeExtractorFailed,
 		Message: fmt.Sprintf("%s extractor %s could not be run: %v", e.language, filepath.Base(e.binary), launchCause(err)),
@@ -406,8 +391,6 @@ func (e extractor) collect(parsed extraction, handed []srcpath.Path) ([]Span, er
 	for _, path := range handed {
 		given[path.String()] = true
 	}
-	// ADR 0011 makes the echo byte-identical, so a path the gate never sent
-	// is checked before anything is read out of the response.
 	for _, echoed := range echoedPaths(parsed) {
 		if !given[echoed] {
 			return nil, &report.Failure{
@@ -420,11 +403,6 @@ func (e extractor) collect(parsed extraction, handed []srcpath.Path) ([]Span, er
 	for _, file := range parsed.Files {
 		status[file.File] = file.Status
 	}
-	// ADR 0014 makes per-file status an obligation so the gate can tell
-	// "nothing here" from "I failed". A path the gate handed in and the
-	// extractor never reported on is neither, and silently scoring its file
-	// with zero spans would let every method in it go unmeasured under a
-	// passing run.
 	for _, path := range handed {
 		switch status[path.String()] {
 		case "parsed":
@@ -441,14 +419,6 @@ func (e extractor) collect(parsed extraction, handed []srcpath.Path) ([]Span, er
 		}
 	}
 	spans := make([]Span, 0, len(parsed.Spans))
-	// The same method emitted twice is an extractor contract violation, because
-	// one of the two rows would silently vanish from the table. Two distinct
-	// methods sharing a line range are not: `class C { int A() => 1; int B() =>
-	// 2; }` is valid C# and so is `class C { int F(int x) => 1; int F(string x)
-	// => 2; }`, and every method in both must be scored. The first pair differs
-	// by name and the second only by signature, so the duplicate test takes
-	// both. ADR 0001's span identity, which the coverage join uses, stays file
-	// and line range alone.
 	seen := map[Span]bool{}
 	for _, span := range parsed.Spans {
 		converted := Span{

@@ -45,8 +45,6 @@ func HalfUp(f float64, precision int) float64 {
 	if neg {
 		rounded = "-" + rounded
 	}
-	// The rounded decimal string always round-trips exactly at this
-	// precision, so the reparse below cannot fail.
 	result, _ := strconv.ParseFloat(rounded, 64)
 	return result
 }

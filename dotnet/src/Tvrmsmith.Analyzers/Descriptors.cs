@@ -25,6 +25,9 @@ internal static class Descriptors
     private const string CommentBlockLengthDocs =
         "https://github.com/tvrmsmith/coding-standards/blob/main/packages/eslint-plugin-tvrmsmith/docs/rules/comment-block-length.md";
 
+    private const string NoCommentsDocs =
+        "https://github.com/tvrmsmith/coding-standards/blob/main/packages/eslint-plugin-tvrmsmith/docs/rules/no-comments.md";
+
 
     /// <summary>TVRM0001 — <c>combine-assertions-on-same-object</c>.</summary>
     public static readonly DiagnosticDescriptor CombineAssertionsOnSameObject = new(
@@ -175,4 +178,29 @@ internal static class Descriptors
             + "the same guideline requires documenting public API contracts, invariants, units and "
             + "side effects.",
         helpLinkUri: CommentBlockLengthDocs);
+
+    /// <summary>TVRM0008 <c>no-comments</c>.</summary>
+    /// <remarks>
+    /// The message is written for the coding agent that reads it, so it names the alternatives
+    /// rather than only the violation, word for word the same in all three languages.
+    /// </remarks>
+    public static readonly DiagnosticDescriptor NoComments = new(
+        id: DiagnosticIds.NoComments,
+        title: "Code comments are not allowed",
+        messageFormat:
+            "Remove this comment. Code should document itself: carry the meaning in a name, a type "
+            + "or an extracted function. A comment is often there to justify a workaround, and the "
+            + "fix for a workaround is the code. If another agent needs to know this, write a test "
+            + "that documents the behavior instead. Doc comments, suppressions, tool directives and "
+            + "generated files are exempt.",
+        category: CommentCategory,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description:
+            "Code should be self-documenting. A comment narrating the code duplicates it and rots "
+            + "beside it, and one justifying a workaround is a sign the code is wrong. Knowledge "
+            + "another agent needs is written as a test, which fails when it stops being true. XML "
+            + "doc comments on declarations, ReSharper, Rider and Sonar suppression comments, and "
+            + "generated code are exempt.",
+        helpLinkUri: NoCommentsDocs);
 }

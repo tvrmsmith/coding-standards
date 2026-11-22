@@ -103,18 +103,9 @@ func emit(stdout, stderr io.Writer, doc report.Document) (int, error) {
 	if err != nil {
 		return 1, fmt.Errorf("writing the document to stdout: %w", err)
 	}
-	// io.Writer obliges a short write to report an error and os.File honours
-	// that, so this branch only fires for a writer that breaks the contract.
-	// A caller must never read exit 0 as approval, so emit checks the count
-	// itself rather than trusting the writer.
 	if n != len(body) {
 		return 1, fmt.Errorf("writing the document to stdout: wrote %d of %d bytes", n, len(body))
 	}
-	// The document already reached the caller by this point, so a failure
-	// writing the human summary has nowhere left to complain: the summary is
-	// what a complaint would be printed to. Dropped explicitly rather than
-	// turned into a second exit-1 cause, which would contradict the document
-	// the caller is already holding.
 	_, _ = io.WriteString(stderr, doc.Stderr())
 	return doc.ExitCode(), nil
 }
@@ -159,11 +150,6 @@ func measure(sc scope.Scope, getwd func() (string, error)) (report.Document, err
 	} else {
 		selected, err = selectDiff(repo, sc)
 	}
-	// A selection that failed part-way still carries what it did establish,
-	// so a base resolved before the extractor broke is still the base the
-	// document names. Failure travels with them: a selection returning an
-	// error carries no typed cause, since failing is the only thing that sets
-	// the field and it keeps the error instead whenever it cannot type it.
 	doc.Base = selected.Base
 	doc.TouchedLinesOutsideSpans = selected.TouchedLinesOutsideSpans
 	doc.SkippedPaths = selected.SkippedPaths
@@ -171,26 +157,18 @@ func measure(sc scope.Scope, getwd func() (string, error)) (report.Document, err
 	if err != nil {
 		return doc, err
 	}
-	// A typed cause the selection established is already the whole verdict.
-	// No metric runs behind it, so the document is finished here.
 	if doc.Failed() {
 		return doc, nil
 	}
 
 	extracted, changed := selected.Extracted, selected.Changed
 	doc.ChangedMethods = len(changed)
-	// ADR 0014: an empty changed-method set exits 0 before resolving any
-	// input, because a metric with nothing to compute is not asking for one.
-	// Every selected metric is still emitted, with no rows, so the document
-	// carries the same keys it would have carried had there been work.
 	if len(changed) == 0 {
 		doc.Metrics = entriesFor(sc.Metrics)
 		return doc, nil
 	}
 
 	lines, declared, skipped, err := loadCoverage(repo.Root(), sc.Coverage, changed, sc.Metrics, cwd)
-	// The append is what enforces ADR 0008's skipped_paths order, which
-	// gate/test/golden/files_skip_before_discovery_skip.toon pins.
 	doc.SkippedPaths = append(doc.SkippedPaths, skipped...)
 	if failure, ok := asFailure(err); ok {
 		doc.Failure = failure
@@ -201,10 +179,6 @@ func measure(sc scope.Scope, getwd func() (string, error)) (report.Document, err
 
 	metrics, unknown := attribute(sc.Metrics, extracted, changed, lines, declared)
 	doc.Metrics = metrics
-	// Any single unknown fails the run: there is no tolerated fraction, and
-	// the table is still present on that failure. The count comes off the join
-	// rather than off a metric's rows, because a method nothing could
-	// attribute is unknown to the run, not to one metric's reading of it.
 	if unknown > 0 {
 		doc.Failure = &report.Failure{
 			Code:    report.CodeUnknownChangedMethod,
@@ -266,9 +240,6 @@ func selectDiff(repo gitscope.Repo, sc scope.Scope) (selection, error) {
 	}
 
 	if base.Staged {
-		// A --staged run checks the claimed files for divergence, not the
-		// diff's own file list: a dirty staged Markdown file the diff never
-		// claimed cannot be misattributed, so it does not refuse the run.
 		dirty, err := stagedDirty(repo, extracted.ClaimedPaths())
 		if err != nil {
 			return failing(selected, err)
@@ -320,10 +291,6 @@ func dirtyBehindExtraction(repo gitscope.Repo, base gitscope.Base, files []srcpa
 // touched_lines_outside_spans has nothing to count.
 func selectFiles(repo gitscope.Repo, names []string, cwd string) (selection, error) {
 	var selected selection
-	// --files is the first path list a developer writes by hand rather than
-	// one built from sorted map keys, so it is the first that can name one
-	// file twice. srcpath owns both the resolution and that de-duplication,
-	// since both turn on which file a typed name landed on.
 	resolved, err := repo.Root().NamedFiles(names, cwd)
 	if err != nil {
 		// Only a refusal about the path itself carries the typed code, whose
@@ -342,9 +309,6 @@ func selectFiles(repo gitscope.Repo, names []string, cwd string) (selection, err
 	if err != nil {
 		return failing(selected, err)
 	}
-	// ADR 0008's 2026-09-11 amendment names --files as the first of the two
-	// producers of skipped_paths. A named file no extractor claims is neither
-	// measured nor an error, so it is listed rather than silently dropped.
 	selected.SkippedPaths = pathStrings(extracted.Unclaimed(resolved))
 	selected.Extracted = extracted
 	selected.Changed = join.AllSpans(extracted)
@@ -475,11 +439,6 @@ func loadCoverage(root srcpath.Root, named []string, changed []extract.Span, sel
 	if err != nil {
 		return nil, true, nil, err
 	}
-	// discovery's own skips and Load's superseded skips are two different
-	// reasons a path is missing from the score, a walk that could not read a
-	// directory and a report a fresher run replaced, but skipped_paths does
-	// not distinguish them, so they append into one sorted list rather than
-	// two fields the document would have to carry separately.
 	skipped = append(skipped, superseded...)
 	slices.Sort(skipped)
 	return set, true, skipped, nil

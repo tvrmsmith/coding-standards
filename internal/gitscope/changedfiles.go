@@ -33,8 +33,6 @@ func (r Repo) StagedFiles() ([]srcpath.Path, error) {
 	if err != nil {
 		return nil, err
 	}
-	// No --diff-filter against HEAD: whatever the letter, a path listed here
-	// differs from HEAD, and that is the whole question this side answers.
 	own, err := r.changedNames("--cached", "HEAD")
 	if err != nil {
 		return nil, err

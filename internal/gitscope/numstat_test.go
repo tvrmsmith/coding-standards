@@ -22,8 +22,6 @@ func TestNumstatPathsReadsThePathAfterTheTwoCounts(t *testing.T) {
 }
 
 func TestNumstatPathsReadsABinaryRecordLikeAnyOther(t *testing.T) {
-	// git counts no lines for a binary difference and writes "-" for both, so a
-	// parser reading the counts as numbers would refuse a path that did diverge.
 	named, err := parseNumstatPaths("-\t-\tsrc/bin.dat\x00")
 
 	if err != nil || !slices.Equal(sortedPaths(named), []srcpath.Path{"src/bin.dat"}) {
@@ -32,9 +30,6 @@ func TestNumstatPathsReadsABinaryRecordLikeAnyOther(t *testing.T) {
 }
 
 func TestNumstatPathsKeepsATabInsideAPath(t *testing.T) {
-	// core.quotePath is pinned false, so a filename holding a tab arrives raw.
-	// Split on every tab rather than the first two, the path would come back
-	// truncated and the file it names would pass the divergence guard.
 	named, err := parseNumstatPaths("1\t2\tsrc/od\td.cs\x001\t0\tsrc/b.cs\x00")
 
 	want := []srcpath.Path{"src/b.cs", "src/od\td.cs"}

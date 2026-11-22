@@ -52,8 +52,6 @@ func TestGoRegistryAdoption(t *testing.T) {
 	}{
 		{"its own line", "/Users/you/dev/other\n" + repoKey + "\n", true},
 		{"a last line with no newline", repoKey, true},
-		// grep -x read each of these three as another path, so the repo went
-		// unlinted in silence.
 		{"a CRLF line ending", repoKey + "\r\n", true},
 		{"a trailing slash", repoKey + "/\n", true},
 		{"a doubled slash", "/Users/you/dev//repo\n", true},
@@ -87,9 +85,7 @@ func TestPropsAdoption(t *testing.T) {
 		{"a condition from before the root-project branch", `<Project><Import Project="x" Condition="$(MSBuildProjectDirectory.StartsWith('` + repoKey + `/'))" /></Project>`, true},
 		{"an MSBuild namespace", `<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">` + bootstrapImport + `</Project>`, true},
 		{"an Import inside an ImportGroup", "<Project><ImportGroup>" + bootstrapImport + "</ImportGroup></Project>", true},
-		// grep -F missed this one.
 		{"quotes as entities", `<Project><Import Project="x" Condition="$(MSBuildProjectDirectory.StartsWith(&apos;` + repoKey + `/&apos;))" /></Project>`, true},
-		// grep -F took each of these three for an adopted repo.
 		{"the condition in a comment", "<Project>\n  <!-- StartsWith('" + repoKey + "/') -->\n</Project>\n", false},
 		{"the condition on another element", `<Project><PropertyGroup Condition="$(MSBuildProjectDirectory.StartsWith('` + repoKey + `/'))" /></Project>`, false},
 		{"the condition in Project rather than Condition", `<Project><Import Project="$(MSBuildProjectDirectory.StartsWith('` + repoKey + `/'))" /></Project>`, false},

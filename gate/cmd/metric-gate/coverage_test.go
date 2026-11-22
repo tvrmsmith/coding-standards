@@ -48,9 +48,6 @@ func TestOnlyADeclaredCoverageInputIsDemanded(t *testing.T) {
 	t.Run("a selection declaring no input skips coverage entirely", func(t *testing.T) {
 		set, declared, skipped, err := loadCoverage(root, nil, changed, []metric.Selection{declaresNothing}, "")
 
-		// Nothing was demanded, so nothing was skipped and the run is free to
-		// pass in a repo where nobody ran the tests. declared is what carries
-		// that decision on to the join.
 		if set != nil || declared || skipped != nil || err != nil {
 			t.Errorf("loadCoverage = (%v, %v, %v, %v), want (nil, false, nil, nil)", set, declared, skipped, err)
 		}
@@ -68,9 +65,6 @@ func TestOnlyADeclaredCoverageInputIsDemanded(t *testing.T) {
 		}
 	})
 
-	// The gate is the union of the declarations rather than each metric's own:
-	// one declarer is enough to stop the whole run, and the metric that
-	// declared nothing neither rescues the run nor gets named as blocked.
 	t.Run("one declarer among several fails the whole run", func(t *testing.T) {
 		_, declared, _, err := loadCoverage(root, nil, changed, []metric.Selection{declaresCoverage, declaresNothing}, "")
 
@@ -87,8 +81,6 @@ func TestOnlyADeclaredCoverageInputIsDemanded(t *testing.T) {
 		}
 	})
 
-	// ADR 0002 names every metric the absent report stops, not only the first,
-	// so the developer learns what the one `dotnet test` run would unblock.
 	t.Run("the failure names every metric stuck on the absent report", func(t *testing.T) {
 		_, _, _, err := loadCoverage(root, nil, changed, []metric.Selection{declaresCoverage, declaresCoverageToo}, "")
 

@@ -331,8 +331,6 @@ func TestEncode_IntegralFloatFieldDropsFraction(t *testing.T) {
 }
 
 func TestEncode_TableFloatCellRoundsToColumnPrecisionThenStripsTrailingZeros(t *testing.T) {
-	// Precision is a rounding rule, not a padding rule: 0.5504 rounds to
-	// 0.550 at precision 3 and then renders canonically as 0.55.
 	doc := toon.Doc{Fields: []toon.Field{
 		{Key: "crap", Value: &toon.Table{
 			Columns: []toon.Column{{Name: "coverage", Precision: 3}},
@@ -375,10 +373,6 @@ func TestEncode_TableFloatCellIntegralAfterRoundingDropsFraction(t *testing.T) {
 }
 
 func TestEncode_TableFloatCellRoundsHalfUpNotHalfToEven(t *testing.T) {
-	// 0.125 is exactly representable in binary (1/8), so this is a genuine
-	// decimal tie at precision 2, not a binary-rounding artifact. Go's
-	// strconv formatting (round-half-to-even) would render 0.12; the
-	// contract requires round-half-up, 0.13.
 	doc := toon.Doc{Fields: []toon.Field{
 		{Key: "crap", Value: &toon.Table{
 			Columns: []toon.Column{{Name: "score", Precision: 2}},
@@ -400,10 +394,6 @@ func TestEncode_TableFloatCellRoundsHalfUpNotHalfToEven(t *testing.T) {
 }
 
 func TestEncode_TableFloatCellRoundsTheDecimalTheReaderSeesNotItsBinaryValue(t *testing.T) {
-	// 1.005 is stored as 1.004999999999999893..., so the scaled
-	// math.Floor(f*100+0.5) form the encoder used to share with crap renders
-	// 1. Rounding the shortest round-tripping decimal instead gives the 1.01 a
-	// developer reading "1.005" in the report expects.
 	doc := toon.Doc{Fields: []toon.Field{
 		{Key: "crap", Value: &toon.Table{
 			Columns: []toon.Column{{Name: "score", Precision: 2}},
@@ -425,9 +415,6 @@ func TestEncode_TableFloatCellRoundsTheDecimalTheReaderSeesNotItsBinaryValue(t *
 }
 
 func TestEncode_TableFloatCellCarriesTheRoundingPastTheDecimalPoint(t *testing.T) {
-	// Rounding 9.995 at two decimals carries through both nines and out of
-	// the fractional part entirely, so the whole part gains a digit and the
-	// stripped result is the bare integer 10.
 	doc := toon.Doc{Fields: []toon.Field{
 		{Key: "crap", Value: &toon.Table{
 			Columns: []toon.Column{{Name: "score", Precision: 2}},

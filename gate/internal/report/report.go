@@ -361,9 +361,6 @@ func (d Document) Stdout() ([]byte, error) {
 	}
 	if len(d.Metrics) > 0 {
 		fields = append(fields, toon.Field{Key: "metrics", Value: metricsTable(d.Metrics)})
-		// Every rows table sits after the whole summary table rather than
-		// beside its own summary row, so a reader finds the verdict for the
-		// run before any of the detail whatever is selected (ADR 0008).
 		for _, m := range d.Metrics {
 			fields = append(fields, toon.Field{Key: m.Name, Value: rowsTable(m.orderedRows())})
 		}

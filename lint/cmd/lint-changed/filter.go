@@ -51,8 +51,6 @@ func scopeFinding(f lintfind.Finding, scope scopeSet) (survivor, bool) {
 // spent against any tree still matches. So a waiver spent at commit time
 // still covers its finding when no-mistakes lints a rebased or fixed-up tree.
 func runFilter(fa FilterArgs, stdout, stderr io.Writer) int {
-	// OpenHook rather than Open, because git runs this filter from a pre-commit
-	// hook and the index it names there is the index the commit will write.
 	repo, err := gitscope.OpenHook()
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
@@ -84,8 +82,6 @@ func runFilter(fa FilterArgs, stdout, stderr io.Writer) int {
 	kept := make([]survivor, 0, len(survivors))
 	var matched []matchedWaiver
 	claimed := map[string]bool{}
-	// An empty log can match nothing, and a run with no survivor has nothing to
-	// match, so the index tree is never computed on either.
 	waivable := len(store.List()) > 0 && len(survivors) > 0
 	var spent waiver.Spent
 	if waivable {
@@ -115,9 +111,6 @@ func runFilter(fa FilterArgs, stdout, stderr io.Writer) int {
 		matched = append(matched, matchedWaiver{waiver: w, rule: s.finding.Rule, path: path})
 	}
 
-	// Written unconditionally once matching has finished, whatever the
-	// verdict below: the file records what matched, and the decision to
-	// spend belongs to the dispatcher alone.
 	if fa.MatchedWaivers != "" {
 		if err := writeMatchedWaivers(fa.MatchedWaivers, matched); err != nil {
 			_, _ = fmt.Fprintln(stderr, err)
@@ -125,8 +118,6 @@ func runFilter(fa FilterArgs, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// A failed write here is reported and nothing more: the kept file feeds the
-	// run log, and a log must never turn a 0 or a 2 into a 1.
 	if fa.Kept != "" {
 		if err := writeKeptFindings(fa.Kept, kept); err != nil {
 			_, _ = fmt.Fprintln(stderr, err)
@@ -140,9 +131,6 @@ func runFilter(fa FilterArgs, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, msg)
 	}
 
-	// Printed for every matched waiver on every verdict, not only when the
-	// run blocks: the filter never spends, so it never knows why a waiver
-	// went unspent, only that it matched.
 	for _, m := range matched {
 		_, _ = fmt.Fprintf(stderr, "waiver %s matched %s on %s\n", m.waiver.ID, m.rule, m.path)
 	}
@@ -152,8 +140,6 @@ func runFilter(fa FilterArgs, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	// A report that checked nothing is the tool breaking rather than a finding,
-	// so it is answered only once no finding has blocked.
 	if len(reports.unchecked) > 0 {
 		return 1
 	}
@@ -179,7 +165,6 @@ func writeMatchedWaivers(path string, matched []matchedWaiver) error {
 		b.WriteByte('\n')
 	}
 	//nolint:gosec // G306: this file is read straight back by the dispatcher
-	// that invoked this run, never executed, so 0644 costs nothing here.
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
 		return fmt.Errorf("writing matched waivers to %s: %w", path, err)
 	}
@@ -199,7 +184,6 @@ func writeKeptFindings(path string, kept []survivor) error {
 		b.WriteByte('\n')
 	}
 	//nolint:gosec // G306: read straight back by the dispatcher that invoked
-	// this run, never executed, so 0644 costs nothing here.
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
 		return fmt.Errorf("writing kept findings to %s: %w", path, err)
 	}
@@ -319,8 +303,6 @@ func readReports(fa FilterArgs, root srcpath.Root) parsedReports {
 	var out parsedReports
 	for _, r := range fa.Reports {
 		//nolint:gosec // G304: the report path is the caller's whole point. The
-		// harness names the files its own build just wrote, in a directory it
-		// created, so there is no trust line for a variable path to cross.
 		f, err := os.Open(r.Path)
 		if err != nil {
 			out.unchecked = append(out.unchecked, fmt.Sprintf("could not read report %s: %v", r.Path, err))

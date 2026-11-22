@@ -65,11 +65,6 @@ func (e *divergentError) Error() string {
 // a caller with no git base can still run.
 func resolveScope(repo gitscope.Repo, fa FilterArgs) (scopeSet, error) {
 	if fa.Mode == ScopeFiles {
-		// Placed through the root rather than cast, because a location's path
-		// is always the canonical repo-relative one and an absolute or
-		// dot-prefixed --files entry would otherwise match nothing and drop
-		// every finding silently. NamedFiles refuses a name it cannot place,
-		// which is how an unresolvable path fails the run instead.
 		cwd, err := os.Getwd()
 		if err != nil {
 			return nil, fmt.Errorf("reading the working directory: %w", err)

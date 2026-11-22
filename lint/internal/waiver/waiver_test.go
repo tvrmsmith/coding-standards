@@ -216,13 +216,10 @@ func TestSpend_wornExampleFromAssignment(t *testing.T) {
 		t.Fatalf("Spend: %v", err)
 	}
 
-	// Same tree: the waiver is still usable, since a retried commit against
-	// the same tree must not burn a second waiver.
 	if _, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", waiver.SpentAgainst("abc123"), nil); !ok {
 		t.Fatalf("Match after same-tree spend: not found")
 	}
 
-	// A different tree: the waiver is used up.
 	if _, ok := store.Match("csharp", srcpath.FromSlash("src/OrderService.cs"), "TVRM0001", waiver.SpentAgainst("def456"), nil); ok {
 		t.Fatalf("Match after spend matched a different tree")
 	}
@@ -435,9 +432,6 @@ func TestMatch_skipsClaimedWaivers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	// Two waivers for the same rule on the same path, so the claim has to skip
-	// past the first and land on the second. With only one recorded, a Match
-	// that refused every lookup whenever anything was claimed would pass too.
 	first, err := store.Record(waiver.Waiver{
 		Language: "csharp",
 		Path:     srcpath.FromSlash("src/OrderService.cs"),
@@ -500,8 +494,6 @@ func TestMatch_returnsOldestUsable(t *testing.T) {
 		t.Fatalf("Match returned %q, want the oldest waiver %q (not %q)", got.ID, first.ID, second.ID)
 	}
 
-	// Spending the oldest drains the store toward the next one, in recording
-	// order.
 	if err := store.Spend(first, "def456"); err != nil {
 		t.Fatalf("Spend: %v", err)
 	}

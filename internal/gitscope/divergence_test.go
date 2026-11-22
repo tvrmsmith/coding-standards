@@ -20,22 +20,13 @@ import (
 func TestDivergentFromIndexFindsTheDirtyFileAmongMorePathspecsThanOneExecCarries(t *testing.T) {
 	repo, dirty := dirtyRepo(t, 1)
 	target := e2bigTarget(t)
-	// The real path goes last, where a single unbounded argv puts it too, so
-	// nothing about the ordering makes the answer easier to reach.
 	paths := append(unmatchedPaths(target), dirty...)
-	// Unbatched, this argv is one exec that fails with E2BIG and comes back as
-	// diff_unparseable, which says git could not parse a diff it never ran. A
-	// layout that stopped clearing the target would leave the case green
-	// against exactly the code it exists to refuse.
 	if argv := divergenceArgvBytes(paths); argv <= target {
 		t.Fatalf("the argv over %d paths is %d bytes, want past the %d target no exec accepts", len(paths), argv, target)
 	}
 
 	divergent, err := repo.DivergentFromIndex(paths)
 
-	// The paths are counted rather than printed. Printing them is two megabytes
-	// of synthetic filler in the CI log for a case whose whole answer is the one
-	// path it did or did not name.
 	if err != nil || !slices.Equal(divergent, dirty) {
 		t.Fatalf("DivergentFromIndex over %d paths named %d of them, erroring %v, want %s alone and no error", len(paths), len(divergent), err, dirty[0])
 	}
@@ -77,8 +68,6 @@ func TestDivergentFromIndexUnionsTheDirtyFilesEveryBatchNames(t *testing.T) {
 // already had, so the case drives the failure out of the second one.
 func TestDivergentFromIndexFailsWhenALaterBatchDoes(t *testing.T) {
 	repo, dirty := dirtyRepo(t, 1)
-	// git refuses a pathspec leading out of the repository, which is a failure
-	// of the invocation carrying it rather than of the paths beside it.
 	outside := srcpath.Path("../outside.cs")
 	paths := slices.Concat(dirty, unmatchedPaths(divergenceBudget), []srcpath.Path{outside})
 	batches := divergenceBatches(paths)

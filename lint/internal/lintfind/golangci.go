@@ -54,10 +54,6 @@ func ParseGolangCI(r io.Reader, root srcpath.Root) ([]Finding, []Dropped, error)
 		}
 		findings = append(findings, finding)
 	}
-	// Stamped here, the single success return, rather than at
-	// placeGolangCIIssue's construction sites (there are several, including
-	// the unparsed() calls), so a future construction site inside this
-	// parser cannot forget it.
 	for i := range findings {
 		findings[i].Language = LanguageGo
 	}
@@ -67,26 +63,16 @@ func ParseGolangCI(r io.Reader, root srcpath.Root) ([]Finding, []Dropped, error)
 // placeGolangCIIssue turns one golangci issue into a Finding, or says how it
 // was dropped when Pos.Filename does not resolve inside root.
 func placeGolangCIIssue(issue golangciIssue, root srcpath.Root) (Finding, Dropped, bool) {
-	// An empty Filename names no tree at all, so it is checked before
-	// placement is even attempted. Outside: true would claim the issue
-	// describes another tree, which is not this issue's problem, and letting
-	// it fall through to root.Place would drop it silently, exactly what
-	// UNPARSED exists to prevent.
 	if issue.Pos.Filename == "" {
 		return unparsed("golangci", "issue carries no filename", issue.Text), Dropped{}, true
 	}
 
-	// Pos.Filename is absolute because harness/linters/go.sh runs golangci
-	// with --path-mode abs.
 	path, ok := root.Place(issue.Pos.Filename).Inside()
 	if !ok {
 		return Finding{}, Dropped{Rule: issue.FromLinter, URI: issue.Pos.Filename, Outside: true}, false
 	}
 
 	if issue.Pos.Line == 0 {
-		// Line 1 column 1, so the report still points at the file and a waiver
-		// for it stays keyed on that path. Only an entry with no path at all
-		// takes the path-less route.
 		return unparsed("golangci", "issue carries no usable line", issue.Text,
 			Location{Path: path, StartLine: 1, StartColumn: 1, EndLine: 1}), Dropped{}, true
 	}

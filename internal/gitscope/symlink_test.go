@@ -32,8 +32,6 @@ const (
 func TestTouchedLinesDropsAnAddedSymlinkAndStillSeesTheMoveBesideIt(t *testing.T) {
 	repo, head := linkAndMoveFixture(t)
 	base := Base{Ref: "HEAD", Commit: head}
-	// The link really did arrive as an add carrying a link's mode, so the case
-	// pins the drop rather than a git that never listed the path at all.
 	records, err := repo.rawChanges(base, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -62,9 +60,6 @@ func TestTouchedLinesDropsAnAddedSymlinkAndStillSeesTheMoveBesideIt(t *testing.T
 // hands `cat-file` an added path's all-zero id, and no add is ever digested.
 func TestTouchedLinesStagedDropsTheSameAddedSymlinkAndMove(t *testing.T) {
 	repo, head := linkAndMoveFixture(t)
-	// The working tree holds a real source file where the index holds the link,
-	// so the two scopes have different answers and a --staged run that read the
-	// working tree would come back naming the link's path.
 	if err := os.Remove(repo.root.Abs(srcpath.Path(fixtureLink))); err != nil {
 		t.Fatal(err)
 	}
@@ -96,8 +91,6 @@ func TestTouchedLinesStagedDropsTheSameAddedSymlinkAndMove(t *testing.T) {
 func TestTouchedLinesDropsARetargetedSymlink(t *testing.T) {
 	repo, head := retargetedLinkFixture(t)
 	base := Base{Ref: "HEAD", Commit: head}
-	// The link really did arrive as a modification carrying a link's mode, so
-	// the case pins the drop rather than a git that listed nothing.
 	records, err := repo.rawChanges(base, nil)
 	if err != nil {
 		t.Fatal(err)

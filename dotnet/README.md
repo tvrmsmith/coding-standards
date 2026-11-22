@@ -32,6 +32,7 @@ src/Tvrmsmith.Analyzers/
   NoDroppedAsyncAssertionAnalyzer.cs         # TVRM0005
   CommentBlockLengthAnalyzer.cs              # TVRM0006
   NoAnonymousObjectComparisonAnalyzer.cs     # TVRM0007
+  NoCommentsAnalyzer.cs                      # TVRM0008
   AnalyzerReleases.{Shipped,Unshipped}.md
   config/Tvrmsmith.Analyzers.globalconfig    # the curated severities
   build/Tvrmsmith.Analyzers.props            # nupkg auto-import, for the published package
@@ -67,6 +68,7 @@ correct rewrite needs a judgement call the analyzer cannot make.
 | `TVRM0005` | `no-dropped-async-assertion` | an awaitable assertion statement in a synchronous body, where CS4014 cannot see it |
 | `TVRM0006` | `comment-block-length` | a run of non-documentation comments over the line budget |
 | `TVRM0007` | `no-anonymous-object-comparison` | an anonymous-object subject compared with an anonymous-object expectation |
+| `TVRM0008` | `no-comments` | any comment but an XML doc comment on a declaration, a ReSharper, Rider or Sonar suppression comment, or one in generated code |
 
 Two scoping decisions carry most of the precision, and both are load-bearing:
 

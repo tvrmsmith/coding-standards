@@ -63,8 +63,6 @@ func TestDocsOnlyChangePassesWithNoExtractorInstalledAtAll(t *testing.T) {
 	f.commitAll("initial")
 	f.write("docs/notes.md", "first\nsecond\n")
 
-	// No changed path carries an extension the gate's table declares, so no
-	// extractor is located, and the absent binary never matters.
 	f.runIn(gateOnlyDir(t)).assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
 		"no changed methods, nothing to measure\n")
 }
@@ -78,8 +76,6 @@ func TestFileMovedWithNoContentChangeReportsNoChangedMethods(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(origin, csharpFile(20))
 	f.commitAll("initial")
-	// `--no-renames` splits this into a delete plus an add carrying the whole
-	// file, and ADR 0015 says a rename with no content change touches nothing.
 	f.git("mv", origin, moved)
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
@@ -100,8 +96,6 @@ func TestFileMovedAndReindentedReportsNoChangedMethods(t *testing.T) {
 	f.write(origin, indented(csharpFile(20), "    "))
 	f.commitAll("initial")
 	f.git("mv", origin, moved)
-	// Reindenting is the only edit, and TouchedLines diffs with `-w`, so the
-	// move has to drop the file rather than report every line of it as added.
 	f.write(moved, indented(csharpFile(20), "\t\t"))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
@@ -125,12 +119,6 @@ func TestTwoIdenticalFilesMovedTogetherReportNoChangedMethods(t *testing.T) {
 	f.write(firstOrigin, csharpFile(20))
 	f.write(secondOrigin, csharpFile(20))
 	f.commitAll("initial")
-	// Two adds and two deletes carrying one content digest. Every add is
-	// accounted for by a delete, so the diff explains itself as a move of both
-	// and neither add is measured. Refusing to drop either, because the digest
-	// has more than one claimant, would demand coverage for every method in both
-	// files and turn a directory rename into the wall of failures the drop
-	// exists to prevent.
 	f.git("mv", firstOrigin, firstMoved)
 	f.git("mv", secondOrigin, secondMoved)
 	f.stub = stubConfig{
@@ -152,12 +140,6 @@ func TestAnAddNobodyCanReadLeavesEveryOtherAddMeasured(t *testing.T) {
 	f.write(origin, csharpFile(20))
 	f.commitAll("initial")
 	f.git("mv", origin, moved)
-	// A second added path whose content the gate cannot read. Counted as one
-	// add fewer, the digest Origin.cs carried has a single claimant against a
-	// single delete, and Moved.cs reads as accounted for and is dropped
-	// unmeasured. The unreadable add could be carrying that content itself, so
-	// nothing here is a move and every method Moved.cs holds stays the gate's
-	// to score.
 	f.addUnreadable("main", "notes.md")
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: moved, lines: spanCoverage(5, 3, 3)}))
@@ -181,10 +163,6 @@ func TestAnAddNobodyCanReadStillLeavesTheMovesTheDeletesExplainDropped(t *testin
 	f.write(firstOrigin, csharpFile(20))
 	f.write(secondOrigin, csharpFile(20))
 	f.commitAll("initial")
-	// Two deletes carry the one digest and only one readable add claims it, so
-	// the add stays accounted for even counting the unreadable add as a second
-	// claimant. The unreadable add makes no add unprovable on its own: it is
-	// one more claimant, not a switch that turns move detection off.
 	f.git("mv", firstOrigin, moved)
 	f.git("rm", secondOrigin)
 	f.addUnreadable("main", "notes.md")
@@ -202,8 +180,6 @@ func TestMethodScoringExactlyAtTheThresholdPasses(t *testing.T) {
 	f := newFixture(t, "main")
 	boundaryFixture(t, f, 30)
 
-	// comp² × (1 − 1)³ + comp is exactly the threshold, and the verdict
-	// compares strictly greater, so the run passes and no fix applies.
 	f.run().assertMatches(t, "threshold_boundary_pass", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 30.00\n")
 }
@@ -213,8 +189,6 @@ func TestMethodScoringJustOverTheThresholdFails(t *testing.T) {
 	f := newFixture(t, "main")
 	boundaryFixture(t, f, 29)
 
-	// One uncovered line of thirty puts the score at 30.03, the smallest
-	// margin the two-decimal cell can show, and that already fails.
 	f.run().assertMatches(t, "threshold_boundary_fail", 2, f.baseLabel("main"),
 		"1 of 1 changed methods over CRAP threshold 30, worst score 30.03\n")
 }
@@ -228,10 +202,6 @@ func TestMethodWhoseRawScoreRoundsDownOntoTheThresholdPasses(t *testing.T) {
 	f.write(boundary, csharpFile(100))
 	f.commitAll("initial")
 	f.touchLine(boundary, 20)
-	// One uncovered line in sixty puts the raw score at 30.0042, over the
-	// threshold, while the cell the document prints is 30. The verdict compares
-	// the rounded score, so the run passes and no reader is asked to fail on a
-	// digit that is nowhere in the document.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: boundary, lines: spanCoverage(11, 60, 59)}))
 	f.stub = stubConfig{
@@ -246,14 +216,6 @@ func TestMethodWhoseRawScoreRoundsDownOntoTheThresholdPasses(t *testing.T) {
 func TestTwoSameRangeMethodsScoringTheSameAreOrderedByName(t *testing.T) {
 	t.Parallel()
 	const pair = "src/Ordering/Pair.cs"
-	// Same file, same range, same complexity and the same coverage, so the two
-	// rows tie on every cell the table sorts by. Only the name settles the order,
-	// and the set the rows are drained from is a map.
-	//
-	// The signatures run against the names, so the arm below the name is a total
-	// order pointing the other way. Without that the case would be a coin flip:
-	// drop the name arm and the rows come out in whatever order the map yielded,
-	// which matches this golden about half the time.
 	a := span{File: pair, Name: "Pair.A", Signature: "(string)", StartLine: 14, EndLine: 14, Complexity: 1}
 	b := span{File: pair, Name: "Pair.B", Signature: "(int)", StartLine: 14, EndLine: 14, Complexity: 1}
 
@@ -263,8 +225,6 @@ func TestTwoSameRangeMethodsScoringTheSameAreOrderedByName(t *testing.T) {
 	f.touchLine(pair, 14)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: pair, lines: spanCoverage(14, 1, 1)}))
-	// Reported the other way round, so the document's order cannot be the order
-	// the extractor happened to use.
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(pair), []span{b, a}),
@@ -292,8 +252,6 @@ func TestExtractorClaimingNoneOfTheFilesItWasLocatedForFails(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// The table located csharp because a .cs file changed; a binary that then
-	// handles only .fs would leave that .cs file scored by nobody.
 	f.stub = stubConfig{Extensions: []string{".fs"}}
 
 	f.run().assertMatches(t, "capabilities_claims_nothing", 1, f.baseLabel("main"),
@@ -306,9 +264,6 @@ func TestExtractorReturningTheSameSpanTwiceFails(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 45)
-	// The identical row twice: one of the two would vanish from the table with
-	// nothing said about it, which is an extractor bug and not a join the gate
-	// should guess its way through.
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, placeAsync}),
@@ -324,10 +279,6 @@ func TestExtractorReturningTheSameSpanWithTwoComplexitiesFails(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 45)
-	// The same method twice under two complexities. One of the two rows still
-	// vanishes from the table, and which one survived is the difference between a
-	// pass and a fail here, so the duplicate test cannot let a differing score
-	// make two rows into two methods.
 	rescored := placeAsync
 	rescored.Complexity = 40
 	f.stub = stubConfig{
@@ -345,8 +296,6 @@ func TestExtractorReportingAComplexityBelowTheMcCabeBaseFails(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 45)
-	// An absent `complexity` field unmarshals to exactly this, and 0 scores 0, so
-	// letting it through prints a passing row for a method nobody measured.
 	uncounted := placeAsync
 	uncounted.Complexity = 0
 	f.stub = stubConfig{
@@ -381,8 +330,6 @@ func TestExtractorReportingAnEndLineBelowItsStartFails(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 45)
-	// A negative width is the quietest of the three: no line is ever inside the
-	// span, so the method leaves the table and the run says nothing changed.
 	inverted := placeAsync
 	inverted.StartLine, inverted.EndLine = 58, 41
 	f.stub = stubConfig{
@@ -420,9 +367,6 @@ func TestChangedFileWhoseExtensionIsSpeltInAnotherCaseIsStillMeasured(t *testing
 func TestTwoMethodsDeclaredOnOneLineAreBothScored(t *testing.T) {
 	t.Parallel()
 	const twins = "src/Ordering/Twins.cs"
-	// `public class C { public int A() => 1; public int B() => 2; }` is valid
-	// C#, and the real Roslyn extractor reports both methods over line 14. Two
-	// methods sharing a range are not a duplicate, and neither may be dropped.
 	first := span{File: twins, Name: "Twins.A", StartLine: 14, EndLine: 14, Complexity: 1}
 	second := span{File: twins, Name: "Twins.B", StartLine: 14, EndLine: 14, Complexity: 2}
 
@@ -430,8 +374,6 @@ func TestTwoMethodsDeclaredOnOneLineAreBothScored(t *testing.T) {
 	f.write(twins, csharpFile(20))
 	f.commitAll("initial")
 	f.touchLine(twins, 14)
-	// Line 14 is the only instrumentable line, and it belongs to both methods,
-	// because neither is narrower than the other.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: twins, lines: spanCoverage(14, 1, 1)}))
 	f.stub = stubConfig{
@@ -450,8 +392,6 @@ func TestChangedSourceFileWithNoExtractorInstalledFails(t *testing.T) {
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 
-	// Unlike a docs-only change, a changed .cs file selects the csharp row, so
-	// the absent binary is the run's failure rather than nobody's business.
 	f.runIn(gateOnlyDir(t)).assertMatches(t, "extractor_missing", 1, f.baseLabel("main"),
 		"csharp extractor not found: metric-gate-csharp\n")
 }
@@ -504,8 +444,6 @@ func TestExtractorSilentAboutAFileItWasGivenFails(t *testing.T) {
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 	f.touchLine(ghost, 7)
-	// Ghost.cs was handed in and never reported on, which is neither "nothing
-	// here" nor "I failed", so its methods must not go unmeasured under a pass.
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
@@ -523,8 +461,6 @@ func TestCoverageWalkRecordsAPathItCouldNotRead(t *testing.T) {
 	f.touchLine(orderService, 62)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
-	// A second results directory the walk cannot enter. Coverage may be
-	// understated by whatever report it holds, so the path is reported.
 	f.denyRead("TestResults/locked")
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
@@ -575,7 +511,6 @@ func TestMethodWithTooLittleCoverageForItsComplexityFails(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 45)
-	// A tenth of PlaceAsync's ten instrumentable lines is covered.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(42, 10, 1)}))
 	f.stub = stubConfig{
@@ -586,11 +521,6 @@ func TestMethodWithTooLittleCoverageForItsComplexityFails(t *testing.T) {
 	f.run().assertMatches(t, "fail_single_method", 2, f.baseLabel("main"),
 		"1 of 1 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
-
-// The next two cases are a pair, and only the pair is the test: one fixture,
-// one score of 20, read once against the default bar of 30 and once against a
-// bar of 12. The score does not move and the verdict does, which is the whole
-// of what --threshold is for (issue 19).
 
 func TestChangedMethodUnderTheDefaultThresholdPasses(t *testing.T) {
 	t.Parallel()
@@ -616,11 +546,6 @@ func TestThresholdBelowAMethodsComplexityAsksForASplitRatherThanCoverage(t *test
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 45)
-	// A tenth of PlaceAsync's ten instrumentable lines is covered, the same
-	// fixture TestMethodWithTooLittleCoverageForItsComplexityFails scores at
-	// the default bar. At a bar of 8 its complexity 9 is already over, so full
-	// coverage would still leave it failing and no test can rescue it: the fix
-	// flips to split_method and there is no coverage target to name.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(42, 10, 1)}))
 	f.stub = stubConfig{
@@ -641,10 +566,6 @@ func TestEmptyChangedSetStillReportsTheThresholdItWasGiven(t *testing.T) {
 	f.commitAll("initial")
 	f.write("docs/notes.md", "first\nsecond\n")
 
-	// The bar reaches the summary row even though nothing scored, and ADR
-	// 0014's rule that an empty changed-method set exits 0 before resolving any
-	// input still holds with one named: there is no coverage report here and
-	// naming a threshold does not go looking for one.
 	f.runWithArgs("--threshold", "crap=12").assertMatches(t, "empty_changed_set_threshold", 0, f.baseLabel("main"),
 		"no changed methods, nothing to measure\n")
 }
@@ -665,13 +586,10 @@ func TestFourChangedMethodsEachGetTheFixThatApplies(t *testing.T) {
 	f.touchLine(orderService, 45)
 	f.touchLine(orderService, 62)
 	f.touchLine(order, 14)
-	// A field, outside every span, so it is a diagnostic and not an unknown.
 	f.touchLine(order, 25)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: pricing, lines: spanCoverage(19, 20, 11)},
 		coverageClass{filename: orderService, lines: append(spanCoverage(42, 10, 1), spanCoverage(61, 3, 2)...)},
-		// Order.cs matches a report path but get_Id's one line is not
-		// instrumentable, which is what makes it structural_na.
 		coverageClass{filename: order, lines: spanCoverage(20, 1, 1)}))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
@@ -693,11 +611,6 @@ func TestBranchIsScoredAgainstTheMergeBaseAndNotTheTipOfMain(t *testing.T) {
 	f.touchLine(orderService, 62)
 	f.commitAll("edit Cancel on the branch")
 
-	// main moves on without the branch, so the tip of main is no longer an
-	// ancestor of HEAD and only the merge base scopes the diff correctly. The
-	// commit it moves on by edits a line inside PlaceAsync, so a diff scoped to
-	// main's tip would report that method changed as well and this document
-	// would not match.
 	f.git("checkout", "--quiet", "main")
 	f.touchLine(orderService, 45)
 	f.commitAll("edit PlaceAsync on main")
@@ -710,9 +623,6 @@ func TestBranchIsScoredAgainstTheMergeBaseAndNotTheTipOfMain(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// The branch's own commit is the whole changed set, and `base` is the
-	// merge base rather than main's tip. The document is the one
-	// pass_single_method pins, because the same one method changed.
 	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
@@ -726,17 +636,10 @@ func TestWholeFileReformatWithNoLogicChangeMeasuresNothing(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(legacy, csharpFile(60))
 	f.commitAll("initial")
-	// Indenting the whole file is the only change. Under -w this produces no
-	// "+++" line and no hunk at all for Legacy.cs, so Legacy.cs never reaches
-	// the extractor and the run never reads the stub's spans.
 	f.write(legacy, indented(csharpFile(60), "        "))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
-		// The fixture writes no coverage report anywhere, which is
-		// load-bearing. A run that measured even one method here would stop
-		// at coverage_missing and exit 1, so this case cannot pass by
-		// accident.
-		Stdout: extractorOutput(t, parsed(legacy), []span{knot, tangle}),
+		Stdout:     extractorOutput(t, parsed(legacy), []span{knot, tangle}),
 	}
 
 	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
@@ -752,9 +655,6 @@ func TestMethodMovedToANewPathAndEditedIsScoredAtItsNewLocation(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(origin, csharpFile(20))
 	f.commitAll("initial")
-	// git scores this as a rename, which status R would drop from an
-	// ACM-filtered diff; ADR 0015 says the method appears as added lines at
-	// its new location instead.
 	f.git("mv", origin, moved)
 	f.touchLine(moved, 7)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
@@ -772,10 +672,7 @@ func TestMethodMovedBetweenFilesWithItsBodyUnchangedIsMeasuredAtItsNewLocation(t
 	t.Parallel()
 	const origin = "src/Ordering/Origin.cs"
 	const destination = "src/Ordering/Destination.cs"
-	// Does not contain line 9, the line Origin's own touch lands on, so
-	// Origin's side of the move is a diagnostic and never a changed method.
 	originKeep := span{File: origin, Name: "Origin.Keep", StartLine: 20, EndLine: 30, Complexity: 2}
-	// Proves only the moved method is measured, not everything sitting near it.
 	destinationUntouched := span{File: destination, Name: "Destination.Untouched", StartLine: 5, EndLine: 15, Complexity: 12}
 	destinationVanish := span{File: destination, Name: "Destination.Vanish", StartLine: 30, EndLine: 40, Complexity: 4}
 
@@ -783,10 +680,6 @@ func TestMethodMovedBetweenFilesWithItsBodyUnchangedIsMeasuredAtItsNewLocation(t
 	f.write(origin, csharpFile(60))
 	f.write(destination, csharpFile(60))
 	f.commitAll("initial")
-	// Neither file is renamed, both stay status M, so the pure-move drop never
-	// fires and the method's body is byte-identical at its new home. git
-	// reports Origin's removal as a zero-length hunk touching line 9 alone,
-	// and Destination's insertion as lines 30 through 40.
 	f.moveLinesBetween(origin, 10, 20, destination, 29)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: destination, lines: spanCoverage(31, 4, 1)}))
@@ -803,18 +696,12 @@ func TestMethodMovedBetweenFilesWithItsBodyUnchangedIsMeasuredAtItsNewLocation(t
 func TestMethodMovedWithinOneFileIsMeasuredAtItsNewLocation(t *testing.T) {
 	t.Parallel()
 	const shuffle = "src/Ordering/Shuffle.cs"
-	// Holds neither the vacated position nor the moved block, so it stays out
-	// of the table and shows the gate measures the move alone.
 	keep := span{File: shuffle, Name: "Shuffle.Keep", StartLine: 20, EndLine: 30, Complexity: 2}
 	vanish := span{File: shuffle, Name: "Shuffle.Vanish", StartLine: 35, EndLine: 45, Complexity: 4}
 
 	f := newFixture(t, "main")
 	f.write(shuffle, csharpFile(60))
 	f.commitAll("initial")
-	// The moved block lands at 35 through 45. git reports two hunks, a
-	// zero-length one touching line 9 alone where the block used to sit and
-	// an insertion covering lines 35 through 45. Line 9 falls inside no span,
-	// so the vacated position contributes exactly one diagnostic.
 	f.moveLinesWithin(shuffle, 10, 20, 45)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: shuffle, lines: spanCoverage(36, 4, 1)}))
@@ -848,10 +735,6 @@ func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) 
 	f.write(orderFile, csharpFile(80))
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
-	// Order.cs becomes a symlink to its sibling in the same directory, so the
-	// link is not dangling. Deletion cases miss this: git renders a deleted
-	// file's new side as `+++ /dev/null`, which carries no extension, so no
-	// extractor ever claims it, and only a live typechange exercises status T.
 	f.removeFile(orderFile)
 	f.symlinkTo(filepath.Base(orderService), orderFile)
 	f.assertTypechange("main", orderFile, realFile, symlink)
@@ -862,25 +745,9 @@ func TestASourceFileReplacedByASymlinkContributesNoChangedMethods(t *testing.T) 
 		StdinLog:   handed,
 	}
 
-	// Under ACM, git reports Order.cs as status T and it never reaches the
-	// diff, so nothing is touched. Drop the filter and git emits a hunk whose
-	// new side is a real, claimed b/src/Ordering/Order.cs, touching line 1,
-	// which falls outside Order.Total's 60-64 span and turns
-	// touched_lines_outside_spans into 1, which is what would stop this golden
-	// from matching.
 	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
 		"no changed methods, nothing to measure\n")
 
-	// Today the golden already reds on any handing of Order.cs, since the
-	// extractor's file list is the touched-line key set (every touched file
-	// here is .cs, so extension filtering never narrows it) and a touched line
-	// either lands inside Order.Total's 60-64 span or outside it. This check
-	// states the rule directly instead of inferring it from an empty
-	// document, and it holds if a later change decouples the extractor's
-	// input from the touched-line key set, which the mode-aware pass in issue
-	// 84 would do. This direction is the dangerous handing, since an
-	// extractor given the link path follows it and reports the target's spans
-	// under Order.cs.
 	assertNotHandedToExtractor(t, handed)
 }
 
@@ -904,8 +771,6 @@ func TestATypechangeIsWithheldWhileTheRestOfTheDiffIsMeasured(t *testing.T) {
 	f.symlinkTo(filepath.Base(orderService), orderFile)
 	f.touchLine(orderService, 62)
 	f.assertTypechange("main", orderFile, realFile, symlink)
-	// Two thirds of Cancel's three instrumentable lines are covered, the same
-	// arithmetic pass_single_method holds.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	handed := filepath.Join(t.TempDir(), "handed")
@@ -968,14 +833,6 @@ func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) 
 	f.run().assertMatches(t, "empty_changed_set", 0, f.baseLabel("main"),
 		"no changed methods, nothing to measure\n")
 
-	// An ACMT widen is caught by the golden above, and so is any other
-	// handing of Order.cs today, since the extractor's file list is the
-	// touched-line key set (every touched file here is .cs, so extension
-	// filtering never narrows it). This check states the rule directly, that a
-	// dropped path never reaches the extractor, instead of inferring it from
-	// an empty document, and it holds if a later change decouples the
-	// extractor's input from that key set, which the mode-aware pass in issue
-	// 84 would do.
 	assertNotHandedToExtractor(t, handed)
 }
 
@@ -1005,24 +862,14 @@ func TestASymlinkReplacedByASourceFileContributesNoChangedMethods(t *testing.T) 
 // so the link is not dangling.
 func TestASymlinkAddedOutrightIsWithheldFromTheChangedSet(t *testing.T) {
 	t.Parallel()
-	// The span starts at line 1, the link's only line, so an extractor that
-	// followed the link would put a measured method on a path holding nothing
-	// but the target's name.
 	orderHeader := span{File: orderFile, Name: "Order.Header", StartLine: 1, EndLine: 4, Complexity: 3}
 
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.symlinkTo(filepath.Base(orderService), orderFile)
-	// `git add` is required, not incidental. ADR 0014's tracked-paths-only
-	// rule means an unstaged new file contributes nothing, exactly as
-	// TestANewFileNeverAddedToTheIndexContributesNoChangedMethods records.
 	f.git("add", orderFile)
 	f.assertAddedAs("main", orderFile, symlink)
-	// The report knows OrderService.cs, the file the link points at, and has
-	// never heard of Order.cs. That mismatch is what the old behaviour failed
-	// on, and it is still here, so the pass below comes from the link never
-	// being measured rather than from a report that happens to cover it.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	handed := filepath.Join(t.TempDir(), "handed")
@@ -1096,8 +943,6 @@ func TestAnAddedSymlinkIsWithheldWhileTheRestOfTheDiffIsMeasured(t *testing.T) {
 	f.git("add", orderFile)
 	f.touchLine(orderService, 62)
 	f.assertAddedAs("main", orderFile, symlink)
-	// Two thirds of Cancel's three instrumentable lines are covered, the same
-	// arithmetic pass_single_method holds.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	handed := filepath.Join(t.TempDir(), "handed")
@@ -1123,19 +968,11 @@ func TestDeletingAMethodAttributesTheZeroLengthHunkToTheLineBeforeIt(t *testing.
 	const legacy = "src/Ordering/Legacy.cs"
 	before := span{File: legacy, Name: "Legacy.Before", StartLine: 5, EndLine: 8, Complexity: 3}
 	boundary := span{File: legacy, Name: "Legacy.Boundary", StartLine: 9, EndLine: 9, Complexity: 3}
-	// Well over the threshold and holding no touched line, so the gate never
-	// measures it and it never reaches the table. Survivor is not the deleted
-	// method and cannot stand in for it. The gate takes spans from the working
-	// tree alone, so a deleted method has no span at all and the clause that
-	// it is never measured has nothing that could falsify it.
 	survivor := span{File: legacy, Name: "Legacy.Survivor", StartLine: 15, EndLine: 25, Complexity: 34}
 
 	f := newFixture(t, "main")
 	f.write(legacy, csharpFile(60))
 	f.commitAll("initial")
-	// Deleting lines 10-40 produces a zero-length hunk whose insertion point
-	// is line 9, so line 9 is the only touched line. It falls inside Boundary
-	// and outside Before, which makes Boundary the one changed method.
 	f.deleteLines(legacy, 10, 40)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: legacy, lines: append(spanCoverage(5, 4, 4), spanCoverage(9, 1, 0)...)}))
@@ -1155,24 +992,15 @@ func TestEveryMethodInANewlyAddedFileIsMeasured(t *testing.T) {
 	second := span{File: fresh, Name: "Fresh.Second", StartLine: 10, EndLine: 16, Complexity: 9}
 
 	f := newFixture(t, "main")
-	// A file already on main so a base exists for Fresh.cs to diff against.
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.write(fresh, csharpFile(20))
-	// `git add` is required, not incidental. ADR 0014's tracked-paths-only
-	// rule says touched lines come from tracked paths only, so an unstaged
-	// new file contributes nothing.
-	// TestANewFileNeverAddedToTheIndexContributesNoChangedMethods is the
-	// other half of the pair: it never adds its new file at all and pins the
-	// same rule from that side.
 	f.git("add", fresh)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: fresh, lines: append(spanCoverage(4, 4, 1), spanCoverage(11, 5, 1)...)}))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
-		// Lines 1, 2, 9, 17, 18, 19 and 20 fall inside no span, seven
-		// diagnostics against an entirely-added file.
-		Stdout: extractorOutput(t, parsed(fresh), []span{first, second}),
+		Stdout:     extractorOutput(t, parsed(fresh), []span{first, second}),
 	}
 
 	f.run().assertMatches(t, "new_file", 2, f.baseLabel("main"),
@@ -1201,10 +1029,7 @@ func TestANewFileNeverAddedToTheIndexContributesNoChangedMethods(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 45)
-	// Never `git add`ed. If untracked files were unioned into the scope this
-	// would be handed to the extractor alongside orderService.
 	f.write("src/Ordering/Scratch.cs", csharpFile(20))
-	// Eight of PlaceAsync's ten instrumentable lines are covered.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(42, 10, 8)}))
 	f.stub = stubConfig{
@@ -1304,10 +1129,7 @@ func TestANestedSpanTakesTheTouchedLineAndItsOwnCoverageFromItsContainer(t *test
 	f := newFixture(t, "main")
 	f.write(outer, csharpFile(80))
 	f.commitAll("initial")
-	// Line 35 sits in both spans, so only the smaller one is changed.
 	f.touchLine(outer, 35)
-	// Lines 12-15 belong to the container alone; 31-34 sit inside the local
-	// function, so the container must not absorb them.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: outer, lines: append(spanCoverage(12, 4, 4), spanCoverage(31, 4, 1)...)}))
 	f.stub = stubConfig{
@@ -1315,9 +1137,6 @@ func TestANestedSpanTakesTheTouchedLineAndItsOwnCoverageFromItsContainer(t *test
 		Stdout:     extractorOutput(t, parsed(outer), []span{container, local}),
 	}
 
-	// One in four of the local function's own lines is covered. Were the
-	// container absorbing them the local function would hold no
-	// instrumentable line and report structural_na instead.
 	f.run().assertMatches(t, "nested_spans", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.69\n")
 }
@@ -1364,12 +1183,6 @@ func TestRepoWithNoResolvableDiffBaseNamesEveryRefAndPointsAtTheFlag(t *testing.
 	f := newFixture(t, "trunk")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
-	// A second commit is what makes the absent HEAD~1 fallback load-bearing.
-	// With one commit HEAD~1 does not resolve either, so a gate that did fall
-	// back would emit this same document. With two, a fallback would resolve
-	// a base and then fail downstream on the stub's empty output, which is
-	// unparsable extractor JSON, rather than producing the no-diff-base error
-	// this case pins.
 	f.touchLine(orderService, 20)
 	f.commitAll("second")
 	f.touchLine(orderService, 62)
@@ -1390,7 +1203,6 @@ func TestChangedMethodInAFileNoReportPathMatchedFails(t *testing.T) {
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 	f.touchLine(ghost, 7)
-	// The report knows OrderService.cs and has never heard of Ghost.cs.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -1414,8 +1226,6 @@ func TestFileInAReportCarryingNoInstrumentableLinesIsUnknownRatherThanCovered(t 
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// a <class> for the file with no <line> at all, which is a report that
-	// never instrumented it rather than a file of trivial members
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService}))
 	f.stub = stubConfig{
@@ -1649,10 +1459,6 @@ func TestCoverageReportThatIsNotValidXMLFails(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// The cause is carried into the message, so a read error and a malformed
-	// document do not reach the reader as the same sentence. The cause itself
-	// is encoding/xml's wording, so the case asks the same parser for it
-	// rather than pinning a sentence this repo does not own.
 	cause := xmlUnmarshalCause(t, malformed)
 	f.run().assertMatchesWith(t, "coverage_unparseable", 1, f.baseLabel("main"),
 		"could not parse coverage report TestResults/fixed/coverage.cobertura.xml; "+cause+"\n",
@@ -1673,11 +1479,6 @@ func TestCoverageReportTheGateCannotReadFailsNamingTheCauseOnly(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// The read error carries the absolute path the process opened, which the
-	// message has already named repo-relative, so only the cause is carried
-	// into it and the document stays free of machine-specific paths. The cause
-	// is the operating system's wording, so the case reads the same denied file
-	// for it rather than pinning "permission denied" on every platform.
 	cause := f.readCause("TestResults/fixed/coverage.cobertura.xml")
 	f.run().assertMatchesWith(t, "coverage_unreadable", 1, f.baseLabel("main"),
 		"could not parse coverage report TestResults/fixed/coverage.cobertura.xml; "+cause+"\n",
@@ -1695,9 +1496,6 @@ func TestMoveWithAnExtraCopyMeasuresBothAddedPaths(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(origin, csharpFile(20))
 	f.commitAll("initial")
-	// Two added paths carry the deleted file's content and `--no-renames` is
-	// what removed git's own answer to which of them is the move, so neither is
-	// dropped. Picking one would silently unscore a brand-new file.
 	f.git("mv", origin, moved)
 	f.copyFile(moved, copied)
 	f.git("add", copied)
@@ -1721,16 +1519,10 @@ func TestADeletedObjectTheGateCannotReadStillEmitsADocument(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.write(gone, csharpFile(20))
 	f.commitAll("initial")
-	// A blobless partial clone has no local object for a deleted file, and the
-	// promisor fetch that `cat-file` then attempts fails offline. Removing the
-	// object is that condition, and the move detection has to skip the object
-	// rather than let the error escape and leave the run with no document.
 	blob := f.git("rev-parse", "HEAD:"+gone)
 	f.git("rm", "--quiet", gone)
 	f.removeLooseObject(blob)
 	f.touchLine(orderService, 62)
-	// An added path of some kind is what sends the move detection to read the
-	// deleted side at all.
 	f.write("docs/notes.md", "new file\n")
 	f.git("add", "docs/notes.md")
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
@@ -1749,14 +1541,9 @@ func TestRemovingASubmoduleStillEmitsADocument(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
-	// A gitlink's object id names a commit in another repository, so reading it
-	// as a blob fails. The move detection has to skip it rather than let the
-	// error escape and leave the run with no document at all.
 	f.addSubmoduleGitlink("vendor/lib")
 	f.removeSubmoduleGitlink("vendor/lib")
 	f.touchLine(orderService, 62)
-	// An added path of some kind is what sends the move detection to read the
-	// deleted side at all, and the gitlink is on that deleted side.
 	f.write("docs/notes.md", "new file\n")
 	f.git("add", "docs/notes.md")
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
@@ -1779,12 +1566,6 @@ func TestRemovedGitlinkNamingABlobDoesNotDropTheAddedFile(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(origin, csharpFile(20))
 	f.commitAll("initial")
-	// A gitlink's object id names a commit in another repository, so the move
-	// detection must not read it as content this repository deleted. Here the id
-	// is also a blob id in this repository, which is what tells the guard apart
-	// from the `cat-file` failure that otherwise hides its absence: read as a
-	// blob, the removed gitlink carries Origin.cs's content, and the brand-new
-	// file carrying that same content is dropped as a move and never scored.
 	f.addGitlink("vendor/lib", f.git("rev-parse", "HEAD:"+origin))
 	f.removeSubmoduleGitlink("vendor/lib")
 	f.copyFile(origin, copied)
@@ -1805,11 +1586,6 @@ func TestACleanFilterInTheRepositorysOwnConfigDoesNotHideTheChange(t *testing.T)
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
-	// The repo-local scope, which is where git-lfs and git-crypt install
-	// themselves, and which neither the environment scrub nor the pinned config
-	// files reach. The driver strips exactly what the edit below writes in, so
-	// git sees the two sides of the change as equal, prints no hunk at all, and
-	// the gate passes green having measured nothing.
 	f.configureCleanFilter()
 	f.touchLine(orderService, 62)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
@@ -1828,10 +1604,6 @@ func TestAProcessFilterInTheRepositorysOwnConfigIsNeverLaunched(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
-	// `filter.<name>.process` is the long-running protocol git prefers over
-	// `.clean` when both are set, and the half git-lfs actually installs. It has
-	// to be blanked beside `.clean`, or a repository that installs only this half
-	// still decides what the gate is allowed to see.
 	f.configureProcessFilter()
 	f.touchLine(orderService, 62)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
@@ -1850,10 +1622,6 @@ func TestARequiredCleanFilterInTheRepositorysOwnConfigStillMeasuresTheChange(t *
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
-	// `git lfs install --local` and git-crypt both mark their driver required.
-	// Blanking the driver and leaving the flag makes git abort the diff rather
-	// than pass the content through, so the gate would exit 1 on every run in
-	// the deployment it claims to support.
 	f.configureRequiredCleanFilter()
 	f.touchLine(orderService, 62)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
@@ -1872,9 +1640,6 @@ func TestAFilterNamedWithATrailingSpaceDoesNotBreakTheRun(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
-	// The gate reads the repository's filter keys and blanks each one. Split on
-	// whitespace, this name yields the fragment `.clean`, git refuses the
-	// resulting `-c`, and the run dies before it can diff anything.
 	f.configureFilterNamedWithATrailingSpace()
 	f.touchLine(orderService, 62)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
@@ -1893,10 +1658,6 @@ func TestAFilterNamedWithAnEqualsIsStillBlanked(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
-	// The subsection name is the repository's to choose and an attribute value
-	// can select one holding an `=`. Delivered as `-c filter.ev=il.clean=`, git
-	// splits on the first `=`, sets `filter.ev`, and the real driver empties the
-	// diff into a green run that measured nothing.
 	f.configureFilterNamedWithAnEquals()
 	f.touchLine(orderService, 62)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
@@ -1915,9 +1676,6 @@ func TestAnFsmonitorHookInTheRepositorysOwnConfigIsNeverRun(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
-	// The gate turns git's ownership check off with `-c safe.directory=*`, which
-	// it can only afford if no program the repository names gets executed.
-	// core.fsmonitor is one git runs to refresh the index on every diff.
 	marker := f.configureFsmonitorHook()
 	f.touchLine(orderService, 62)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
@@ -1940,9 +1698,6 @@ func TestADiffGitRefusesToPrintIsATypedDocumentNotAnEmptyStdout(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
-	// Base resolution reads commits and still succeeds, so the document exists
-	// and ADR 0008 requires it on stdout. The diff itself reads the old side's
-	// blob, which is gone, so git exits 128 before printing a patch.
 	blob := f.git("rev-parse", "HEAD:"+orderService)
 	f.touchLine(orderService, 62)
 	f.removeLooseObject(blob)
@@ -1967,23 +1722,11 @@ func TestHostileGitConfigAndEnvironmentDoNotHideTheChange(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// Each of these reshapes `git diff` into something the hunk parser reads as
-	// no change at all: colour codes ahead of every header, a w/ prefix instead
-	// of b/, no prefix, or an external driver that prints nothing. A gate that
-	// measures nothing passes, so every one of them is a silent green build.
 	f.git("config", "color.ui", "always")
 	f.git("config", "diff.mnemonicPrefix", "true")
 	f.git("config", "diff.noprefix", "true")
 	f.git("config", "diff.external", externalDiffScript(t))
 
-	// What this case pins is the repo-local half, the four settings above, each
-	// of which configOverrides and diffFlags outrank. The two environment
-	// payloads ride along rather than carrying the case: `--no-ext-diff` refuses
-	// GIT_EXTERNAL_DIFF on its own, and a `-c filter.hide.clean=` outranks the
-	// same key arriving through GIT_CONFIG_PARAMETERS. The environment payload no
-	// flag can answer is a repository redirect, and
-	// TestGitDirPointedAtAnotherRepositoryDoesNotHideTheChange is what pins the
-	// scrub with one.
 	result := f.runWithEnv(
 		"GIT_EXTERNAL_DIFF="+externalDiffScript(t),
 		cleanFilterParameters(t),
@@ -2006,11 +1749,6 @@ func TestGitDirPointedAtAnotherRepositoryDoesNotHideTheChange(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// These outrank the working directory the gate runs git in, so every
-	// question it asks would be answered by a second, unchanged repository: the
-	// root resolves there, the diff comes back empty, and the run passes with no
-	// changed methods. git exports them into every hook it runs, so they are
-	// present in the exact deployment this gate is built for.
 	other := newFixture(t, "main")
 	other.write("src/Ordering/Elsewhere.cs", csharpFile(20))
 	other.commitAll("initial")
@@ -2030,10 +1768,6 @@ func TestATextconvDriverDoesNotHideTheChange(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
-	// A textconv driver replaces both sides of the diff with whatever it prints,
-	// and this one prints the same constant for every input, so every hunk header
-	// disappears. The attribute lives in the repository, ahead of anything the
-	// run can pass on the command line, and only `--no-textconv` answers it.
 	f.write(".gitattributes", "*.cs diff=hide\n")
 	f.commitAll("initial")
 	f.git("config", "diff.hide.textconv", constantTextconvScript(t))
@@ -2054,8 +1788,6 @@ func TestLinesDeletedFromInsideAMethodChangeIt(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
-	// A pure deletion produces a zero-length new-side hunk, "@@ -62,2 +61,0 @@".
-	// Nothing was added, but Cancel is not the method it was.
 	f.deleteLines(orderService, 62, 63)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
@@ -2076,8 +1808,6 @@ func TestFirstLineOfAFileDeletedChangesTheMethodThatStartsThere(t *testing.T) {
 	f := newFixture(t, "main")
 	f.write(head, csharpFile(20))
 	f.commitAll("initial")
-	// git reports the insertion point of a deletion at the top of a file as 0,
-	// which is not a line. Line 1 is the nearest line that exists.
 	f.deleteLines(head, 1, 1)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: head, lines: spanCoverage(2, 3, 2)}))
@@ -2095,9 +1825,6 @@ func TestAnAddedLineThatLooksLikeAFileHeaderDoesNotStealLaterHunks(t *testing.T)
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
-	// An added line whose own text starts with "++ " renders as "+++ fake".
-	// Reading that as a file header would reattribute the file's later hunks to
-	// a path that does not exist, and Cancel would go unscored under a pass.
 	f.write(orderService, replaceLine(f.read(orderService), 45, "++ fake"))
 	f.touchLine(orderService, 62)
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
@@ -2117,9 +1844,6 @@ func TestCoverageReportOutsideAResultsDirectoryIsNotFound(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// Discovery anchors on a TestResults directory. A report at the
-	// repo root is not one, and quietly reading it would make the gate's idea
-	// of coverage depend on stray files.
 	f.write("coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -2134,10 +1858,6 @@ func TestCoverageReportOutsideAResultsDirectoryIsNotFound(t *testing.T) {
 func TestTwoOverloadsDeclaredOnOneLineAreBothScored(t *testing.T) {
 	t.Parallel()
 	const calc = "src/Ordering/Calc.cs"
-	// `public class C { public int F(int x) => 1; public int F(string x) => 2; }`
-	// is valid C#. The two overloads share a file, a name and a line range, and
-	// only their parameter lists tell them apart, so a duplicate test that reads
-	// name alone calls this an extractor contract violation and scores neither.
 	first := span{File: calc, Name: "Calc.F", Signature: "(int)", StartLine: 14, EndLine: 14, Complexity: 1}
 	second := span{File: calc, Name: "Calc.F", Signature: "(string)", StartLine: 14, EndLine: 14, Complexity: 2}
 
@@ -2152,8 +1872,6 @@ func TestTwoOverloadsDeclaredOnOneLineAreBothScored(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(calc), []span{first, second}),
 	}
 
-	// Two rows under one name, carrying the two complexities and so the two
-	// scores. Collapsing them into one would lose whichever the map dropped.
 	f.run().assertMatches(t, "same_line_two_overloads", 0, f.baseLabel("main"),
 		"0 of 2 changed methods over CRAP threshold 30, worst score 2.00\n")
 }
@@ -2164,9 +1882,6 @@ func TestChangedMethodInAUTF16SourceFileIsStillMeasured(t *testing.T) {
 	vanish := span{File: wide, Name: "Wide.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
 
 	f := newFixture(t, "main")
-	// UTF-16 puts a NUL beside every ASCII character, so git autodetects the file
-	// as binary and prints "Binary files differ" in place of any hunk header. The
-	// gate would then see no touched line, measure nothing, and pass.
 	f.writeUTF16LE(wide, csharpFile(20))
 	f.commitAll("initial")
 	f.writeUTF16LE(wide, replaceLine(csharpFile(20), 7, "// line 7, edited"))
@@ -2185,8 +1900,6 @@ func TestGitattributesMarkingSourceUndiffableDoesNotHideTheChange(t *testing.T) 
 	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
-	// `-diff` lives in the repository, ahead of anything the run can pass on the
-	// command line, and it suppresses every hunk header for the paths it names.
 	f.write(".gitattributes", "*.cs -diff\n")
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
@@ -2214,11 +1927,6 @@ func TestCleanFilterInjectedThroughTheEnvironmentDoesNotHideTheChange(t *testing
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// The filter reverses the edit and leaves the two sides equal, and the
-	// GIT_CONFIG_COUNT family is the other way an ambient environment installs
-	// one. Two answers hold it, the scrub that drops the variables and the
-	// blanking `-c` that outranks the key wherever it came from, so this case
-	// goes red only if both are gone.
 	result := f.runWithEnv(cleanFilterEnv(t)...)
 
 	result.assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
@@ -2238,10 +1946,6 @@ func TestGlobalGitConfigTheRunCannotParseDoesNotStopTheMeasurement(t *testing.T)
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// Dropping git's namespace from the environment is not enough on its own:
-	// with GIT_CONFIG_GLOBAL gone, git reads ~/.gitconfig instead. This one it
-	// cannot read at all, which no `-c` override and no driver blanking can
-	// answer, so the run reaches a diff only by never opening the file.
 	result := f.runWithEnv(unparseableGlobalConfigHome(t)...)
 
 	result.assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
@@ -2254,10 +1958,6 @@ func TestChangedMethodInADirectoryWhoseNameHoldsASpaceIsStillMeasured(t *testing
 	vanish := span{File: spaced, Name: "A.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
 
 	f := newFixture(t, "main")
-	// git appends a TAB to the name on a "+++" line whenever the path holds a
-	// space. Read literally the header names "My Project/A.cs\t", whose extension
-	// is not .cs, so the language table locates no extractor for it and every
-	// changed method in the file goes unscored under a pass.
 	f.write(spaced, csharpFile(20))
 	f.commitAll("initial")
 	f.touchLine(spaced, 7)
@@ -2278,10 +1978,6 @@ func TestChangedMethodInAQuotedPathHoldingASpaceIsStillMeasured(t *testing.T) {
 	vanish := span{File: awkward, Name: "Awkward.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
 
 	f := newFixture(t, "main")
-	// Both at once, which is the worse half of the same defect: the double quote
-	// makes git quote the name and the space makes it append a TAB after the
-	// closing quote, so unquoting the field whole fails and the run would exit 1
-	// with nothing on stdout at all.
 	f.write(awkward, csharpFile(20))
 	f.commitAll("initial")
 	f.touchLine(awkward, 7)
@@ -2302,9 +1998,6 @@ func TestChangedMethodInAPathGitQuotesIsStillMeasured(t *testing.T) {
 	vanish := span{File: weird, Name: "Weird.Vanish", StartLine: 5, EndLine: 9, Complexity: 4}
 
 	f := newFixture(t, "main")
-	// A path holding a double quote is one git quotes and escapes whatever
-	// core.quotePath says, so no -c flag can turn this off. Read literally the
-	// header names a path no extractor was given and no report ever matched.
 	f.write(weird, csharpFile(20))
 	f.commitAll("initial")
 	f.touchLine(weird, 7)
@@ -2325,9 +2018,6 @@ func TestMissingCoverageFailureStillReportsThePathsTheWalkCouldNotRead(t *testin
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// The one directory that could have held a report is unreadable. Reporting
-	// "none found" without saying so reads as a repo with no coverage at all,
-	// rather than one whose coverage the run could not reach.
 	f.denyRead("TestResults/locked")
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
@@ -2344,16 +2034,6 @@ func TestLibraryCoveredByTwoTestProjectsIsScoredOnTheUnion(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// spanCoverage cannot express two reports that each hit a different subset
-	// of Cancel's three lines, so the coverage lines are written out inline.
-	// The unit report alone leaves Cancel at one line of three, scoring 5.67,
-	// and the integration report alone at two of three, scoring 3.33, so the
-	// golden's 3.00 is the union and nothing else.
-	//
-	// The reports sit in per-project TestResults directories, the layout
-	// `dotnet test` writes when it is not given --results-directory. Where
-	// they sit makes no difference to the union; only that both are consumed
-	// does.
 	f.write("tests/Unit.Tests/TestResults/run/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 1}, {number: 62, hits: 0}, {number: 63, hits: 0}}}))
 	f.write("tests/Integration.Tests/TestResults/run/coverage.cobertura.xml", cobertura(f.root,
@@ -2373,11 +2053,6 @@ func TestCoverageReportStampedInEpochMillisecondsIsRefused(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// A units error a producer emitting epoch milliseconds writes, coverage.py's
-	// Cobertura writer among several Java ones. Read as seconds it lands the
-	// parsed instant tens of thousands of years out, so a run comparing only
-	// against newest.At would never see this report as stale and would score
-	// Cancel against it.
 	f.write("TestResults/coverage.cobertura.xml", coberturaStamped("1767225600000", f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -2385,8 +2060,6 @@ func TestCoverageReportStampedInEpochMillisecondsIsRefused(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// No crap table appears: no method is scored against a report the run
-	// refused.
 	f.run().assertMatches(t, "coverage_timestamp_ahead_of_now", 1, f.baseLabel("main"),
 		"coverage report TestResults/coverage.cobertura.xml carries a timestamp \"1767225600000\" more than 24h ahead of now; it must be epoch seconds, or the clock on this machine is behind the one that wrote it\n")
 }
@@ -2397,9 +2070,6 @@ func TestCoverageReportStampedJustBeyondToleranceIsRefused(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// 25h ahead of now, one hour past the 24h tolerance the gate allows: a clock-skewed CI
-	// agent rather than a units error, and what pins the constant as a boundary
-	// rather than a magic number only large enough to catch milliseconds.
 	stamp := stampAt(time.Now().Add(25 * time.Hour))
 	f.write("TestResults/coverage.cobertura.xml", coberturaStamped(stamp, f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
@@ -2420,9 +2090,6 @@ func TestCoverageReportStampedInsideToleranceIsScored(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// 23h ahead of now, inside the 24h tolerance the gate allows. An implementation refusing
-	// every report stamped anywhere ahead of now, rather than only past the
-	// tolerance, fails here.
 	f.write("TestResults/coverage.cobertura.xml", coberturaStamped(stampAt(time.Now().Add(23*time.Hour)), f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -2440,10 +2107,6 @@ func TestNamedCoverageReportStampedFarAheadIsRefusedToo(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// Outside any TestResults directory, so discovery cannot reach it: the only
-	// way this report is read is by naming it, which pins the future-timestamp
-	// rule as running for a named report too, unlike staleness, which a named
-	// report can only be refused for and never skipped.
 	f.write("artifacts/coverage.xml", coberturaStamped("1767225600000", f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -2501,11 +2164,6 @@ func TestCoverageReportStampedExactlyAtTheFloorIsScored(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// 2000-01-01T00:00:00Z exactly, the oldest instant the floor admits. A
-	// guard refusing everything at or below the floor, rather than only below
-	// it, fails here. The source carries the same instant so the report is not
-	// stale against it, which is what leaves the floor as the only rule the
-	// case can turn on.
 	edited := time.Unix(946684800, 0)
 	f.setModTime(orderService, edited)
 	f.write("TestResults/coverage.cobertura.xml", coberturaStamped("946684800", f.root,
@@ -2525,9 +2183,6 @@ func TestFutureStampedReportBesideAFreshOneStillRefuses(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// Issue 32 notes a report stamped implausibly far ahead would win any
-	// ranking it took part in. This pins that it is refused outright instead of
-	// preferred over the fresh report discovered beside it.
 	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml", coberturaStamped(freshStamp(), f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.write("tests/Beta.Tests/TestResults/run/coverage.cobertura.xml", coberturaStamped("1767225600000", f.root,
@@ -2547,8 +2202,6 @@ func TestCoverageReportOlderThanTheCodeItDescribesIsRefused(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// A year behind the source's own mtime, derived from it rather than fixed,
-	// so the case cannot be turned green by the machine's clock.
 	f.write("TestResults/coverage.cobertura.xml", coberturaStamped(f.editStamp(orderService, -365*24*time.Hour), f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -2556,8 +2209,6 @@ func TestCoverageReportOlderThanTheCodeItDescribesIsRefused(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// No crap table appears: no method is scored against a report the run
-	// refused.
 	f.run().assertMatches(t, "coverage_stale", 1, f.baseLabel("main"),
 		"coverage report TestResults/coverage.cobertura.xml was written before src/Ordering/OrderService.cs was last edited; clear stale TestResults directories and re-run the tests\n")
 }
@@ -2568,15 +2219,8 @@ func TestNamedCoverageReportIsUsedAndDiscoveryIsIgnored(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// Discoverable, and it holds a fourth instrumentable line the named report
-	// has never heard of. Consulting discovery instead of the named report
-	// scores Cancel 12.00, and consulting both unions to two lines of four and
-	// scores it 4.13. Only replacement scores it 3.33. Covering the same lines
-	// here would leave the two indistinguishable, since the union of a covered
-	// line and an uncovered one is covered either way.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 4, 0)}))
-	// Named, outside any TestResults directory so discovery cannot reach it.
 	f.write("artifacts/coverage.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -2596,11 +2240,6 @@ func TestNamingAReportSkipsDiscoveryEntirely(t *testing.T) {
 	f.touchLine(orderService, 62)
 	f.write("artifacts/coverage.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
-	// Two traps, both load-bearing setup rather than leftovers. The stale
-	// discoverable report is refused as coverage_stale by any run that reaches
-	// discovery, so only a run that skips the walk can reach the golden. The
-	// unreadable directory is what makes the golden's empty skipped_paths mean
-	// no walk happened rather than a walk that read everything.
 	f.write("TestResults/run/coverage.cobertura.xml",
 		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
 			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
@@ -2628,10 +2267,6 @@ func TestNamedReportReachedThroughASymlinkIsNamedRepoRelative(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// The typed path reaches a directory inside the repo through a symlink
-	// beside it. Relativizing what the developer typed rather than what it
-	// resolves to would name the report link/coverage.xml, a spelling no other
-	// diagnostic in the document uses for the same file.
 	symlinkedDir(t, filepath.Join(f.root, "artifacts"), filepath.Join(f.root, "link"))
 	f.runWithArgs("--coverage", "link/coverage.xml").assertMatches(
 		t, "named_coverage_stale", 1, f.baseLabel("main"),
@@ -2645,10 +2280,6 @@ func TestStaleReportIsRefusedAheadOfItsErasedSourceRoot(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// A report that is both stale and carries the DeterministicReport=true
-	// placeholder. Staleness runs ahead of resolution, so the report is refused
-	// for its age; a run that resolved first would send the developer to fix
-	// the MSBuild property on a report they are about to regenerate anyway.
 	f.write("TestResults/coverage.cobertura.xml",
 		renderCobertura(f.editStamp(orderService, -time.Second), nil,
 			coverageClass{filename: "/_/src/Ordering/OrderService.cs", lines: spanCoverage(61, 3, 3)}))
@@ -2766,17 +2397,7 @@ func TestMethodWhoseOnlyCoverageWasSupersededIsUnknownNotMisscored(t *testing.T)
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 	f.touchLine(ghost, 7)
-	// Both files edited on the same second, so the stale report is stale
-	// against whichever of them the newest edit resolves to.
 	f.setModTime(ghost, f.modTime(orderService))
-	// The fresh report knows only OrderService.cs. Ghost.cs was covered by the
-	// superseded report alone, so skipping that report leaves Ghost.Vanish with
-	// no coverage at all rather than with a second file's lines standing in for
-	// it. Every other case for issue 32 gives both reports the same class, where
-	// the fresh one backfills whatever the skipped one held; this is the shape
-	// where dropping a report costs the run coverage, and the cost is loud, an
-	// unknown row and the skipped report named beside it, rather than a method
-	// scored against lines that are not its own.
 	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml",
 		coberturaStamped(freshStamp(), f.root,
 			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
@@ -2799,15 +2420,6 @@ func TestSupersededNameIsNotCarriedIntoALaterReportFailure(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// A superseded report the loader has already skipped, a directory the walk
-	// could not enter, and a second report it cannot parse at all. The run
-	// exits 1 with nothing scored, so there is no understated coverage for
-	// either skipped name to explain and the document carries the fault that
-	// stopped the run alone: skipped_paths stays empty rather than listing a
-	// leftover TestResults directory or an unreadable one beside a broken
-	// report as though any of them were why the score is short. Both producers
-	// of skipped_paths are present, since suppressing only the loader's names
-	// would put one field under two rules on one path.
 	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml",
 		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
 			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
@@ -2831,12 +2443,6 @@ func TestSupersededReportAndUnreadablePathAreOneSortedSkippedList(t *testing.T) 
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// The two reasons a path lands in skipped_paths at once, a directory the
-	// walk could not enter and a report a fresher run superseded. They are
-	// produced by different code at different times and merge into one list,
-	// so the run pins that the list is one sorted sequence: the unreadable
-	// directory here sorts after the superseded report, which appending
-	// discovery's skips and then the loader's would reverse.
 	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml",
 		coberturaStamped(freshStamp(), f.root,
 			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
@@ -2859,13 +2465,6 @@ func TestEveryDiscoveredReportStaleRefusesNamingThemAll(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// Both reports stale by one second, so nothing survives to skip past:
-	// unlike TestSupersededDiscoveredReportIsSkippedAndTheFreshOneScores, there
-	// is no fresh report to fall back on and the run has to refuse rather than
-	// pass silently with an empty crap table. The single-report shape of this
-	// message is already pinned by
-	// TestCoverageReportOlderThanTheCodeItDescribesIsRefused and its golden
-	// coverage_stale.toon, which this case leaves untouched.
 	f.write("tests/Alpha.Tests/TestResults/run/coverage.cobertura.xml",
 		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
 			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
@@ -2928,8 +2527,6 @@ func TestStalenessIsJudgedOnEveryNamedReportNotJustTheFirst(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// The remedy names the report the developer passed, since clearing
-	// TestResults would not replace a file they generated themselves.
 	f.runWithArgs("--coverage", "artifacts/unit.xml", "--coverage", "artifacts/integration.xml").assertMatches(
 		t, "named_coverage_stale_second", 1, f.baseLabel("main"),
 		"coverage report artifacts/integration.xml was written before src/Ordering/OrderService.cs was last edited; "+
@@ -2942,10 +2539,6 @@ func TestNamedReportOutsideTheRepoIsRead(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// A CI job that collects coverage into a workspace directory beside the
-	// checkout, rather than under it. Its <sources> still anchors every class
-	// inside the repo, so the lines it records are scored like any other
-	// report's.
 	typed := filepath.Join(t.TempDir(), "coverage.xml")
 	writeAbsolute(t, typed, coberturaStamped(freshStamp(), f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 4, 2)}))
@@ -2964,10 +2557,6 @@ func TestStaleNamedReportOutsideTheRepoIsNamedAbsolutely(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// The same out-of-repo report, one second stale. It has no repo-relative
-	// form, so the refusal names it by the absolute path the containment test
-	// weighed, which is the one spelling a document carrying no working
-	// directory can be resolved against.
 	typed := filepath.Join(t.TempDir(), "coverage.xml")
 	writeAbsolute(t, typed, coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 4, 2)}))
@@ -2990,11 +2579,6 @@ func TestRelativeNamedReportOutsideTheRepoIsNamedAbsolutely(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// The developer runs the gate from a subdirectory and points --coverage at
-	// a sibling of the checkout by a path relative to where they stand. The
-	// document carries no working directory, so quoting what they typed would
-	// hand a consumer a name it cannot resolve, and the same file named from
-	// the repo root would print a different string.
 	outside := filepath.Join(t.TempDir(), "coverage.xml")
 	writeAbsolute(t, outside, coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 4, 2)}))
@@ -3022,10 +2606,6 @@ func TestNamedReportOutsideTheRepoIsNamedPastItsSymlink(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// Two spellings of one out-of-repo report, the link and its target. The
-	// document names the same file the same way whichever one reaches
-	// --coverage, so the refusal quotes the target rather than the link the
-	// developer walked in through.
 	dir := t.TempDir()
 	realDir := filepath.Join(dir, "real")
 	link := symlinkedDir(t, realDir, filepath.Join(dir, "link"))
@@ -3051,14 +2631,6 @@ func TestReportStampedAtTheSecondTheSourceWasEditedIsFresh(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// The Cobertura timestamp attribute has second resolution and cannot
-	// express anything finer, so equal seconds is not stale. Stamping the
-	// report at exactly the source's truncated mtime pins that boundary
-	// instead of leaving it to how fast the case ran. The half second the
-	// fixture puts on the mtime is what makes the truncation load-bearing: a
-	// gate that compared untruncated times would read the source as newer than
-	// the report, and this case would go red on any filesystem rather than only
-	// on one whose own stamping happened to carry nanoseconds.
 	f.setModTime(orderService, f.modTime(orderService).Add(500*time.Millisecond))
 	f.write("TestResults/coverage.cobertura.xml", coberturaStamped(f.editStamp(orderService, 0), f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 1)}))
@@ -3077,7 +2649,6 @@ func TestReportStampedOneSecondBeforeTheEditIsStale(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// One second the other side of the boundary the case above sits on.
 	f.write("TestResults/coverage.cobertura.xml",
 		coberturaStamped(f.editStamp(orderService, -time.Second), f.root,
 			coverageClass{filename: orderService, lines: spanCoverage(61, 3, 3)}))
@@ -3098,11 +2669,6 @@ func TestStalenessJudgesTheReportAgainstTheNewestChangedFile(t *testing.T) {
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 	f.touchLine(orderFile, 62)
-	// Order.cs is the older edit and OrderService.cs the newer, forced rather
-	// than left to a filesystem that stamps both within one second. The report
-	// sits between them, so it is fresh for one changed file and stale for the
-	// other: only the greatest mtime refuses it, and the message names that
-	// file.
 	edited := f.modTime(orderService)
 	f.setModTime(orderFile, edited.Add(-10*time.Second))
 	f.setModTime(orderService, edited)
@@ -3129,11 +2695,6 @@ func TestChangedFilesEditedInTheSameSecondNameTheSmallestPath(t *testing.T) {
 	f.touchLine(orderService, 62)
 	f.touchLine(orderFile, 62)
 	f.touchLine(pricingFile, 62)
-	// Equal mtimes, so no file is newer and the answer rests entirely on the
-	// order the newest-edit scan walks them in. join.Changed drains its spans
-	// out of a Go map before sorting them, so without that sort the order is
-	// arbitrary and the message names whichever file the runtime happened to
-	// yield first. Order.cs, the smallest path, is the only stable answer.
 	edited := f.modTime(orderService)
 	for _, file := range []string{orderService, orderFile, pricingFile} {
 		f.setModTime(file, edited)
@@ -3159,9 +2720,6 @@ func TestCoverageFlagRepeatedUnionsEveryNamedReport(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// Two named reports each hitting a different subset of Cancel's lines, so
-	// only consuming both reaches two of three. Both spellings of the flag are
-	// exercised here, since one parse site now serves them.
 	f.write("artifacts/unit.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 1}, {number: 62, hits: 0}, {number: 63, hits: 0}}}))
 	f.write("artifacts/integration.xml", cobertura(f.root,
@@ -3190,8 +2748,6 @@ func TestAbsoluteNamedReportIsNamedRepoRelativeInTheDocument(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// ADR 0013: a human-typed path resolves against the process cwd, then
-	// relativizes for the name the document carries.
 	f.runWithArgs("--coverage", filepath.Join(f.root, "artifacts", "coverage.xml")).assertMatches(
 		t, "named_coverage_stale", 1, f.baseLabel("main"),
 		"coverage report artifacts/coverage.xml was written before src/Ordering/OrderService.cs was last edited; "+
@@ -3213,9 +2769,6 @@ func TestRelativeNamedReportResolvesAgainstTheWorkingDirectory(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// ADR 0013: the path resolves against the process cwd, which here is a
-	// subdirectory rather than the repo root. Joining against the root instead
-	// lands outside the repo, where there is no report to read at all.
 	f.runFromWithArgs("tests", "--coverage", "../artifacts/from-subdir.xml").assertMatches(
 		t, "named_relative_stale", 1, f.baseLabel("main"),
 		"coverage report artifacts/from-subdir.xml was written before src/Ordering/OrderService.cs was last edited; "+
@@ -3233,10 +2786,6 @@ func TestNamedReportThatIsNotOnDiskIsRefusedAsUnparseable(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// A path the developer typed that names nothing is a report the gate
-	// cannot read, not a repo with no coverage, so it fails as unparseable and
-	// quotes the spelling they typed rather than the missing-report search
-	// location.
 	f.runWithArgs("--coverage", "artifacts/typo.xml").assertMatches(
 		t, "named_report_absent", 1, f.baseLabel("main"),
 		"could not parse coverage report artifacts/typo.xml; open: no such file or directory\n")
@@ -3253,12 +2802,6 @@ func TestAbsentNamedReportUnderASymlinkedRootIsStillNamedRepoRelative(t *testing
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// The absolute path names nothing, so there is no report to resolve
-	// symlinks through, and it reaches the repo through one: /tmp and /var are
-	// symlinks on macOS, so this is the ordinary shape of an absolute path a
-	// developer types there. Relativizing it unresolved against the resolved
-	// root escapes for the indirection alone, and ADR 0011 has the document
-	// naming paths repo-relative whenever they have that form.
 	link := symlinkedDir(t, f.root, filepath.Join(t.TempDir(), "link"))
 	f.runWithArgs("--coverage", filepath.Join(link, "artifacts", "typo.xml")).assertMatches(
 		t, "named_report_absent", 1, f.baseLabel("main"),
@@ -3278,13 +2821,6 @@ func TestNamedReportThroughAFileComponentIsStillNamedRepoRelative(t *testing.T) 
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// The typo puts a filename where a directory belongs, which the filesystem
-	// answers with ENOTDIR rather than with an absence. The path still reaches
-	// the repo through a symlink, as an absolute path typed on macOS does, so a
-	// resolution that stops at the first component naming no directory leaves
-	// the link unresolved, the document escapes the repo for the indirection
-	// alone and quotes a machine-specific absolute path where ADR 0011 asks for
-	// a repo-relative one.
 	link := symlinkedDir(t, f.root, filepath.Join(t.TempDir(), "link"))
 	f.runWithArgs("--coverage", filepath.Join(link, "artifacts", "coverage.xml", "typo.xml")).assertMatches(
 		t, "named_report_through_a_file", 1, f.baseLabel("main"),
@@ -3304,9 +2840,6 @@ func TestAChangedFileMissingFromTheWorkingTreeFailsInsideTheDocument(t *testing.
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// A sparse checkout: the file is tracked and its edit is in the diff, so
-	// the changed method is known, but nothing of it is on disk for the
-	// staleness rule to read an mtime off.
 	f.git("update-index", "--skip-worktree", orderService)
 	absent := filepath.Join(f.root, filepath.FromSlash(orderService))
 	if err := os.Remove(absent); err != nil {
@@ -3317,19 +2850,12 @@ func TestAChangedFileMissingFromTheWorkingTreeFailsInsideTheDocument(t *testing.
 		t.Fatalf("%s is still readable, which the case needs it not to be", orderService)
 	}
 
-	// Issue 31: the base resolved and the changed method is counted, so the
-	// document is establishable and the failure belongs inside it. The message
-	// names the source path rather than the absolute one os.Stat's own error
-	// carries, which is what ADR 0011 asks of every path the document prints.
 	f.runWithArgs().assertMatches(t, "changed_file_unreadable", 1, f.baseLabel("main"),
 		"could not read "+orderService+" to date it against the coverage report: no such file or directory\n")
 }
 
 func TestCoverageFlagTakesAValueBeginningWithOneDashAsAPath(t *testing.T) {
 	t.Parallel()
-	// TestScopeUsageErrors refuses the two-dash spelling alone. The gate's own
-	// flags are all long ones, so a single dash names no flag it could be
-	// confused with, and a report really can be written under a name like this.
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
@@ -3341,9 +2867,6 @@ func TestCoverageFlagTakesAValueBeginningWithOneDashAsAPath(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// The scored row is what says the report was read: refused, the run would
-	// carry a usage error, and ignored, Cancel would score against no coverage
-	// at all.
 	f.runWithArgs("--coverage", "-report.xml").assertMatches(t, "named_coverage_report", 0,
 		f.baseLabel("main"), "0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
@@ -3360,10 +2883,6 @@ func assertUsageError(t *testing.T, result runResult, stderr string) {
 		result.exitCode, result.stdout, "", result.stderr, stderr)
 }
 
-// The cases below are issue 16: the three exit-1 diagnostics ADR 0012
-// names, plus regression coverage for the resolution rules the tracer already
-// satisfied before this issue landed.
-
 func TestNestedSolutionLayoutScoresCorrectly(t *testing.T) {
 	t.Parallel()
 	const nested = "src/Services/Ordering/Api/OrderService.cs"
@@ -3375,8 +2894,6 @@ func TestNestedSolutionLayoutScoresCorrectly(t *testing.T) {
 	f.commitAll("initial")
 	f.touchLine(nested, 45)
 	f.touchLine(nested, 62)
-	// <source> is the repo root itself, several directories above the class,
-	// which is the shape a nested solution's coverlet run actually produces.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: nested, lines: append(spanCoverage(42, 10, 10), spanCoverage(61, 3, 3)...)}))
 	f.stub = stubConfig{
@@ -3395,12 +2912,6 @@ func TestReportBuiltInAnotherCheckoutFailsNamingTheMismatch(t *testing.T) {
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 
-	// A second checkout of the same source tree, entirely outside this
-	// fixture's repo root. Coverlet's <source> names it faithfully; nothing
-	// about the report is malformed, it was just measured against a different
-	// working tree than the one being gated. The temp root is resolved once, so
-	// the expected path below is built by joining rather than by running the
-	// gate's own resolver over the answer.
 	otherCheckout := resolvedPath(t, t.TempDir())
 	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
 	writeAbsolute(t, classPath, csharpFile(80))
@@ -3424,16 +2935,6 @@ func TestReportSourceMisCasingTheRepoRootPrefixIsMeasuredInside(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// The same tree the passing single-method case measures, with the report's
-	// <source> naming the repo root in another case. Nothing was built
-	// elsewhere: os.SameFile confirms the two spellings reach one directory, so
-	// the class sits where a correctly spelled <source> would have put it and
-	// the score is the one that case gets. Asserting that case's own golden is
-	// what makes "exactly what the correctly spelled one scores" hold by
-	// construction rather than by two files that happen to match today. Refusing this as
-	// coverage_outside_repo would blame a location for a spelling, and unlike
-	// --files there is nobody to send back to the keyboard, because the path
-	// came out of whatever the test runner was invoked with.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(sameDirectoryUpperCased(t, f.root),
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -3452,12 +2953,6 @@ func TestNamedReportBuiltInAnotherCheckoutIsQuotedAbsolutely(t *testing.T) {
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 
-	// The same wrong-checkout report as the case above, reaching the gate on
-	// --coverage from outside the repo instead of through discovery. The
-	// resolution diagnostics take the report's display name, so this is where
-	// the absolute spelling has to survive. Relativizing an out-of-repo path
-	// would quote a ../ chain climbing out of the root, which names no file the
-	// developer can look at.
 	otherCheckout := resolvedPath(t, t.TempDir())
 	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
 	writeAbsolute(t, classPath, csharpFile(80))
@@ -3529,12 +3024,6 @@ func TestClassWithNoFilenameDoesNotSuppressTheOutsideRepoDiagnostic(t *testing.T
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 
-	// The same other-checkout report, plus a malformed class carrying no
-	// filename and a second <source> inside the repo root. Joining nothing
-	// onto that source names src/ itself, a directory that resolves inside the
-	// root, so an empty filename has to contribute no evidence rather than
-	// stand in for a class that resolved. The real class resolves under
-	// neither src/ nor anything else in this repo.
 	otherCheckout := resolvedPath(t, t.TempDir())
 	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
 	writeAbsolute(t, classPath, csharpFile(80))
@@ -3561,12 +3050,6 @@ func TestReportReachedThroughASymlinkQuotesThePathItResolvedTo(t *testing.T) {
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 
-	// The report's <source> reaches a second checkout through a symlink, so
-	// the path the join builds and the path it resolves to differ by more than
-	// whatever indirection the temp directory happens to carry. The diagnostic
-	// quotes the resolved one, which is the path the gate actually compared
-	// against the repo root, and the expectation below is written out rather
-	// than recomputed with the resolver the gate uses.
 	base := resolvedPath(t, t.TempDir())
 	checkout := filepath.Join(base, "checkout")
 	classPath := filepath.Join(checkout, filepath.FromSlash(orderService))
@@ -3593,15 +3076,6 @@ func TestClassFilenameNamingNoFileDoesNotSuppressTheOutsideRepoDiagnostic(t *tes
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 
-	// Four directory-shaped filenames, none carved out by spelling: each one
-	// joins onto a <source> like any other filename and is refused for what it
-	// resolves to. "." names the in-root <source> directory itself, ".." the
-	// directory above it, "../.." the repo root off the deepest <source> here,
-	// and "/" resolves to the filesystem root, outside. Reading any of them as
-	// a placed class would let one malformed element stand in for the real
-	// class, which resolved in another checkout entirely, and suppress the
-	// diagnostic. The lines each one carries would score a file, so a
-	// regression here is a wrong number rather than a missing one.
 	otherCheckout := resolvedPath(t, t.TempDir())
 	classPath := filepath.Join(otherCheckout, filepath.FromSlash(orderService))
 	writeAbsolute(t, classPath, csharpFile(80))
@@ -3630,11 +3104,6 @@ func TestClassFilenameClimbingBackIntoTheRootScores(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// A filename that starts with ".." but names a real file once joined: the
-	// <source> is the class's own directory and the filename climbs out of it
-	// and back in. It is not the ".." case, it names a file, and reading the
-	// two leading characters rather than what the join resolves to would drop
-	// every class a multi-project solution writes this way.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(filepath.Join(f.root, "src", "Ordering"),
 		coverageClass{filename: "../Ordering/OrderService.cs", lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -3652,11 +3121,6 @@ func TestTwoClassesOnOneFileInOneReportAreUnioned(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// coverlet writes one <class> per class, so a file holding two of them
-	// appears twice in the same report, each element listing only its own
-	// lines. Cancel's three lines are split across the pair, so letting the
-	// second element replace the first rather than fold into it would score
-	// the method on one line instead of three.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: []coverageLine{{number: 61, hits: 4}, {number: 62, hits: 0}}},
 		coverageClass{filename: orderService, lines: []coverageLine{{number: 63, hits: 1}}}))
@@ -3676,11 +3140,6 @@ func TestReportMeasuredAgainstAContainerMountFailsNamingTheMismatch(t *testing.T
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 
-	// dotnet test ran in a container with the repo bind-mounted, and the gate
-	// runs on the host where that mount does not exist. This is the <source>
-	// coverlet actually writes on Unix, "/", with the whole mount path carried
-	// in the filename, so no candidate resolves anywhere at all and the report
-	// still has to be named rather than presenting as unattributable methods.
 	mounted := filepath.Join(t.TempDir(), "srv", "repo", filepath.FromSlash(orderService))
 	f.write("TestResults/coverage.cobertura.xml", cobertura("/",
 		coverageClass{
@@ -3705,11 +3164,6 @@ func TestRelativeSourceIsRefusedRatherThanResolvedAgainstTheWorkingDirectory(t *
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// A <source> that is not absolute, joined onto a relative filename, names
-	// exactly the file the gate would score if it resolved candidates against
-	// its own working directory, which is the repo root. ADR 0012 resolves
-	// nothing that way, because the report would then be scored from a path it
-	// never named, so the report places nothing and is named instead.
 	f.write("TestResults/coverage.cobertura.xml", cobertura("src",
 		coverageClass{filename: "Ordering/OrderService.cs", lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -3717,9 +3171,6 @@ func TestRelativeSourceIsRefusedRatherThanResolvedAgainstTheWorkingDirectory(t *
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// The candidate is relative, so the message marks it as anchored nowhere
-	// rather than quoting a string the reader would take for a resolved path
-	// inside this repo.
 	example := "src/Ordering/OrderService.cs"
 	root := resolvedPath(t, f.root)
 	f.run().assertMatchesWith(t, "coverage_outside_repo_unanchored", 1, f.baseLabel("main"),
@@ -3733,11 +3184,6 @@ func TestReportWithNoSourcesAndRelativeFilenamesFailsNamingTheMismatch(t *testin
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// <sources/> beside a relative filename leaves nothing to anchor the class
-	// to, so the join builds no candidate at all. That places no class inside
-	// the root just as surely as a candidate landing elsewhere does, and the
-	// report has to be named rather than scoring an empty set and dying
-	// downstream as a wall of unknown methods.
 	f.write("TestResults/coverage.cobertura.xml", coberturaNoSources(
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -3757,10 +3203,6 @@ func TestReportWhoseEveryClassCarriesNoFilenameFailsSayingSo(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// Every class is malformed the one way that yields no candidate and no
-	// path to quote either. The report still placed nothing, so it still
-	// fails, and the message says there was nothing to compare rather than
-	// quoting an empty path as though it were one.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: "", lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -3781,9 +3223,6 @@ func TestDeterministicReportEmptyingSourcesFailsNamingTheProperty(t *testing.T) 
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// DeterministicReport=true rewrites every filename under the /_/
-	// placeholder and empties <sources>, so there is no root left to join
-	// against.
 	f.write("TestResults/coverage.cobertura.xml", coberturaNoSources(
 		coverageClass{filename: "/_/src/Ordering/OrderService.cs", lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -3802,8 +3241,6 @@ func TestUseSourceLinkFailsNamingTheProperty(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// UseSourceLink=true emits one empty <source> and the raw source-link
-	// document key, a URL, as the filename.
 	f.write("TestResults/coverage.cobertura.xml", cobertura("",
 		coverageClass{
 			filename: "https://raw.githubusercontent.com/org/repo/deadbeef/src/Ordering/OrderService.cs",
@@ -3825,10 +3262,6 @@ func TestUseSourceLinkWithASchemelessDocumentKeyFailsNamingTheProperty(t *testin
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// The document key need not be a URL, and this one reads as an ordinary
-	// repo-relative path. The empty <source> is the half of the shape that
-	// still gives it away, and without reading it the run would degrade to the
-	// wall of unknown methods the diagnostic exists to replace.
 	f.write("TestResults/coverage.cobertura.xml", cobertura("",
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -3847,9 +3280,6 @@ func TestUseSourceLinkDocumentKeyBesideARealSourceRootFailsNamingTheProperty(t *
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// A URL document key in a report that still carries an ordinary source
-	// root, so the blank <source> half of the shape is absent and the key
-	// itself is the only thing that gives it away.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{
 			filename: "https://raw.githubusercontent.com/org/repo/deadbeef/src/Ordering/OrderService.cs",
@@ -3871,12 +3301,6 @@ func TestWhitespaceOnlySourceReadsAsBlankAndNamesTheProperty(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// The UseSourceLink=true shape as a formatter leaves it, with a space
-	// between the <source> tags rather than nothing. A source root of
-	// whitespace is no source root, and the two readers of the document, the
-	// join and the erased-root check, have to agree on that; otherwise the run
-	// blames the checkout while telling the reader to turn off UseSourceLink,
-	// or the reverse.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(" ",
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -3895,10 +3319,6 @@ func TestWhitespacePaddedSourceRootStillAnchorsTheJoin(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// The other half of the same formatter's output: a real source root with
-	// whitespace either side of it. Trimming has to happen where the document
-	// is read, not only where the erased-root check looks, or the join carries
-	// the padding into every candidate and the report resolves nothing.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(" "+f.root+" ",
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -3916,10 +3336,6 @@ func TestBlankSourceWithAnAbsoluteFilenameScores(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// One blank <source> beside a filename that is already an absolute path.
-	// The filename carries its own root, so this is the coverlet shape ADR 0012
-	// names and not UseSourceLink=true: joining the blank source onto it leaves
-	// it unchanged, and it places inside the repo root.
 	f.write("TestResults/coverage.cobertura.xml", cobertura("",
 		coverageClass{
 			filename: filepath.Join(f.root, filepath.FromSlash(orderService)),
@@ -3940,9 +3356,6 @@ func TestReportCarryingBothErasedShapesNamesDeterministicReport(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// Both erased shapes in one report, the source-link key first. The
-	// property named is DeterministicReport whatever order the classes are in,
-	// because it is the one that erased <sources> for the whole document.
 	f.write("TestResults/coverage.cobertura.xml", coberturaNoSources(
 		coverageClass{
 			filename: "https://raw.githubusercontent.com/org/repo/deadbeef/src/Ordering/OrderService.cs",
@@ -3965,11 +3378,6 @@ func TestNumberedDeterministicPlaceholderFailsNamingTheProperty(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// MSBuild numbers the placeholder per source root, so a project with a
-	// second root, from a submodule or a source package, carries /_1/ rather
-	// than /_/. The remedy is the same property, and without matching the
-	// numbered form the path is merely absolute on Unix and the run would
-	// blame the checkout instead.
 	f.write("TestResults/coverage.cobertura.xml", coberturaNoSources(
 		coverageClass{filename: "/_1/src/Ordering/OrderService.cs", lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -3986,15 +3394,10 @@ func TestErasedSourceRootIsNamedAheadOfAnAmbiguousClass(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
-	// Order.cs exists under both sources, so on its own it is ambiguous.
 	f.write("src/a/Order.cs", csharpFile(20))
 	f.write("src/b/Order.cs", csharpFile(20))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// One erased filename beside the ambiguous class. The erased root voids
-	// the whole document before any candidate is built, so the reader is told
-	// which property to turn off rather than shown a contradiction that is a
-	// consequence of it.
 	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
 		[]string{filepath.Join(f.root, "src", "a"), filepath.Join(f.root, "src", "b")},
 		coverageClass{filename: "Order.cs", lines: spanCoverage(1, 1, 1)},
@@ -4017,10 +3420,6 @@ func TestAmbiguousClassIsNamedAheadOfTheReportPlacingNothingInside(t *testing.T)
 	f.write("src/b/Order.cs", csharpFile(20))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// The first class in document order places nowhere, from a source outside
-	// the repo, and the second contradicts itself. The class-level check runs
-	// as each class is read, so the contradiction is named rather than the
-	// report-level verdict that is decided only after the last class.
 	otherCheckout := t.TempDir()
 	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
 		[]string{otherCheckout, filepath.Join(f.root, "src", "a"), filepath.Join(f.root, "src", "b")},
@@ -4050,10 +3449,6 @@ func TestCaseOnlyPathDifferenceIsRefusedRatherThanGuessed(t *testing.T) {
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 	f.touchLine(other, 7)
-	// The wrong-case candidate resolves here, to a path whose case is not
-	// OrderService.cs's own, so refusing it rather than folding case is what
-	// leaves Cancel unknown. Other.cs is correctly cased, so the report still
-	// places a class inside the root.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: "src/Ordering/orderservice.cs", lines: spanCoverage(61, 3, 2)},
 		coverageClass{filename: other, lines: spanCoverage(6, 4, 1)}))
@@ -4071,14 +3466,10 @@ func TestClassYieldingTwoCandidatesInsideRepoRootFailsNamingBoth(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
-	// Order.cs exists twice inside the repo root, under the two <source>
-	// directories the report lists for the one class.
 	f.write("src/a/Order.cs", csharpFile(20))
 	f.write("src/b/Order.cs", csharpFile(20))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// The sources are listed b before a, so the message's sorted order is not
-	// the order the candidates arrive in.
 	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
 		[]string{filepath.Join(f.root, "src", "b"), filepath.Join(f.root, "src", "a")},
 		coverageClass{filename: "Order.cs", lines: spanCoverage(1, 1, 1)}))
@@ -4087,8 +3478,6 @@ func TestClassYieldingTwoCandidatesInsideRepoRootFailsNamingBoth(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// Both source paths are already repo-relative, so unlike the
-	// coverage_outside_repo case the message needs no machine-specific hole.
 	f.run().assertMatches(t, "file_ambiguous", 1, f.baseLabel("main"),
 		"class Order.cs in coverage report TestResults/coverage.cobertura.xml resolved to more than one path "+
 			"inside the repo root, src/a/Order.cs and src/b/Order.cs\n")
@@ -4098,15 +3487,11 @@ func TestClassYieldingThreeCandidatesInsideRepoRootFailsNamingAllOfThem(t *testi
 	t.Parallel()
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
-	// Order.cs exists three times inside the repo root, one copy per <source>.
 	f.write("src/a/Order.cs", csharpFile(20))
 	f.write("src/b/Order.cs", csharpFile(20))
 	f.write("src/c/Order.cs", csharpFile(20))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// A contradiction the reader has to resolve by hand, so the message names
-	// every path the class resolved to. Quoting the first two would leave the
-	// reader deleting one copy and hitting the same failure again.
 	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
 		[]string{
 			filepath.Join(f.root, "src", "c"),
@@ -4131,10 +3516,6 @@ func TestReportPathOutsideRepoIsIgnoredInSilence(t *testing.T) {
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
 
-	// A leftover class describing a file this repo has never had, sourced from
-	// a tree entirely outside the root. The gate ignores it in silence rather
-	// than tripping the zero-classes-inside-root diagnostic, because Cancel
-	// already resolved inside the root from the report's other source.
 	otherCheckout := t.TempDir()
 	writeAbsolute(t, filepath.Join(otherCheckout, "obsolete", "Old.cs"), csharpFile(5))
 	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
@@ -4158,9 +3539,6 @@ func TestReportPathNoLongerOnDiskIsIgnoredRatherThanFatal(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.write(deletedFile, csharpFile(10))
 	f.commitAll("initial")
-	// A report describes a moment in the past (ADR 0012): a class naming a
-	// file removed since the test run must stay a silent ignore now that the
-	// report is checked for more than the join alone.
 	f.git("rm", "--quiet", deletedFile)
 	f.commitAll("delete the file the coverage report still names")
 	f.touchLine(orderService, 62)
@@ -4185,12 +3563,6 @@ func TestReportWhoseEveryClassIsGoneFromDiskFailsNamingTheMismatch(t *testing.T)
 	f.write(orderService, csharpFile(80))
 	f.write(deletedFile, csharpFile(10))
 	f.commitAll("initial")
-	// Every class the report names is gone, which is the shape a report left
-	// behind in a gitignored TestResults/ takes after a branch switch. ADR 0012
-	// fails a report that places no class inside the root whatever became of
-	// the candidates, and the message hands the reader the path to look at, so
-	// a stale report is diagnosed as one rather than as a wall of methods
-	// nothing could be attributed to.
 	f.git("rm", "--quiet", deletedFile)
 	f.commitAll("delete the only file the coverage report names")
 	f.touchLine(orderService, 62)
@@ -4202,8 +3574,6 @@ func TestReportWhoseEveryClassIsGoneFromDiskFailsNamingTheMismatch(t *testing.T)
 		Stdout:     extractorOutput(t, parsed(orderService), []span{cancel}),
 	}
 
-	// The candidate no longer resolves, so the example is the path as the join
-	// built it, unresolved, beside a repo root that is resolved.
 	example := filepath.ToSlash(filepath.Join(f.root, filepath.FromSlash(deletedFile)))
 	root := resolvedPath(t, f.root)
 	f.run().assertMatchesWith(t, "coverage_outside_repo", 1, f.baseLabel("main"),
@@ -4217,10 +3587,6 @@ func TestReportCarryingNoClassesDoesNotTripTheOutsideRepoDiagnostic(t *testing.T
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// A report with a source root and no <class> at all resolved nothing, so
-	// there is nothing that could have been outside the repo and no path the
-	// diagnostic could quote. The run still fails, on the pre-existing
-	// unknown_changed_method path.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root))
 	f.stub = stubConfig{
 		Extensions: []string{".cs"},
@@ -4238,8 +3604,6 @@ func TestReportListingTheSameSourceTwiceIsNotAmbiguous(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// Both <source> elements yield the same candidate for the one class, so
-	// the class resolves to one path and file_ambiguous must not fire.
 	f.write("TestResults/coverage.cobertura.xml", renderCobertura(freshStamp(),
 		[]string{f.root, f.root},
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
@@ -4258,9 +3622,6 @@ func TestAbsoluteClassFilenameWithNoSourcesScores(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.touchLine(orderService, 62)
-	// Coverlet emits an absolute filename and no source root when no computed
-	// source root prefixes the document (ADR 0012). The filename alone is the
-	// candidate, and it lands inside the root.
 	f.write("TestResults/coverage.cobertura.xml", coberturaNoSources(
 		coverageClass{
 			filename: filepath.Join(f.root, filepath.FromSlash(orderService)),
@@ -4290,13 +3651,6 @@ func TestRunOutsideAGitRepoFailsWithATypedCodeAndADocument(t *testing.T) {
 	f.run().assertMatches(t, "no_git_repo", 1, "",
 		"could not find a git repository: fatal: not a git repository (or any of the parent directories): .git\n")
 }
-
-// The three exit-1 causes that share the non-repo case's place in the run,
-// each carrying its own code because a caller branches on the code and each
-// names a different thing to go and fix. They are driven here rather than at
-// the seam because the black-box suite is where a whole document is compared
-// (ADR 0008), and the environment the gate inherits is enough to stage all
-// three.
 
 // A runner with no git on PATH. Told to init a repository it would go looking
 // for one it already has.
@@ -4355,10 +3709,6 @@ func inRepo(t *testing.T, dir string) bool {
 // lands. A run reading exit 0 back would have approved a change nobody saw.
 func TestStdoutRefusingTheWriteExitsOneRatherThanTheDocumentsOwnCode(t *testing.T) {
 	t.Parallel()
-	// The only tolerated reason to skip is a platform without /dev/full at
-	// all. Any other stat failure, and any failure to open it, is a broken
-	// environment, and a silent skip there would leave the one end-to-end
-	// proof of this behaviour unguarded while CI stayed green.
 	info, err := os.Stat("/dev/full")
 	if errors.Is(err, fs.ErrNotExist) {
 		t.Skip("/dev/full does not exist on this platform")
@@ -4386,9 +3736,6 @@ func TestStdoutRefusingTheWriteExitsOneRatherThanTheDocumentsOwnCode(t *testing.
 	f.commitAll("initial")
 	f.write("docs/notes.md", "first\nsecond\n")
 
-	// This is the same docs-only fixture TestDocsOnlyChangePassesWithNoCoverageReportPresent
-	// runs, which exits 0 today. Pointing its stdout at /dev/full is what turns
-	// that pass into the reported error the issue is about.
 	exitCode, stderr := f.runWithStdout(full)
 
 	if exitCode != 1 || !strings.Contains(stderr, "writing the document to stdout") {
@@ -4414,11 +3761,6 @@ func TestOriginHeadOutranksLocalMainAsTheDiffBase(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// origin/HEAD sits at "initial", local main has moved on to "second", and
-	// ResolveBase must stop at the first candidate that resolves rather than
-	// the last. Diffing from origin/HEAD carries both the committed edit to
-	// line 42 and the working-tree edit to line 62, two changed methods; from
-	// local main only the second survives.
 	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/HEAD"),
 		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
@@ -4429,8 +3771,6 @@ func TestOriginMainOutranksLocalMainWhenNoOriginHeadExists(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.addOrigin("main")
-	// No setOriginHead: a push alone never creates refs/remotes/origin/HEAD,
-	// which is the shape of a fetch that never ran `remote set-head`.
 	f.touchLine(orderService, 42)
 	f.commitAll("second")
 	f.touchLine(orderService, 62)
@@ -4465,10 +3805,6 @@ func TestOriginHeadOutranksOriginMainWhenTheRemoteDefaultBranchIsNotMain(t *test
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// origin/HEAD names origin/trunk, which sits at "initial" while origin/main
-	// has moved on to "second" alongside local main. Diffing from origin/HEAD
-	// therefore carries both edits, two changed methods; diffing from
-	// origin/main would carry only the working-tree edit to line 62, one.
 	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/HEAD"),
 		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
@@ -4492,12 +3828,6 @@ func TestOriginMainOutranksOriginMasterWhenBothRemoteBranchesExist(t *testing.T)
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// origin/main sits at "initial" while origin/master has moved on to
-	// "second", so diffing from origin/main carries both edits, two changed
-	// methods, and diffing from origin/master would carry only the
-	// working-tree edit to line 62, one. The count separates the two rungs,
-	// so the case turns on which one ResolveBase picks and not on the label
-	// alone.
 	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/main"),
 		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
@@ -4520,13 +3850,6 @@ func TestOriginMasterOutranksLocalMainWhenBothExist(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// The remote carries master only, so neither origin/HEAD nor origin/main
-	// resolves and the walk reaches origin/master, back at "initial", before
-	// local main, which is HEAD's own branch at "second". Diffing from
-	// origin/master carries both edits, two changed methods; diffing from main
-	// would carry only the working-tree edit to line 62, one. The count
-	// separates the two rungs, so the case turns on which one ResolveBase
-	// picks and not on the label alone.
 	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/master"),
 		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
@@ -4548,12 +3871,6 @@ func TestLocalMainOutranksLocalMasterWhenBothBranchesExist(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// No remote, so the walk reaches the two local rungs. main is HEAD's own
-	// branch at "second", so diffing from it carries only the working-tree
-	// edit, one changed method; master is still back at "initial", so diffing
-	// from it would carry both edits, two. The count separates the two rungs,
-	// so the case turns on which one ResolveBase picks and not on the label
-	// alone.
 	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
@@ -4564,7 +3881,6 @@ func TestOriginMasterResolvesOnAMasterDefaultBranch(t *testing.T) {
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.addOrigin("master")
-	// No setOriginHead: origin/HEAD is absent, so the walk reaches origin/master.
 	f.touchLine(orderService, 42)
 	f.commitAll("second")
 	f.requireDistinctCommits("origin/master", "master")
@@ -4576,12 +3892,6 @@ func TestOriginMasterResolvesOnAMasterDefaultBranch(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// HEAD's own branch is master, so origin/master sits at "initial" while
-	// local master has moved on to "second". Diffing from origin/master
-	// carries both edits, two changed methods; diffing from local master would
-	// carry only the working-tree edit to line 62, one. The count separates
-	// the two rungs, so the case turns on which one ResolveBase picks and not
-	// on the label alone.
 	f.run().assertMatches(t, "two_hunks_one_file", 2, f.baseLabel("origin/master"),
 		"1 of 2 changed methods over CRAP threshold 30, worst score 68.05\n")
 }
@@ -4599,8 +3909,6 @@ func TestLocalMasterResolvesWhenNoRemoteExists(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// No remote exists, so no origin candidate resolves and local master is
-	// the only ref the run can reach for a base at all.
 	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("master"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
@@ -4612,11 +3920,6 @@ func TestRemoteMainWithUnrelatedHistoryFallsThroughToLocalMain(t *testing.T) {
 	f.commitAll("initial")
 	f.addOrigin("main")
 	f.pushOrphanHistoryToOrigin("main")
-	// No setOriginHead: origin/HEAD is absent, so the walk reaches origin/main
-	// first. Asserted rather than assumed, because an origin/HEAD pointing at
-	// the same orphan commit would make the walk skip both rungs and still
-	// land on local main, leaving the case green while pinning a rung it does
-	// not name.
 	if head := f.git("for-each-ref", "--format=%(refname)", "refs/remotes/origin/HEAD"); head != "" {
 		t.Fatalf("refs/remotes/origin/HEAD exists (%s), so the case no longer reaches the origin/main rung", head)
 	}
@@ -4628,13 +3931,6 @@ func TestRemoteMainWithUnrelatedHistoryFallsThroughToLocalMain(t *testing.T) {
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// origin/main resolves but its merge-base against HEAD exits 1, which is git
-	// answering that the two share no ancestor, and that answer is what
-	// ResolveBase skips the candidate on. The helper's own exit-1 guard is what
-	// proves the fixture produces that arm rather than a git failure, which the
-	// walk no longer falls through. The local main label together with the one
-	// changed method from the working-tree edit is what shows the walk fell
-	// through to the next candidate that does share history.
 	f.run().assertMatches(t, "pass_single_method", 0, f.baseLabel("main"),
 		"0 of 1 changed methods over CRAP threshold 30, worst score 3.33\n")
 }
@@ -4645,18 +3941,8 @@ func TestBranchWithNoCommitInARepoHoldingHistorySaysSoRatherThanNamingEveryRef(t
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
 	f.git("checkout", "--quiet", "--orphan", "fresh")
-	// The rung the case turns on, asserted rather than assumed. The HEAD check
-	// short-circuits ahead of the walk, so this document is byte-identical to
-	// the one an empty repo emits and the case would go on passing if the
-	// history it is named for stopped being there.
 	f.git("rev-parse", "--verify", "--quiet", "main^{commit}")
 
-	// main still resolves, so the walk reaches merge-base, and merge-base
-	// against an unborn HEAD exits 128 rather than the exit 1 that means no
-	// common ancestor. Without the HEAD check ahead of the walk this would come
-	// back as a diff the gate could not read, for a run that never reached a
-	// diff, or as the tried-refs list naming a branch that is sitting right
-	// there.
 	f.run().assertMatches(t, "base_no_commits", 1, "",
 		"no diff base: this branch has no commit\n")
 }
@@ -4668,10 +3954,6 @@ func TestARefStoreGitCannotReadReportsAnUnreadableDiffRatherThanNamingEveryRef(t
 	f.commitAll("initial")
 	f.corruptPackedRefs()
 
-	// Every ref read now exits 128 rather than the exit 1 that means no such
-	// ref. Read as no such ref, the run would hand the developer a list of
-	// candidates their repo actually has and send them hunting a missing
-	// branch, while what is broken is the ref store the list was read from.
 	cause := f.gitStderr("rev-parse", "--verify", "--quiet", "HEAD")
 
 	f.run().assertMatchesWith(t, "base_head_unreadable", 1, "",
@@ -4683,21 +3965,11 @@ func TestAMergeBaseGitCannotWalkReportsAnUnreadableDiffRatherThanTryingTheNextRe
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
-	// A branch whose name is no BaseCandidates rung, so main is the candidate
-	// the walk reaches and HEAD is a commit main does not carry.
 	f.git("checkout", "--quiet", "-b", "topic")
 	f.touchLine(orderService, 62)
 	f.commitAll("second")
 	f.removeLooseObject(f.git("rev-parse", "HEAD"))
 
-	// The object git cannot read is HEAD's own commit rather than the rung's,
-	// which is the walk itself failing and is what this case pins that the
-	// missing-candidate case does not. Both checks answer about a ref rather
-	// than about an object, so merge-base is the first thing to touch the
-	// missing one. Left to fall through, git failing to walk would read as git
-	// answering that main shares no ancestor with HEAD, the walk would try the
-	// remaining rungs, and a repo with nothing else to reach would name every
-	// candidate rather than the object it cannot read.
 	cause := f.gitStderr("merge-base", "HEAD", "main")
 
 	f.run().assertMatchesWith(t, "base_merge_base_unreadable", 1, "",
@@ -4709,10 +3981,6 @@ func TestBeforeTheFirstCommitTheDefaultScopeSaysSoRatherThanNamingEveryRef(t *te
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 
-	// No commit anywhere, so no candidate resolves either, and the tried-refs
-	// list is what the walk alone would print. The HEAD check ahead of it is
-	// what turns that into the branch's own answer, which is the same one
-	// --staged gives from the same check.
 	f.run().assertMatches(t, "base_no_commits", 1, "",
 		"no diff base: this branch has no commit\n")
 }
@@ -4725,16 +3993,8 @@ func TestACandidateWhoseCommitObjectIsGoneReportsAnUnreadableDiffRatherThanNamin
 	f.git("checkout", "--quiet", "-b", "topic")
 	f.touchLine(orderService, 62)
 	f.commitAll("second")
-	// main's own commit, which HEAD reaches only through the parent link, so
-	// removing it leaves HEAD readable and main's object gone.
 	f.removeLooseObject(f.git("rev-parse", "main"))
 
-	// `rev-parse --verify --quiet main^{commit}` exits 1 on a missing object,
-	// the same code an absent branch gives, so a peeled candidate check reads a
-	// rung git cannot read as a rung the repo does not carry, skips it, and
-	// ends at the tried-refs list naming main while main is sitting right
-	// there. Unpeeled, the check answers about the ref and merge-base is what
-	// classifies the object.
 	cause := f.gitStderr("merge-base", "HEAD", "main")
 
 	f.run().assertMatchesWith(t, "base_merge_base_unreadable", 1, "",
@@ -4749,17 +4009,8 @@ func TestATagShadowingACandidateWithANonCommitReportsAnUnreadableDiffRatherThanS
 	f.git("checkout", "--quiet", "-b", "topic")
 	f.touchLine(orderService, 62)
 	f.commitAll("second")
-	// git resolves refs/tags/main ahead of refs/heads/main, so this tag is what
-	// the main rung names from here on, and it names a tree rather than a
-	// commit.
 	f.git("tag", "main", f.git("rev-parse", "HEAD^{tree}"))
 
-	// The unpeeled candidate check is what lets the tag resolve at all, since a
-	// `^{commit}` peel exits 1 on it and the walk would skip the rung and end
-	// at the tried-refs list naming main. Unpeeled, merge-base is what
-	// classifies the object, at exit 128, and the run names the object it
-	// cannot read rather than resolving a base through some other rung than the
-	// one the developer's repo says main is.
 	cause := f.gitStderr("merge-base", "HEAD", "main")
 
 	f.run().assertMatchesWith(t, "base_merge_base_unreadable", 1, "",
@@ -4771,11 +4022,7 @@ func TestAnUnreadableRungStopsTheRunRatherThanResolvingABaseThroughALaterOne(t *
 	f := newFixture(t, "main")
 	f.write(orderService, csharpFile(80))
 	f.commitAll("initial")
-	// addOrigin leaves refs/remotes/origin/HEAD unset, so origin/main is the
-	// first rung the walk resolves and the broken one is the one it reaches.
 	f.addOrigin("main")
-	// A commit only origin/main carries, so dropping its object breaks that
-	// rung alone and leaves local main whole.
 	f.git("checkout", "--quiet", "-b", "remote-tip")
 	f.touchLine(orderService, 40)
 	f.commitAll("remote tip")
@@ -4786,23 +4033,11 @@ func TestAnUnreadableRungStopsTheRunRatherThanResolvingABaseThroughALaterOne(t *
 	f.git("checkout", "--quiet", "-b", "topic")
 	f.touchLine(orderService, 62)
 	f.commitAll("second")
-	// Two refs rather than one, so the base the run refuses to resolve is not
-	// the broken rung's own commit.
 	f.requireDistinctCommits("origin/main", "main")
-	// A healthy later rung is what the case needs, and it is read back rather
-	// than assumed. Local main has to be an ancestor of HEAD for the walk to
-	// have a good base one rung down, and without that this case would go green
-	// on a repo where nothing usable followed, which is the hole the
-	// neighbouring cases have.
 	if fallback := f.baseLabel("main"); fallback != "main@"+f.git("rev-parse", "main")[:7] {
 		t.Fatalf("local main is %s rather than a base behind HEAD, so the walk has no healthy rung to fall through to", fallback)
 	}
 	f.removeLooseObject(remoteTip)
-	// A coverage report and an extractor the run never reaches, so that a walk
-	// which fell through would answer with a measurement over local main rather
-	// than stopping at some later complaint. That leaves the null base the
-	// golden carries as the thing this case fails on, which is the difference
-	// between refusing and resolving.
 	f.write("TestResults/coverage.cobertura.xml", cobertura(f.root,
 		coverageClass{filename: orderService, lines: spanCoverage(61, 3, 2)}))
 	f.stub = stubConfig{
@@ -4810,13 +4045,6 @@ func TestAnUnreadableRungStopsTheRunRatherThanResolvingABaseThroughALaterOne(t *
 		Stdout:     extractorOutput(t, parsed(orderService), []span{placeAsync, cancel}),
 	}
 
-	// origin/main resolves, local main is a base one rung down that the walk
-	// could reach, and the run still refuses. Refusing is the point. A base
-	// resolved through a rung other than the one the developer's own repo says
-	// their work forked from is a wrong answer nothing in the output would show
-	// them, where the object git cannot read names what is really broken. The
-	// null base the golden carries is what separates the two, since a walk that
-	// regained its old continue would report a base here.
 	cause := f.gitStderr("merge-base", "HEAD", "origin/main")
 
 	f.run().assertMatchesWith(t, "base_merge_base_unreadable", 1, "",

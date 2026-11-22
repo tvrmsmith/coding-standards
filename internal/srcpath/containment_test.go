@@ -58,11 +58,6 @@ func TestRelativizeReadsAMisCasedRootPrefixAsFolded(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
 
-	// Mis-cased below the root as well as at it. Only the root prefix folds, so
-	// the components below come back as the candidate spells them, upper case
-	// and all. ADR 0013 still refuses that case-only difference one layer up, in
-	// named's spelling walk and in the join, which is what this asserts by
-	// holding "SRC/a.txt" rather than the tree's "src/a.txt".
 	rel, place, err := root.relativize(filepath.Join(miscased, "SRC", "a.txt"))
 
 	if err != nil || place != folded || rel != "SRC/a.txt" {
@@ -344,8 +339,6 @@ func TestNameRefusesADotDotThatLeavesTheRepoThroughASymlink(t *testing.T) {
 	if err := os.Symlink(mkdir(t, filepath.Join(outside, "sub")), filepath.Join(root.Dir(), "link")); err != nil {
 		t.Fatal(err)
 	}
-	// Built by hand rather than with filepath.Join, which cleans, and a cleaned
-	// candidate is the very input this case exists to keep out of resolution.
 	sep := string(filepath.Separator)
 	candidate := filepath.Join(root.Dir(), "link") + sep + ".." + sep + "x"
 
@@ -409,9 +402,6 @@ func TestNamedRefusesAMisCasedRootPrefixAsASpellingRatherThanALocation(t *testin
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
-	// Everything below the root is spelled as the tree spells it, so the only
-	// thing wrong with this name is the root prefix, and issue 48's whole
-	// complaint is that the gate sent the developer after the location.
 	name := filepath.Join(miscased, "src", "a.cs")
 
 	_, err := root.named(name, "", dirNames{})
@@ -429,9 +419,6 @@ func TestNamedAcceptsARelativeNameResolvedThroughAMisCasedWorkingDirectory(t *te
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
-	// Handing the mis-cased spelling in as cwd is what makes this the fold
-	// case; the tree's own spelling would be an ordinary inside reading that
-	// never reaches the fold and still passes.
 	assertFolds(t, root, filepath.Join(miscased, "src", "a.cs"))
 
 	rel, err := root.named(filepath.Join("src", "a.cs"), miscased, dirNames{})
@@ -506,8 +493,6 @@ func TestNamedRefusesAMisCasedRootPrefixAnInteriorClimbReachedOutTo(t *testing.T
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
-	// Spelled rather than joined, because filepath.Join cleans its arguments and
-	// would hand named a name whose climb is already a leading parent.
 	name := filepath.FromSlash("src/../../" + filepath.Base(miscased) + "/src/a.cs")
 
 	_, err := root.named(name, root.Dir(), dirNames{})
@@ -533,8 +518,6 @@ func TestNamedRefusesACaseDifferingRootSpellingARelativeNameClimbedOutTo(t *test
 func TestNamedRefusesACaseDifferingRootSpellingAnInteriorClimbReachedOutTo(t *testing.T) {
 	root, realDir := symlinkedMiscasedRoot(t)
 	touch(t, filepath.Join(realDir, "src", "a.cs"))
-	// Spelled rather than joined, because filepath.Join cleans its arguments and
-	// would hand named a name whose climb is already a leading parent.
 	name := filepath.FromSlash("src/../../" + filepath.Base(realDir) + "/src/a.cs")
 
 	_, err := root.named(name, realDir, dirNames{})
@@ -564,8 +547,6 @@ func TestNamedRefusesAMisCasedRootPrefixTypedThroughASymlinkedAncestor(t *testin
 	}
 	miscased := miscasedRoot(t, root)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
-	// Typed under the unresolved temp directory, the spelling a developer's
-	// shell hands them, with only the root component re-cased.
 	name := filepath.Join(tmp, filepath.Base(miscased), "src", "a.cs")
 	assertFolds(t, root, filepath.Join(miscased, "src", "a.cs"))
 
@@ -611,8 +592,6 @@ func TestNamedRefusesAMisCasedRootPrefixWithAClimbBelowIt(t *testing.T) {
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
-	// Spelled rather than joined, because filepath.Join would clean the climb
-	// away before named ever sees it.
 	name := filepath.FromSlash(filepath.ToSlash(miscased) + "/src/../src/a.cs")
 
 	_, err := root.named(name, "", dirNames{})
@@ -671,8 +650,6 @@ func TestNamedAcceptsARelativeNameUnderAMisCasedParentOfTheRoot(t *testing.T) {
 	root, miscasedParent := miscasedParentRoot(t)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
 	assertFolds(t, root, filepath.Join(miscasedParent, "repo", "src", "a.cs"))
-	// "repo" spelled as the tree spells it. The mis-cased component is DEV,
-	// above it, which only the working directory supplied.
 	name := filepath.Join("..", "..", "repo", "src", "a.cs")
 
 	rel, err := root.named(name, filepath.Join(miscasedParent, "repo", "src"), dirNames{})
@@ -691,8 +668,6 @@ func TestNamedRefusesAMisCasedRootPrefixAheadOfACountChangingSymlink(t *testing.
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
 	touch(t, filepath.Join(root.Dir(), "deep", "inner", "a.cs"))
-	// Stored relative, so resolving it keeps the developer's own spelling of the
-	// root and still lands two components where they typed one.
 	if err := os.Symlink(filepath.Join("deep", "inner"), filepath.Join(root.Dir(), "link")); err != nil {
 		t.Fatal(err)
 	}
@@ -768,8 +743,6 @@ func TestNamedRefusesAMisCasedRootComponentAboveTheLastOneTheTextSpelled(t *test
 	root, realDir := rootUnderASymlinkedMiscasedParent(t)
 	touch(t, filepath.Join(realDir, "src", "a.cs"))
 	assertFolds(t, root, filepath.Join(realDir, "src", "a.cs"))
-	// The parent as the tree spells it, which is the spelling the root does not
-	// use on this side of the pair.
 	parent := filepath.Base(filepath.Dir(realDir))
 	name := filepath.Join("..", "..", "..", parent, filepath.Base(realDir), "src", "a.cs")
 
@@ -807,8 +780,6 @@ func TestNamedAcceptsARelativeNameWhoseWorkingDirectoryIsMisCasedAboveTheRoot(t 
 	root, realDir := rootUnderASymlinkedMiscasedParent(t)
 	touch(t, filepath.Join(realDir, "src", "a.cs"))
 	assertFolds(t, root, filepath.Join(realDir, "src", "a.cs"))
-	// "repo" spelled as the tree spells it. The mis-cased component is the
-	// parent above it, which only the working directory supplied.
 	name := filepath.Join("..", "..", filepath.Base(realDir), "src", "a.cs")
 
 	rel, err := root.named(name, filepath.Join(realDir, "src"), dirNames{})
@@ -900,8 +871,6 @@ func TestNamedAcceptsARelativeNameWhoseSymlinkTargetSpellsTheRootMisCased(t *tes
 	miscased := miscasedRoot(t, root)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
 	tmp := filepath.Dir(root.Dir())
-	// Stored mis-cased, which is the spelling EvalSymlinks hands back and the
-	// component the developer's own name never carries.
 	if err := os.Symlink(filepath.Join(miscased, "src"), filepath.Join(tmp, "link")); err != nil {
 		t.Fatal(err)
 	}
@@ -997,8 +966,6 @@ func TestNamedRefusesABelowRootMisCaseReachedThroughAMisCasedWorkingDirectory(t 
 	root := containmentRoot(t)
 	miscased := miscasedRoot(t, root)
 	touch(t, filepath.Join(root.Dir(), "src", "a.cs"))
-	// The mis-cased spelling handed in as cwd is what folds the prefix; the
-	// tree's own spelling would never reach the fold road this case is about.
 	assertFolds(t, root, filepath.Join(miscased, "SRC", "a.cs"))
 	name := filepath.Join("SRC", "a.cs")
 
@@ -1108,10 +1075,6 @@ func TestPlaceLandsACandidateWhoseRootPrefixIsMisCased(t *testing.T) {
 	if err := os.Symlink("src", filepath.Join(root.Dir(), "srclink")); err != nil {
 		t.Fatal(err)
 	}
-	// Typed through a relative link, which resolves to the same mis-cased prefix
-	// with the link spelled out. Resolved answering the link-free path is what
-	// says Place got past the absolute and symlink checks ahead of the fold,
-	// rather than turning back at one of them with the candidate as typed.
 	resolved := filepath.Join(miscased, "src", "a.cs")
 	assertFolds(t, root, resolved)
 
@@ -1138,9 +1101,6 @@ func TestPlaceLandsACandidateUnderACaseDifferingRootSpelling(t *testing.T) {
 	}
 	assertFolds(t, root, resolved)
 
-	// Typed through a relative link, as the macOS twin does, so Resolved
-	// answering the link-free path says Place got past the absolute and symlink
-	// checks rather than turning back at one of them with the candidate as typed.
 	placed := root.Place(filepath.Join(realDir, "srclink", "a.cs"))
 
 	rel, in := placed.Inside()
@@ -1165,9 +1125,6 @@ func TestPlaceLandsNowhereWhenTheRepoRootCannotBeStatted(t *testing.T) {
 	if err := os.Remove(root.Dir()); err != nil {
 		t.Fatal(err)
 	}
-	// Place lands nowhere for anything it reads as outside the root, so without
-	// this the case stays green if the removal stops provoking the root stat and
-	// the candidate simply reads as outside.
 	if _, _, err := root.relativize(resolved); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("relativize on %s returned %v, want the root-stat fault; this case is not exercising the fault arm", resolved, err)
 	}
@@ -1204,9 +1161,6 @@ func TestNameNamesAReportItCannotWeighAgainstTheRepoRootByItsAbsolutePath(t *tes
 	}
 	path := filepath.Join(parent, "REPO", "TestResults", "coverage.cobertura.xml")
 	denyAccess(t, parent, 0o000)
-	// Name answers the absolute path for anything it reads as outside the root,
-	// so without this the case stays green if the mode stops provoking a stat
-	// failure and the fault arm is never reached.
 	if _, _, err := root.relativize(resolveExisting(path)); !errors.Is(err, fs.ErrPermission) {
 		t.Fatalf("relativize on %s returned %v, want a permission fault; this case is not exercising the fault arm", path, err)
 	}
@@ -1292,8 +1246,6 @@ func TestNameReadsAPathOutsideTheRepoAsItsResolvedAbsolutePath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Named through the link, so the answer being the resolved path rather than
-	// the typed one is visible rather than a coincidence of the two matching.
 	name := root.Name(filepath.Join(link, "coverage.xml"))
 
 	if name != Name(filepath.ToSlash(realDir)) {
